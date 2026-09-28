@@ -22,10 +22,11 @@ describe('openDb', () => {
 describe('migrate', () => {
 	it('ist idempotent: zweiter Lauf führt nichts aus', () => {
 		const file = join(tmp, 'idem.db');
-		expect(migrate(openDb(file))).toEqual(['001_core_schema.sql']);
+		const all = ['001_core_schema.sql', '002_workflow_state.sql'];
+		expect(migrate(openDb(file))).toEqual(all);
 		const db = openDb(file); // wie ein Neustart
 		expect(migrate(db)).toEqual([]);
-		expect(names(db)).toEqual(['001_core_schema.sql']);
+		expect(names(db)).toEqual(all);
 	});
 
 	it('wendet in Namensreihenfolge an, unabhängig von der Eingabereihenfolge', () => {
@@ -82,7 +83,10 @@ describe('Kernschema', () => {
 		['Relation auf sich selbst', "INSERT INTO ticket_relations VALUES (100, 100, 'blocks')", /CHECK/],
 		['Relationstyp unbekannt', "INSERT INTO ticket_relations VALUES (100, 101, 'depends_on')", /CHECK/],
 		['Relation zu fehlendem Ticket', "INSERT INTO ticket_relations VALUES (100, 999, 'blocks')", /FOREIGN KEY/],
-		['Spalte mit Tickets löschen', 'DELETE FROM columns WHERE id = 10', /FOREIGN KEY/]
+		['Spalte mit Tickets löschen', 'DELETE FROM columns WHERE id = 10', /FOREIGN KEY/],
+		['blocks_satisfied_at unbekannt', "UPDATE projects SET blocks_satisfied_at = 'review' WHERE id = 1", /CHECK/],
+		['Review-Freigabe ohne Actor', 'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP WHERE id = 100', /CHECK/],
+		['Actor kein JSON', "UPDATE tickets SET moved_by = 'dev' WHERE id = 100", /CHECK/]
 	])('weist ab: %s', (_, sql, error) => {
 		expect(() => db.exec(sql)).toThrow(error);
 	});
