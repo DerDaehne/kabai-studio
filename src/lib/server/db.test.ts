@@ -22,11 +22,22 @@ describe('openDb', () => {
 describe('migrate', () => {
 	it('ist idempotent: zweiter Lauf führt nichts aus', () => {
 		const file = join(tmp, 'idem.db');
-		const all = ['001_core_schema.sql', '002_workflow_state.sql'];
-		expect(migrate(openDb(file))).toEqual(all);
+		const first = migrate(openDb(file));
+		expect(first.slice(0, 2)).toEqual(['001_core_schema.sql', '002_workflow_state.sql']);
 		const db = openDb(file); // wie ein Neustart
 		expect(migrate(db)).toEqual([]);
-		expect(names(db)).toEqual(all);
+		expect(names(db)).toEqual(first);
+	});
+
+	it('überspringt, was ein anderer Prozess inzwischen angewendet hat (Prüfung in der Transaktion)', () => {
+		const db = openDb(':memory:');
+		// 001 simuliert den Konkurrenten: trägt 002 als angewendet ein, nachdem die Pending-Liste schon feststeht
+		const ran = migrate(db, {
+			'/m/001_a.sql': "CREATE TABLE a (id INTEGER); INSERT INTO schema_migrations (name) VALUES ('002_b.sql')",
+			'/m/002_b.sql': 'CREATE TABLE b (id INTEGER)'
+		});
+		expect(ran).toEqual(['001_a.sql']);
+		expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'b'").get()).toBeUndefined();
 	});
 
 	it('wendet in Namensreihenfolge an, unabhängig von der Eingabereihenfolge', () => {
