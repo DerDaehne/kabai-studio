@@ -1,8 +1,9 @@
 # kabai studio
 
 Agent orchestration studio: tickets are executable jobs. Board columns carry a
-role prompt and rules; AI agents — local models via Ollama first, Claude/OpenAI
-optional — work tickets manually or automatically, and the human only
+role prompt and rules; AI agents — local models first (llama.cpp, Ollama or any
+OpenAI-compatible server), Claude/OpenAI optional — work tickets manually or
+automatically, and the human only
 orchestrates: answering questions, granting approvals, accepting results.
 
 Successor in spirit to [kabai](https://github.com/DerDaehne/kabai) +

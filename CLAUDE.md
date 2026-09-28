@@ -87,6 +87,10 @@ nix develop --command npm test         # Tests (sobald eingerichtet)
 
 ## Git
 
-- Branch pro Ticket: `ticket/<id>-<kurz-slug>`. Commits klein, Format
-  `feat|fix|chore|docs: <was> (#<ticket-id>)`, ein Ticket pro Commit.
+- Branch pro Ticket: `ticket/<id>-<kurz-slug>`, abgezweigt vom aktuellen `main`.
+  Commits klein, Format `feat|fix|chore|docs: <was> (#<ticket-id>)`, ein Ticket pro
+  Commit.
+- Nach „Review ok" merged der Review-Agent den Ticket-Branch per `git merge --ff-only`
+  nach `main` (vorher ggf. auf `main` rebasen) und löscht den Branch.
+- Commit-Identität kommt aus der Repo-Konfiguration (noreply-Adresse) — nie ändern.
 - Neue Remotes anlegen und pushen macht nur der Maintainer.
