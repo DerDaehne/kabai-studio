@@ -28,3 +28,6 @@ result
 
 # Interne, persönliche Agent-Infos (nie committen)
 CLAUDE.local.md
+
+# Laufzeitdaten (SQLite-DB)
+/data
