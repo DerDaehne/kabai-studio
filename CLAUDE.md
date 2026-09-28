@@ -12,6 +12,27 @@ Geistiger Nachfolger von kabai (MCP-Server) + kabai-ui (SvelteKit), aber
 **Lies zusätzlich `CLAUDE.local.md`, falls vorhanden** — dort stehen die internen,
 nicht öffentlichen Arbeitsinfos (Board, Wissen, lokale Umgebung). Sie ist gitignored.
 
+## Oberstes Designziel: UX und AX gleichrangig (verbindlich)
+
+Studio hat zwei gleichrangige Nutzer: den **Menschen**, der orchestriert, und den
+**Agent**, der arbeitet. Beide sollen angenehm und effizient arbeiten können. Jede
+Funktion wird für beide entworfen; beide sehen dieselbe Wahrheit (eine
+Domain-Schicht), nur die Oberfläche unterscheidet sich.
+
+- **UX (Mensch):** kein Handbuch nötig (Defaults, Assistent) · Tastatur zuerst,
+  häufige Aktionen in ≤ 2 Schritten, hohe Dichte, Live-Updates · Fragen,
+  Freigaben, Abnahmen gesammelt in der Inbox · jede Agent-Aktion nachvollziehbar
+  und übersteuerbar · Fehler immer mit Ausweg · zugänglich (Tastatur, Fokus,
+  Kontrast WCAG AA, Labels, reduced motion) · unterwegs nutzbar.
+- **AX (Agent):** Kontext im Prompt statt Erkundungsaufrufen · wenige, knappe
+  Werkzeuge, batch-first, schlanke Antworten · keine impliziten Regeln (erlaubte
+  Moves explizit) · Fehler mit stabilem Code und konkretem Ausweg · Identität
+  automatisch aus dem Run · Token-Budget kleiner Modelle ernst nehmen ·
+  retry-sichere Schreibaufrufe.
+- Jedes Ticket mit sichtbarer Oberfläche (UI, MCP-Werkzeug, Prompt, CLI,
+  Fehlermeldung) hat UX/AX-Kriterien; sie gehören zur Definition of Done und
+  werden im Review ausdrücklich geprüft.
+
 ## Öffentliches Repo — Datenschutz (verbindlich)
 
 Dieses Repo ist öffentlich. **Niemals** in Dateien, Commits oder Commit-Nachrichten:
