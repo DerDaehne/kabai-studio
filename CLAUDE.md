@@ -79,7 +79,7 @@ Abweichung nur mit neuem ADR:
 nix develop --command npm run check    # svelte-check, muss 0 Fehler zeigen
 nix develop --command npm run build    # Produktions-Build nach build/
 nix develop --command node build       # Server auf http://localhost:3000
-nix develop --command npm test         # Tests (sobald eingerichtet)
+nix develop --command npm test         # vitest (src/**/*.test.ts)
 ```
 
 - Abhängigkeiten sparsam: erst Stdlib (`node:crypto`, `node:sqlite`, `node:events`),

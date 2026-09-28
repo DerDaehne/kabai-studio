@@ -16,7 +16,8 @@ its own database — no compatibility with kabai required.
 
 - One SvelteKit app (TypeScript, Svelte 5, `adapter-node`) = web server +
   orchestrator + runner in a single process.
-- Own SQLite database (single file, WAL).
+- Own SQLite database (single file, WAL) via `node:sqlite`, stored in `./data`
+  (override with `STUDIO_DATA_DIR`); migrations in `migrations/` run on startup.
 - PWA as the only client (Linux, macOS, mobile) — agents never run in the client.
 - Agents run hybrid: coding agents (opencode, Claude Code, Codex, …) via the
   [Agent Client Protocol](https://agentclientprotocol.com), lightweight tasks via
@@ -33,6 +34,7 @@ nix develop            # or: direnv allow
 npm install
 npm run dev            # dev server
 npm run check          # svelte-check / TypeScript
+npm test               # vitest
 npm run build && node build   # production build on http://localhost:3000
 ```
 
