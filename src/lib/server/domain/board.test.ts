@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
-import { DomainError, type Actor } from './core';
+import { DomainError, tx, type Actor } from './core';
 
 const user: Actor = { kind: 'user' };
 const dev: Actor = { kind: 'agent', runId: 1 };
@@ -74,9 +74,15 @@ describe('createProject / createTicket', () => {
 		expect(columnOf(a)).toBe('Backlog'); // Default: erste normale Spalte
 	});
 
-	it('weist Anlage in einer done-Spalte ab', () => {
+	it('Anlage: nie in done, in human_answered nur durch user, in human_intervention auch durch Agent', () => {
 		const { db, projectId, col } = setup();
 		expect(caught(() => board.createTicket(db, user, projectId, { title: 'X', column_id: col.Done })).code).toBe('invalid_column');
+		const err = caught(() => board.createTicket(db, dev, projectId, { title: 'X', column_id: col['Human Answered'] }));
+		expect(err.code).toBe('requires_human');
+		expect(err.message).toBe('Nur ein Mensch darf Tickets in „Human Answered“ anlegen.');
+		board.createTicket(db, user, projectId, { title: 'Antwort', column_id: col['Human Answered'] });
+		board.createTicket(db, dev, projectId, { title: 'Frage', column_id: col['Human Intervention'] }); // Agent darf eskalieren
+		expect(db.prepare('SELECT count(*) AS n FROM tickets').get()?.n).toBe(2);
 	});
 
 	it('updateTicket setzt nur freigegebene Felder', () => {
@@ -106,11 +112,18 @@ describe('moveTicket', () => {
 		const id = ticket();
 		for (const from of ['Backlog', 'In Arbeit', 'Review', 'Done', 'Human Answered']) {
 			place(id, from);
-			board.moveTicket(db, dev, id, col['Human Intervention']);
+			board.moveTicket(db, from === 'Done' ? user : dev, id, col['Human Intervention']); // aus done nur der Mensch (Reopen)
 			expect(columnOf(id)).toBe('Human Intervention');
 		}
 		place(id, 'Human Answered');
-		expect(board.allowedMoves(db, id, dev).map((m) => m.name)).toEqual(['Backlog', 'In Arbeit', 'Review', 'Done', 'Human Intervention']);
+		expect(board.allowedMoves(db, id, dev).map((m) => [m.name, m.requiresHuman])).toEqual([
+			['Backlog', false],
+			['In Arbeit', false],
+			['Review', false],
+			['Done', true],
+			['Human Intervention', false]
+		]);
+		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('requires_human'); // implizite Kante, trotzdem nur Mensch
 		board.moveTicket(db, dev, id, col.Backlog); // keine gespeicherte Kante
 		expect(columnOf(id)).toBe('Backlog');
 	});
@@ -140,6 +153,21 @@ describe('moveTicket', () => {
 
 		place(id, 'Human Intervention');
 		expect(caught(() => board.moveTicket(db, dev, id, col['Human Answered'])).code).toBe('requires_human');
+	});
+
+	it('lässt nur user ein Ticket aus einer done-Spalte heraus verschieben (Reopen)', () => {
+		const { db, ticket, place, col, columnOf } = setup();
+		const id = ticket();
+		place(id, 'Done');
+		expect(board.allowedMoves(db, id, dev).map((m) => [m.name, m.requiresHuman, m.blockers.map((b) => b.code)])).toEqual([
+			['Review', true, ['requires_human']],
+			['Human Intervention', true, ['requires_human']]
+		]);
+		const err = caught(() => board.moveTicket(db, dev, id, col.Review));
+		expect(err.message).toBe('Nur ein Mensch darf STU-1 aus „Done“ wieder öffnen.');
+		expect(err.hint).toContain('Folgeticket');
+		board.moveTicket(db, user, id, col.Review);
+		expect(columnOf(id)).toBe('Review');
 	});
 
 	it('weist Epic → done mit offenem Kind ab', () => {
@@ -237,6 +265,7 @@ describe('workableTickets', () => {
 		const [a, b] = [ticket(), ticket()];
 		const done = ticket();
 		place(done, 'Done');
+		place(ticket(), 'Human Intervention'); // wartet auf den Menschen, nicht bearbeitbar
 		board.linkRelation(db, user, a, b, 'blocks');
 		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-1']);
 		place(a, 'Done');
@@ -279,11 +308,15 @@ describe('Tasks mit Begründung', () => {
 });
 
 describe('Event-Bus', () => {
-	it('jede Mutation emittiert nach dem Commit ein Event; abgewiesene emittieren nichts', () => {
+	it('jede Mutation emittiert ein Event, und zwar außerhalb der Transaktion', () => {
 		const db = openDb(':memory:');
 		migrate(db);
 		const events: StudioEvent[] = [];
-		const off = subscribe((e) => events.push(e));
+		const inTx: boolean[] = [];
+		const off = subscribe((e) => {
+			events.push(e);
+			inTx.push(db.isTransaction);
+		});
 
 		const p = board.createProject(db, user, { key: 'EVT', name: 'Events' }).id;
 		board.setBlocksSatisfiedAt(db, user, p, 'review_ok');
@@ -302,7 +335,6 @@ describe('Event-Bus', () => {
 		board.linkRelation(db, dev, a, b, 'blocks');
 		board.unlinkRelation(db, dev, a, b, 'blocks');
 		board.deleteTicket(db, user, b);
-		caught(() => board.moveTicket(db, dev, a, 99999));
 		off();
 
 		expect(events.map((e) => e.type)).toEqual([
@@ -326,6 +358,23 @@ describe('Event-Bus', () => {
 			'ticket.deleted'
 		]);
 		expect(events.every((e) => e.projectId === p && e.actor)).toBe(true);
+		expect(inTx.every((t) => t === false)).toBe(true); // erst nach COMMIT publiziert
 		expect(events[5]).toMatchObject({ ticketId: a, actor: dev, to: inArbeit });
+	});
+
+	it('eine zurückgerollte Transaktion meldet nichts, auch wenn sie schon emittiert hatte', () => {
+		const db = openDb(':memory:');
+		migrate(db);
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		const failing = () =>
+			tx(db, (emit) => {
+				emit({ type: 'ticket.created', projectId: 1, actor: user });
+				throw new Error('Abbruch');
+			});
+		expect(failing).toThrow('Abbruch');
+		off();
+		expect(events).toEqual([]);
+		expect(db.isTransaction).toBe(false);
 	});
 });

@@ -59,19 +59,28 @@ function task(db: DatabaseSync, id: number) {
 const columns = (db: DatabaseSync, projectId: number) =>
 	db.prepare('SELECT id, name, kind FROM columns WHERE project_id = ? ORDER BY position, id').all(projectId) as Column[];
 
-/** Erreichbare Spalten: gespeicherte Transitionen plus implizit jede Spalte → human_intervention und human_answered → jede Spalte. */
+/**
+ * Erreichbare Spalten: gespeicherte Transitionen plus implizit jede Spalte → human_intervention und human_answered → jede Spalte.
+ * Aus einer done-Spalte heraus (Reopen) darf nur der Mensch — unabhängig von der Kante.
+ */
 function targets(db: DatabaseSync, t: Ticket) {
 	const rows = db.prepare('SELECT to_column_id AS id, requires_human AS rh FROM transitions WHERE project_id = ? AND from_column_id = ?').all(t.project_id, t.column_id);
 	const explicit = new Map(rows.map((r) => [r.id as number, r.rh === 1]));
 	return columns(db, t.project_id)
 		.filter((c) => c.id !== t.column_id && (explicit.has(c.id) || c.kind === 'human_intervention' || t.column_kind === 'human_answered'))
-		.map((column) => ({ column, requiresHuman: explicit.get(column.id) ?? humanOnly(column.kind) }));
+		.map((column) => ({ column, requiresHuman: t.column_kind === 'done' || (explicit.get(column.id) ?? humanOnly(column.kind)) }));
 }
 
 /** Die eine Regelprüfung für allowedMoves und moveTicket. */
 function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolean, actor: Actor): Blocker[] {
 	const out: Blocker[] = [];
-	if (requiresHuman && actor.kind !== 'user')
+	if (requiresHuman && actor.kind !== 'user' && t.column_kind === 'done')
+		out.push({
+			code: 'requires_human',
+			message: `Nur ein Mensch darf ${t.ref} aus „${t.column_name}“ wieder öffnen.`,
+			hint: 'Abgenommene Tickets öffnet nur der Mensch. Für Nacharbeit ein Folgeticket anlegen und per relates_to verknüpfen.'
+		});
+	else if (requiresHuman && actor.kind !== 'user')
 		out.push({
 			code: 'requires_human',
 			message: `Nur ein Mensch darf ${t.ref} nach „${to.name}“ verschieben.`,
@@ -172,6 +181,12 @@ export function createTicket(
 		if (!col) throw new DomainError('not_found', `Projekt ${projectId} hat keine Spalte ${column_id ?? 'der Art normal'}.`, 'Prüfe Projekt- und Spalten-ID.');
 		if (col.kind === 'done')
 			throw new DomainError('invalid_column', `Tickets starten nicht in der done-Spalte „${col.name}“.`, 'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.');
+		if (col.kind === 'human_answered' && actor.kind !== 'user')
+			throw new DomainError(
+				'requires_human',
+				`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
+				'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
+			);
 		const f = fieldsOf(rest);
 		const { n } = db.prepare('UPDATE projects SET ticket_seq = ticket_seq + 1 WHERE id = ? RETURNING ticket_seq AS n').get(projectId) as { n: number };
 		const { id } = db
