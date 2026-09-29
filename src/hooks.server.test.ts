@@ -120,6 +120,7 @@ describe('Auth-Durchlauf', () => {
 		expect(isActionFailure(again) && again.status).toBe(403);
 		expect(await run(() => setupLoad(event('/setup', jar())))).toEqual({ redirect: '/login', status: 303 });
 		expect(await guard('/')).toEqual({ redirect: '/login', status: 303 });
+		expect(await guard('/settings')).toEqual({ redirect: '/login', status: 303 }); // #820: Übersicht nur mit Session
 		expect(await guard('/settings/secrets')).toEqual({ redirect: '/login', status: 303 }); // Secrets nur mit Session
 		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 });
 	});
