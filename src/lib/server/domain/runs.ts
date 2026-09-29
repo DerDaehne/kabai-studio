@@ -129,11 +129,16 @@ export function setRunState(db: DatabaseSync, actor: Actor, runId: number, to: '
 	tx(db, (emit) => transition(db, emit, actor, runId, to, 'setRunState'));
 }
 
-/** Beendet den Run: entwertet das Token, addiert den letzten Verbrauch und liefert die Summen. `failed` braucht `error`. */
-export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: { state: EndState; error?: string; usage?: Usage }) {
-	return tx(db, (emit) =>
-		transition(db, emit, actor, runId, end.state, 'finishRun', `, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`, end.error ?? null, ...usage(end.usage))
-	);
+/** Ende eines Runs; `failed` verlangt einen Fehlertext — im Typ und zur Laufzeit. */
+export type RunEnd = ({ state: 'failed'; error: string } | { state: Exclude<EndState, 'failed'>; error?: string }) & { usage?: Usage };
+
+/** Beendet den Run: entwertet das Token, addiert den letzten Verbrauch und liefert die Summen. */
+export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: RunEnd) {
+	return tx(db, (emit) => {
+		if (end.state === 'failed' && !end.error?.trim())
+			throw new DomainError('error_required', `Run ${runId} als „failed“ beenden geht nur mit Fehlertext.`, 'Gib `error` an: in einem Satz, was schiefging — der Mensch sieht ihn am Run.');
+		return transition(db, emit, actor, runId, end.state, 'finishRun', `, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`, end.error ?? null, ...usage(end.usage));
+	});
 }
 
 /**

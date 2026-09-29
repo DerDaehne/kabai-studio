@@ -245,10 +245,15 @@ describe('finishRun', () => {
 		expect(row(id)).toMatchObject({ tokens_in: 151, tokens_out: 26, cost: 0.75 });
 	});
 
-	it('failed braucht einen Fehlertext', () => {
+	it('failed braucht einen Fehlertext (DomainError statt rohem CHECK-Fehler)', () => {
 		const { db, running, row } = setup();
 		const id = running();
-		expect(() => runs.finishRun(db, system, id, { state: 'failed' })).toThrow(/CHECK/);
+		for (const end of [{ state: 'failed' }, { state: 'failed', error: '  ' }] as never[]) {
+			const err = caught(() => runs.finishRun(db, system, id, end));
+			expect(err.code).toBe('error_required');
+			expect(err.message).toBe('Run 1 als „failed“ beenden geht nur mit Fehlertext.');
+			expect(err.hint).toContain('error');
+		}
 		expect(row(id).state).toBe('running');
 	});
 });
@@ -294,15 +299,20 @@ describe('Agent-Profile', () => {
 		expect(runs.getProfile(db, profileId).permission_policy).toEqual({});
 	});
 
-	it('Löschen nur ohne aktive Runs; beendete Runs behalten ihren Verlauf', () => {
-		const { db, profileId, running, row } = setup();
-		const id = running();
+	it('Löschen nur ohne aktive Runs (queued, running, waiting_approval); beendete Runs behalten ihren Verlauf', () => {
+		const { db, profileId, queued, running, row } = setup();
+		const [waiting, active, approval] = [queued(), running(), running()];
+		runs.setRunState(db, system, approval, 'waiting_approval');
 		const err = caught(() => runs.deleteProfile(db, user, profileId));
 		expect(err.code).toBe('profile_in_use');
-		expect(err.message).toBe('Profil „Lokal“ wird von aktiven Runs genutzt: 1.');
-		runs.finishRun(db, system, id, { state: 'succeeded' });
+		expect(err.message).toBe('Profil „Lokal“ wird von aktiven Runs genutzt: 1, 2, 3.');
+		runs.finishRun(db, system, active, { state: 'succeeded' });
+		runs.finishRun(db, user, approval, { state: 'cancelled' });
+		// ein wartender Run sperrt allein: ohne Profil könnte der Runner ihn nicht mehr starten
+		expect(caught(() => runs.deleteProfile(db, user, profileId)).message).toBe('Profil „Lokal“ wird von aktiven Runs genutzt: 1.');
+		runs.finishRun(db, user, waiting, { state: 'cancelled' });
 		runs.deleteProfile(db, user, profileId);
-		expect(row(id)).toMatchObject({ state: 'succeeded', agent_profile_id: null });
+		expect(row(active)).toMatchObject({ state: 'succeeded', agent_profile_id: null });
 	});
 });
 
