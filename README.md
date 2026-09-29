@@ -37,12 +37,13 @@ npm install
 npm run dev            # dev server
 npm run check          # svelte-check / TypeScript
 npm test               # vitest
-npm run build && ORIGIN=http://localhost:3000 node build   # production build, listens on 127.0.0.1:3000
+npm run build && ORIGIN=http://127.0.0.1:3000 node build   # production build on http://127.0.0.1:3000
 npm run reset-password # recovery: set a new owner password, ends all sessions
 ```
 
-On first start the server prints a one-time setup token; open `/setup` to create the
-owner account.
+On first start the server prints a one-time setup link; open it to create the owner
+account. Open studio at exactly the address given in `ORIGIN` — form posts from any
+other address are rejected.
 
 ## License
 
