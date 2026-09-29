@@ -98,21 +98,24 @@
 		grid-template-areas: 'brand main' 'nav main' 'foot main';
 		height: 100dvh;
 	}
-	.brand,
+	/* .brand und main gibt es in Shell und bare-Ansicht: Raster/Chrome nur über .shell > … */
+	.brand {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-weight: 650;
+		letter-spacing: -0.01em;
+	}
+	.shell > .brand,
 	nav,
 	.foot {
 		background: var(--bg-chrome);
 		border-right: 1px solid var(--border);
 	}
-	.brand {
+	.shell > .brand {
 		grid-area: brand;
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
 		height: 48px;
 		padding: 0 var(--space-4);
-		font-weight: 650;
-		letter-spacing: -0.01em;
 	}
 	nav {
 		grid-area: nav;
@@ -167,7 +170,7 @@
 		color: inherit;
 		font-weight: 600;
 	}
-	main {
+	.shell > main {
 		grid-area: main;
 		min-width: 0;
 		overflow: auto;
@@ -196,18 +199,18 @@
 			min-height: 100dvh;
 			padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
 		}
-		.brand,
+		.shell > .brand,
 		.foot {
 			border-right: 0;
 		}
-		.brand {
+		.shell > .brand {
 			height: 44px;
 			border-bottom: 1px solid var(--border);
 		}
 		.foot {
 			border-top: 1px solid var(--border);
 		}
-		main {
+		.shell > main {
 			overflow: visible;
 			padding: var(--space-3);
 		}
@@ -247,16 +250,28 @@
 		padding: var(--space-6) var(--space-4);
 	}
 	.bare .brand {
-		height: auto;
-		padding: 0;
-		border: 0;
-		background: none;
 		font-size: var(--text-lg);
 	}
 	.bare main {
 		display: grid;
 		gap: var(--space-3);
 		width: min(360px, 100%);
+	}
+	/* Formulare der Anmelde-/Einrichtungsseiten: Abstand zwischen Feldern, Label über dem Feld, Fehler hervorgehoben */
+	.bare main :global(form) {
+		display: grid;
+		gap: var(--space-3);
+	}
+	.bare main :global(label) {
+		display: grid;
+		gap: var(--space-1);
+	}
+	.bare main :global(form > button) {
+		justify-self: start;
+	}
+	.bare main :global([role='alert']) {
+		color: var(--status-failed);
+		font-weight: 560;
 	}
 	.bare .attribution {
 		color: var(--text-muted);
