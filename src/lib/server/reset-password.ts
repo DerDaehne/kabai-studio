@@ -60,6 +60,8 @@ try {
 	db.close();
 	console.log('Passwort gesetzt, alle Sessions beendet. Jetzt mit dem neuen Passwort unter /login anmelden.');
 } catch (err) {
-	console.error(`reset-password: ${(err as Error).message}`);
+	// SQLITE_BUSY (errcode 5): trotz busy_timeout gesperrt geblieben — Klartext statt roher SQLite-Meldung (#817).
+	const locked = (err as NodeJS.ErrnoException & { errcode?: number }).errcode === 5;
+	console.error(locked ? 'reset-password: Studio läuft gerade und schreibt; erneut versuchen.' : `reset-password: ${(err as Error).message}`);
 	process.exitCode = 1;
 }

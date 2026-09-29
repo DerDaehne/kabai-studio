@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,34 @@ describe('openDb', () => {
 		expect(db.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
 		expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
 		expect(db.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+	});
+
+	it('wartet auf eine zweite, bereits offene Verbindung statt sofort mit "database is locked" zu scheitern (#817)', async () => {
+		const file = join(tmp, 'zweiter-prozess.db');
+		// Simuliert einen zweiten, bereits laufenden Prozess auf der frischen Datei: hält eine
+		// Lese-Transaktion (Shared Lock), die journal_mode=WAL zwingend braucht, für 300ms.
+		const childScript = `
+			const { DatabaseSync } = require('node:sqlite');
+			const db = new DatabaseSync(${JSON.stringify(file)});
+			db.exec('BEGIN');
+			db.exec('SELECT 1 FROM sqlite_master');
+			process.stdout.write('LOCKED\\n');
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+			db.exec('COMMIT');
+		`;
+		const child = spawn(process.execPath, ['-e', childScript], { stdio: ['ignore', 'pipe', 'inherit'] });
+		await new Promise<void>((resolve) => {
+			child.stdout.on('data', (chunk: Buffer) => {
+				if (chunk.toString().includes('LOCKED')) resolve();
+			});
+		});
+
+		const t0 = Date.now();
+		const db = openDb(file); // darf nicht sofort scheitern — muss auf die Freigabe warten
+		expect(Date.now() - t0).toBeGreaterThanOrEqual(250); // hat wirklich gewartet, nicht nur Glück gehabt
+		expect(db.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
+
+		await new Promise((resolve) => child.on('exit', resolve));
 	});
 });
 

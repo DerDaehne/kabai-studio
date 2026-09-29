@@ -4,7 +4,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 export function openDb(file: string): DatabaseSync {
 	const db = new DatabaseSync(file);
-	db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+	// busy_timeout zuerst: sonst scheitert journal_mode=WAL bei einer zweiten Verbindung sofort mit
+	// "database is locked" statt zu warten (#817).
+	db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 	return db;
 }
 
