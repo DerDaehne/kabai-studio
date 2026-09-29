@@ -24,6 +24,9 @@ its own database — no compatibility with kabai required.
   encrypted. The key is `secret.key` in the data directory, created on first
   start — back it up separately from the database — or `STUDIO_SECRET_KEY`
   (base64, 32 bytes, e.g. `openssl rand -base64 32`).
+- Backups: daily and before every migration into `<data>/backups/studio-YYYYMMDD-HHMM.db`
+  (UTC); 7 daily + 4 weekly are kept. Status under Settings. Backups hold secrets
+  only encrypted — `secret.key` is not included.
 - PWA as the only client (Linux, macOS, mobile) — agents never run in the client.
 - Agents run hybrid: coding agents (opencode, Claude Code, Codex, …) via the
   [Agent Client Protocol](https://agentclientprotocol.com), lightweight tasks via
@@ -43,6 +46,7 @@ npm run check          # svelte-check / TypeScript
 npm test               # vitest
 npm run build && ORIGIN=http://127.0.0.1:3000 node build   # production build on http://127.0.0.1:3000
 npm run reset-password # recovery: set a new owner password, ends all sessions
+npm run restore -- data/backups/studio-20260101-0300.db   # stop the server first; saves the current DB, then restores
 ```
 
 On first start the server prints a one-time setup link; open it to create the owner

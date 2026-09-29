@@ -11,7 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run --dir src",
-		"reset-password": "node src/lib/server/reset-password.ts"
+		"reset-password": "node src/lib/server/reset-password.ts",
+		"restore": "node src/lib/server/restore.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.4",

@@ -101,6 +101,7 @@ nix develop --command npm run check    # svelte-check, muss 0 Fehler zeigen
 nix develop --command npm run build    # Produktions-Build nach build/
 ORIGIN=http://127.0.0.1:3000 nix develop --command node build   # Server auf http://127.0.0.1:3000 (HOST=0.0.0.0: alle Interfaces)
 nix develop --command npm run reset-password   # Owner-Passwort neu setzen, beendet alle Sessions
+nix develop --command npm run restore -- <backup-datei>   # Server gestoppt: sichert die aktuelle DB, spielt die Sicherung ein
 nix develop --command npm test         # vitest (src/**/*.test.ts)
 ```
 
