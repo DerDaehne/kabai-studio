@@ -20,8 +20,7 @@
 			<div class="toast" data-tone={t.tone}>
 				<span class="bar" aria-hidden="true"></span>
 				<p>{#if t.tone === 'error'}<span class="visually-hidden">Fehler: </span>{/if}{t.message}
-					<!-- volle Navigation: ein Toast-Link führt aus einem kaputten Zustand heraus (z. B. Sitzung abgelaufen) -->
-					{#if t.action}<a href={t.action.href} data-sveltekit-reload>{t.action.label}</a>{/if}</p>
+					{#if t.action}<a href={t.action.href}>{t.action.label}</a>{/if}</p>
 				<button class="btn btn-ghost btn-icon btn-sm" aria-label="Meldung schließen" onclick={() => dismiss(t.id)}>
 					<Icon name="x" size={14} />
 				</button>

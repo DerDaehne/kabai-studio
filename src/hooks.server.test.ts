@@ -128,6 +128,12 @@ describe('Auth-Durchlauf', () => {
 		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 });
 	});
 
+	it('#822: __data.json öffentlicher Seiten ist mit-öffentlich, ohne dass geschützte __data.json aufgehen', async () => {
+		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // kein Redirect: Client-Navigation zu /login lädt Daten nach
+		expect(await guard('/setup/__data.json')).toBeInstanceOf(Response);
+		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 }); // weiterhin geschützt
+	});
+
 	it('Login setzt ein Cookie mit Secure außerhalb von localhost, der Guard lässt es durch', async () => {
 		const cookies = jar();
 		expect(await login({ name: 'owner', password: PW }, { origin: 'https://studio.example', ip: '10.0.0.4' }, cookies)).toEqual({
