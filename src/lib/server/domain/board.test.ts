@@ -1,16 +1,27 @@
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
 import { DomainError, tx, type Actor } from './core';
+import * as runs from './runs';
 
 const user: Actor = { kind: 'user' };
 const dev: Actor = { kind: 'agent', runId: 1 };
 const reviewer: Actor = { kind: 'agent', runId: 2 };
 
+/** Agent-Actors handeln in echten Runs (comments.run_id hat einen FK): legt Run 1 und 2 in einem eigenen Projekt an. */
+function withRuns(db: DatabaseSync) {
+	const p = board.createProject(db, user, { key: 'RUN', name: 'Runs' }).id;
+	const ticketId = board.createTicket(db, user, p, { title: 'Runs' }).id;
+	const profileId = runs.createProfile(db, user, { name: 'Test', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	for (let i = 0; i < 2; i++) runs.createRun(db, user, { ticketId, profileId });
+}
+
 function setup() {
 	const db = openDb(':memory:');
 	migrate(db);
+	withRuns(db);
 	const { id: projectId } = board.createProject(db, user, { key: 'STU', name: 'Studio' });
 	const rows = db.prepare('SELECT name, id FROM columns WHERE project_id = ?').all(projectId);
 	const col = Object.fromEntries(rows.map((r) => [r.name, r.id])) as Record<string, number>;
@@ -82,7 +93,7 @@ describe('createProject / createTicket', () => {
 		expect(err.message).toBe('Nur ein Mensch darf Tickets in „Human Answered“ anlegen.');
 		board.createTicket(db, user, projectId, { title: 'Antwort', column_id: col['Human Answered'] });
 		board.createTicket(db, dev, projectId, { title: 'Frage', column_id: col['Human Intervention'] }); // Agent darf eskalieren
-		expect(db.prepare('SELECT count(*) AS n FROM tickets').get()?.n).toBe(2);
+		expect(db.prepare('SELECT count(*) AS n FROM tickets WHERE project_id = ?').get(projectId)?.n).toBe(2);
 	});
 
 	it('updateTicket setzt nur freigegebene Felder', () => {
@@ -311,6 +322,7 @@ describe('Event-Bus', () => {
 	it('jede Mutation emittiert ein Event, und zwar außerhalb der Transaktion', () => {
 		const db = openDb(':memory:');
 		migrate(db);
+		withRuns(db);
 		const events: StudioEvent[] = [];
 		const inTx: boolean[] = [];
 		const off = subscribe((e) => {

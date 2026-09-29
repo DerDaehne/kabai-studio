@@ -39,7 +39,7 @@ const humanOnly = (kind: Kind) => kind === 'done' || kind === 'human_answered';
 const label = (a: Actor) => (a.runId === undefined ? a.kind : `${a.kind} (Run ${a.runId})`);
 const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ');
 
-function ticket(db: DatabaseSync, id: number): Ticket {
+export function ticket(db: DatabaseSync, id: number): Ticket {
 	const t = db
 		.prepare(
 			`SELECT t.id, t.project_id, t.column_id, t.moved_by, p.key || '-' || t.number AS ref, c.name AS column_name, c.kind AS column_kind
@@ -123,8 +123,8 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 
 function comment(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, body: string, system = false) {
 	const row = db
-		.prepare('INSERT INTO comments (ticket_id, author_kind, author, body) VALUES (?, ?, ?, ?) RETURNING id')
-		.get(t.id, system ? 'system' : actor.kind, system ? 'system' : label(actor), body) as { id: number };
+		.prepare('INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (?, ?, ?, ?, ?) RETURNING id')
+		.get(t.id, system ? 'system' : actor.kind, system ? 'system' : label(actor), body, actor.runId ?? null) as { id: number };
 	emit({ type: 'comment.added', projectId: t.project_id, ticketId: t.id, actor, commentId: row.id });
 	return { id: row.id };
 }
