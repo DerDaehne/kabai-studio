@@ -51,11 +51,15 @@ darauf prüfen.
   `human_intervention`.
 - **Die `agent_role_instruction` der Spalte, in der das Ticket liegt, ist deine
   Rolle** (Refine = Refiner ohne Code, In Arbeit = Developer, Review = Reviewer).
-- Nur Tickets aus **Ready** aufnehmen, deren `blocks`-Vorgänger done sind **oder** in
-  Review liegen und einen Kommentar „Review ok" eines Review-Agents tragen.
-- Agents schieben höchstens bis **Review**. Ein eigener Review-Agent (nie der Autor)
-  prüft und kommentiert „Review ok" oder schiebt mit Befunden zurück. **done setzt
-  ausschließlich der Maintainer** — gesammelt (Sammelabnahme).
+- Nur Tickets aus **Ready** aufnehmen, deren `blocks`-Vorgänger in **Abnahme** oder
+  **done** liegen.
+- Developer schieben höchstens bis **Review**. Ein eigener Review-Agent (nie der Autor)
+  prüft; bei Befunden zurück nach In Arbeit, sonst „Review ok"-Kommentar, Merge und
+  weiter nach **Abnahme**. **done setzt ausschließlich der Maintainer** aus Abnahme
+  heraus — gesammelt (Sammelabnahme).
+- Git-Hygiene: kein `git reset --hard`, `git clean` oder `git checkout -- .` im
+  Worktree; Mutationsproben per `git stash` oder Wegwerf-Clone. Selbst gestartete
+  Prozesse (Server, Test-Kinder) vor dem Abschluss beenden.
 - Entscheidung ändert sich? Neues ADR + `supersedes`-Link, altes ADR nie umschreiben.
 
 ## Architektur-Leitplanken
