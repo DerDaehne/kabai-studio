@@ -4,6 +4,7 @@ import { migrate, openDb } from '../db';
 import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
 import { DomainError, tx, type Actor } from './core';
+import * as notes from './notes';
 import * as runs from './runs';
 
 const user: Actor = { kind: 'user' };
@@ -105,6 +106,20 @@ describe('createProject / createTicket', () => {
 		expect(err.code).toBe('unknown_field');
 		expect(err.hint).toContain('moveTicket');
 	});
+
+	it('Epics tragen docs_required immer: wird beim Anlegen erzwungen, explizites 0 wird abgelehnt (Anlegen und Ändern)', () => {
+		const { db, projectId, ticket } = setup();
+		const epic = board.createTicket(db, user, projectId, { title: 'Epic', type: 'epic' }).id;
+		expect(db.prepare('SELECT docs_required FROM tickets WHERE id = ?').get(epic)).toEqual({ docs_required: 1 });
+		expect(caught(() => board.createTicket(db, user, projectId, { title: 'X', type: 'epic', docs_required: 0 })).code).toBe('epic_docs_required');
+
+		const plain = ticket();
+		board.updateTicket(db, user, plain, { type: 'epic' });
+		expect(db.prepare('SELECT docs_required FROM tickets WHERE id = ?').get(plain)).toEqual({ docs_required: 1 });
+		const err = caught(() => board.updateTicket(db, user, plain, { docs_required: 0 }));
+		expect(err.code).toBe('epic_docs_required');
+		expect(err.message).toContain('STU-'); // Meldung nennt den Ticket-Ref
+	});
 });
 
 describe('moveTicket', () => {
@@ -184,6 +199,8 @@ describe('moveTicket', () => {
 	it('weist Epic → done mit offenem Kind ab', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const epic = ticket({ type: 'epic' });
+		const { id: noteId } = notes.createNote(db, user, { slug: 'epic-doku', title: 'N', body: '' });
+		notes.linkTicket(db, user, noteId, epic, 'documents'); // Epics sind immer docs_required — Note vorab verknüpft, damit nur open_children prüft
 		const child = ticket();
 		board.linkRelation(db, user, epic, child, 'parent_of');
 		place(epic, 'Review');
@@ -193,6 +210,30 @@ describe('moveTicket', () => {
 		place(child, 'Done');
 		board.moveTicket(db, user, epic, col.Done);
 		expect(columnOf(epic)).toBe('Done');
+	});
+
+	it('weist done mit fehlender docs_required-Note ab und lässt es mit verknüpfter Note zu', () => {
+		const { db, ticket, place, col, columnOf } = setup();
+		const id = ticket({ docs_required: 1 });
+		place(id, 'Review');
+		const err = caught(() => board.moveTicket(db, user, id, col.Done));
+		expect(err.code).toBe('docs_required');
+		expect(err.hint).toContain('createNote');
+
+		const { id: noteId } = notes.createNote(db, user, { slug: 'n-1', title: 'N', body: '' });
+		notes.linkTicket(db, user, noteId, id, 'documents');
+		board.moveTicket(db, user, id, col.Done);
+		expect(columnOf(id)).toBe('Done');
+	});
+
+	it('eine archivierte Note zählt nicht als docs_required-Nachweis', () => {
+		const { db, ticket, place, col } = setup();
+		const id = ticket({ docs_required: 1 });
+		const { id: noteId } = notes.createNote(db, user, { slug: 'n-2', title: 'N', body: '' });
+		notes.linkTicket(db, user, noteId, id, 'documents');
+		notes.archiveNote(db, user, noteId);
+		place(id, 'Review');
+		expect(caught(() => board.moveTicket(db, user, id, col.Done)).code).toBe('docs_required');
 	});
 });
 

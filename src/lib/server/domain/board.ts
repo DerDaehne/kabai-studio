@@ -4,7 +4,17 @@ import { DomainError, tx, type Actor } from './core';
 
 type Kind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
 type Column = { id: number; name: string; kind: Kind };
-type Ticket = { id: number; project_id: number; column_id: number; moved_by: string | null; ref: string; column_name: string; column_kind: Kind };
+type Ticket = {
+	id: number;
+	project_id: number;
+	column_id: number;
+	moved_by: string | null;
+	ref: string;
+	column_name: string;
+	column_kind: Kind;
+	type: 'ticket' | 'epic';
+	docs_required: 0 | 1;
+};
 type Emit = (event: StudioEvent) => void;
 export type RelationType = 'parent_of' | 'blocks' | 'relates_to' | 'duplicate_of';
 export type Blocker = { code: string; message: string; hint: string };
@@ -42,7 +52,7 @@ const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ');
 export function ticket(db: DatabaseSync, id: number): Ticket {
 	const t = db
 		.prepare(
-			`SELECT t.id, t.project_id, t.column_id, t.moved_by, p.key || '-' || t.number AS ref, c.name AS column_name, c.kind AS column_kind
+			`SELECT t.id, t.project_id, t.column_id, t.moved_by, t.type, t.docs_required, p.key || '-' || t.number AS ref, c.name AS column_name, c.kind AS column_kind
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
 		.get(id) as Ticket | undefined;
@@ -107,7 +117,25 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolea
 			message: `${t.ref} hat nicht abgeschlossene Kind-Tickets: ${kids.map((r) => r.ref).join(', ')}.`,
 			hint: 'Schließe die Kind-Tickets zuerst ab oder löse sie per unlinkRelation vom Epic und begründe das im Kommentar.'
 		});
+	if (t.docs_required && !db.prepare('SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0').get(t.id))
+		out.push({
+			code: 'docs_required',
+			message: `${t.ref} verlangt vor dem Abschluss eine verknüpfte Note, hat aber keine.`,
+			hint: 'Lege eine Note an (createNote) und verknüpfe sie mit dem Ticket (linkTicket, z. B. relation "documents").'
+		});
 	return out;
+}
+
+/** Epics tragen docs_required immer: fehlt es, wird es gesetzt; explizit auf 0 gesetzt ist ein Fehler. */
+function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(type: string, fields: T, ref?: string): T {
+	if (type !== 'epic') return fields;
+	if (fields.docs_required === 0)
+		throw new DomainError(
+			'epic_docs_required',
+			`${ref ? ref + ': ' : ''}Epics brauchen docs_required — das lässt sich nicht ausschalten.`,
+			'Lass docs_required weg oder setze es auf 1; für Epics ist es immer an.'
+		);
+	return fields.docs_required === 1 ? fields : { ...fields, docs_required: 1 };
 }
 
 /** Nur freigegebene Felder; alles andere ist ein Fehler statt still ignoriert. Liefert [Spalte, Wert]-Paare. */
@@ -187,7 +215,7 @@ export function createTicket(
 				`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
 				'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
 			);
-		const f = fieldsOf(rest);
+		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest));
 		const { n } = db.prepare('UPDATE projects SET ticket_seq = ticket_seq + 1 WHERE id = ? RETURNING ticket_seq AS n').get(projectId) as { n: number };
 		const { id } = db
 			.prepare(`INSERT INTO tickets (project_id, number, column_id, moved_by, ${f.map(([k]) => k).join(', ')}) VALUES (?, ?, ?, ?, ${f.map(() => '?').join(', ')}) RETURNING id`)
@@ -200,7 +228,7 @@ export function createTicket(
 export function updateTicket(db: DatabaseSync, actor: Actor, ticketId: number, patch: Partial<TicketFields>) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const f = fieldsOf(patch);
+		const f = fieldsOf(withEpicDocsRequired(patch.type ?? t.type, patch, t.ref));
 		if (!f.length) return;
 		db.prepare(`UPDATE tickets SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), t.id);
 		emit({ type: 'ticket.updated', projectId: t.project_id, ticketId: t.id, actor, fields: f.map(([k]) => k) });

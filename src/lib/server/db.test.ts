@@ -202,3 +202,53 @@ describe('Kernschema', () => {
 		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]); // übrig: die Spalte von OTH und das Profil (global)
 	});
 });
+
+describe('Notes-Schema', () => {
+	const db = openDb(':memory:');
+	migrate(db);
+	db.exec(`
+		INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+		INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+		INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Ticket');
+		INSERT INTO notes (id, slug, title, kind, status) VALUES (1, 'adr-a', 'A', 'adr', 'accepted'), (2, 'note-b', 'B', 'note', NULL);
+		INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);
+		INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (2, 1, 'references');
+		INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'documents');
+	`);
+
+	it.each([
+		['Slug nicht kebab-case', "INSERT INTO notes (slug, title) VALUES ('Adr-A', 'x')", /CHECK/],
+		['Notekind unbekannt', "INSERT INTO notes (slug, title, kind) VALUES ('n-x', 'x', 'faq')", /CHECK/],
+		['Status ohne kind=adr', "INSERT INTO notes (slug, title, status) VALUES ('n-y', 'x', 'accepted')", /CHECK/],
+		['Status-Wert unbekannt', "INSERT INTO notes (slug, title, kind, status) VALUES ('n-z', 'x', 'adr', 'draft')", /CHECK/],
+		['tags kein JSON-Array', "UPDATE notes SET tags = '{}' WHERE id = 1", /CHECK/],
+		['Slug doppelt', "INSERT INTO notes (slug, title) VALUES ('adr-a', 'x')", /UNIQUE/],
+		['note_projects ohne Projekt', 'INSERT INTO note_projects (note_id, project_id) VALUES (1, 999)', /FOREIGN KEY/],
+		['note_links auf sich selbst', "INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (1, 1, 'references')", /CHECK/],
+		['note_links Typ unbekannt', "INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (1, 2, 'related')", /CHECK/],
+		['note_tickets Relation unbekannt', "INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'mentions')", /CHECK/],
+		['note_tickets ohne Ticket', "INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 999, 'documents')", /FOREIGN KEY/],
+		['note_tickets Relation doppelt', "INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'documents')", /UNIQUE|PRIMARY KEY/]
+	])('weist ab: %s', (_, sql, error) => {
+		expect(() => db.exec(sql)).toThrow(error);
+	});
+
+	it('löscht eine Note kaskadierend aus note_projects/note_links/note_tickets; ein Ticket löschen kaskadiert note_tickets', () => {
+		db.exec('DELETE FROM notes WHERE id = 2'); // note-b verweist per note_links auf adr-a
+		expect(db.prepare('SELECT count(*) AS n FROM note_links').get()?.n).toBe(0);
+		db.exec('DELETE FROM tickets WHERE id = 100');
+		expect(db.prepare('SELECT count(*) AS n FROM note_tickets').get()?.n).toBe(0);
+		expect(db.prepare('SELECT count(*) AS n FROM note_projects').get()?.n).toBe(1); // adr-a bleibt, nur ihr Ticket-Link ist weg
+	});
+
+	it('FTS5-Trigger halten notes_fts synchron mit INSERT/UPDATE/DELETE', () => {
+		const hits = (q: string) => db.prepare("SELECT n.slug FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid WHERE notes_fts MATCH ?").all(q).map((r) => r.slug);
+		db.exec("INSERT INTO notes (id, slug, title, body) VALUES (3, 'fts-x', 'FtsTitelWort', 'FtsBodyWort')");
+		expect(hits('FtsTitelWort')).toEqual(['fts-x']);
+		db.exec("UPDATE notes SET body = 'FtsBodyWortGeaendert' WHERE id = 3");
+		expect(hits('FtsBodyWort')).toEqual([]);
+		expect(hits('FtsBodyWortGeaendert')).toEqual(['fts-x']);
+		db.exec('DELETE FROM notes WHERE id = 3');
+		expect(hits('FtsTitelWort')).toEqual([]);
+	});
+});
