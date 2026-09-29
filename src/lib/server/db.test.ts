@@ -135,6 +135,24 @@ describe('migrate', () => {
 		expect(db.prepare('SELECT body, run_id FROM comments').all()).toEqual([{ body: 'vorher', run_id: null }]);
 		expect(() => db.exec("INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 7)")).toThrow(/FOREIGN KEY/);
 	});
+
+	it('005 setzt docs_required für Epics, die schon vor der Migration bestanden (die Domain-Regel „Epic immer docs_required" kennt nur das Flag, keinen Sonderfall für type=epic)', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true });
+		const db = openDb(':memory:');
+		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => !path.endsWith('/005_notes.sql'))));
+		db.exec(`
+			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+			INSERT INTO tickets (id, project_id, number, column_id, title, type, docs_required) VALUES
+				(100, 1, 1, 10, 'Altes Epic', 'epic', 0),
+				(101, 1, 2, 10, 'Altes Ticket', 'ticket', 0);
+		`);
+		expect(migrate(db)).toEqual(['005_notes.sql']);
+		expect(db.prepare('SELECT id, docs_required FROM tickets ORDER BY id').all()).toEqual([
+			{ id: 100, docs_required: 1 }, // Bestands-Epic nachgezogen
+			{ id: 101, docs_required: 0 } // gewöhnliches Ticket unberührt
+		]);
+	});
 });
 
 describe('Kernschema', () => {
@@ -243,6 +261,9 @@ describe('Notes-Schema', () => {
 
 	it('FTS5-Trigger halten notes_fts synchron mit INSERT/UPDATE/DELETE', () => {
 		const hits = (q: string) => db.prepare("SELECT n.slug FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid WHERE notes_fts MATCH ?").all(q).map((r) => r.slug);
+		// ohne JOIN: ein fehlender AD-Trigger ließe eine verwaiste Zeile in notes_fts zurück, die der gejointe Check maskiert
+		// (die Zeile in notes fehlt dann ja auch), eine spätere Wiederverwendung derselben rowid träfe aber falsch.
+		const rawHits = (q: string) => db.prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?').all(q).map((r) => r.rowid);
 		db.exec("INSERT INTO notes (id, slug, title, body) VALUES (3, 'fts-x', 'FtsTitelWort', 'FtsBodyWort')");
 		expect(hits('FtsTitelWort')).toEqual(['fts-x']);
 		db.exec("UPDATE notes SET body = 'FtsBodyWortGeaendert' WHERE id = 3");
@@ -250,5 +271,7 @@ describe('Notes-Schema', () => {
 		expect(hits('FtsBodyWortGeaendert')).toEqual(['fts-x']);
 		db.exec('DELETE FROM notes WHERE id = 3');
 		expect(hits('FtsTitelWort')).toEqual([]);
+		expect(rawHits('FtsTitelWort')).toEqual([]);
+		expect(rawHits('FtsBodyWortGeaendert')).toEqual([]);
 	});
 });

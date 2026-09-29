@@ -126,8 +126,13 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolea
 	return out;
 }
 
-/** Epics tragen docs_required immer: fehlt es, wird es gesetzt; explizit auf 0 gesetzt ist ein Fehler. */
-function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(type: string, fields: T, ref?: string): T {
+/**
+ * Epics tragen docs_required immer: fehlt es, wird es gesetzt; explizit auf 0 gesetzt ist ein Fehler. `current` ist der
+ * gespeicherte Wert (0 bei createTicket, da die Zeile noch nicht existiert) — ist er schon 1, bleibt `fields` unverändert,
+ * sonst würde jedes Update eines Epics (auch nur der Titel) still ein docs_required-Feld einschmuggeln, das sich gar nicht
+ * geändert hat: kein No-op mehr, ein irreführendes `ticket.updated`-Event mit `fields:['docs_required']`.
+ */
+function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(type: string, fields: T, current: 0 | 1, ref?: string): T {
 	if (type !== 'epic') return fields;
 	if (fields.docs_required === 0)
 		throw new DomainError(
@@ -135,7 +140,7 @@ function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }
 			`${ref ? ref + ': ' : ''}Epics brauchen docs_required — das lässt sich nicht ausschalten.`,
 			'Lass docs_required weg oder setze es auf 1; für Epics ist es immer an.'
 		);
-	return fields.docs_required === 1 ? fields : { ...fields, docs_required: 1 };
+	return fields.docs_required === 1 || current === 1 ? fields : { ...fields, docs_required: 1 };
 }
 
 /** Nur freigegebene Felder; alles andere ist ein Fehler statt still ignoriert. Liefert [Spalte, Wert]-Paare. */
@@ -215,7 +220,7 @@ export function createTicket(
 				`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
 				'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
 			);
-		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest));
+		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest, 0));
 		const { n } = db.prepare('UPDATE projects SET ticket_seq = ticket_seq + 1 WHERE id = ? RETURNING ticket_seq AS n').get(projectId) as { n: number };
 		const { id } = db
 			.prepare(`INSERT INTO tickets (project_id, number, column_id, moved_by, ${f.map(([k]) => k).join(', ')}) VALUES (?, ?, ?, ?, ${f.map(() => '?').join(', ')}) RETURNING id`)
@@ -228,7 +233,7 @@ export function createTicket(
 export function updateTicket(db: DatabaseSync, actor: Actor, ticketId: number, patch: Partial<TicketFields>) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const f = fieldsOf(withEpicDocsRequired(patch.type ?? t.type, patch, t.ref));
+		const f = fieldsOf(withEpicDocsRequired(patch.type ?? t.type, patch, t.docs_required, t.ref));
 		if (!f.length) return;
 		db.prepare(`UPDATE tickets SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), t.id);
 		emit({ type: 'ticket.updated', projectId: t.project_id, ticketId: t.id, actor, fields: f.map(([k]) => k) });

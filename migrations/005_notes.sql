@@ -54,3 +54,7 @@ CREATE TRIGGER notes_fts_au AFTER UPDATE ON notes BEGIN
 	INSERT INTO notes_fts (notes_fts, rowid, slug, title, tags, body) VALUES ('delete', old.id, old.slug, old.title, old.tags, old.body);
 	INSERT INTO notes_fts (rowid, slug, title, tags, body) VALUES (new.id, new.slug, new.title, new.tags, new.body);
 END;
+
+-- Bestands-Epics (angelegt vor dieser Migration, also vor der Epic-immer-docs_required-Regel) auf denselben Stand bringen wie
+-- neue: die done-Blockade in moveTicket liest ausschließlich tickets.docs_required, kein Sonderfall für type='epic'.
+UPDATE tickets SET docs_required = 1 WHERE type = 'epic';

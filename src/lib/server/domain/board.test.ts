@@ -120,6 +120,23 @@ describe('createProject / createTicket', () => {
 		expect(err.code).toBe('epic_docs_required');
 		expect(err.message).toContain('STU-'); // Meldung nennt den Ticket-Ref
 	});
+
+	it('ein unbeteiligtes Update eines Epics schmuggelt docs_required nicht als geändertes Feld ins Event', () => {
+		const { db, projectId } = setup();
+		const epic = board.createTicket(db, user, projectId, { title: 'Epic', type: 'epic' }).id; // docs_required bereits 1
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		board.updateTicket(db, user, epic, { title: 'Anderer Titel' });
+		off();
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({ type: 'ticket.updated', fields: ['title'] }); // kein docs_required in fields, obwohl das Epic es trägt
+
+		const events2: StudioEvent[] = [];
+		const off2 = subscribe((e) => events2.push(e));
+		board.updateTicket(db, user, epic, {}); // leeres Update auf einem Epic bleibt No-op, kein Event
+		off2();
+		expect(events2).toEqual([]);
+	});
 });
 
 describe('moveTicket', () => {
@@ -234,6 +251,18 @@ describe('moveTicket', () => {
 		notes.archiveNote(db, user, noteId);
 		place(id, 'Review');
 		expect(caught(() => board.moveTicket(db, user, id, col.Done)).code).toBe('docs_required');
+	});
+
+	it('gilt auch für einen Agent-Actor, unabhängig von der requires_human-Kante (#771: Transitionen sind konfigurierbar)', () => {
+		const { db, projectId, ticket, place, col } = setup();
+		const id = ticket({ docs_required: 1 });
+		place(id, 'Review');
+		const done = board.allowedMoves(db, id, dev).find((m) => m.name === 'Done');
+		expect(done?.blockers.map((b) => b.code)).toEqual(['requires_human', 'docs_required']);
+
+		// Isoliert von requires_human: die Kante Review -> Done probeweise für Agents freigegeben (#771 noch nicht als API vorhanden).
+		db.prepare('UPDATE transitions SET requires_human = 0 WHERE project_id = ? AND from_column_id = ? AND to_column_id = ?').run(projectId, col.Review, col.Done);
+		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('docs_required');
 	});
 });
 

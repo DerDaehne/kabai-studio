@@ -40,9 +40,35 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		});
 }
 
-/** [[slug]]-Verweise im Body: bekannte Slugs (ohne sich selbst) → Ziel-ID, unbekannte separat. */
+/** DB-CHECK exakt gespiegelt (Migration 005): beginnt mit Kleinbuchstabe/Ziffer, sonst nur Kleinbuchstaben/Ziffern/„-“. */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/** Slug-Format und -Eindeutigkeit vorab prüfen, statt den rohen SQLite-Fehler (CHECK/UNIQUE) an den Aufrufer durchzureichen. */
+function checkSlug(db: DatabaseSync, slug: string) {
+	if (!SLUG_RE.test(slug))
+		throw new DomainError(
+			'invalid_slug',
+			`Slug „${slug}“ ist nicht kebab-case.`,
+			'Nur Kleinbuchstaben, Ziffern und „-“, beginnend mit Buchstabe/Ziffer (Beispiel: „arch-studio-notes“).'
+		);
+	const existing = db.prepare('SELECT id FROM notes WHERE slug = ?').get(slug) as { id: number } | undefined;
+	if (existing)
+		throw new DomainError(
+			'slug_taken',
+			`Slug „${slug}“ ist schon vergeben (Note ${existing.id}).`,
+			`Note ${existing.id} existiert schon — updateNote statt createNote, oder einen anderen Slug wählen.`
+		);
+}
+
+/** `status` ist nur bei `kind="adr"` erlaubt (DB-CHECK) — vorab geprüft, damit ein kind-Wechsel weg von adr keinen rohen CHECK-Fehler wirft. */
+function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) {
+	if (status != null && kind !== 'adr')
+		throw new DomainError('invalid_status', `status ist nur bei kind="adr" erlaubt (kind ist "${kind}").`, 'Lass status weg, oder setze kind auf "adr".');
+}
+
+/** [[slug]] bzw. [[slug|Anzeigetext]]-Verweise im Body: bekannte Slugs (ohne sich selbst) → Ziel-ID, unbekannte separat. */
 function wikilinks(db: DatabaseSync, selfId: number, body: string): { known: Map<string, number>; unknown: string[] } {
-	const slugs = [...new Set([...body.matchAll(/\[\[([^\]|]+)\]\]/g)].map((m) => m[1].trim()))].filter(Boolean);
+	const slugs = [...new Set([...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)].map((m) => m[1].trim()))].filter(Boolean);
 	const known = new Map<string, number>();
 	const unknown: string[] = [];
 	for (const slug of slugs) {
@@ -75,6 +101,8 @@ export function createNote(
 ): { id: number; warnings: string[] } {
 	return tx(db, () => {
 		const { slug, projectIds, ...rest } = fields;
+		checkSlug(db, slug);
+		checkKindStatus(rest.kind ?? 'note', rest.status);
 		const f = fieldsOf(rest);
 		const { id } = db
 			.prepare(`INSERT INTO notes (slug, ${f.map(([k]) => k).join(', ')}) VALUES (?, ${f.map(() => '?').join(', ')}) RETURNING id`)
@@ -99,6 +127,7 @@ export function updateNote(db: DatabaseSync, actor: Actor, noteId: number, patch
 				`Note „${n.slug}“ wurde inzwischen geändert (aktuelle Version ${n.version}, erwartet ${expectedVersion}).`,
 				'Note neu lesen (getNote) und die Änderung auf der aktuellen Version erneut anwenden.'
 			);
+		checkKindStatus(patch.kind ?? n.kind, patch.status !== undefined ? patch.status : n.status);
 		const f = fieldsOf(patch);
 		if (f.length) db.prepare(`UPDATE notes SET ${f.map(([k]) => `${k} = ?`).join(', ')}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), n.id);
 		if (patch.body === undefined) return { warnings: [] };
@@ -106,23 +135,35 @@ export function updateNote(db: DatabaseSync, actor: Actor, noteId: number, patch
 	});
 }
 
-/** `actor` ist für spätere Regeln vorgesehen (Konvention: Mutationen nehmen ihn als zweiten Parameter) — heute ungenutzt. */
+/**
+ * `actor` ist für spätere Regeln vorgesehen (Konvention: Mutationen nehmen ihn als zweiten Parameter) — heute ungenutzt.
+ * Erhöht `version`: ein paralleles `updateNote` mit einer davor gelesenen `expectedVersion` bekommt sonst still den
+ * archivierten Stand überschrieben, statt `conflict` zu sehen.
+ */
 export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): void {
 	tx(db, () => {
 		const n = note(db, noteId);
-		if (!n.archived) db.prepare('UPDATE notes SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(n.id);
+		if (!n.archived) db.prepare('UPDATE notes SET archived = 1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(n.id);
 	});
 }
 
-/** Verknüpft zwei Notes (idempotent). `supersedes` auf eine ADR setzt deren Status automatisch auf `superseded`. */
+/**
+ * Verknüpft zwei Notes. Manuell gesetzt (`origin='manual'`) — auch wenn schon eine automatische Wikilink-Kante existiert:
+ * `DO UPDATE` hebt sie auf `manual`, sonst würde ein späteres Entfernen des `[[slug]]` aus dem Body die inzwischen bewusst
+ * gesetzte Kante mitlöschen (verletzt „manuelle Links bleiben unberührt“ unabhängig von der Reihenfolge).
+ * `supersedes` auf eine ADR setzt deren Status automatisch auf `superseded` und erhöht ihre `version` (sonst Lost Update,
+ * s. `archiveNote`).
+ */
 export function linkNote(db: DatabaseSync, actor: Actor, fromId: number, toId: number, type: NoteLinkType): void {
 	tx(db, () => {
 		const from = note(db, fromId);
 		const to = note(db, toId);
 		if (from.id === to.id) throw new DomainError('self_relation', `Note „${from.slug}“ kann nicht mit sich selbst verknüpft werden.`, 'Wähle als Ziel eine andere Note.');
-		db.prepare("INSERT INTO note_links (from_note_id, to_note_id, type, origin) VALUES (?, ?, ?, 'manual') ON CONFLICT DO NOTHING").run(from.id, to.id, type);
+		db.prepare(
+			"INSERT INTO note_links (from_note_id, to_note_id, type, origin) VALUES (?, ?, ?, 'manual') ON CONFLICT (from_note_id, to_note_id, type) DO UPDATE SET origin = 'manual'"
+		).run(from.id, to.id, type);
 		if (type === 'supersedes' && to.kind === 'adr' && to.status !== 'superseded')
-			db.prepare("UPDATE notes SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(to.id);
+			db.prepare("UPDATE notes SET status = 'superseded', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(to.id);
 	});
 }
 
@@ -164,9 +205,13 @@ export function verifyNote(db: DatabaseSync, actor: Actor, noteId: number, ticke
 
 export type NoteSearchHit = { id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
 
-/** Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts. */
+/**
+ * Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts.
+ * Ein eingebettetes NUL kappt den gebundenen String vor dem schließenden Anführungszeichen („unterminated string“ in FTS5) — vorher entfernt.
+ */
 function ftsQuery(query: string): string {
 	return query
+		.replace(/\0/g, '')
 		.trim()
 		.split(/\s+/)
 		.filter(Boolean)
@@ -174,8 +219,17 @@ function ftsQuery(query: string): string {
 		.join(' ');
 }
 
-/** Ranking: bm25 (beste Treffer zuerst), superseded ADRs werden herabgestuft. Snippet + bodyChars statt Volltext. */
-export function searchNotes(db: DatabaseSync, query: string, opts: { kind?: NoteKind; projectId?: number; tag?: string; limit?: number } = {}): NoteSearchHit[] {
+/**
+ * Ranking: bm25 (beste Treffer zuerst), superseded ADRs herabgestuft. `n.status = 'superseded'` wäre für status IS NULL (jede
+ * Nicht-ADR) NULL, und NULL sortiert in SQLite vor 0/1 — jede normale Note stünde vor jeder lebenden ADR, egal wie relevant.
+ * `IS` ist NULL-sicher (liefert 0). Archivierte Notes sind standardmäßig herausgefiltert (`archived` heißt „falsch/irrelevant“);
+ * `includeArchived` zeigt sie, dann aber klar ans Ende sortiert. Snippet + bodyChars statt Volltext.
+ */
+export function searchNotes(
+	db: DatabaseSync,
+	query: string,
+	opts: { kind?: NoteKind; projectId?: number; tag?: string; limit?: number; includeArchived?: boolean } = {}
+): NoteSearchHit[] {
 	const match = ftsQuery(query);
 	if (!match) return [];
 	return db
@@ -187,8 +241,9 @@ export function searchNotes(db: DatabaseSync, query: string, opts: { kind?: Note
 				AND (?2 IS NULL OR n.kind = ?2)
 				AND (?4 IS NULL OR EXISTS (SELECT 1 FROM note_projects np WHERE np.note_id = n.id AND np.project_id = ?4))
 				AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(n.tags) WHERE value = ?5))
-			ORDER BY (n.status = 'superseded'), notes_fts.rank
+				AND (n.archived = 0 OR ?6 = 1)
+			ORDER BY n.archived, n.status IS 'superseded', notes_fts.rank
 			LIMIT ?3`
 		)
-		.all(match, opts.kind ?? null, opts.limit ?? 20, opts.projectId ?? null, opts.tag ?? null) as NoteSearchHit[];
+		.all(match, opts.kind ?? null, opts.limit ?? 20, opts.projectId ?? null, opts.tag ?? null, opts.includeArchived ? 1 : 0) as NoteSearchHit[];
 }
