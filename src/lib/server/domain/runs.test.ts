@@ -278,6 +278,18 @@ describe('finishRun', () => {
 		}
 		expect(row(id).state).toBe('running');
 	});
+
+	it('maskiert bekannte Secret-Werte im Fehlertext vor dem Speichern (#824)', () => {
+		const { db, running, row } = setup();
+		const id = running();
+		const SECRET = 'sk-test-finishrun-secret-456';
+		setSecret(db, 'finishrun-test', SECRET, false, SECRET_KEY);
+
+		runs.finishRun(db, system, id, { state: 'failed', error: `Provider-Fehler: Key ${SECRET} abgelehnt` });
+
+		expect(row(id).error).toBe('Provider-Fehler: Key [secret:finishrun-test] abgelehnt');
+		expect(row(id).error).not.toContain(SECRET);
+	});
 });
 
 describe('Agent-Profile', () => {

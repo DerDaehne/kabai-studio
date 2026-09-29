@@ -138,7 +138,8 @@ export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: Ru
 	return tx(db, (emit) => {
 		if (end.state === 'failed' && !end.error?.trim())
 			throw new DomainError('error_required', `Run ${runId} als „failed“ beenden geht nur mit Fehlertext.`, 'Gib `error` an: in einem Satz, was schiefging — der Mensch sieht ihn am Run.');
-		return transition(db, emit, actor, runId, end.state, 'finishRun', `, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`, end.error ?? null, ...usage(end.usage));
+		// Fehlertext kommt von Agent/Provider und kann ein Secret enthalten (ADR studio-011) — vor dem Schreiben maskieren (#824), wie appendEvent es für Event-Payloads schon tut (#819).
+		return transition(db, emit, actor, runId, end.state, 'finishRun', `, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`, end.error ? mask(end.error) : null, ...usage(end.usage));
 	});
 }
 
