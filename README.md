@@ -20,6 +20,10 @@ its own database — no compatibility with kabai required.
   orchestrator + runner in a single process.
 - Own SQLite database (single file, WAL) via `node:sqlite`, stored in `./data`
   (override with `STUDIO_DATA_DIR`); migrations in `migrations/` run on startup.
+- Secrets (API keys, tokens) are entered in the UI and stored AES-256-GCM
+  encrypted. The key is `secret.key` in the data directory, created on first
+  start — back it up separately from the database — or `STUDIO_SECRET_KEY`
+  (base64, 32 bytes, e.g. `openssl rand -base64 32`).
 - PWA as the only client (Linux, macOS, mobile) — agents never run in the client.
 - Agents run hybrid: coding agents (opencode, Claude Code, Codex, …) via the
   [Agent Client Protocol](https://agentclientprotocol.com), lightweight tasks via
