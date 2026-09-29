@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import { subscribe, type StudioEvent } from '../events';
+import { setSecret } from '../secrets';
 import * as board from './board';
 import { DomainError, type Actor } from './core';
 import * as runs from './runs';
@@ -12,6 +13,7 @@ import * as runs from './runs';
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 const LOCAL = { name: 'Lokal', executor: 'builtin', provider: 'openai-compatible', model: 'm' } as const;
+const SECRET_KEY = randomBytes(32); // eigener Schlüssel, damit der Test kein secret.key im Datenverzeichnis anlegt
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-runs-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -180,6 +182,26 @@ describe('appendEvent', () => {
 		expect(seqs(db, id)).toEqual([1, 2]);
 		expect(events.filter((e) => e.type === 'run.event').map((e) => e.seq)).toEqual([1, 2]);
 		expect(row(id).tokens_in).toBe(10);
+	});
+
+	it('maskiert bekannte Secret-Werte im Payload vor dem Speichern und Emittieren; Idempotenz bleibt korrekt (#819)', () => {
+		const { db, running } = setup();
+		const id = running();
+		const SECRET = 'sk-test-appendevent-secret-123';
+		setSecret(db, 'appendevent-test', SECRET, false, SECRET_KEY);
+
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		const { seq } = runs.appendEvent(db, system, id, { type: 'tool_result', payload: { output: `token=${SECRET}` }, key: 'evt-1' });
+		off();
+
+		const stored = db.prepare('SELECT payload FROM run_events WHERE run_id = ? AND seq = ?').get(id, seq) as { payload: string };
+		expect(stored.payload).not.toContain(SECRET);
+		expect(stored.payload).toContain('[secret:appendevent-test]');
+		expect(events.find((e) => e.type === 'run.event')).toMatchObject({ payload: { output: 'token=[secret:appendevent-test]' } });
+
+		// Wiederholter Aufruf mit gleichem Schlüssel bleibt idempotent — Vergleich läuft auf dem maskierten Payload.
+		expect(runs.appendEvent(db, system, id, { type: 'tool_result', payload: { output: `token=${SECRET}` }, key: 'evt-1' })).toEqual({ seq, duplicate: true });
 	});
 
 	it('nimmt Events nur von laufenden Runs an', () => {

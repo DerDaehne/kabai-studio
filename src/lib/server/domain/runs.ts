@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
+import { mask } from '../secrets';
 import { ticket } from './board';
 import { DomainError, tx, type Actor } from './core';
 
@@ -153,8 +154,8 @@ export function appendEvent(
 ): { seq: number; duplicate: boolean } {
 	return tx(db, (emit) => {
 		const r = run(db, runId);
-		// Secret-Werte maskiert der Secrets-Store (ADR studio-011) künftig hier, bevor der Payload gespeichert und publiziert wird.
-		const payload = JSON.stringify(e.payload ?? {});
+		// Secret-Werte maskiert der Secrets-Store (ADR studio-011) hier, bevor der Payload gespeichert und publiziert wird (#819).
+		const payload = JSON.stringify(mask(e.payload ?? {}));
 		if (e.key !== undefined) {
 			const old = db.prepare('SELECT seq, type, payload FROM run_events WHERE run_id = ? AND idempotency_key = ?').get(r.id, e.key);
 			if (old && old.type === e.type && old.payload === payload) return { seq: old.seq as number, duplicate: true };
