@@ -97,6 +97,15 @@ describe('Owner und Sessions', () => {
 		expect(expiresAt(token)).toBe('2026-02-02 00:00:00');
 	});
 
+	it('renew: false prüft nur und verlängert nie — die Verlängerung bleibt dem nächsten Request', () => {
+		const token = createSession(db, 1, now);
+		expect(validateSession(db, token, now + 2 * DAY, { renew: false })).toEqual({ user: { id: 1, name: 'owner' }, renewed: false });
+		expect(expiresAt(token)).toBe('2026-01-31 00:00:00');
+		expect(validateSession(db, token, now + 2 * DAY)?.renewed).toBe(true);
+		expect(validateSession(db, token, now + 31 * DAY, { renew: false })).not.toBeNull(); // Ablauf gilt weiter
+		expect(validateSession(db, token, now + 32 * DAY, { renew: false })).toBeNull();
+	});
+
 	it('weist abgelaufene Sessions ab und löscht sie', () => {
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 30 * DAY - 1000)).not.toBeNull(); // verlängert auf +60 Tage

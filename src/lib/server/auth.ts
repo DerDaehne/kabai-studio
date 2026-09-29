@@ -114,8 +114,15 @@ export function createSession(db: DatabaseSync, userId: number, now = Date.now()
 /**
  * Prüft ein Session-Token. null = unbekannt oder abgelaufen (abgelaufene Zeile wird gelöscht).
  * Gleitender Ablauf: verlängert auf 30 Tage, sobald die Restlaufzeit unter 29 Tagen liegt (max. ein Schreibzugriff pro Tag).
+ * `renew: false` prüft nur — für Stellen, die das Cookie nicht neu setzen können (offener SSE-Stream). Sonst verbrauchte
+ * z. B. ein Heartbeat die Verlängerung, der Guard setzte das Cookie nie neu, und ein offener Tab hielte die Session ewig.
  */
-export function validateSession(db: DatabaseSync, token: string, now = Date.now()): { user: User; renewed: boolean } | null {
+export function validateSession(
+	db: DatabaseSync,
+	token: string,
+	now = Date.now(),
+	{ renew = true } = {}
+): { user: User; renewed: boolean } | null {
 	const hash = tokenHash(token);
 	const row = db
 		.prepare('SELECT s.expires_at, u.id, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?')
@@ -125,7 +132,7 @@ export function validateSession(db: DatabaseSync, token: string, now = Date.now(
 		deleteSession(db, token);
 		return null;
 	}
-	const renewed = row.expires_at < sqlTime(now + (SESSION_DAYS - 1) * DAY);
+	const renewed = renew && row.expires_at < sqlTime(now + (SESSION_DAYS - 1) * DAY);
 	if (renewed) db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').run(sqlTime(now + SESSION_DAYS * DAY), hash);
 	return { user: { id: row.id, name: row.name }, renewed };
 }

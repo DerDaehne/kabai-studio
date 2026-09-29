@@ -11,6 +11,8 @@ export const GET: RequestHandler = ({ url, cookies }) => {
 	if (!Number.isInteger(projectId) || projectId <= 0) error(400, 'project fehlt oder ist ungültig');
 
 	const token = cookies.get(SESSION_COOKIE)!; // ohne gültiges Cookie käme der Request nicht am Guard vorbei
-	const stream = eventStream((event) => event.projectId === projectId, { alive: () => validateSession(db(), token) !== null });
+	const stream = eventStream((event) => event.projectId === projectId, {
+		alive: () => validateSession(db(), token, Date.now(), { renew: false }) !== null // nur prüfen: Cookie ist hier nicht mehr setzbar
+	});
 	return new Response(stream, { headers: SSE_HEADERS });
 };

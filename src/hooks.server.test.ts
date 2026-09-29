@@ -1,6 +1,7 @@
 // Durchlauf Guard → Setup → Login → Logout gegen echte DB-Datei, Handler direkt aufgerufen.
 import { isActionFailure, isRedirect, type Cookies } from '@sveltejs/kit';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -195,6 +196,34 @@ describe('Auth-Durchlauf', () => {
 		publish({ type: 'ticket.updated', projectId: 1, ticketId: 1, actor: { kind: 'user' } });
 		expect(await reader.read()).toEqual({ done: true, value: undefined });
 		expect(listenerCount()).toBe(before);
+	});
+
+	it('Event-Stream verlängert die Session nicht (das bleibt dem Guard samt Cookie); Ablauf beendet den Stream', async () => {
+		const hash = (token: string) => createHash('sha256').update(token).digest('hex');
+		const expiresAt = (token: string) =>
+			(db().prepare('SELECT expires_at FROM sessions WHERE token_hash = ?').get(hash(token)) as { expires_at: string }).expires_at;
+		const sessionToken = createSession(db(), 1, Date.now() - 2 * 86_400_000); // vor 2 Tagen angemeldet → fällig zur Verlängerung
+		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
+		const before = expiresAt(sessionToken);
+
+		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+		try {
+			const reader = ((await events(event('/api/events?project=1', cookies))) as Response).body!.getReader();
+			await reader.read(); // ': connected'
+			vi.advanceTimersByTime(25_000); // Heartbeat → alive() prüft die Session
+			expect(new TextDecoder().decode((await reader.read()).value)).toBe(': heartbeat\n\n');
+			expect(expiresAt(sessionToken)).toBe(before);
+
+			expect(await guard('/', cookies)).toBeInstanceOf(Response); // der nächste Request verlängert und setzt das Cookie neu
+			expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ maxAge: 30 * 86_400 });
+			expect(expiresAt(sessionToken) > before).toBe(true);
+
+			db().prepare("UPDATE sessions SET expires_at = '2000-01-01 00:00:00' WHERE token_hash = ?").run(hash(sessionToken)); // abgelaufen
+			vi.advanceTimersByTime(25_000);
+			expect(await reader.read()).toEqual({ done: true, value: undefined });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('npm run reset-password setzt das Passwort, während eine andere Verbindung offen ist', async () => {
