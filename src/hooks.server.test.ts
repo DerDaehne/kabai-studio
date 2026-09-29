@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import { handle } from './hooks.server';
@@ -34,13 +34,15 @@ function jar(cookies: Record<string, string> = {}) {
 		delete(name: string, opts: CookieOptions) {
 			values.delete(name);
 			options.set(name, { ...opts, deleted: true });
-		}
+		},
+		serialize: (name: string, value: string, opts: CookieOptions) => `${name}=${value}; Max-Age=${opts.maxAge}; Path=${opts.path}`
 	};
 }
 type Jar = ReturnType<typeof jar>;
 
 // Minimales RequestEvent: nur die Felder, die Guard und Handler nutzen.
-const event = (path: string, cookies: Jar, init: { form?: Record<string, string>; ip?: string; origin?: string } = {}): any => {
+type Init = { form?: Record<string, string>; ip?: string; origin?: string; request?: RequestInit };
+const event = (path: string, cookies: Jar, init: Init = {}): any => {
 	const url = new URL(path, init.origin ?? 'http://localhost:3000');
 	const body = new FormData();
 	for (const [k, v] of Object.entries(init.form ?? {})) body.set(k, v);
@@ -49,7 +51,7 @@ const event = (path: string, cookies: Jar, init: { form?: Record<string, string>
 		cookies: cookies as unknown as Cookies,
 		locals: {},
 		getClientAddress: () => init.ip ?? '10.0.0.1',
-		request: new Request(url, init.form ? { method: 'POST', body } : {})
+		request: new Request(url, init.request ?? (init.form ? { method: 'POST', body } : {}))
 	};
 };
 
@@ -63,8 +65,8 @@ async function run(fn: () => unknown) {
 	}
 }
 
-const guard = (path: string, cookies = jar()) =>
-	run(() => handle({ event: event(path, cookies), resolve: () => new Response('ok') }));
+const guard = (path: string, cookies = jar(), init: Init = {}) =>
+	run(() => handle({ event: event(path, cookies, init), resolve: () => new Response('ok') }));
 const setup = (form: Record<string, string>, ip = '10.0.0.1', cookies = jar()) => run(() => setupActions.default(event('/setup', cookies, { form, ip })));
 const login = (form: Record<string, string>, init: { ip?: string; origin?: string } = {}, cookies = jar()) =>
 	run(() => loginActions.default(event('/login', cookies, { form, ...init })));
@@ -76,7 +78,8 @@ describe('Auth-Durchlauf', () => {
 		expect(await guard('/')).toEqual({ redirect: '/setup', status: 303 });
 		const api = (await guard('/api/tickets')) as Response;
 		expect(api.status).toBe(401);
-		expect(await api.json()).toEqual({ error: 'unauthorized' });
+		expect(await api.json()).toMatchObject({ error: 'unauthorized', hint: expect.stringContaining('/login') });
+		expect(api.headers.get('set-cookie')).toBeNull(); // ohne Cookie nichts zu löschen
 		expect(await guard('/setup')).toBeInstanceOf(Response);
 		expect(await guard('/login')).toBeInstanceOf(Response);
 		expect(await guard('/_app/remote/abc')).toEqual({ redirect: '/setup', status: 303 }); // Remote Functions nicht öffentlich
@@ -86,6 +89,16 @@ describe('Auth-Durchlauf', () => {
 	it('/setup weist einen falschen Setup-Token ab', async () => {
 		const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW });
 		expect(isActionFailure(res) && res.status).toBe(403);
+		expect(hasOwner(db())).toBe(false);
+	});
+
+	it('/setup zählt falsche Setup-Tokens ins Rate-Limit: nach 5 greift 429, auch mit richtigem Token', async () => {
+		for (let i = 0; i < 5; i++) {
+			const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW }, '10.0.1.1');
+			expect(isActionFailure(res) && res.status).toBe(403);
+		}
+		const blocked = await setup({ token, name: 'owner', password: PW, confirm: PW }, '10.0.1.1');
+		expect(isActionFailure(blocked) && blocked.status).toBe(429);
 		expect(hasOwner(db())).toBe(false);
 	});
 
@@ -131,6 +144,29 @@ describe('Auth-Durchlauf', () => {
 		expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.6' })).toEqual({ redirect: '/', status: 303 });
 	});
 
+	it('Rate-Limit zählt erfolgreiche Logins nicht: 6 Anmeldungen pro Minute von einer IP klappen', async () => {
+		for (let i = 0; i < 6; i++) expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.7' })).toEqual({ redirect: '/', status: 303 });
+	});
+
+	it('API mit ungültigem Cookie: 401 JSON und das Cookie wird gelöscht', async () => {
+		const api = (await guard('/api/tickets', jar({ [SESSION_COOKIE]: 'abgelaufen-oder-erfunden' }))) as Response;
+		expect(api.status).toBe(401);
+		expect(api.headers.get('set-cookie')).toMatch(/^studio_session=; Max-Age=0; Path=\//);
+	});
+
+	it('CSRF: POST ohne Formular-Content-Type von fremder Origin wird abgewiesen, die Session bleibt', async () => {
+		const sessionToken = createSession(db(), 1);
+		const cookies = () => jar({ [SESSION_COOKIE]: sessionToken });
+		const post = (origin?: string): Init => ({ request: { method: 'POST', headers: origin ? { origin } : undefined } });
+
+		const foreign = (await guard('/logout', cookies(), post('http://localhost:8080'))) as Response;
+		expect(foreign.status).toBe(403);
+		expect(await foreign.text()).toMatch(/fremder Herkunft/);
+		expect(await guard('/', cookies())).toBeInstanceOf(Response); // Session noch gültig
+		expect(await guard('/logout', cookies(), post('http://localhost:3000'))).toBeInstanceOf(Response); // eigene Origin → weiter
+		expect(await guard('/logout', cookies(), post())).toBeInstanceOf(Response); // ohne Origin = kein Browser
+	});
+
 	it('Logout löscht Session und Cookie; das alte Token führt wieder auf /login', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
@@ -165,5 +201,26 @@ describe('Auth-Durchlauf', () => {
 		});
 		expect(cli.status).toBe(1);
 		expect(cli.stderr).toMatch(/mindestens 12/);
+	});
+});
+
+describe('Default-Bind', () => {
+	// Der Hook setzt HOST beim Laden; adapter-node liest es erst danach. Leeres HOST hieße „alle Interfaces".
+	it.each([
+		['ungesetzt', undefined, '127.0.0.1'],
+		['leer', '', '127.0.0.1'],
+		['explizit', '0.0.0.0', '0.0.0.0']
+	])('HOST %s → %s', async (_, value, expected) => {
+		const before = process.env.HOST;
+		try {
+			if (value === undefined) delete process.env.HOST;
+			else process.env.HOST = value;
+			vi.resetModules();
+			await import('./hooks.server');
+			expect(process.env.HOST).toBe(expected);
+		} finally {
+			if (before === undefined) delete process.env.HOST;
+			else process.env.HOST = before;
+		}
 	});
 });

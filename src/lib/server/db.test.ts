@@ -40,6 +40,36 @@ describe('migrate', () => {
 		expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'b'").get()).toBeUndefined();
 	});
 
+	it('hält die Schreibsperre ab BEGIN: ein zweiter Prozess kann nicht dazwischen schreiben', () => {
+		const file = join(tmp, 'konkurrenz.db');
+		const base = { '/m/001_side.sql': 'CREATE TABLE side (x INTEGER)' };
+		migrate(openDb(file), base);
+		const other = openDb(file);
+		other.exec('PRAGMA busy_timeout = 0');
+		const [a, rival] = [openDb(file), { wrote: false }];
+		// Direkt bevor A die Migration ausführt (nach BEGIN und Re-Check), versucht ein zweiter Prozess zu schreiben.
+		// Mit plain BEGIN gelänge das, und A scheiterte danach mit „database is locked" (veralteter Snapshot).
+		const spy = new Proxy(a, {
+			get(target, prop) {
+				if (prop === 'exec')
+					return (sql: string) => {
+						if (sql.startsWith('CREATE TABLE x'))
+							try {
+								other.exec('INSERT INTO side VALUES (1)');
+								rival.wrote = true;
+							} catch {
+								/* gesperrt — erwartet */
+							}
+						return target.exec(sql);
+					};
+				const value = Reflect.get(target, prop);
+				return typeof value === 'function' ? value.bind(target) : value;
+			}
+		});
+		expect(migrate(spy, { ...base, '/m/002_x.sql': 'CREATE TABLE x (id INTEGER)' })).toEqual(['002_x.sql']);
+		expect(rival.wrote).toBe(false);
+	});
+
 	it('wendet in Namensreihenfolge an, unabhängig von der Eingabereihenfolge', () => {
 		const db = openDb(':memory:');
 		const ran = migrate(db, { '/m/002_b.sql': 'CREATE TABLE b (a_id INTEGER REFERENCES a (id))', '/m/001_a.sql': 'CREATE TABLE a (id INTEGER PRIMARY KEY)' });

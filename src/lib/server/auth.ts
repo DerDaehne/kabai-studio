@@ -146,6 +146,10 @@ export function clearSessionCookie(cookies: Cookies, url: URL) {
 	cookies.delete(SESSION_COOKIE, cookieOptions(url));
 }
 
+/** Set-Cookie-Wert, der das Session-Cookie löscht — für Antworten, an die SvelteKit event.cookies nicht anhängt. */
+export const expiredSessionCookie = (cookies: Cookies, url: URL) =>
+	cookies.serialize(SESSION_COOKIE, '', { ...cookieOptions(url), maxAge: 0 });
+
 // --- Rate-Limit ---------------------------------------------------------------------------------
 
 /**
@@ -174,3 +178,4 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 
 /** Gemeinsames Limit für /login und /setup: 5 Fehlversuche pro Minute und IP. */
 export const authLimiter = rateLimiter();
+export const TOO_MANY = 'Zu viele Fehlversuche von dieser Adresse. Bitte eine Minute warten und dann erneut versuchen.';
