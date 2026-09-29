@@ -16,3 +16,8 @@ export function subscribe(listener: (event: StudioEvent) => void): () => void {
 	bus.on('event', listener);
 	return () => bus.off('event', listener);
 }
+
+/** Nur für Tests: aktuelle Zahl der Bus-Listener, um Aufräumen beim Verbindungsende (kein Leck) zu prüfen. */
+export function listenerCount(): number {
+	return bus.listenerCount('event');
+}
