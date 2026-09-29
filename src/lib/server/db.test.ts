@@ -24,6 +24,7 @@ describe('migrate', () => {
 		const file = join(tmp, 'idem.db');
 		const first = migrate(openDb(file));
 		expect(first.slice(0, 2)).toEqual(['001_core_schema.sql', '002_workflow_state.sql']);
+		expect(first).toContain('006_runs.sql');
 		const db = openDb(file); // wie ein Neustart
 		expect(migrate(db)).toEqual([]);
 		expect(names(db)).toEqual(first);
@@ -90,6 +91,21 @@ describe('migrate', () => {
 		// korrigiert läuft sie beim nächsten Start
 		expect(migrate(db, { ...ok, '/m/002_bad.sql': 'CREATE TABLE b (id INTEGER)' })).toEqual(['002_bad.sql']);
 	});
+
+	it('006 ergänzt comments.run_id (mit FK) auch in einer DB mit Kommentaren', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true });
+		const db = openDb(':memory:');
+		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => !path.endsWith('/006_runs.sql'))));
+		db.exec(`
+			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Alt');
+			INSERT INTO comments (ticket_id, author_kind, author, body) VALUES (100, 'user', 'user', 'vorher');
+		`);
+		expect(migrate(db)).toEqual(['006_runs.sql']);
+		expect(db.prepare('SELECT body, run_id FROM comments').all()).toEqual([{ body: 'vorher', run_id: null }]);
+		expect(() => db.exec("INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 7)")).toThrow(/FOREIGN KEY/);
+	});
 });
 
 describe('Kernschema', () => {
@@ -103,6 +119,10 @@ describe('Kernschema', () => {
 		INSERT INTO tasks (ticket_id, title) VALUES (100, 'Kriterium');
 		INSERT INTO comments (ticket_id, author_kind, author, body, redacted_at, redacted_reason) VALUES (100, 'agent', 'dev', 'x', CURRENT_TIMESTAMP, 'Secret');
 		INSERT INTO ticket_relations VALUES (100, 101, 'blocks');
+		INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'Lokal', 'builtin', 'openai-compatible', 'm');
+		INSERT INTO runs (id, ticket_id, agent_profile_id, trigger) VALUES (1, 100, 1, 'manual');
+		INSERT INTO run_events (run_id, seq, type) VALUES (1, 1, 'log');
+		INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'agent (Run 1)', 'y', 1);
 	`);
 
 	it.each([
@@ -127,7 +147,21 @@ describe('Kernschema', () => {
 		['Spalte mit Tickets löschen', 'DELETE FROM columns WHERE id = 10', /FOREIGN KEY/],
 		['blocks_satisfied_at unbekannt', "UPDATE projects SET blocks_satisfied_at = 'review' WHERE id = 1", /CHECK/],
 		['Review-Freigabe ohne Actor', 'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP WHERE id = 100', /CHECK/],
-		['Actor kein JSON', "UPDATE tickets SET moved_by = 'dev' WHERE id = 100", /CHECK/]
+		['Actor kein JSON', "UPDATE tickets SET moved_by = 'dev' WHERE id = 100", /CHECK/],
+		['Profil mit Klartext-Key statt Verweis', "UPDATE agent_profiles SET api_key_ref = 'sk-abc123' WHERE id = 1", /CHECK/],
+		['builtin-Profil ohne Modell', "INSERT INTO agent_profiles (name, executor, provider) VALUES ('x', 'builtin', 'p')", /CHECK/],
+		['acp-Profil ohne Kommando', "INSERT INTO agent_profiles (name, executor) VALUES ('x', 'acp')", /CHECK/],
+		['Profil-Parameter kein JSON-Objekt', "UPDATE agent_profiles SET params = '[1]' WHERE id = 1", /CHECK/],
+		['Run-Zustand unbekannt', "UPDATE runs SET state = 'done' WHERE id = 1", /CHECK/],
+		['Run-Token in wartendem Run', "UPDATE runs SET token_hash = printf('%064d', 0) WHERE id = 1", /CHECK/],
+		['Run-Token im Klartext (falsche Länge)', "UPDATE runs SET state = 'running', token_hash = 'klartext' WHERE id = 1", /CHECK/],
+		['Endzustand ohne finished_at', "UPDATE runs SET state = 'succeeded' WHERE id = 1", /CHECK/],
+		['failed ohne Fehlertext', "UPDATE runs SET state = 'failed', finished_at = CURRENT_TIMESTAMP WHERE id = 1", /CHECK/],
+		['Run-Event mit doppelter seq', "INSERT INTO run_events (run_id, seq, type) VALUES (1, 1, 'log')", /UNIQUE|PRIMARY KEY/],
+		['Run-Event-Typ unbekannt', "INSERT INTO run_events (run_id, seq, type) VALUES (1, 2, 'chat')", /CHECK/],
+		['Run-Event-Payload kein JSON', "INSERT INTO run_events (run_id, seq, type, payload) VALUES (1, 2, 'log', '{kaputt')", /CHECK/],
+		['Idempotenz-Schlüssel doppelt', "INSERT INTO run_events (run_id, seq, type, idempotency_key) VALUES (1, 2, 'log', 'k'), (1, 3, 'log', 'k')", /UNIQUE/],
+		['Kommentar mit unbekanntem Run', "INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 99)", /FOREIGN KEY/]
 	])('weist ab: %s', (_, sql, error) => {
 		expect(() => db.exec(sql)).toThrow(error);
 	});
@@ -135,7 +169,7 @@ describe('Kernschema', () => {
 	it('löscht ein Projekt samt Board kaskadierend', () => {
 		db.exec('DELETE FROM projects WHERE id = 1');
 		const count = (table: string) => db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
-		const tables = ['columns', 'transitions', 'tickets', 'tasks', 'comments', 'ticket_relations'];
-		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0]); // übrig: die Spalte von OTH
+		const tables = ['columns', 'transitions', 'tickets', 'tasks', 'comments', 'ticket_relations', 'runs', 'run_events', 'agent_profiles'];
+		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]); // übrig: die Spalte von OTH und das Profil (global)
 	});
 });
