@@ -1,0 +1,118 @@
+/*
+ * Design-Tokens von kabai studio — „Calm Utility", dicht.
+ * Ruhige Graphit-/Slate-Neutraltöne, genau ein Akzent (entsättigtes Moosgrün, Solarized-Familie),
+ * Statusfarben im selben Charakter. Hell/dunkel über light-dark(): folgt prefers-color-scheme,
+ * <html data-theme="light|dark"> übersteuert. Kontrast (WCAG AA) prüft src/lib/styles/contrast.test.ts.
+ * Farbwerte nur über die semantischen Tokens verwenden, nicht über die Skalen.
+ */
+:root {
+	color-scheme: light dark;
+
+	/* Skalen (OKLCH-abgeleitet, als Hex) */
+	--gray-0: #fcfefe;
+	--gray-25: #f6fafb;
+	--gray-50: #f1f5f7;
+	--gray-100: #e6ecef;
+	--gray-150: #dce2e5;
+	--gray-200: #ced6d9;
+	--gray-300: #b3bcc0;
+	--gray-400: #818b90;
+	--gray-500: #6c777b;
+	--gray-600: #525d61;
+	--gray-700: #3d474b;
+	--gray-800: #2a3235;
+	--gray-850: #21282b;
+	--gray-900: #191f22;
+	--gray-925: #14191b;
+	--gray-950: #0f1315;
+
+	--green-50: #f2f9ea;
+	--green-100: #e4f1d6;
+	--green-200: #cde2b4;
+	--green-300: #b2ce8f;
+	--green-400: #98b86e;
+	--green-500: #7d9d51;
+	--green-600: #67843d;
+	--green-700: #526c2f;
+	--green-800: #405324;
+	--green-900: #2e3c1a;
+	--green-950: #202a13;
+
+	/* Flächen, Linien, Text */
+	--bg: light-dark(var(--gray-0), var(--gray-900));
+	--bg-chrome: light-dark(var(--gray-50), var(--gray-925));
+	--surface: light-dark(var(--gray-0), var(--gray-850));
+	--surface-hover: light-dark(var(--gray-100), var(--gray-800));
+	--border: light-dark(var(--gray-150), var(--gray-800));
+	--border-control: light-dark(var(--gray-400), var(--gray-500));
+	--text: light-dark(var(--gray-900), var(--gray-100));
+	--text-muted: light-dark(var(--gray-600), #a3adb1);
+
+	/* Akzent: Aktives, Fokus, Primäraktion */
+	--accent: light-dark(var(--green-700), var(--green-400));
+	--accent-hover: light-dark(var(--green-800), var(--green-300));
+	--on-accent: light-dark(#ffffff, var(--gray-950));
+	--accent-text: light-dark(var(--green-700), var(--green-300));
+	--accent-tint: light-dark(var(--green-100), #252d1a);
+	--focus: light-dark(var(--green-600), var(--green-400));
+
+	/* Status: Text/Punkt + Hintergrund-Tönung */
+	--status-running: light-dark(#1b659a, #89beeb);
+	--status-running-tint: light-dark(#e3f2ff, #1b2c3a);
+	--status-waiting: light-dark(#7a5b01, #d4b36a);
+	--status-waiting-tint: light-dark(#f8efde, #322915);
+	--status-failed: light-dark(#95443d, #e9a39a);
+	--status-failed-tint: light-dark(#ffeae7, #3a2321);
+	--status-succeeded: var(--accent-text);
+	--status-succeeded-tint: light-dark(var(--green-50), #252d1a);
+	--status-paused: light-dark(#5b569c, #b1b0ec);
+	--status-paused-tint: light-dark(#eeeeff, #28283b);
+	--status-neutral: var(--text-muted);
+	--status-neutral-tint: light-dark(var(--gray-100), var(--gray-800));
+
+	--shadow-overlay: 0 8px 28px light-dark(rgb(20 30 35 / 0.16), rgb(0 0 0 / 0.5)), 0 1px 3px rgb(0 0 0 / 0.12);
+	--scrim: rgb(10 15 18 / 0.45);
+
+	/* Typo: Inter, falls installiert, sonst System-UI. Mono nur für IDs, Code, Logs. */
+	--font-sans: Inter, 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+	--text-sm: 12.5px;
+	--text-base: 14px;
+	--text-lg: 16px;
+	--text-xl: 19px;
+	--leading: 1.43;
+	--leading-tight: 1.25;
+
+	/* Dichte: 4-px-Raster, 28-px-Controls (Touch: größer, siehe unten) */
+	--space-05: 2px;
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--control-h: 28px;
+	--control-h-sm: 24px;
+	--radius-sm: 4px;
+	--radius: 6px;
+	--radius-lg: 10px;
+	--sidebar-w: 200px;
+	--tabbar-h: 56px;
+
+	--duration: 160ms;
+	--ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+:root[data-theme='light'] {
+	color-scheme: light;
+}
+:root[data-theme='dark'] {
+	color-scheme: dark;
+}
+
+@media (pointer: coarse) {
+	:root {
+		--control-h: 36px;
+		--control-h-sm: 32px;
+	}
+}
