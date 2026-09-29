@@ -40,14 +40,10 @@ export const init: ServerInit = () => {
 
 // Öffentlich nur diese beiden. Statische Dateien liefert adapter-node vor den Hooks aus, /_app/* beantwortet SvelteKit
 // selbst vor handle — bis auf Remote Functions (/_app/remote), die deshalb bewusst NICHT ausgenommen sind.
+// SvelteKit entfernt /__data.json aus event.url.pathname, bevor handle läuft (respond.js) — /login/__data.json kommt
+// hier schon als /login an, siehe [[arch-studio-auth]].
 const PUBLIC = new Set(['/login', '/setup']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const DATA_SUFFIX = '/__data.json';
-
-// Client-seitige Navigation (SvelteKit-Link ohne Reload) lädt /login als /login/__data.json nach — muss ebenso
-// öffentlich sein wie die Seite selbst, sonst läuft der Link in den Redirect (#822). Geschützte Seiten bleiben
-// geschützt: /settings/secrets/__data.json ist nicht in PUBLIC und bleibt es.
-const isPublic = (path: string) => PUBLIC.has(path) || (path.endsWith(DATA_SUFFIX) && PUBLIC.has(path.slice(0, -DATA_SUFFIX.length)));
 
 export const handle: Handle = async ({ event, resolve }) => {
 	// CSRF auch jenseits von SvelteKits Formular-Check (der nur Formular-Content-Types prüft, z. B. POST /logout ohne Body):
@@ -65,7 +61,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	const path = event.url.pathname;
-	if (!session && !isPublic(path)) {
+	if (!session && !PUBLIC.has(path)) {
 		if (path === '/api' || path.startsWith('/api/')) {
 			const res = json({ error: 'unauthorized', hint: 'Keine gültige Session — im Browser unter /login anmelden.' }, { status: 401 });
 			// direkt zurückgegebene Antworten bekommen event.cookies nicht angehängt → Löschung selbst setzen

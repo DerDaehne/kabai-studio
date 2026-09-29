@@ -45,12 +45,18 @@ type Jar = ReturnType<typeof jar>;
 
 // Minimales RequestEvent: nur die Felder, die Guard und Handler nutzen.
 type Init = { form?: Record<string, string>; ip?: string; origin?: string; request?: RequestInit };
+const DATA_SUFFIX = '/__data.json';
 const event = (path: string, cookies: Jar, init: Init = {}): any => {
 	const url = new URL(path, init.origin ?? 'http://localhost:3000');
+	// SvelteKit strippt /__data.json aus url.pathname, bevor handle läuft (respond.js) — hier nachgebildet, damit der
+	// Guard dasselbe Event sieht wie in echt (#822-Review: der Guard hat /__data.json nie selbst gesehen).
+	const isDataRequest = url.pathname.endsWith(DATA_SUFFIX);
+	if (isDataRequest) url.pathname = url.pathname.slice(0, -DATA_SUFFIX.length) || '/';
 	const body = new FormData();
 	for (const [k, v] of Object.entries(init.form ?? {})) body.set(k, v);
 	return {
 		url,
+		isDataRequest,
 		cookies: cookies as unknown as Cookies,
 		locals: {},
 		getClientAddress: () => init.ip ?? '10.0.0.1',
@@ -128,7 +134,7 @@ describe('Auth-Durchlauf', () => {
 		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 });
 	});
 
-	it('#822: __data.json öffentlicher Seiten ist mit-öffentlich, ohne dass geschützte __data.json aufgehen', async () => {
+	it('#822: __data.json öffentlicher Seiten ist mit-öffentlich (SvelteKit strippt das Suffix vor handle), geschützte bleiben es', async () => {
 		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // kein Redirect: Client-Navigation zu /login lädt Daten nach
 		expect(await guard('/setup/__data.json')).toBeInstanceOf(Response);
 		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 }); // weiterhin geschützt
