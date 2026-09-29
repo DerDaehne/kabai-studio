@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { backup } from './backup.ts';
+import { backup, privateDir } from './backup.ts';
 
 export function openDb(file: string): DatabaseSync {
 	const db = new DatabaseSync(file);
@@ -14,8 +14,32 @@ export function openDb(file: string): DatabaseSync {
 /** Datenverzeichnis: `STUDIO_DATA_DIR`, Default `./data`. */
 export const dataDir = () => process.env.STUDIO_DATA_DIR || 'data';
 export const backupDir = () => join(dataDir(), 'backups');
-/** Enthält die PID des laufenden Servers; restore bricht ab, solange dieser Prozess lebt. */
-export const pidFile = () => join(dataDir(), 'studio.pid');
+
+// Sperren dieses Prozesses je Lock-Datei — auf globalThis, damit ein neu geladenes db.ts (Vite-HMR) die eigene Sperre
+// wiedererkennt, statt an ihr zu scheitern.
+const locks: Map<string, DatabaseSync> = ((globalThis as { studioLocks?: Map<string, DatabaseSync> }).studioLocks ??= new Map());
+
+/**
+ * Einzelinstanz-Sperre auf dem Datenverzeichnis: exklusive SQLite-Sperre auf `<dir>/studio.lock`, gehalten bis zum
+ * Prozessende. Der Kernel gibt sie auch nach Absturz oder kill -9 frei — keine verwaisten Dateien, keine PID-Wiederverwendung,
+ * und eine zweite Instanz kann sie weder übernehmen noch löschen. false = ein anderer Prozess (Server oder restore) hält sie.
+ */
+export function lockDataDir(dir = dataDir()): boolean {
+	const file = resolve(dir, 'studio.lock');
+	if (locks.has(file)) return true;
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const lock = new DatabaseSync(file);
+	try {
+		// im EXCLUSIVE-Modus bleibt die mit BEGIN EXCLUSIVE geholte Sperre nach COMMIT bestehen, bis die Verbindung schließt
+		lock.exec('PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;');
+	} catch (err) {
+		lock.close();
+		if ((err as { errcode?: number }).errcode === 5) return false; // SQLITE_BUSY: gehalten
+		throw err;
+	}
+	locks.set(file, lock);
+	return true;
+}
 
 /**
  * Wendet noch nicht angewendete Migrationen in Namensreihenfolge an, jede in eigener Transaktion.
@@ -62,10 +86,18 @@ export function migrate(
 
 let conn: DatabaseSync | undefined;
 
-/** Die eine Verbindung des Prozesses — beim ersten Aufruf geöffnet, gesichert (falls Migrationen anstehen) und migriert. */
+/**
+ * Die eine Verbindung des Prozesses — beim ersten Aufruf: Datenverzeichnis sperren (vor jeder DB-Aktion), öffnen,
+ * sichern (falls Migrationen anstehen) und migrieren.
+ */
 export function db(): DatabaseSync {
 	if (!conn) {
-		mkdirSync(dataDir(), { recursive: true });
+		privateDir(dataDir());
+		if (!lockDataDir())
+			throw new Error(
+				`Studio läuft bereits mit dem Datenverzeichnis ${resolve(dataDir())} (zweiter Server oder laufendes restore). ` +
+					`Die laufende Instanz verwenden oder beenden — für eine weitere Instanz STUDIO_DATA_DIR auf ein eigenes Verzeichnis setzen.`
+			);
 		const c = openDb(join(dataDir(), 'studio.db'));
 		migrate(c, undefined, () => backup(c, backupDir())); // Sicherung scheitert → Start bricht ab, nichts wird migriert
 		conn = c;

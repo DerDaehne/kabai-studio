@@ -1,23 +1,12 @@
 // Wiederherstellung ohne UI: `npm run restore -- <backup-datei>` ersetzt die DB durch eine Sicherung (#808).
-// Nur bei gestopptem Server. Reihenfolge schützt die Daten: Quelle prüfen → aktuelle DB sichern → ersetzen.
-// Läuft direkt mit Node (Type-Stripping, kein Build), wie reset-password.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+// Nur bei gestopptem Server: restore hält die Einzelinstanz-Sperre des Datenverzeichnisses für seine ganze Laufzeit — läuft ein
+// Server, bricht restore ab; startet einer währenddessen, bricht der ab. Reihenfolge schützt die Daten: Quelle prüfen →
+// aktuelle DB sichern → ersetzen. Läuft direkt mit Node (Type-Stripping, kein Build), wie reset-password.
+import { copyFileSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { backup } from './backup.ts';
-import { backupDir, dataDir, openDb, pidFile } from './db.ts';
-
-/** PID des laufenden Servers laut PID-Datei, sonst null (keine Datei oder Prozess beendet, etwa nach einem Absturz). */
-function serverPid(): number | null {
-	const pid = existsSync(pidFile()) ? Number(readFileSync(pidFile(), 'utf8')) : 0;
-	if (!pid) return null;
-	try {
-		process.kill(pid, 0); // Signal 0 prüft nur, ob der Prozess existiert
-		return pid;
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code === 'EPERM' ? pid : null; // EPERM: lebt, gehört nur einem anderen Nutzer
-	}
-}
+import { backupDir, dataDir, lockDataDir, openDb } from './db.ts';
 
 /** Wirft, wenn `file` keine intakte Studio-Datenbank ist. */
 function check(file: string) {
@@ -33,18 +22,16 @@ function check(file: string) {
 
 const file = join(dataDir(), 'studio.db');
 const tmp = `${file}.restore`;
+let locked = false; // erst mit der Sperre gehört die Temp-Kopie diesem Lauf
 try {
 	const src = process.argv[2];
 	if (!src) throw new Error(`Aufruf: npm run restore -- <backup-datei>. Sicherungen liegen unter ${backupDir()}.`);
 	if (!existsSync(src)) throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);
-	const pid = serverPid();
-	if (pid)
-		throw new Error(
-			`Studio läuft noch (PID ${pid}). Server stoppen und erneut ausführen — läuft er sicher nicht mehr, ${pidFile()} löschen.`
-		);
+	locked = lockDataDir();
+	if (!locked)
+		throw new Error(`Studio läuft noch mit dem Datenverzeichnis ${resolve(dataDir())} (oder ein anderes restore). Server stoppen und erneut ausführen.`);
 
 	// Geprüft wird die Kopie, die gleich eingesetzt wird — so entstehen auch keine -wal/-shm-Dateien neben der Quelle.
-	mkdirSync(dataDir(), { recursive: true });
 	copyFileSync(src, tmp);
 	try {
 		check(tmp);
@@ -53,16 +40,19 @@ try {
 	}
 
 	if (existsSync(file)) {
-		const current = openDb(file);
 		let saved: string;
 		try {
-			saved = backup(current, backupDir());
+			const current = openDb(file); // wirft schon hier, wenn die aktuelle Datei keine SQLite-DB mehr ist
+			try {
+				saved = backup(current, backupDir());
+			} finally {
+				current.close(); // letzte Verbindung: SQLite schreibt das WAL zurück und löscht es
+			}
 		} catch (err) {
+			const reason = (((err as Error).cause as Error | undefined) ?? (err as Error)).message;
 			throw new Error(
-				`Aktuelle Datenbank lässt sich nicht sichern (${(err as Error).message}). Ist sie defekt: ${file} samt -wal/-shm von Hand beiseitelegen und erneut ausführen.`
+				`Die aktuelle Datenbank ${file} lässt sich vorher nicht sichern (${reason}). Ist sie defekt: sie samt -wal/-shm von Hand beiseitelegen (umbenennen) und erneut ausführen; sonst Speicherplatz und Schreibrechte in ${backupDir()} prüfen.`
 			);
-		} finally {
-			current.close(); // letzte Verbindung: SQLite schreibt das WAL zurück und löscht es
 		}
 		console.log(`Aktuelle Datenbank gesichert: ${saved}`);
 	}
@@ -72,7 +62,7 @@ try {
 	renameSync(tmp, file);
 	console.log(`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`);
 } catch (err) {
-	rmSync(tmp, { force: true });
+	if (locked) rmSync(tmp, { force: true });
 	console.error(`restore: ${(err as Error).message}`);
 	process.exitCode = 1;
 }

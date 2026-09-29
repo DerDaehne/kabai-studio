@@ -9,9 +9,8 @@ import {
 	setSessionCookie,
 	validateSession
 } from '$lib/server/auth';
-import { rmSync, writeFileSync } from 'node:fs';
 import { startBackups } from '$lib/server/backup';
-import { backupDir, db, pidFile } from '$lib/server/db';
+import { backupDir, db } from '$lib/server/db';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
 // Sicherer Default: adapter-node bindet ohne HOST an 0.0.0.0, bei leerem HOST sogar an alle Interfaces (IPv4+IPv6) —
@@ -29,12 +28,9 @@ export const init: ServerInit = () => {
 			`Hinweis: ORIGIN ist nicht gesetzt — Setup und Anmeldung werden sonst abgewiesen. ` +
 				`Neu starten mit ORIGIN=http://127.0.0.1:${process.env.PORT || 3000} und genau diese Adresse im Browser öffnen.`
 		);
-	// öffnet und migriert die DB, lädt bzw. erzeugt secret.key — einmal beim Start, Fehler brechen den Start ab
+	// sperrt das Datenverzeichnis (zweite Instanz bricht hier ab), öffnet, sichert und migriert die DB, lädt bzw. erzeugt
+	// secret.key — einmal beim Start, Fehler brechen den Start ab
 	initSecrets(db());
-	// restore erkennt daran den laufenden Server; nach einem Absturz bleibt die Datei, restore prüft dann die PID
-	const pid = pidFile();
-	writeFileSync(pid, String(process.pid));
-	process.on('exit', () => rmSync(pid, { force: true }));
 	startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
 	if (!hasOwner(db())) {
 		const token = issueSetupToken();

@@ -1,6 +1,6 @@
 // Sicherungen der SQLite-DB (#808): `VACUUM INTO` nach `<datenverzeichnis>/backups/studio-YYYYMMDD-HHMM[-N].db` (UTC).
 // Nur node:-Importe: die CLI restore lädt diese Datei direkt mit Node, ohne Vite.
-import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -13,6 +13,16 @@ export const RETENTION = { daily: 7, weekly: 4 };
 const NAME = /^studio-(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(?:-(\d+))?\.db$/;
 
 export type Backup = { file: string; at: Date; n: number };
+
+/**
+ * Legt ein Verzeichnis nur für den eigenen Nutzer an (0700). Ein vorhandenes mit Rechten für andere bleibt, wie es ist —
+ * still umbiegen könnte eine bewusste Einrichtung brechen —, es gibt nur eine Warnung.
+ */
+export function privateDir(dir: string) {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	if (process.platform !== 'win32' && statSync(dir).mode & 0o077)
+		console.warn(`Warnung: ${dir} ist für andere Nutzer zugänglich — „chmod 700 ${dir}“ schränkt das ein.`);
+}
 
 /** Fertige Sicherungen in `dir`, neueste zuerst. */
 export function listBackups(dir: string): Backup[] {
@@ -43,8 +53,10 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 	for (let n = 2; taken.has(file); n++) file = `${base}-${n}.db`;
 	const tmp = `${file}.tmp`;
 	try {
-		mkdirSync(dir, { recursive: true });
-		rmSync(tmp, { force: true }); // Rest eines abgestürzten Laufs — VACUUM INTO verweigert vorhandene Dateien
+		privateDir(dir);
+		rmSync(tmp, { force: true }); // Rest eines abgestürzten Laufs — VACUUM INTO nimmt nur eine leere Zieldatei
+		// 0600 ab dem ersten Byte: Sicherungen enthalten Passwort- und Session-Hashes, Chiffrate und den ganzen Verlauf
+		writeFileSync(tmp, '', { mode: 0o600, flag: 'wx' });
 		db.prepare('VACUUM INTO ?').run(tmp);
 		const fd = openSync(tmp, 'r+');
 		fsyncSync(fd); // erst auf der Platte, dann sichtbar
@@ -102,7 +114,11 @@ export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
 	}
 }
 
-/** Beim Start und dann stündlich prüfen — so übersteht der Tagesrhythmus auch häufige Neustarts. */
+/**
+ * Beim Start und dann stündlich prüfen — so übersteht der Tagesrhythmus auch häufige Neustarts.
+ * ponytail: VACUUM INTO läuft synchron im Server-Prozess und hält bei großer DB kurz alle Anfragen an — in einen Worker
+ * verlegen, sobald das spürbar wird.
+ */
 export function startBackups(db: DatabaseSync, dir: string) {
 	backupIfDue(db, dir);
 	setInterval(() => backupIfDue(db, dir), HOUR).unref();
