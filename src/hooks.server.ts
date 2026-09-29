@@ -10,6 +10,7 @@ import {
 	validateSession
 } from '$lib/server/auth';
 import { db } from '$lib/server/db';
+import { initSecrets, maskConsole } from '$lib/server/secrets';
 
 // Sicherer Default: adapter-node bindet ohne HOST an 0.0.0.0, bei leerem HOST sogar an alle Interfaces (IPv4+IPv6) —
 // sonst wäre /setup im LAN offen (bis #810 die CLI liefert). `||=`, damit auch HOST= (leer) den Default bekommt.
@@ -17,6 +18,7 @@ import { db } from '$lib/server/db';
 process.env.HOST ||= '127.0.0.1';
 
 export const init: ServerInit = () => {
+	maskConsole(); // ab hier läuft jede Log-Zeile durch die Secret-Maskierung
 	// adapter-node nimmt ohne ORIGIN https an; Studio spricht selbst HTTP → SvelteKits CSRF-Check weist sonst jedes Formular ab.
 	// ORIGIN liest adapter-node vor den Hooks, ein Default hier käme zu spät.
 	const origin = process.env.ORIGIN;
@@ -25,7 +27,8 @@ export const init: ServerInit = () => {
 			`Hinweis: ORIGIN ist nicht gesetzt — Setup und Anmeldung werden sonst abgewiesen. ` +
 				`Neu starten mit ORIGIN=http://127.0.0.1:${process.env.PORT || 3000} und genau diese Adresse im Browser öffnen.`
 		);
-	// öffnet die DB und migriert — einmal beim Start, Fehler brechen den Start ab
+	// öffnet und migriert die DB, lädt bzw. erzeugt secret.key — einmal beim Start, Fehler brechen den Start ab
+	initSecrets(db());
 	if (!hasOwner(db())) {
 		const token = issueSetupToken();
 		console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
