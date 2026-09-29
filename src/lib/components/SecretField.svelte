@@ -4,6 +4,7 @@
 	Schlichtes Markup ohne eigenes Styling — das Design-System übernimmt das Aussehen.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 
 	type Props = {
@@ -17,15 +18,27 @@
 	let { name, updatedAt, error }: Props = $props();
 
 	const id = $props.id();
-	// Ein Fehler zu diesem Secret öffnet die Eingabe (auch ohne JS nach dem Neuladen); Ersetzen/Abbrechen überschreiben das.
+	// Ein Fehler zu einem gespeicherten Secret öffnet dessen Eingabe (auch ohne JS nach dem Neuladen); Ersetzen/Abbrechen überschreiben
+	// das. Nur mit `name` von Bedeutung — das Formular für ein neues Secret ist immer offen.
 	let replacing = $derived(!!error);
 	const nameInvalid = $derived(['secret_name_invalid', 'secret_name_is_value', 'secret_exists'].includes(error?.code ?? ''));
+	let replaceButton: HTMLButtonElement | undefined = $state();
+
+	/** Schließt das Ersetzen-Formular; der Fokus ginge mit ihm verloren, darum zurück auf „Ersetzen“. */
+	async function closeReplace() {
+		replacing = false;
+		await tick();
+		replaceButton?.focus();
+	}
+	const focusIf = (when: () => boolean) => (el: HTMLElement) => {
+		if (when()) el.focus();
+	};
 </script>
 
 {#if name && !replacing}
 	<p>
 		<strong>{name}</strong> — gesetzt, geändert {updatedAt} UTC
-		<button type="button" onclick={() => (replacing = true)}>Ersetzen</button>
+		<button type="button" onclick={() => (replacing = true)} bind:this={replaceButton}>Ersetzen</button>
 	</p>
 	<form
 		method="POST"
@@ -44,8 +57,8 @@
 		use:enhance={({ cancel }) => {
 			if (name && !confirm(`Secret „${name}“ ersetzen? Der bisherige Wert ist danach unwiederbringlich weg.`)) return cancel();
 			return async ({ result, update }) => {
-				await update();
-				if (result.type === 'success') replacing = false;
+				await update(); // setzt den Fokus bei Erfolg zurück auf die Seite — darum erst danach schließen
+				if (result.type === 'success' && name) closeReplace();
 			};
 		}}
 	>
@@ -56,11 +69,19 @@
 		{:else}
 			<label>
 				Name
-				<input name="name" required autocomplete="off" aria-invalid={nameInvalid} aria-describedby={error && nameInvalid ? `${id}-error` : undefined} />
+				<input
+					name="name"
+					required
+					autocomplete="off"
+					aria-invalid={nameInvalid}
+					aria-describedby={nameInvalid ? `${id}-error` : undefined}
+					{@attach focusIf(() => nameInvalid)}
+				/>
 			</label>
 		{/if}
 		<label>
 			{name ? `Neuer Wert für ${name}` : 'Wert'}
+			<!-- Fokus: beim Öffnen von „Ersetzen“ und bei einem Fehler zum Wert -->
 			<input
 				type="password"
 				name="value"
@@ -68,13 +89,11 @@
 				autocomplete="new-password"
 				aria-invalid={!!error && !nameInvalid}
 				aria-describedby={error && !nameInvalid ? `${id}-error` : undefined}
-				{@attach (el) => {
-					if (replacing) el.focus();
-				}}
+				{@attach focusIf(() => (!!name || !!error) && !nameInvalid)}
 			/>
 		</label>
 		<button>Speichern</button>
-		{#if replacing}<button type="button" onclick={() => (replacing = false)}>Abbrechen</button>{/if}
+		{#if name}<button type="button" onclick={closeReplace}>Abbrechen</button>{/if}
 		{#if error}<p id="{id}-error" role="alert">{error.message} {error.hint}</p>{/if}
 	</form>
 {/if}

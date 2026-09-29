@@ -23,3 +23,10 @@ it('Fehler steht am betroffenen Feld (aria-describedby) mit Ursache und Ausweg �
 	expect(named).toMatch(/<input name="name"[^>]*aria-invalid="true" aria-describedby="[^"]+-error"/);
 	expect(named).toMatch(/<input type="password"[^>]*aria-invalid="false"/);
 });
+
+it('„Abbrechen“ gibt es nur beim Ersetzen eines gespeicherten Secrets — beim neuen Secret hätte es keine Wirkung', () => {
+	const error = { code: 'secret_too_short', message: 'Zu kurz.', hint: 'Vollständig einfügen.' };
+	expect(html({ name: 'demo', updatedAt: '2026-01-01 00:00:00', error })).toContain('>Abbrechen</button>');
+	expect(html({ error })).not.toContain('Abbrechen');
+	expect(html({ error })).not.toContain('name="replace"');
+});
