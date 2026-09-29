@@ -124,6 +124,13 @@ describe('Schlüssel', () => {
 		expect(loadKey(dir, undefined).equals(key)).toBe(true);
 	});
 
+	it('der Schlüssel selbst wird maskiert — aus der Datei wie aus STUDIO_SECRET_KEY', () => {
+		const fileKey = loadKey(join(tmp, 'masked-key'), undefined).toString('base64');
+		const envKey = randomBytes(32).toString('base64');
+		loadKey(join(tmp, 'unused'), ` ${envKey}\n`);
+		expect(mask(`file=${fileKey} env=${envKey}`)).toBe('file=[secret-key] env=[secret-key]');
+	});
+
 	it('STUDIO_SECRET_KEY hat Vorrang vor secret.key und legt keine Datei an', () => {
 		const withFile = join(tmp, 'fresh-env');
 		const fileKey = loadKey(withFile, undefined);
@@ -165,13 +172,40 @@ describe('Verweise', () => {
 	it('löst secret:<name> und ${ENV} an einer Stelle auf, übriger Text bleibt', () => {
 		const db = setup();
 		setSecret(db, 'gh', VALUE, false, KEY);
-		process.env.STUDIO_TEST_TOKEN = 'env-token-abcdef';
+		process.env.TEST_API_TOKEN = 'env-token-abcdef';
 		expect(resolveRef(db, 'secret:gh', KEY)).toBe(VALUE);
-		expect(resolveRef(db, 'Bearer ${STUDIO_TEST_TOKEN}', KEY)).toBe('Bearer env-token-abcdef');
+		expect(resolveRef(db, 'Bearer ${TEST_API_TOKEN}', KEY)).toBe('Bearer env-token-abcdef');
 		expect(resolveRef(db, 'plain value', KEY)).toBe('plain value');
-		const err = caught(() => resolveRef(db, '${STUDIO_TEST_MISSING}', KEY));
+		const err = caught(() => resolveRef(db, '${TEST_MISSING_VAR}', KEY));
 		expect(err.code).toBe('env_missing');
 		expect(err.hint).toContain('secret:<name>');
+	});
+
+	it('verweigert Studio-Interna: ${STUDIO_SECRET_KEY} (auch klein geschrieben) liefert nie den Schlüssel', () => {
+		const db = setup();
+		const before = process.env.STUDIO_SECRET_KEY;
+		process.env.STUDIO_SECRET_KEY = KEY.toString('base64');
+		try {
+			for (const ref of ['${STUDIO_SECRET_KEY}', 'Bearer ${studio_secret_key}', '${STUDIO_DATA_DIR}']) {
+				const err = caught(() => resolveRef(db, ref, KEY));
+				expect(err.code).toBe('env_forbidden');
+				expect(err.hint).toContain('secret:<name>');
+				expect(`${err.message} ${err.hint}`).not.toContain(KEY.toString('base64'));
+			}
+		} finally {
+			if (before === undefined) delete process.env.STUDIO_SECRET_KEY;
+			else process.env.STUDIO_SECRET_KEY = before;
+		}
+	});
+
+	it('nennt im Fehler nur gültige Secret-Namen — ein versehentlich eingefügter Key wird nicht wiederholt', () => {
+		const db = setup();
+		expect(caught(() => resolveRef(db, 'secret:fehlt', KEY)).message).toContain('„fehlt“');
+		const pasted = 'sk-Test_NotARealKey.123';
+		const err = caught(() => resolveRef(db, `secret:${pasted}`, KEY));
+		expect(err.code).toBe('secret_ref_invalid');
+		expect(err.hint).toContain('secret:anthropic-api-key');
+		expect(`${err.message} ${err.hint}`).not.toContain(pasted);
 	});
 });
 
@@ -193,12 +227,47 @@ describe('Maskierung', () => {
 	});
 
 	it('maskiert per ${ENV} aufgelöste Werte und mehrzeilige Werte auch in escapter Form', () => {
-		process.env.STUDIO_TEST_TOKEN = 'env-token-abcdef';
-		resolveRef(db, '${STUDIO_TEST_TOKEN}', KEY);
-		expect(mask('Authorization: Bearer env-token-abcdef')).toBe('Authorization: Bearer [env:STUDIO_TEST_TOKEN]');
+		process.env.TEST_API_TOKEN = 'env-token-abcdef';
+		resolveRef(db, '${TEST_API_TOKEN}', KEY);
+		expect(mask('Authorization: Bearer env-token-abcdef')).toBe('Authorization: Bearer [env:TEST_API_TOKEN]');
 		const pem = '-----BEGIN TEST-----\nnot-a-real-key\n-----END TEST-----';
 		setSecret(db, 'pem', pem, false, KEY);
 		expect(mask(JSON.stringify({ pem }))).toBe('{"pem":"[secret:pem]"}');
+	});
+
+	it('längste Werte zuerst: enthält ein Secret ein anderes, bleibt vom längeren nichts stehen', () => {
+		setSecret(db, 'inner', 'test-inner-value-1', false, KEY); // zuerst gemerkt
+		setSecret(db, 'outer', 'outer-start-test-inner-value-1-outer-end', false, KEY);
+		expect(mask('x outer-start-test-inner-value-1-outer-end y')).toBe('x [secret:outer] y');
+	});
+
+	it('Nicht-Plain-Objekte (URL, Date, Klasseninstanz, Map) laufen über ihre JSON- bzw. inspect-Form; Zyklen werfen nicht', () => {
+		class Client {
+			constructor(readonly apiKey: string) {}
+		}
+		const holder = { url: new URL(`https://api.example.test/v1?key=${MASKED}`), client: new Client(MASKED), at: new Date(0) };
+		const masked = mask(holder);
+		expect(JSON.stringify(masked)).not.toContain(MASKED);
+		expect(masked.url).toBe('https://api.example.test/v1?key=[secret:anthropic]');
+		expect(masked.client).toEqual({ apiKey: '[secret:anthropic]' });
+		expect(masked.at).toBe('1970-01-01T00:00:00.000Z');
+		expect(holder.url).toBeInstanceOf(URL); // Original unverändert
+
+		const big = { n: 1n, s: MASKED }; // ohne JSON-Form → inspect-Text
+		expect(mask([new Map([['k', MASKED]]), { inner: Object.assign(Object.create({}), big) }])).toEqual([{}, { inner: expect.stringContaining('[secret:anthropic]') }]);
+
+		const cyclic: Record<string, unknown> = { s: MASKED };
+		cyclic.self = cyclic;
+		const shared = { s: MASKED };
+		expect(mask({ cyclic, a: shared, b: shared })).toEqual({
+			cyclic: { s: '[secret:anthropic]', self: '[Circular]' },
+			a: { s: '[secret:anthropic]' },
+			b: { s: '[secret:anthropic]' } // mehrfach verwendet ist kein Zyklus
+		});
+		const err = new Error(`kaputt ${MASKED}`);
+		(err as { cause?: unknown }).cause = err;
+		expect(() => mask(err)).not.toThrow();
+		expect(mask(err).message).toBe('kaputt [secret:anthropic]');
 	});
 
 	it('greift in Fehlermeldungen: Meldung, Stack, cause und code/hint — der Fehlertyp bleibt', () => {

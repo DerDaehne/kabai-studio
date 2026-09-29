@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { format } from 'node:util';
+import { format, inspect } from 'node:util';
 import { dataDir } from './db';
 import { DomainError } from './domain/core';
 
@@ -30,7 +30,7 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 		// auch leer ist ein Fehler: sonst entstünde still eine neue secret.key, und die gespeicherten Secrets wären unlesbar
 		if (!KEY_FORMAT.test(env.trim()))
 			throw invalidKey(KEY_ENV, `Erzeuge einen mit „openssl rand -base64 32“ — oder entferne ${KEY_ENV}, dann nutzt Studio secret.key im Datenverzeichnis.`);
-		return Buffer.from(env.trim(), 'base64');
+		return keyFrom(env.trim());
 	}
 	const file = join(dir, 'secret.key');
 	mkdirSync(dir, { recursive: true });
@@ -47,8 +47,11 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 		);
 	if (process.platform !== 'win32' && statSync(file).mode & 0o077)
 		console.warn(`Warnung: ${file} ist für andere Nutzer lesbar — „chmod 600 ${file}“ schränkt das ein.`);
-	return Buffer.from(text, 'base64');
+	return keyFrom(text);
 }
+
+/** Base64-Text → Schlüssel. Der Text selbst geht in die Maskierung: auch der Schlüssel darf in keinem Log auftauchen. */
+const keyFrom = (text: string) => Buffer.from(remember(text, '[secret-key]'), 'base64');
 
 let key: Buffer | undefined;
 /** Der Schlüssel des Prozesses — beim ersten Aufruf geladen bzw. erzeugt (nicht beim Import: der Build legt nichts an). */
@@ -96,25 +99,43 @@ function maskText(text: string): string {
 }
 
 /**
- * Ersetzt bekannte Secret-Werte durch `[secret:<name>]` bzw. `[env:<NAME>]` — in Strings, Arrays, einfachen Objekten
- * (Werte und Schlüssel) und Errors (Meldung, Stack, cause, eigene Felder wie code/hint; der Typ bleibt). Das Original bleibt
- * unverändert. Pflicht für alles, was ein Agent oder der Browser später lesen kann: run_events-Payloads, Fehlermeldungen, Tool-Ergebnisse.
+ * Ersetzt bekannte Secret-Werte durch `[secret:<name>]`, `[env:<NAME>]` bzw. `[secret-key]` — in Strings, Arrays, einfachen
+ * Objekten (Werte und Schlüssel) und Errors (Meldung, Stack, cause, eigene Felder wie code/hint; der Typ bleibt). Andere Objekte
+ * (URL, Date, Map, Klasseninstanzen) kommen in ihrer JSON-Form zurück — so, wie sie gespeichert würden —, ohne JSON-Form als
+ * maskierter inspect-Text; Zyklen werden zu `[Circular]`. Das Original bleibt unverändert.
+ * Pflicht für alles, was ein Agent oder der Browser später lesen kann: run_events-Payloads, Fehlermeldungen, Tool-Ergebnisse.
+ * Gleichwertig für schon serialisierte Payloads: `mask(JSON.stringify(payload))` (die JSON-escapte Form ist mit gemerkt).
  */
-export function mask<T>(value: T): T {
-	if (typeof value === 'string') return maskText(value) as T;
-	if (Array.isArray(value)) return value.map(mask) as T;
-	if (value instanceof Error) {
-		const copy = Object.assign(Object.create(Object.getPrototypeOf(value)), mask({ ...value }), {
-			message: maskText(value.message),
-			stack: value.stack && maskText(value.stack)
-		});
-		if ('cause' in value) copy.cause = mask(value.cause);
-		return copy;
+export const mask = <T>(value: T): T => walk(value, new Set()) as T;
+
+function walk(value: unknown, parents: Set<object>): unknown {
+	if (typeof value === 'string') return maskText(value);
+	if (!value || typeof value !== 'object') return value;
+	if (parents.has(value)) return '[Circular]';
+	parents.add(value);
+	try {
+		if (Array.isArray(value)) return value.map((v) => walk(v, parents));
+		if (value instanceof Error) {
+			const copy = Object.assign(Object.create(Object.getPrototypeOf(value)), walk({ ...value }, parents), {
+				message: maskText(value.message),
+				stack: value.stack && maskText(value.stack)
+			});
+			if ('cause' in value) copy.cause = walk(value.cause, parents);
+			return copy;
+		}
+		const proto = Object.getPrototypeOf(value);
+		if (proto === Object.prototype || proto === null)
+			return Object.fromEntries(Object.entries(value).map(([k, v]) => [maskText(k), walk(v, parents)]));
+		let json: string | undefined;
+		try {
+			json = JSON.stringify(value);
+		} catch {
+			// Zyklus, BigInt, werfender Getter
+		}
+		return json === undefined ? maskText(inspect(value)) : walk(JSON.parse(json), parents);
+	} finally {
+		parents.delete(value); // nur Vorfahren zählen: dasselbe Objekt zweimal nebeneinander ist kein Zyklus
 	}
-	const proto = value && typeof value === 'object' ? Object.getPrototypeOf(value) : undefined;
-	if (proto === Object.prototype || proto === null)
-		return Object.fromEntries(Object.entries(value as object).map(([k, v]) => [maskText(k), mask(v)])) as T;
-	return value;
 }
 
 const LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
@@ -176,18 +197,28 @@ export const deleteSecret = (db: DatabaseSync, name: string) => db.prepare('DELE
 function getSecret(db: DatabaseSync, name: string, key: Buffer): string {
 	const row = db.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets WHERE name = ?').get(name) as Row | undefined;
 	if (!row)
-		throw new DomainError('secret_not_found', `Secret „${name}“ gibt es nicht.`, 'Lege es unter Einstellungen → Secrets an oder korrigiere den Verweis secret:<name>.');
+		throw NAME.test(name)
+			? new DomainError('secret_not_found', `Secret „${name}“ gibt es nicht.`, 'Lege es unter Einstellungen → Secrets an oder korrigiere den Verweis secret:<name>.')
+			: // kein gültiger Name, vielleicht ein versehentlich eingefügter Key: nicht wiederholen
+				new DomainError('secret_ref_invalid', 'Der Verweis secret:<name> enthält keinen gültigen Secret-Namen.', `Namen bestehen aus 1–64 Zeichen a–z, 0–9, „-“ und „_“ — z. B. secret:anthropic-api-key. Steht dort der Key selbst, speichere ihn unter Einstellungen → Secrets und verweise auf seinen Namen.`);
 	return remember(decrypt(key, row), `[secret:${name}]`);
 }
 
 /**
  * Die eine Stelle, die Verweise in Konfigurationswerten auflöst: `secret:<name>` (ganzer Wert) → entschlüsseltes Secret;
  * sonst wird jedes `${ENV_NAME}` durch die Umgebungsvariable ersetzt, übriger Text bleibt (`Bearer ${TOKEN}`).
- * Aufgelöste Werte gehen in die Maskierung.
+ * Aufgelöste Werte gehen in die Maskierung. `${STUDIO_*}` wird verweigert (Schlüssel und andere Interna).
  */
 export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): string {
 	if (ref.startsWith('secret:')) return getSecret(db, ref.slice('secret:'.length), key);
 	return ref.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => {
+		// Studio-Interna (allen voran STUDIO_SECRET_KEY) gehen nie an Provider oder MCP-Server; i: Windows-Env ignoriert Groß/klein
+		if (/^STUDIO_/i.test(name))
+			throw new DomainError(
+				'env_forbidden',
+				`${name} ist eine interne Studio-Variable und lässt sich nicht als Verweis auflösen.`,
+				'Speichere den benötigten Wert unter Einstellungen → Secrets und verweise mit secret:<name> darauf.'
+			);
 		const value = process.env[name];
 		if (!value)
 			throw new DomainError(

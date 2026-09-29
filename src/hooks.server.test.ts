@@ -1,13 +1,13 @@
 // Durchlauf Guard → Setup → Login → Logout gegen echte DB-Datei, Handler direkt aufgerufen.
 import { isActionFailure, isRedirect, type Cookies } from '@sveltejs/kit';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
 import { db } from '$lib/server/db';
-import { handle } from './hooks.server';
+import { handle, init } from './hooks.server';
 import { actions as loginActions } from './routes/login/+page.server';
 import { POST as logout } from './routes/logout/+server';
 import { actions as setupActions, load as setupLoad } from './routes/setup/+page.server';
@@ -221,6 +221,21 @@ describe('Default-Bind', () => {
 		} finally {
 			if (before === undefined) delete process.env.HOST;
 			else process.env.HOST = before;
+		}
+	});
+});
+
+describe('init', () => {
+	it('legt die Secret-Maskierung um console — der beim Start erzeugte Schlüssel erscheint in keiner Log-Zeile', async () => {
+		const out: string[] = [];
+		const log = vi.spyOn(console, 'log').mockImplementation((...args) => void out.push(args.join(' ')));
+		try {
+			await init();
+			const key = readFileSync(join(tmp, 'secret.key'), 'utf8').trim();
+			console.log('key=%s', key);
+			expect(out.at(-1)).toBe('%s key=[secret-key]');
+		} finally {
+			log.mockRestore();
 		}
 	});
 });
