@@ -7,8 +7,10 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
 import { db } from '$lib/server/db';
+import { listenerCount, publish } from '$lib/server/events';
 import { handle, init } from './hooks.server';
 import { actions as loginActions } from './routes/login/+page.server';
+import { GET as events } from './routes/api/events/+server';
 import { POST as logout } from './routes/logout/+server';
 import { actions as setupActions, load as setupLoad } from './routes/setup/+page.server';
 
@@ -179,6 +181,20 @@ describe('Auth-Durchlauf', () => {
 		const stale = jar({ [SESSION_COOKIE]: sessionToken });
 		expect(await guard('/', stale)).toEqual({ redirect: '/login', status: 303 });
 		expect(stale.options.get(SESSION_COOKIE)?.deleted).toBe(true);
+	});
+
+	it('Logout beendet einen offenen Event-Stream: kein Event mehr, Stream zu, Listener abgemeldet', async () => {
+		const sessionToken = createSession(db(), 1);
+		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
+		const before = listenerCount();
+		const reader = ((await events(event('/api/events?project=1', cookies))) as Response).body!.getReader();
+		await reader.read(); // ': connected'
+		expect(listenerCount()).toBe(before + 1);
+
+		await run(() => logout(event('/logout', cookies, { form: {} })));
+		publish({ type: 'ticket.updated', projectId: 1, ticketId: 1, actor: { kind: 'user' } });
+		expect(await reader.read()).toEqual({ done: true, value: undefined });
+		expect(listenerCount()).toBe(before);
 	});
 
 	it('npm run reset-password setzt das Passwort, während eine andere Verbindung offen ist', async () => {
