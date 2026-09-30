@@ -517,4 +517,24 @@ describe('addTasks / completeTasks', () => {
 		board.completeTasks(db, dev, own, [a]);
 		expect(openTitles(db, own)).toEqual(['B']);
 	});
+
+	it('completes a task listed several times only once', () => {
+		const { db, ticket } = setup();
+		const id = ticket();
+		const [a] = board.addTasks(db, dev, id, ['A']).ids;
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		board.completeTasks(db, dev, id, [a, a, a]);
+		off();
+		expect(events.map((e) => e.type)).toEqual(['task.completed']);
+	});
+});
+
+describe('ticket title', () => {
+	it('rejects a blank title on create and update', () => {
+		const { db, projectId, ticket } = setup();
+		const id = ticket();
+		expect(caught(() => board.updateTicket(db, dev, id, { title: '   ' })).code).toBe('empty_title');
+		expect(caught(() => board.createTicket(db, user, projectId, { title: ' ' })).code).toBe('empty_title');
+	});
 });

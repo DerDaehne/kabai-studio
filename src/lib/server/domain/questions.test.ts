@@ -73,7 +73,7 @@ describe('answers', () => {
 	it('the human can retract or change an answer until the agent collects it; afterwards it is final', () => {
 		const { db, ticketId, agent, ask } = setup();
 		const id = ask([{ label: 'A' }, { label: 'B' }]);
-		expect(questions.collectAnswer(db, agent, ticketId)).toBeUndefined();
+		expect(questions.collectAnswer(db, agent, ticketId)?.answer).toBeNull();
 		questions.answerQuestion(db, user, id, { option: 1 });
 		questions.retractAnswer(db, user, id);
 		expect(caught(() => questions.retractAnswer(db, user, id)).code).toBe('not_answered');
@@ -86,6 +86,16 @@ describe('answers', () => {
 		expect(late.message).toContain('schon übernommen');
 		expect(caught(() => questions.answerQuestion(db, user, id, { option: 1 })).code).toBe('answer_collected');
 		expect(questions.collectAnswer(db, agent, ticketId)?.answer).toEqual({ text: 'Weder noch, C.' });
+	});
+
+	it('reports only the newest question, so an old answer never stands for a newer open question', () => {
+		const { db, ticketId, agent, ask } = setup();
+		const first = ask([{ label: 'A' }, { label: 'B' }]);
+		questions.answerQuestion(db, user, first, { option: 1 });
+		expect(questions.collectAnswer(db, agent, ticketId)).toMatchObject({ id: first, answer: { option: 1 } });
+
+		const second = questions.requestHuman(db, agent, ticketId, { question: 'C oder D?' }).id;
+		expect(questions.collectAnswer(db, agent, ticketId)).toEqual({ id: second, question: 'C oder D?', options: [], answer: null });
 	});
 
 	it('announces asking, answering, retracting and collecting on the bus', () => {

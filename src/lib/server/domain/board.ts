@@ -149,6 +149,8 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		.map(([k, v]) => {
 			if (!(FIELDS as readonly string[]).includes(k))
 				throw new DomainError('unknown_field', `Das Ticketfeld „${k}“ ist nicht direkt setzbar.`, `Setzbar: ${FIELDS.join(', ')}. Spaltenwechsel über moveTicket.`);
+			if (k === 'title' && !String(v).trim())
+				throw new DomainError('empty_title', 'Ein Ticket braucht einen Titel.', 'Gib einen Titel an, der sagt, worum es im Ticket geht.');
 			return [k, v];
 		});
 }
@@ -365,7 +367,7 @@ export function completeTasks(db: DatabaseSync, actor: Actor, ticketId: number, 
 				own.length ? `Die Tasks von ${t.ref} haben die IDs ${own.join(', ')}.` : `${t.ref} hat noch keine Tasks.`
 			);
 		const complete = db.prepare('UPDATE tasks SET done_at = coalesce(done_at, CURRENT_TIMESTAMP) WHERE id = ?');
-		for (const taskId of taskIds) {
+		for (const taskId of new Set(taskIds)) {
 			complete.run(taskId);
 			emit({ type: 'task.completed', projectId: t.project_id, ticketId: t.id, actor, taskId });
 		}

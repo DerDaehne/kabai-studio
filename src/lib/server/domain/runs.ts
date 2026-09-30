@@ -3,7 +3,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
 import { mask } from '../secrets';
 import { ticket } from './board';
-import { DomainError, tx, type Actor } from './core';
+import { actorLabel, DomainError, tx, type Actor } from './core';
 
 export type RunState = 'queued' | 'running' | 'waiting_approval' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
 export type EndState = 'paused' | 'succeeded' | 'failed' | 'cancelled';
@@ -128,7 +128,14 @@ export function startRun(db: DatabaseSync, actor: Actor, runId: number): { token
 function start(db: DatabaseSync, emit: Emit, actor: Actor, runId: number) {
 	const token = randomBytes(32).toString('base64url');
 	transition(db, emit, actor, runId, 'running', 'startRun', ', started_at = CURRENT_TIMESTAMP, token_hash = ?', hash(token));
+	assignTicketToRun(db, emit, actor, run(db, runId));
 	return { token };
+}
+
+/** The board shows who works a ticket from the moment its run starts, also for runs that only read or fail early. */
+function assignTicketToRun(db: DatabaseSync, emit: Emit, actor: Actor, r: Run) {
+	db.prepare('UPDATE tickets SET assignee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(actorLabel({ kind: 'agent', runId: r.id }), r.ticket_id);
+	emit({ type: 'ticket.updated', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id, fields: ['assignee'] });
 }
 
 // An active run without a profile counts towards the global limit only.

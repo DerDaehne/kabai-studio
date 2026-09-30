@@ -238,6 +238,7 @@ describe('Event-Bus', () => {
 		expect(events.map((e) => (e.type === 'run.state_changed' ? `${e.from}→${e.to}` : e.type))).toEqual([
 			'run.created',
 			'queued→running',
+			'ticket.updated',
 			'run.event',
 			'run.event',
 			'run.event',
@@ -360,5 +361,20 @@ describe('Kommentare', () => {
 			{ author: 'agent (Run 1)', run_id: id },
 			{ author: 'user', run_id: null }
 		]);
+	});
+});
+
+describe('assignee', () => {
+	it('makes a starting run the assignee of its ticket, whether started directly or claimed by the runner', () => {
+		const { db, ticketId, queued, profileId } = setup();
+		const assignee = () => db.prepare('SELECT assignee FROM tickets WHERE id = ?').get(ticketId)?.assignee;
+		const first = queued();
+		expect(assignee()).toBeNull();
+		runs.startRun(db, system, first);
+		expect(assignee()).toBe(`agent (Run ${first})`);
+
+		const second = runs.createRun(db, system, { ticketId, profileId }).id;
+		expect(runs.claimRun(db, system, { global: 4, pools: { local: 2 } })?.id).toBe(second);
+		expect(assignee()).toBe(`agent (Run ${second})`);
 	});
 });

@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { McpServer } from '@modelcontextprotocol/server';
+import { randomBytes } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
 import { mcpEndpoint } from './mcp';
+import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
@@ -88,7 +91,7 @@ describe('run token', () => {
 });
 
 describe('scope of a run', () => {
-	it('reads every ticket of its project, but none of another project', async () => {
+	it('reads every ticket of its project by ref, but none of another project and no bare number', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket('Eigenes');
 		ticket('Nachbar');
@@ -96,11 +99,15 @@ describe('scope of a run', () => {
 		for (let i = 0; i < 3; i++) board.createTicket(db, user, other, { title: 'Fremd' });
 		const { token } = startRun(own);
 
-		const neighbour = await call(token, 'get_ticket', { ticket: 2 });
+		const neighbour = await call(token, 'get_ticket', { ticket: 'STU-2' });
 		expect(neighbour.body).toMatchObject({ ref: 'STU-2', title: 'Nachbar' });
 		expect(neighbour.body).not.toHaveProperty('allowed_moves');
-		const foreign = await call(token, 'get_ticket', { ticket: 3 });
-		expect(foreign).toMatchObject({ isError: true, body: { error: 'not_found' } });
+		expect((await call(token, 'get_ticket', { ticket: 'stu-2' })).body.ref).toBe('STU-2');
+		for (const ref of ['OTH-1', 'OTH-3', 'STU-9', '3']) {
+			const refused = await call(token, 'get_ticket', { ticket: ref });
+			expect(refused).toMatchObject({ isError: true, body: { error: 'not_found', hint: expect.stringContaining('STU-12') } });
+		}
+		expect((await call(token, 'get_ticket', { ticket: 3 })).isError).toBe(true);
 	});
 
 	it('refuses writes to other tickets: foreign task ids and a ticket parameter are rejected', async () => {
@@ -113,7 +120,7 @@ describe('scope of a run', () => {
 		expect(complete).toMatchObject({ isError: true, body: { error: 'not_found', message: expect.stringContaining(String(foreignTask)) } });
 		expect(db.prepare('SELECT done_at FROM tasks WHERE id = ?').get(foreignTask)?.done_at).toBeNull();
 
-		const update = await call(token, 'update_ticket', { ticket: 2, title: 'Gekapert' });
+		const update = await call(token, 'update_ticket', { ticket: 'STU-2', title: 'Gekapert' });
 		expect(update.isError).toBe(true);
 		expect(db.prepare('SELECT title FROM tickets ORDER BY id').all().map((r) => r.title)).toEqual(['Eigenes', 'Nachbar']);
 	});
@@ -210,11 +217,12 @@ describe('batch tools', () => {
 });
 
 describe('identity from the run', () => {
-	it('takes comment author, actor and assignee from the run token', async () => {
+	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();
 		const own = ticket();
 		const { runId, token } = startRun(own);
 		const label = `agent (Run ${runId})`;
+		expect(db.prepare('SELECT assignee FROM tickets WHERE id = ?').get(own)?.assignee).toBe(label);
 
 		const { body } = await call(token, 'add_comment', { text: 'Angefangen' });
 		expect(db.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?').get(body.comment_id)).toEqual({ author_kind: 'agent', author: label, run_id: runId });
@@ -271,7 +279,7 @@ describe('request_human', () => {
 
 		const resumed = startRun(own, first.runId);
 		const { body } = await call(resumed.token, 'get_ticket');
-		expect(body.human_answer).toEqual({ question: 'A oder B?', options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }], answer: { option: 2 } });
+		expect(body.human_answer).toEqual({ question_id: questionId, question: 'A oder B?', options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }], answer: { option: 2 } });
 		expect(() => questions.retractAnswer(db, user, questionId)).toThrow(/schon übernommen/);
 	});
 });
@@ -327,7 +335,7 @@ describe('errors reach the agent with a way out in tool vocabulary', () => {
 	});
 });
 
-// Real tokenizers (a local model's, o200k, cl100k) count about 4.5 characters per token on these definitions; 4 leaves a margin.
+// Real tokenizers (a local model's, o200k, cl100k) count 4.3 to 4.6 characters per token on these definitions; 4 leaves a margin.
 const estimateTokens = (json: string) => Math.ceil(json.length / 4);
 
 describe('token budget', () => {
@@ -337,5 +345,156 @@ describe('token budget', () => {
 		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
 		const definitions = JSON.stringify(tools.map(({ name, description, inputSchema }: Record<string, unknown>) => ({ name, description, inputSchema })));
 		expect(estimateTokens(definitions)).toBeLessThanOrEqual(4000);
+	});
+});
+
+describe('latest question', () => {
+	it('shows a newer open question as pending instead of the answer to an earlier one', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const first = startRun(own);
+		const q1 = (await call(first.token, 'request_human', { question: 'Q1: A oder B?', options: [{ label: 'A' }, { label: 'B' }] })).body.question_id;
+		runs.finishRun(db, system, first.runId, { state: 'paused' });
+		questions.answerQuestion(db, user, q1, { option: 1 });
+
+		const second = startRun(own, first.runId);
+		expect((await call(second.token, 'get_ticket')).body.human_answer).toMatchObject({ question_id: q1, answer: { option: 1 } });
+		const q2 = (await call(second.token, 'request_human', { question: 'Q2: C oder D?' })).body.question_id;
+		const { body } = await call(second.token, 'get_ticket');
+		expect(body).not.toHaveProperty('human_answer');
+		expect(body.pending_question).toEqual({ question_id: q2, question: 'Q2: C oder D?' });
+	});
+});
+
+describe('secrets', () => {
+	it('masks secret values before an agent write is stored and in every tool result', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const secret = 'sk-test-mcp-secret-4711';
+		setSecret(db, 'probe', secret, false, randomBytes(32));
+		const own = ticket();
+		const { token } = startRun(own);
+
+		await call(token, 'add_comment', { text: `key is ${secret}` });
+		await call(token, 'update_ticket', { description: `key ${secret}` });
+		await call(token, 'add_tasks', { titles: [`task ${secret}`] });
+		await call(token, 'request_human', { question: `use ${secret}?`, options: [{ label: secret }] });
+		const stored = JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
+		expect(stored).not.toContain(secret);
+		expect(stored).toContain('[secret:probe]');
+
+		board.addComment(db, user, own, `pasted by a human: ${secret}`);
+		const view = JSON.stringify((await call(token, 'get_ticket')).body);
+		expect(view).not.toContain(secret);
+		expect(view).toContain('pasted by a human: [secret:probe]');
+	});
+});
+
+describe('size limits', () => {
+	const oversized: [string, string, object][] = [
+		['comment text', 'add_comment', { text: 'x'.repeat(20_001) }],
+		['ticket title', 'update_ticket', { title: 'x'.repeat(201) }],
+		['ticket description', 'update_ticket', { description: 'x'.repeat(20_001) }],
+		['task title', 'add_tasks', { titles: ['x'.repeat(201)] }],
+		['number of new tasks', 'add_tasks', { titles: Array.from({ length: 51 }, (_, i) => `T${i}`) }],
+		['number of task ids', 'complete_tasks', { task_ids: Array.from({ length: 51 }, (_, i) => i + 1) }],
+		['question', 'request_human', { question: 'x'.repeat(2001) }],
+		['option label', 'request_human', { question: 'q', options: [{ label: 'x'.repeat(101) }] }],
+		['option effect', 'request_human', { question: 'q', options: [{ label: 'a', effect: 'x'.repeat(201) }] }],
+		['ticket ref', 'get_ticket', { ticket: 'STU-'.padEnd(21, '1') }]
+	];
+
+	it.each(oversized)('rejects an oversized %s in the schema, before anything is written', async (_, name, args) => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const state = () => JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
+		const before = state();
+		const refused = await call(token, name, args);
+		expect(refused.isError).toBe(true);
+		expect(refused.body).toMatch(/^Input validation error/);
+		expect(state()).toBe(before);
+	});
+
+	it('accepts a comment of exactly the maximum length', async () => {
+		const { call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		expect((await call(token, 'add_comment', { text: 'x'.repeat(20_000) })).isError).toBe(false);
+	});
+
+	it('cuts long comments in get_ticket and says how to read one in full', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const long = 'a'.repeat(5000);
+		const commentId = board.addComment(db, user, own, long).id;
+		const { token } = startRun(own);
+
+		const [shown] = (await call(token, 'get_ticket')).body.comments;
+		expect(shown.text).toBe(`${'a'.repeat(1500)}…`);
+		expect(shown.more).toBe(`get_ticket {"comment": ${commentId}}`);
+		expect((await call(token, 'get_ticket', { comment: commentId })).body).toMatchObject({ id: commentId, text: long });
+	});
+});
+
+describe('other projects', () => {
+	it('shows a related ticket of another project only by ref, and none of its comments', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		const foreign = board.createTicket(db, user, other, { title: 'Geheimer Plan' }).id;
+		const foreignComment = board.addComment(db, user, foreign, 'Geheime Notiz').id;
+		const own = ticket();
+		board.linkRelation(db, user, foreign, own, 'blocks');
+		const { token } = startRun(own);
+
+		const { body } = await call(token, 'get_ticket');
+		expect(body.waits_for).toEqual([{ ref: 'OTH-1', other_project: true, blocking: true }]);
+		expect(JSON.stringify(body)).not.toContain('Geheimer Plan');
+		expect((await call(token, 'get_ticket', { comment: foreignComment })).body.error).toBe('not_found');
+	});
+});
+
+describe('authorization header', () => {
+	it('accepts the bearer scheme in any case and with several spaces, and no other scheme', async () => {
+		const { serve, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const statusWith = async (authorization: string) =>
+			(
+				await serve(
+					new Request('http://127.0.0.1:3000/mcp', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization },
+						body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+					})
+				)
+			).status;
+		expect(await statusWith(`bearer ${token}`)).toBe(200);
+		expect(await statusWith(`Bearer   ${token}`)).toBe(200);
+		expect(await statusWith(`Basic ${token}`)).toBe(401);
+		expect(await statusWith(token)).toBe(401);
+		expect(await statusWith(`Bearer ${token}, Bearer ${token}`)).toBe(401);
+	});
+});
+
+describe('update_ticket', () => {
+	it('rejects a blank title', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket('Titel');
+		const { token } = startRun(own);
+		expect((await call(token, 'update_ticket', { title: '   ' })).body.error).toBe('empty_title');
+		expect(db.prepare('SELECT title FROM tickets WHERE id = ?').get(own)?.title).toBe('Titel');
+	});
+});
+
+describe('tool schemas', () => {
+	it('hands every request the same schema objects, so the validator cache does not grow with requests', async () => {
+		const { serve, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const registerTool = vi.spyOn(McpServer.prototype, 'registerTool');
+		try {
+			for (let i = 0; i < 3; i++) await rpc(serve, token, 'tools/list');
+			const schemas = registerTool.mock.calls.map(([, config]) => (config as { inputSchema: unknown }).inputSchema);
+			expect(schemas).toHaveLength(3 * 7);
+			expect(new Set(schemas).size).toBe(7);
+		} finally {
+			registerTool.mockRestore();
+		}
 	});
 });

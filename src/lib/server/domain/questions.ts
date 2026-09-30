@@ -5,7 +5,7 @@ import { DomainError, tx, type Actor } from './core';
 export type QuestionOption = { label: string; effect?: string };
 /** `option` counts from 1, as the options are shown to the human. */
 export type Answer = { option: number } | { text: string };
-export type AnsweredQuestion = { id: number; question: string; options: QuestionOption[]; answer: Answer };
+export type LatestQuestion = { id: number; question: string; options: QuestionOption[]; answer: Answer | null };
 
 const MAX_OPTIONS = 3;
 
@@ -104,18 +104,21 @@ export function retractAnswer(db: DatabaseSync, actor: Actor, questionId: number
 	});
 }
 
-/** The newest answered question of a ticket. Collecting makes the answer final: the human can no longer retract it. */
-export function collectAnswer(db: DatabaseSync, actor: Actor, ticketId: number): AnsweredQuestion | undefined {
+/**
+ * The newest question of a ticket, so an answer to an older question never passes for the answer to an open one.
+ * If it is answered, collecting makes the answer final: the human can no longer retract it.
+ */
+export function collectAnswer(db: DatabaseSync, actor: Actor, ticketId: number): LatestQuestion | undefined {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
 		const q = db
-			.prepare('SELECT id, ticket_id, question, options, answer, collected_at FROM questions WHERE ticket_id = ? AND answer IS NOT NULL ORDER BY id DESC LIMIT 1')
-			.get(t.id) as (QuestionRow & { answer: string }) | undefined;
+			.prepare('SELECT id, ticket_id, question, options, answer, collected_at FROM questions WHERE ticket_id = ? ORDER BY id DESC LIMIT 1')
+			.get(t.id) as QuestionRow | undefined;
 		if (!q) return undefined;
-		if (!q.collected_at) {
+		if (q.answer !== null && !q.collected_at) {
 			db.prepare('UPDATE questions SET collected_at = CURRENT_TIMESTAMP WHERE id = ?').run(q.id);
 			emit({ type: 'question.collected', projectId: t.project_id, ticketId: t.id, actor, questionId: q.id });
 		}
-		return { id: q.id, question: q.question, options: JSON.parse(q.options), answer: JSON.parse(q.answer) };
+		return { id: q.id, question: q.question, options: JSON.parse(q.options), answer: q.answer === null ? null : JSON.parse(q.answer) };
 	});
 }
