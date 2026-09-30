@@ -15,6 +15,18 @@ export function openDb(file: string): DatabaseSync {
 export const dataDir = () => process.env.STUDIO_DATA_DIR || 'data';
 export const backupDir = () => join(dataDir(), 'backups');
 
+// Same {code, message, hint} shape as the domain layer's DomainError, reimplemented locally rather than imported:
+// db.ts also loads directly under plain Node (restore, reset-password), and DomainError's constructor uses a TS
+// parameter-property shorthand that Node's type-stripping mode can't parse.
+export function assertKnownMigrations(applied: Iterable<string>, known: ReadonlySet<string>): void {
+	const unknown = [...applied].filter((name) => !known.has(name));
+	if (unknown.length)
+		throw Object.assign(new Error(`Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: ${unknown.join(', ')}.`), {
+			code: 'db_newer_than_code',
+			hint: 'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
+		});
+}
+
 // Sperren dieses Prozesses je Lock-Datei — auf globalThis, damit ein neu geladenes db.ts (Vite-HMR) die eigene Sperre
 // wiedererkennt, statt an ihr zu scheitern.
 const locks: Map<string, DatabaseSync> = ((globalThis as { studioLocks?: Map<string, DatabaseSync> }).studioLocks ??= new Map());
@@ -58,6 +70,12 @@ export function migrate(
 ): string[] {
 	db.exec(
 		'CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP) STRICT'
+	);
+	const known = new Set(Object.keys(migrations).map((path) => path.split('/').pop()!));
+	// Before any transaction: a DB with migrations this code doesn't know must not be written to.
+	assertKnownMigrations(
+		(db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name),
+		known
 	);
 	const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?');
 	const pending = Object.entries(migrations)

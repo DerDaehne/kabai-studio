@@ -344,7 +344,18 @@ describe('restore (CLI)', () => {
 			},
 			/keine intakte Studio-Sicherung \(Integritätsprüfung meldet Fehler\)/
 		],
-		['ist keine Studio-DB', () => (new DatabaseSync(join(tmp, 'fremd.db')).exec('CREATE TABLE t (x)'), join(tmp, 'fremd.db')), /keine intakte Studio-Sicherung \(no such table/]
+		['ist keine Studio-DB', () => (new DatabaseSync(join(tmp, 'fremd.db')).exec('CREATE TABLE t (x)'), join(tmp, 'fremd.db')), /keine intakte Studio-Sicherung \(no such table/],
+		[
+			'contains an unknown migration (DB newer than code)',
+			() => {
+				const db = seed(join(tmp, 'newer.db'));
+				db.exec("INSERT INTO schema_migrations (name) VALUES ('999_future.sql')"); // simulates a future migration this code doesn't know
+				const saved = backup(db, join(tmp, 'newer-backups'));
+				db.close();
+				return saved;
+			},
+			/^restore: \[db_newer_than_code\] Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 999_future\.sql\. Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen\.\n$/
+		]
 	])('Datei %s → Exit 1, eine Zeile mit Ausweg, DB unverändert', (_, source, message) => {
 		const r = restore(source());
 		expect(r.status).toBe(1);
