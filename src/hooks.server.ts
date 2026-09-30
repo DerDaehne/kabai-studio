@@ -41,7 +41,7 @@ export const init: ServerInit = () => {
 // Öffentlich nur diese beiden. Statische Dateien liefert adapter-node vor den Hooks aus, /_app/* beantwortet SvelteKit
 // selbst vor handle — bis auf Remote Functions (/_app/remote), die deshalb bewusst NICHT ausgenommen sind.
 // SvelteKit entfernt /__data.json aus event.url.pathname, bevor handle läuft (respond.js) — /login/__data.json kommt
-// hier schon als /login an, siehe [[arch-studio-auth]].
+// hier schon als /login an (Details dazu in der internen Wissensdatenbank, Auth-Architektur).
 const PUBLIC = new Set(['/login', '/setup']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
