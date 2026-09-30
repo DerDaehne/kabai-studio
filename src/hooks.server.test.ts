@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { format } from 'node:util';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
 import { db } from '$lib/server/db';
@@ -313,6 +314,25 @@ describe('init', () => {
 				'%s',
 				'kabai studio: [db_newer_than_code] Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 007_future.sql. Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
 			);
+			expect(exit).toHaveBeenCalledWith(1);
+		} finally {
+			dbSpy.mockRestore();
+			exit.mockRestore();
+			error.mockRestore();
+		}
+	});
+
+	it('a startup failure without a stable code keeps its cause visible', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
+			throw new Error('Migration 006_runs.sql fehlgeschlagen', { cause: new Error('table runs already exists') });
+		});
+		try {
+			await init();
+			const printed = error.mock.calls.map((args) => format(...args)).join('\n');
+			expect(printed).toContain('Migration 006_runs.sql fehlgeschlagen');
+			expect(printed).toContain('table runs already exists');
 			expect(exit).toHaveBeenCalledWith(1);
 		} finally {
 			dbSpy.mockRestore();

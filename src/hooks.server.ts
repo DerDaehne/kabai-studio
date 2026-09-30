@@ -11,7 +11,7 @@ import {
 } from '$lib/server/auth';
 import { startBackups } from '$lib/server/backup';
 import { backupDir, db } from '$lib/server/db';
-import { formatError } from '$lib/server/domain/error';
+import { DomainError, formatError } from '$lib/server/domain/error';
 import { startRunner } from '$lib/server/runner';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
@@ -20,7 +20,7 @@ import { initSecrets, maskConsole } from '$lib/server/secrets';
 // Greift, weil build/index.js HOST erst liest, nachdem handler.js per `await server.init()` diese Datei geladen hat.
 process.env.HOST ||= '127.0.0.1';
 
-export const init: ServerInit = () => {
+export const init: ServerInit = async () => {
 	maskConsole(); // ab hier läuft jede Log-Zeile durch die Secret-Maskierung
 	// adapter-node nimmt ohne ORIGIN https an; Studio spricht selbst HTTP → SvelteKits CSRF-Check weist sonst jedes Formular ab.
 	// ORIGIN liest adapter-node vor den Hooks, ein Default hier käme zu spät.
@@ -42,8 +42,14 @@ export const init: ServerInit = () => {
 			console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
 		}
 	} catch (err) {
-		// A raw exception here would otherwise surface as a multi-line stack trace from adapter-node's bootstrap.
-		console.error(`kabai studio: ${formatError(err)}`);
+		// A DomainError's cause and hint are already in its message; any other error keeps its cause and stack
+		// (console.error passes them through maskConsole like everything else) instead of only its top message.
+		if (err instanceof DomainError) console.error(`kabai studio: ${formatError(err)}`);
+		else console.error('kabai studio:', err);
+		// stderr isn't always written synchronously (e.g. piped, common for a supervised process) — process.exit()
+		// right after console.error can cut the line off before it reaches the OS. An empty write queued on the
+		// same stream only completes once the error line ahead of it has actually been flushed.
+		await new Promise<void>((resolve) => process.stderr.write('', () => resolve()));
 		process.exit(1);
 	}
 };
