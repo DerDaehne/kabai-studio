@@ -54,6 +54,24 @@ On first start the server prints a one-time setup link; open it to create the ow
 account. Open studio at exactly the address given in `ORIGIN` — form posts from any
 other address are rejected.
 
+## Local models
+
+Recommendations and parameters for local models (llama.cpp, LM Studio, Ollama,
+llama-swap or any other OpenAI-compatible server), meant to drive model
+recognition and default profile settings once those consumers land. Generated
+from `src/lib/agents/model-catalog.ts` — edit the catalog, then run
+`npm run docs:models`.
+
+<!-- BEGIN GENERATED: model-catalog -->
+| Model | Recommended for | Thinking | Min. context | Known pitfalls |
+|---|---|---|---|---|
+| `ornith-1.5-35b` | refine, code | on (chat_template_kwargs) | 32k | without thinking enabled it often asks a clarifying question before doing any work → enable thinking; with a small token budget (around 12k) thinking consumes it all and no answer is produced → raise max_tokens to at least 32000, or disable thinking; the model's own test expectations are sometimes wrong → always verify test results independently |
+| `qwen3.6-35b` | code, tour | configurable (chat_template_kwargs) | 128k | never asks clarifying questions; open product decisions are silently skipped → have a reviewer check for skipped decisions, or use it only for tasks without open decisions; the model's own test expectations are sometimes wrong → always verify test results independently |
+| `qwen3-coder-next` | tour (acceptable) | off (fixed) | 32k | weaker code quality in evaluation runs, and splits tasks too finely → raise the tool-loop step limit, or prefer another model for code tickets |
+| `gpt-oss-20b` | code (acceptable) | on (fixed) | 32k | weak refinement quality and mixes languages in its output → use only for small, well-scoped auxiliary tasks, not for refine or review |
+| `qwen3.8-27b` | — | configurable (chat_template_kwargs) | — | too slow once it no longer fits fully in VRAM (dense model, no MoE expert offloading) → prefer an MoE model of similar size, e.g. ornith-1.5-35b or qwen3.6-35b |
+<!-- END GENERATED: model-catalog -->
+
 ## License
 
 [AGPL-3.0](LICENSE) with an additional attribution term (GPLv3 §7(b), permitted

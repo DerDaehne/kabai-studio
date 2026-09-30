@@ -14,7 +14,8 @@
 		"reset-password": "node src/lib/server/reset-password.ts",
 		"restore": "node src/lib/server/restore.ts",
 		"scan:secrets": "bash scripts/scan-secrets.sh",
-		"test:scan-secrets": "bash scripts/scan-secrets.test.sh"
+		"test:scan-secrets": "bash scripts/scan-secrets.test.sh",
+		"docs:models": "node scripts/generate-model-catalog-readme.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.5.4",
