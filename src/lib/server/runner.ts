@@ -47,9 +47,15 @@ export function startRunner(db: DatabaseSync, executors: Partial<Record<Profile[
 
 	function executorFor(profile: Profile): Executor {
 		const executor = executors[profile.executor];
-		if (!executor)
-			throw new DomainError('executor_unavailable', `Für „${profile.executor}“-Profile ist noch kein Executor eingebaut.`, 'Wähle ein Profil mit einem anderen Executor.');
-		return executor;
+		if (executor) return executor;
+		const installed = Object.keys(executors);
+		throw new DomainError(
+			'executor_unavailable',
+			`Für „${profile.executor}“-Profile ist kein Executor installiert.`,
+			installed.length
+				? `Wähle ein Profil mit einem installierten Executor: ${installed.join(', ')}.`
+				: 'In dieser Version ist noch kein Executor installiert — Runs lassen sich noch nicht ausführen.'
+		);
 	}
 
 	async function execute(run: RunContext) {
@@ -63,6 +69,7 @@ export function startRunner(db: DatabaseSync, executors: Partial<Record<Profile[
 			if (!controller.signal.aborted) failRun(run.id, run.ticketId, err); // after cancel() the run has already ended
 		} finally {
 			controllers.delete(run.id);
+			wake(); // deleting the ticket removes the run without any event, so the executor's end has to free the slot
 		}
 	}
 
@@ -80,7 +87,7 @@ export function startRunner(db: DatabaseSync, executors: Partial<Record<Profile[
 		}
 	}
 
-	// ponytail: no polling — only run events wake the runner; a failed claim (e.g. database locked) waits for the next one.
+	// ponytail: no polling — run events and executor ends wake the runner; a failed claim (e.g. database locked) waits for the next wake-up.
 	function wake() {
 		if (stopped || wakeScheduled) return;
 		wakeScheduled = true;

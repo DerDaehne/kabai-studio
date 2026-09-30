@@ -183,6 +183,20 @@ describe('startRunner', () => {
 		expect(() => runner.cancel(cancelled)).toThrow(expect.objectContaining({ code: 'invalid_run_transition' }));
 	});
 
+	it('frees the pool slot as soon as a run is cancelled, even if its executor ignores the signal', async () => {
+		const s = setup();
+		const ignoresSignal: Executor = { execute: () => new Promise(() => {}) };
+		const runner = start(s.db, { builtin: ignoresSignal });
+		const [cancelled, waiting] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		expect(s.state(waiting)).toBe('queued');
+
+		runner.cancel(cancelled);
+		await flush();
+
+		expect(s.state(waiting)).toBe('running');
+	});
+
 	it('fails runs left active by a server restart with a system comment, then keeps working the queue', async () => {
 		const s = setup();
 		const [running, waiting] = [s.queue(s.local), s.queue(s.cloud)];
@@ -230,13 +244,51 @@ describe('startRunner', () => {
 		]);
 	});
 
-	it('fails a run with executor_unavailable instead of leaving it queued when no executor handles its profile', async () => {
+	it('fails a run with executor_unavailable instead of leaving it queued, and the way out names the installed executors', async () => {
 		const s = setup();
 		const acp = runs.createProfile(s.db, user, { name: 'ACP', executor: 'acp', command: 'agent' }).id;
-		start(s.db, {});
+		start(s.db, { builtin: fakeExecutor().executor });
 		const id = s.queue(acp);
 		await flush();
-		expect(s.row(id).error).toBe('[executor_unavailable] Für „acp“-Profile ist noch kein Executor eingebaut.');
-		expect(s.comments()).toHaveLength(1);
+		expect(s.row(id).error).toBe('[executor_unavailable] Für „acp“-Profile ist kein Executor installiert.');
+		expect(s.comments()).toEqual([
+			{
+				author_kind: 'system',
+				run_id: id,
+				body: `Run ${id} ist fehlgeschlagen: [executor_unavailable] Für „acp“-Profile ist kein Executor installiert.\nAusweg: Wähle ein Profil mit einem installierten Executor: builtin.`
+			}
+		]);
+	});
+
+	it('says plainly that runs cannot execute yet when no executor is installed at all', async () => {
+		const s = setup();
+		start(s.db, {});
+		const id = s.queue(s.local);
+		await flush();
+		expect(s.comments()).toEqual([
+			{
+				author_kind: 'system',
+				run_id: id,
+				body: `Run ${id} ist fehlgeschlagen: [executor_unavailable] Für „builtin“-Profile ist kein Executor installiert.\nAusweg: In dieser Version ist noch kein Executor installiert — Runs lassen sich noch nicht ausführen.`
+			}
+		]);
+	});
+
+	it('keeps working the queue when the ticket of a running run is deleted, which removes the run without an event', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 1 } });
+		const otherTicket = board.createTicket(s.db, user, s.projectId, { title: 'Other' }).id;
+		const [deleted, waiting] = [s.queue(s.local), s.queue(s.local, otherTicket)];
+		await flush();
+		expect(s.state(waiting)).toBe('queued');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		board.deleteTicket(s.db, user, s.ticketId);
+		fake.call(deleted).done();
+		await flush();
+
+		expect(s.state(waiting)).toBe('running');
+		expect(consoleError).toHaveBeenCalledOnce(); // finishing the vanished run fails and is logged
 	});
 });
