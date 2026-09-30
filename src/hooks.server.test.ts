@@ -98,6 +98,13 @@ describe('Auth-Durchlauf', () => {
 		token = issueSetupToken(); // wie der init-Hook beim Start ohne Owner
 	});
 
+	it('lets /mcp through without a session, but not sub-paths or foreign origins', async () => {
+		expect(await guard('/mcp', jar(), { request: { method: 'POST' } })).toBeInstanceOf(Response);
+		expect(await guard('/mcp/other')).toEqual({ redirect: '/setup', status: 303 });
+		const foreign = (await guard('/mcp', jar(), { request: { method: 'POST', headers: { origin: 'http://evil.example' } } })) as Response;
+		expect(foreign.status).toBe(403);
+	});
+
 	it('/setup weist einen falschen Setup-Token ab', async () => {
 		const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW });
 		expect(isActionFailure(res) && res.status).toBe(403);

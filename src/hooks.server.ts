@@ -58,6 +58,8 @@ export const init: ServerInit = async () => {
 // SvelteKit entfernt /__data.json aus event.url.pathname, bevor handle läuft (respond.js) — /login/__data.json kommt
 // hier schon als /login an (Details dazu in der internen Wissensdatenbank, Auth-Architektur).
 const PUBLIC = new Set(['/login', '/setup']);
+/** Agents have no session: the MCP endpoint checks the run's bearer token on every request itself. */
+const RUN_TOKEN_PATH = '/mcp';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -76,7 +78,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	const path = event.url.pathname;
-	if (!session && !PUBLIC.has(path)) {
+	if (!session && !PUBLIC.has(path) && path !== RUN_TOKEN_PATH) {
 		if (path === '/api' || path.startsWith('/api/')) {
 			const res = json({ error: 'unauthorized', hint: 'Keine gültige Session — im Browser unter /login anmelden.' }, { status: 401 });
 			// direkt zurückgegebene Antworten bekommen event.cookies nicht angehängt → Löschung selbst setzen
