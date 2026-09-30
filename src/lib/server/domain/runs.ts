@@ -35,7 +35,11 @@ export type Profile = {
 	permission_policy: Record<string, unknown>;
 	max_steps: number | null;
 	max_tokens: number | null;
+	/** Parallelism pool, e.g. local or cloud; the runner limits active runs per pool. */
+	pool: string;
 };
+/** Maximum active (running or waiting_approval) runs, overall and per pool; a pool without an entry gets 1 because a local GPU is scarce. */
+export type Limits = { global: number; pools: Record<string, number> };
 
 type Emit = (event: StudioEvent) => void;
 type Run = { id: number; ticket_id: number; project_id: number; state: RunState };
@@ -53,7 +57,7 @@ const NEXT: Record<RunState, RunState[]> = {
 /** Welche Funktion einen Übergang ausführt: startRun erzeugt dabei das Token, finishRun entwertet es. */
 const via = (from: RunState, to: RunState) => (NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState');
 
-const PROFILE_FIELDS = ['name', 'executor', 'provider', 'base_url', 'model', 'command', 'args', 'api_key_ref', 'params', 'extra_prompt', 'permission_policy', 'max_steps', 'max_tokens'] as const;
+const PROFILE_FIELDS = ['name', 'executor', 'provider', 'base_url', 'model', 'command', 'args', 'api_key_ref', 'params', 'extra_prompt', 'permission_policy', 'max_steps', 'max_tokens', 'pool'] as const;
 const JSON_FIELDS = ['args', 'params', 'permission_policy'];
 
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -118,10 +122,32 @@ export function createRun(
  * (Nicht schon bei createRun: queued-Runs überdauern einen Neustart, der Klartext wäre dann verloren.)
  */
 export function startRun(db: DatabaseSync, actor: Actor, runId: number): { token: string } {
+	return tx(db, (emit) => start(db, emit, actor, runId));
+}
+
+function start(db: DatabaseSync, emit: Emit, actor: Actor, runId: number) {
+	const token = randomBytes(32).toString('base64url');
+	transition(db, emit, actor, runId, 'running', 'startRun', ', started_at = CURRENT_TIMESTAMP, token_hash = ?', hash(token));
+	return { token };
+}
+
+// An active run without a profile counts towards the global limit only.
+const CLAIM = `WITH active AS (
+	SELECT p.pool FROM runs r LEFT JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state IN ('running', 'waiting_approval'))
+SELECT r.id, r.ticket_id AS ticketId, r.agent_profile_id AS profileId FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id
+WHERE r.state = 'queued'
+	AND (SELECT count(*) FROM active) < ?1
+	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), 1)
+ORDER BY r.id LIMIT 1`;
+
+/**
+ * Starts the oldest queued run (FIFO) whose pool and the global limit have room, or returns undefined.
+ * Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
+ */
+export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits) {
 	return tx(db, (emit) => {
-		const token = randomBytes(32).toString('base64url');
-		transition(db, emit, actor, runId, 'running', 'startRun', ', started_at = CURRENT_TIMESTAMP, token_hash = ?', hash(token));
-		return { token };
+		const next = db.prepare(CLAIM).get(limits.global, JSON.stringify(limits.pools)) as { id: number; ticketId: number; profileId: number } | undefined;
+		return next && { id: next.id, ticketId: next.ticketId, profile: getProfile(db, next.profileId), ...start(db, emit, actor, next.id) };
 	});
 }
 

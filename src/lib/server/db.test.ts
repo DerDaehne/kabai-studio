@@ -124,14 +124,14 @@ describe('migrate', () => {
 	it('006 ergänzt comments.run_id (mit FK) auch in einer DB mit Kommentaren', () => {
 		const bundled = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true });
 		const db = openDb(':memory:');
-		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => !path.endsWith('/006_runs.sql'))));
+		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/006'))); // schema before 006; later migrations build on it
 		db.exec(`
 			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
 			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
 			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Alt');
 			INSERT INTO comments (ticket_id, author_kind, author, body) VALUES (100, 'user', 'user', 'vorher');
 		`);
-		expect(migrate(db)).toEqual(['006_runs.sql']);
+		expect(migrate(db)[0]).toBe('006_runs.sql');
 		expect(db.prepare('SELECT body, run_id FROM comments').all()).toEqual([{ body: 'vorher', run_id: null }]);
 		expect(() => db.exec("INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 7)")).toThrow(/FOREIGN KEY/);
 	});
@@ -199,6 +199,7 @@ describe('Kernschema', () => {
 		['builtin-Profil ohne Modell', "INSERT INTO agent_profiles (name, executor, provider) VALUES ('x', 'builtin', 'p')", /CHECK/],
 		['acp-Profil ohne Kommando', "INSERT INTO agent_profiles (name, executor) VALUES ('x', 'acp')", /CHECK/],
 		['Profil-Parameter kein JSON-Objekt', "UPDATE agent_profiles SET params = '[1]' WHERE id = 1", /CHECK/],
+		['profile without a pool', "UPDATE agent_profiles SET pool = '' WHERE id = 1", /CHECK/],
 		['Run-Zustand unbekannt', "UPDATE runs SET state = 'done' WHERE id = 1", /CHECK/],
 		['Run-Token in wartendem Run', "UPDATE runs SET token_hash = printf('%064d', 0) WHERE id = 1", /CHECK/],
 		['Run-Token im Klartext (falsche Länge)', "UPDATE runs SET state = 'running', token_hash = 'klartext' WHERE id = 1", /CHECK/],

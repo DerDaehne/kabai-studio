@@ -11,6 +11,7 @@ import {
 } from '$lib/server/auth';
 import { startBackups } from '$lib/server/backup';
 import { backupDir, db } from '$lib/server/db';
+import { startRunner } from '$lib/server/runner';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
 // Sicherer Default: adapter-node bindet ohne HOST an 0.0.0.0, bei leerem HOST sogar an alle Interfaces (IPv4+IPv6) —
@@ -32,6 +33,8 @@ export const init: ServerInit = () => {
 	// secret.key — einmal beim Start, Fehler brechen den Start ab
 	initSecrets(db());
 	startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
+	// no executors are installed yet, so queued runs fail with a clear reason instead of waiting forever
+	startRunner(db(), {});
 	if (!hasOwner(db())) {
 		const token = issueSetupToken();
 		console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
