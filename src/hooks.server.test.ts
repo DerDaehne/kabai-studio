@@ -340,4 +340,30 @@ describe('init', () => {
 			error.mockRestore();
 		}
 	});
+
+	it('exits only after stderr has flushed the error line', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		let flushed: (() => void) | undefined;
+		const write = vi.spyOn(process.stderr, 'write').mockImplementation(((_chunk: unknown, callback?: () => void) => {
+			flushed = callback;
+			return false;
+		}) as typeof process.stderr.write);
+		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
+			throw new DomainError('db_newer_than_code', 'Datenbank neuer als Code.', 'Neuere Version installieren.');
+		});
+		try {
+			const started = init();
+			await vi.waitFor(() => expect(flushed).toBeTypeOf('function'));
+			expect(exit).not.toHaveBeenCalled();
+			flushed!();
+			await started;
+			expect(exit).toHaveBeenCalledWith(1);
+		} finally {
+			dbSpy.mockRestore();
+			write.mockRestore();
+			exit.mockRestore();
+			error.mockRestore();
+		}
+	});
 });

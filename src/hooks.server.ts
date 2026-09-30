@@ -42,8 +42,7 @@ export const init: ServerInit = async () => {
 			console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
 		}
 	} catch (err) {
-		// A DomainError's cause and hint are already in its message; any other error keeps its cause and stack
-		// (console.error passes them through maskConsole like everything else) instead of only its top message.
+		// A DomainError is a complete user-facing report; anything else is unexpected and needs its stack and cause.
 		if (err instanceof DomainError) console.error(`kabai studio: ${formatError(err)}`);
 		else console.error('kabai studio:', err);
 		// stderr isn't always written synchronously (e.g. piped, common for a supervised process) — process.exit()
