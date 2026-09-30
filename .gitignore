@@ -29,5 +29,8 @@ result
 # Interne, persönliche Agent-Infos (nie committen)
 CLAUDE.local.md
 
+# Privatsphären-Scan: private Muster (Namen, Mails, Hostnamen, Pfade), nie committen
+/.privacy-patterns
+
 # Laufzeitdaten (SQLite-DB)
 /data

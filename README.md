@@ -1,6 +1,7 @@
 # kabai studio
 
 [![CI](https://github.com/DerDaehne/kabai-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/DerDaehne/kabai-studio/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DerDaehne/kabai-studio/badge)](https://securityscorecards.dev/viewer/?uri=github.com/DerDaehne/kabai-studio)
 
 Agent orchestration studio: tickets are executable jobs. Board columns carry a
 role prompt and rules; AI agents — local models first (llama.cpp, Ollama or any

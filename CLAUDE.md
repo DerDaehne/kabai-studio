@@ -39,7 +39,8 @@ Dieses Repo ist öffentlich. **Niemals** in Dateien, Commits oder Commit-Nachric
 Namen von Personen, E-Mail-Adressen, Passwörter, API-Keys/Tokens, lokale Pfade,
 Hostnamen, IP-Adressen, Hardware-/Setup-Details oder interne Board-/Ticket-Inhalte.
 Persönliches und Internes gehört in `CLAUDE.local.md`. Vor jedem Commit den Diff
-darauf prüfen.
+darauf prüfen — und vorher `npm run scan:secrets` laufen lassen (gitleaks +
+Privatsphären-Scan gegen `.privacy-patterns`).
 
 ## Arbeitsweise (verbindlich)
 

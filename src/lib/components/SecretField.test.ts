@@ -2,7 +2,7 @@ import { render } from 'svelte/server';
 import { expect, it } from 'vitest';
 import SecretField from './SecretField.svelte';
 
-const html = (props: Record<string, unknown>) => render(SecretField, { props }).body.replace(/<!--[^>]*-->/g, '');
+const html = (props: Record<string, unknown>) => render(SecretField, { props }).body.replace(/<!--[\s\S]*?-->/g, '');
 
 it('gespeichertes Secret: nur „gesetzt“, Ersetzen und Löschen — kein Eingabefeld für den Wert', () => {
 	const out = html({ name: 'demo', updatedAt: '2026-01-01 00:00:00' });

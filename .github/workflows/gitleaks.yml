@@ -1,0 +1,45 @@
+name: gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      # gitleaks-Version + Checksum sind manuell gepflegt — Dependabot aktualisiert nur npm-
+      # und Action-Abhängigkeiten, kein Release-Binary in einer env-Variable (siehe Note).
+      GITLEAKS_VERSION: "8.30.1"
+      # SHA256 aus gitleaks_${GITLEAKS_VERSION}_checksums.txt (https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1)
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scannt die volle History, kein Shallow-Clone
+          persist-credentials: false
+
+      # Binary statt gitleaks/gitleaks-action: die offizielle Action prüft bei jedem Lauf gegen
+      # einen Lizenzserver (bei Org-Repos kostenpflichtig, bei persönlichen Repos zwar frei,
+      # aber mit externem Netzwerk-Call). Das gepinnte Release-Binary mit SHA256-Prüfung kommt
+      # ohne diese Abhängigkeit aus und ist derselbe Befehl wie lokal (`npm run scan:secrets`).
+      - name: gitleaks installieren (SHA256-geprüft)
+        run: |
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+
+      - id: scan
+        run: gitleaks git --redact -v --no-banner .
+      - if: failure() && steps.scan.outcome == 'failure'
+        run: echo "::error::Secret sofort rotieren, History vor dem Push bereinigen; Fehlalarm → Fingerprint in .gitleaksignore ergänzen."
+
+      # Regressionstests für scripts/scan-secrets.sh selbst (Wegwerf-Repo, kein Bezug zum
+      # Checkout hier) — gitleaks ist in diesem Job schon installiert, das Secret-Szenario
+      # deckt damit den echten Aufruf ab statt nur den lokalen nix-Fallback.
+      - run: bash scripts/scan-secrets.test.sh

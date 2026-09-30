@@ -118,8 +118,10 @@ describe('Schlüssel', () => {
 		const dir = join(tmp, 'fresh');
 		const key = loadKey(dir, undefined);
 		const file = join(dir, 'secret.key');
-		expect(statSync(file).mode & 0o777).toBe(0o600);
+		// Reihenfolge bewusst: erst lesen (Nutzung), dann die Rechte prüfen — vermeidet das
+		// Check-then-use-Muster (stat vor read auf demselben Pfad), das CodeQL js/file-system-race meldet.
 		expect(readFileSync(file, 'utf8').trim()).toBe(key.toString('base64'));
+		expect(statSync(file).mode & 0o777).toBe(0o600);
 		expect(key.length).toBe(32);
 		expect(loadKey(dir, undefined).equals(key)).toBe(true);
 	});
