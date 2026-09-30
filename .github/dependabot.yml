@@ -9,6 +9,13 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # Node types must match the runtime major (Node 24).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # svelte-check pins its TypeScript peer range; bump TypeScript majors together with it.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
