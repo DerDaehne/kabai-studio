@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
 import { db } from '$lib/server/db';
+import * as dbModule from '$lib/server/db';
+import { DomainError } from '$lib/server/domain/error';
 import { listenerCount, publish } from '$lib/server/events';
 import { handle, init } from './hooks.server';
 import { actions as loginActions } from './routes/login/+page.server';
@@ -296,6 +298,26 @@ describe('init', () => {
 			expect(out.at(-1)).toBe('%s key=[secret-key]');
 		} finally {
 			log.mockRestore();
+		}
+	});
+
+	it('a startup failure with a stable error prints one clean line and exits instead of an uncaught stack trace', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
+			throw new DomainError('db_newer_than_code', 'Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 007_future.sql.', 'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.');
+		});
+		try {
+			await init();
+			expect(error).toHaveBeenCalledWith(
+				'%s',
+				'kabai studio: [db_newer_than_code] Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 007_future.sql. Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
+			);
+			expect(exit).toHaveBeenCalledWith(1);
+		} finally {
+			dbSpy.mockRestore();
+			exit.mockRestore();
+			error.mockRestore();
 		}
 	});
 });

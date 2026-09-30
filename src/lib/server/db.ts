@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { backup, privateDir } from './backup.ts';
+import { DomainError } from './domain/error.ts';
 
 export function openDb(file: string): DatabaseSync {
 	const db = new DatabaseSync(file);
@@ -15,16 +16,14 @@ export function openDb(file: string): DatabaseSync {
 export const dataDir = () => process.env.STUDIO_DATA_DIR || 'data';
 export const backupDir = () => join(dataDir(), 'backups');
 
-// Same {code, message, hint} shape as the domain layer's DomainError, reimplemented locally rather than imported:
-// db.ts also loads directly under plain Node (restore, reset-password), and DomainError's constructor uses a TS
-// parameter-property shorthand that Node's type-stripping mode can't parse.
 export function assertKnownMigrations(applied: Iterable<string>, known: ReadonlySet<string>): void {
 	const unknown = [...applied].filter((name) => !known.has(name));
 	if (unknown.length)
-		throw Object.assign(new Error(`Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: ${unknown.join(', ')}.`), {
-			code: 'db_newer_than_code',
-			hint: 'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
-		});
+		throw new DomainError(
+			'db_newer_than_code',
+			`Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: ${unknown.join(', ')}.`,
+			'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
+		);
 }
 
 // Sperren dieses Prozesses je Lock-Datei — auf globalThis, damit ein neu geladenes db.ts (Vite-HMR) die eigene Sperre

@@ -11,6 +11,7 @@ import {
 } from '$lib/server/auth';
 import { startBackups } from '$lib/server/backup';
 import { backupDir, db } from '$lib/server/db';
+import { formatError } from '$lib/server/domain/error';
 import { startRunner } from '$lib/server/runner';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
@@ -29,15 +30,21 @@ export const init: ServerInit = () => {
 			`Hinweis: ORIGIN ist nicht gesetzt — Setup und Anmeldung werden sonst abgewiesen. ` +
 				`Neu starten mit ORIGIN=http://127.0.0.1:${process.env.PORT || 3000} und genau diese Adresse im Browser öffnen.`
 		);
-	// sperrt das Datenverzeichnis (zweite Instanz bricht hier ab), öffnet, sichert und migriert die DB, lädt bzw. erzeugt
-	// secret.key — einmal beim Start, Fehler brechen den Start ab
-	initSecrets(db());
-	startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
-	// no executors are installed yet, so queued runs fail with a clear reason instead of waiting forever
-	startRunner(db(), {});
-	if (!hasOwner(db())) {
-		const token = issueSetupToken();
-		console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
+	try {
+		// locks the data directory (a second instance aborts here), opens, backs up and migrates the DB, loads or
+		// creates secret.key — once at startup
+		initSecrets(db());
+		startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
+		// no executors are installed yet, so queued runs fail with a clear reason instead of waiting forever
+		startRunner(db(), {});
+		if (!hasOwner(db())) {
+			const token = issueSetupToken();
+			console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
+		}
+	} catch (err) {
+		// A raw exception here would otherwise surface as a multi-line stack trace from adapter-node's bootstrap.
+		console.error(`kabai studio: ${formatError(err)}`);
+		process.exit(1);
 	}
 };
 

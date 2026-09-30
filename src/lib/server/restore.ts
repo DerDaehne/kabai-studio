@@ -7,6 +7,11 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { backup } from './backup.ts';
 import { assertKnownMigrations, backupDir, dataDir, lockDataDir, openDb } from './db.ts';
+import { DomainError, formatError } from './domain/error.ts';
+
+// Migration filenames this code knows, resolved relative to this module rather than the process cwd — restore may
+// run with any working directory.
+const MIGRATIONS_DIR = new URL('../../../migrations', import.meta.url);
 
 /** Throws if `file` isn't an intact Studio database, or contains migrations this code doesn't know. */
 function check(file: string) {
@@ -15,8 +20,7 @@ function check(file: string) {
 		const result = db.prepare('PRAGMA integrity_check').all();
 		if (result.length !== 1 || result[0].integrity_check !== 'ok') throw new Error('Integritätsprüfung meldet Fehler');
 		const names = (db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name); // not a Studio DB → "no such table"
-		// Runs without Vite (Node type-stripping), so import.meta.glob isn't available — read the same migration files straight off disk.
-		assertKnownMigrations(names, new Set(readdirSync('migrations').filter((f) => f.endsWith('.sql'))));
+		assertKnownMigrations(names, new Set(readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))));
 	} finally {
 		db.close();
 	}
@@ -38,7 +42,7 @@ try {
 	try {
 		check(tmp);
 	} catch (err) {
-		if ((err as { code?: string }).code === 'db_newer_than_code') throw err; // has its own stable code — don't wrap it in a generic message
+		if (err instanceof DomainError) throw err;
 		throw new Error(`${src} ist keine intakte Studio-Sicherung (${(err as Error).message}). Eine andere Datei aus ${backupDir()} wählen.`);
 	}
 
@@ -66,8 +70,6 @@ try {
 	console.log(`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`);
 } catch (err) {
 	if (locked) rmSync(tmp, { force: true });
-	const e = err as Error & { code?: string; hint?: string };
-	// Include the stable code and hint when the error carries them; otherwise unchanged from before.
-	console.error(`restore: ${e.code ? `[${e.code}] ` : ''}${e.message}${e.hint ? ` ${e.hint}` : ''}`);
+	console.error(`restore: ${formatError(err)}`);
 	process.exitCode = 1;
 }

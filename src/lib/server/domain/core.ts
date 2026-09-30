@@ -1,20 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { publish, type StudioEvent } from '../events';
 
+export { DomainError } from './error';
+
 /** Wer eine Mutation auslöst. Agents handeln immer in einem Run. */
 export type Actor = { kind: 'user' | 'agent' | 'system'; runId?: number };
-
-/** Regelverletzung mit einer Meldung, die ein Agent direkt versteht; `hint` nennt den Ausweg. */
-export class DomainError extends Error {
-	constructor(
-		readonly code: string,
-		message: string,
-		readonly hint: string
-	) {
-		super(message);
-		this.name = 'DomainError';
-	}
-}
 
 /**
  * Führt `fn` in einer Transaktion aus. Events, die `fn` über `emit` meldet, gehen erst nach dem COMMIT

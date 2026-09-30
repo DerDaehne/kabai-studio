@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
@@ -124,7 +124,7 @@ describe('migrate', () => {
 	it('aborts before any transaction when schema_migrations has a migration this code does not know (DB newer than code, e.g. after a downgrade) — known, still-pending migrations are not applied either', () => {
 		const db = openDb(':memory:');
 		migrate(db, { '/m/001_a.sql': 'CREATE TABLE a (id INTEGER)' });
-		db.exec("INSERT INTO schema_migrations (name) VALUES ('003_future.sql')"); // simulates a backup/DB from a newer version
+		db.exec("INSERT INTO schema_migrations (name) VALUES ('003_future.sql')");
 		const withPending = { '/m/001_a.sql': 'CREATE TABLE a (id INTEGER)', '/m/002_b.sql': 'CREATE TABLE b (id INTEGER)' };
 
 		expect(() => migrate(db, withPending)).toThrowError(
@@ -134,8 +134,20 @@ describe('migrate', () => {
 				hint: expect.stringMatching(/neuere Studio-Version installieren|ältere Sicherung wiederherstellen/)
 			})
 		);
-		expect(names(db)).toEqual(['001_a.sql', '003_future.sql']); // unchanged, 002_b.sql was not applied
+		expect(names(db)).toEqual(['001_a.sql', '003_future.sql']);
 		expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'b'").get()).toBeUndefined();
+	});
+
+	it('does not run the pre-upgrade backup when the database is newer than the code', () => {
+		const db = openDb(':memory:');
+		migrate(db, { '/m/001_a.sql': 'CREATE TABLE a (id INTEGER)' });
+		db.exec("INSERT INTO schema_migrations (name) VALUES ('003_future.sql')");
+		const beforeUpgrade = vi.fn();
+
+		expect(() => migrate(db, { '/m/001_a.sql': 'CREATE TABLE a (id INTEGER)', '/m/002_b.sql': 'CREATE TABLE b (id INTEGER)' }, beforeUpgrade)).toThrowError(
+			expect.objectContaining({ code: 'db_newer_than_code' })
+		);
+		expect(beforeUpgrade).not.toHaveBeenCalled();
 	});
 
 	it('006 ergänzt comments.run_id (mit FK) auch in einer DB mit Kommentaren', () => {

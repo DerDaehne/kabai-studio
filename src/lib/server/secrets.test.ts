@@ -245,7 +245,10 @@ describe('Maskierung', () => {
 
 	it('Nicht-Plain-Objekte (URL, Date, Klasseninstanz, Map) laufen über ihre JSON- bzw. inspect-Form; Zyklen werfen nicht', () => {
 		class Client {
-			constructor(readonly apiKey: string) {}
+			readonly apiKey: string;
+			constructor(apiKey: string) {
+				this.apiKey = apiKey;
+			}
 		}
 		const holder = { url: new URL(`https://api.example.test/v1?key=${MASKED}`), client: new Client(MASKED), at: new Date(0) };
 		const masked = mask(holder);

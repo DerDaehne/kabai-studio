@@ -349,7 +349,7 @@ describe('restore (CLI)', () => {
 			'contains an unknown migration (DB newer than code)',
 			() => {
 				const db = seed(join(tmp, 'newer.db'));
-				db.exec("INSERT INTO schema_migrations (name) VALUES ('999_future.sql')"); // simulates a future migration this code doesn't know
+				db.exec("INSERT INTO schema_migrations (name) VALUES ('999_future.sql')");
 				const saved = backup(db, join(tmp, 'newer-backups'));
 				db.close();
 				return saved;
@@ -398,5 +398,31 @@ describe('restore (CLI)', () => {
 		expect(r.stderr).toBe('');
 		expect(r.status).toBe(0);
 		expect(current()).toEqual(atBackup);
+	});
+});
+
+describe('restore run from a directory other than the package root', () => {
+	const cwdTmp = mkdtempSync(join(tmp, 'restore-cwd-'));
+	const data = join(cwdTmp, 'data');
+	mkdirSync(data);
+	const source = openDb(join(cwdTmp, 'source.db'));
+	migrate(source, import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true }));
+	const older = backup(source, join(cwdTmp, 'older'));
+	source.exec("INSERT INTO schema_migrations (name) VALUES ('999_future.sql')");
+	const newer = backup(source, join(cwdTmp, 'newer'));
+	source.close();
+	const restoreFrom = (cwd: string, file: string) =>
+		spawnSync(process.execPath, [resolve('src/lib/server/restore.ts'), file], { cwd, env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+
+	it('still rejects a backup from a newer version with db_newer_than_code', () => {
+		const r = restoreFrom(cwdTmp, newer);
+		expect(r.status).toBe(1);
+		expect(r.stderr).toMatch(/^restore: \[db_newer_than_code\] .*999_future\.sql/);
+	});
+
+	it('restores a valid backup', () => {
+		const r = restoreFrom(cwdTmp, older);
+		expect(r.stderr).toBe('');
+		expect(r.status).toBe(0);
 	});
 });
