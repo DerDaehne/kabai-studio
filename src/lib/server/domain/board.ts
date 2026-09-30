@@ -1,10 +1,10 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
-import { DomainError, tx, type Actor } from './core';
+import { actorLabel as label, DomainError, tx, type Actor } from './core';
 
 type Kind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
 type Column = { id: number; name: string; kind: Kind };
-type Ticket = {
+export type Ticket = {
 	id: number;
 	project_id: number;
 	column_id: number;
@@ -46,7 +46,6 @@ const DEFAULT_COLUMNS: [string, Kind][] = [
 
 /** Default für requires_human: Abschließen und „der Mensch hat geantwortet“ darf nur ein Mensch. */
 const humanOnly = (kind: Kind) => kind === 'done' || kind === 'human_answered';
-const label = (a: Actor) => (a.runId === undefined ? a.kind : `${a.kind} (Run ${a.runId})`);
 const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ');
 
 export function ticket(db: DatabaseSync, id: number): Ticket {
@@ -154,7 +153,8 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		});
 }
 
-function comment(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, body: string, system = false) {
+/** Writes a comment inside an open transaction; `addComment` is the standalone mutation. */
+export function appendComment(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, body: string, system = false) {
 	const row = db
 		.prepare('INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (?, ?, ?, ?, ?) RETURNING id')
 		.get(t.id, system ? 'system' : actor.kind, system ? 'system' : label(actor), body, actor.runId ?? null) as { id: number };
@@ -254,26 +254,28 @@ export function allowedMoves(db: DatabaseSync, ticketId: number, actor: Actor): 
 }
 
 export function moveTicket(db: DatabaseSync, actor: Actor, ticketId: number, columnId: number) {
-	tx(db, (emit) => {
-		const t = ticket(db, ticketId);
-		if (t.column_id === columnId) return;
-		const to = columns(db, t.project_id).find((c) => c.id === columnId);
-		if (!to) throw new DomainError('not_found', `Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`, 'allowedMoves listet die erreichbaren Spalten mit ID.');
-		const moves = targets(db, t);
-		const move = moves.find((m) => m.column.id === columnId);
-		if (!move)
-			throw new DomainError(
-				'transition_not_allowed',
-				`${t.ref} darf nicht von „${t.column_name}“ nach „${to.name}“ wechseln. Erlaubte Ziele: ${quoted(moves.map((m) => m.column.name))}.`,
-				'Verschiebe über eine der erlaubten Spalten; allowedMoves zeigt alle Ziele samt Sperrgründen.'
-			);
-		const bs = blockers(db, t, to, move.requiresHuman, actor);
-		if (bs.length) throw new DomainError(bs[0].code, bs.map((b) => b.message).join(' '), bs.map((b) => b.hint).join(' '));
-		db.prepare('UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(columnId, JSON.stringify(actor), t.id);
-		// Die Freigabe gilt dem geprüften Stand; zurück im normalen Fluss (z. B. „In Arbeit“) kann er sich ändern.
-		if (to.kind === 'normal') db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
-		emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
-	});
+	tx(db, (emit) => applyMove(db, emit, actor, ticket(db, ticketId), columnId));
+}
+
+/** Moves a ticket inside an open transaction, with the same rules as `moveTicket`. */
+export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, columnId: number) {
+	if (t.column_id === columnId) return;
+	const to = columns(db, t.project_id).find((c) => c.id === columnId);
+	if (!to) throw new DomainError('not_found', `Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`, 'allowedMoves listet die erreichbaren Spalten mit ID.');
+	const moves = targets(db, t);
+	const move = moves.find((m) => m.column.id === columnId);
+	if (!move)
+		throw new DomainError(
+			'transition_not_allowed',
+			`${t.ref} darf nicht von „${t.column_name}“ nach „${to.name}“ wechseln. Erlaubte Ziele: ${quoted(moves.map((m) => m.column.name))}.`,
+			'Verschiebe über eine der erlaubten Spalten; allowedMoves zeigt alle Ziele samt Sperrgründen.'
+		);
+	const bs = blockers(db, t, to, move.requiresHuman, actor);
+	if (bs.length) throw new DomainError(bs[0].code, bs.map((b) => b.message).join(' '), bs.map((b) => b.hint).join(' '));
+	db.prepare('UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(columnId, JSON.stringify(actor), t.id);
+	// Die Freigabe gilt dem geprüften Stand; zurück im normalen Fluss (z. B. „In Arbeit“) kann er sich ändern.
+	if (to.kind === 'normal') db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
+	emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
 }
 
 /** Review-Freigabe (ADR studio-012). Der Mensch darf immer; ein Agent nicht, wenn er das Ticket zuletzt verschoben hat. */
@@ -293,6 +295,9 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 	});
 }
 
+/** SQL condition for an unfinished `blocks` predecessor `b` in column `bc`, judged by the successor's project `p`. */
+const PREDECESSOR_OPEN = `bc.kind <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
+
 /**
  * Tickets ohne offene blocks-Vorgänger (ohne done- und human_intervention-Spalten). Offen ist ein Vorgänger,
  * solange er nicht in einer done-Spalte liegt — bei `blocks_satisfied_at = 'review_ok'` genügt seine Review-Freigabe.
@@ -305,19 +310,65 @@ export function workableTickets(db: DatabaseSync, projectId: number, columnId?: 
 			WHERE t.project_id = ?1 AND (?2 IS NULL OR t.column_id = ?2) AND c.kind NOT IN ('done', 'human_intervention')
 				AND NOT EXISTS (
 					SELECT 1 FROM ticket_relations r JOIN tickets b ON b.id = r.from_ticket_id JOIN columns bc ON bc.id = b.column_id
-					WHERE r.to_ticket_id = t.id AND r.type = 'blocks' AND bc.kind <> 'done'
-						AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL))
+					WHERE r.to_ticket_id = t.id AND r.type = 'blocks' AND ${PREDECESSOR_OPEN})
 			ORDER BY c.position, t.position, t.number`
 		)
 		.all(projectId, columnId ?? null) as { id: number; ref: string; title: string; type: 'ticket' | 'epic'; column_id: number; assignee: string | null }[];
 }
 
+export type Predecessor = { id: number; ref: string; title: string; column: string };
+
+/** The `blocks` predecessors that keep a ticket out of `workableTickets`. */
+export function blockingPredecessors(db: DatabaseSync, ticketId: number): Predecessor[] {
+	const t = ticket(db, ticketId);
+	return db
+		.prepare(
+			`SELECT b.id, bp.key || '-' || b.number AS ref, b.title, bc.name AS "column"
+			FROM ticket_relations r JOIN tickets b ON b.id = r.from_ticket_id JOIN projects bp ON bp.id = b.project_id
+			JOIN columns bc ON bc.id = b.column_id JOIN projects p ON p.id = ?2
+			WHERE r.to_ticket_id = ?1 AND r.type = 'blocks' AND ${PREDECESSOR_OPEN}
+			ORDER BY b.project_id, b.number`
+		)
+		.all(t.id, t.project_id) as Predecessor[];
+}
+
 export function addTask(db: DatabaseSync, actor: Actor, ticketId: number, title: string): { id: number } {
+	return { id: addTasks(db, actor, ticketId, [title]).ids[0] };
+}
+
+/** Adds all tasks or none. */
+export function addTasks(db: DatabaseSync, actor: Actor, ticketId: number, titles: string[]): { ids: number[] } {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const { id } = db.prepare('INSERT INTO tasks (ticket_id, title) VALUES (?, ?) RETURNING id').get(t.id, title) as { id: number };
-		emit({ type: 'task.added', projectId: t.project_id, ticketId: t.id, actor, taskId: id });
-		return { id };
+		if (titles.some((title) => !title.trim()))
+			throw new DomainError('empty_title', `Ein Task für ${t.ref} hat keinen Titel.`, 'Gib jedem Task einen Titel, der das Akzeptanzkriterium nennt.');
+		const insert = db.prepare('INSERT INTO tasks (ticket_id, title) VALUES (?, ?) RETURNING id');
+		const ids = titles.map((title) => {
+			const { id } = insert.get(t.id, title) as { id: number };
+			emit({ type: 'task.added', projectId: t.project_id, ticketId: t.id, actor, taskId: id });
+			return id;
+		});
+		return { ids };
+	});
+}
+
+/** Completes tasks of one ticket, all or none: an id that is not a task of this ticket rejects the whole call. */
+export function completeTasks(db: DatabaseSync, actor: Actor, ticketId: number, taskIds: number[]) {
+	tx(db, (emit) => {
+		const t = ticket(db, ticketId);
+		const own = db.prepare('SELECT id FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(t.id).map((r) => r.id as number);
+		const foreign = taskIds.filter((id) => !own.includes(id));
+		if (foreign.length)
+			throw new DomainError(
+				'not_found',
+				`${t.ref} hat keine Tasks mit den IDs ${foreign.join(', ')}.`,
+				own.length ? `Die Tasks von ${t.ref} haben die IDs ${own.join(', ')}.` : `${t.ref} hat noch keine Tasks.`
+			);
+		const complete = db.prepare('UPDATE tasks SET done_at = coalesce(done_at, CURRENT_TIMESTAMP) WHERE id = ?');
+		for (const taskId of taskIds) {
+			complete.run(taskId);
+			emit({ type: 'task.completed', projectId: t.project_id, ticketId: t.id, actor, taskId });
+		}
 	});
 }
 
@@ -338,7 +389,7 @@ export function updateTask(db: DatabaseSync, actor: Actor, taskId: number, title
 		const { t, title: old } = task(db, taskId);
 		db.prepare('UPDATE tasks SET title = ? WHERE id = ?').run(title, taskId);
 		emit({ type: 'task.updated', projectId: t.project_id, ticketId: t.id, actor, taskId });
-		comment(db, emit, actor, t, `Task „${old}“ umbenannt in „${title}“ von ${label(actor)}. Grund: ${reason}`, true);
+		appendComment(db, emit, actor, t, `Task „${old}“ umbenannt in „${title}“ von ${label(actor)}. Grund: ${reason}`, true);
 	});
 }
 
@@ -349,12 +400,12 @@ export function deleteTask(db: DatabaseSync, actor: Actor, taskId: number, reaso
 		const { t, title } = task(db, taskId);
 		db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 		emit({ type: 'task.deleted', projectId: t.project_id, ticketId: t.id, actor, taskId });
-		comment(db, emit, actor, t, `Task „${title}“ gelöscht von ${label(actor)}. Grund: ${reason}`, true);
+		appendComment(db, emit, actor, t, `Task „${title}“ gelöscht von ${label(actor)}. Grund: ${reason}`, true);
 	});
 }
 
 export function addComment(db: DatabaseSync, actor: Actor, ticketId: number, body: string): { id: number } {
-	return tx(db, (emit) => comment(db, emit, actor, ticket(db, ticketId), body));
+	return tx(db, (emit) => appendComment(db, emit, actor, ticket(db, ticketId), body));
 }
 
 /** Verknüpft zwei Tickets (idempotent). parent_of und blocks bleiben zyklenfrei. */

@@ -460,3 +460,61 @@ describe('Event-Bus', () => {
 		expect(db.isTransaction).toBe(false);
 	});
 });
+
+describe('blockingPredecessors', () => {
+	const refs = (rows: { ref: string }[]) => rows.map((r) => r.ref);
+
+	it('lists the open predecessors that keep a ticket out of workableTickets', () => {
+		const { db, projectId, ticket, place, col } = setup();
+		const [open, finished, successor] = [ticket(), ticket(), ticket()];
+		place(finished, 'Done');
+		board.linkRelation(db, user, open, successor, 'blocks');
+		board.linkRelation(db, user, finished, successor, 'blocks');
+		expect(board.blockingPredecessors(db, successor)).toEqual([{ id: open, ref: 'STU-1', title: 'T', column: 'Backlog' }]);
+		expect(refs(board.workableTickets(db, projectId, col.Backlog))).not.toContain('STU-3');
+
+		place(open, 'Done');
+		expect(board.blockingPredecessors(db, successor)).toEqual([]);
+		expect(refs(board.workableTickets(db, projectId, col.Backlog))).toContain('STU-3');
+	});
+
+	it('counts an approved predecessor as finished only when the project says review_ok', () => {
+		const { db, projectId, ticket, place } = setup();
+		const [predecessor, successor] = [ticket(), ticket()];
+		board.linkRelation(db, user, predecessor, successor, 'blocks');
+		place(predecessor, 'Review');
+		board.approveReview(db, reviewer, predecessor);
+		expect(refs(board.blockingPredecessors(db, successor))).toEqual(['STU-1']);
+		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
+		expect(board.blockingPredecessors(db, successor)).toEqual([]);
+	});
+});
+
+describe('addTasks / completeTasks', () => {
+	const openTitles = (db: DatabaseSync, id: number) => db.prepare('SELECT title FROM tasks WHERE ticket_id = ? AND done_at IS NULL ORDER BY id').all(id).map((r) => r.title);
+
+	it('adds all tasks or none', () => {
+		const { db, ticket } = setup();
+		const id = ticket();
+		expect(caught(() => board.addTasks(db, dev, id, ['A', '  '])).code).toBe('empty_title');
+		expect(openTitles(db, id)).toEqual([]);
+		expect(board.addTasks(db, dev, id, ['A', 'B']).ids).toHaveLength(2);
+		expect(openTitles(db, id)).toEqual(['A', 'B']);
+	});
+
+	it('completes only tasks of the given ticket and rejects the whole call for a foreign id', () => {
+		const { db, ticket } = setup();
+		const [own, other] = [ticket(), ticket()];
+		const [a, b] = board.addTasks(db, dev, own, ['A', 'B']).ids;
+		const [foreign] = board.addTasks(db, user, other, ['Fremd']).ids;
+		const err = caught(() => board.completeTasks(db, dev, own, [a, foreign]));
+		expect(err.code).toBe('not_found');
+		expect(err.message).toContain(String(foreign));
+		expect(err.hint).toContain(`${a}, ${b}`);
+		expect(openTitles(db, own)).toEqual(['A', 'B']);
+		expect(openTitles(db, other)).toEqual(['Fremd']);
+
+		board.completeTasks(db, dev, own, [a]);
+		expect(openTitles(db, own)).toEqual(['B']);
+	});
+});

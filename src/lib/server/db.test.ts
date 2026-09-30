@@ -238,7 +238,10 @@ describe('Kernschema', () => {
 		['Run-Event-Typ unbekannt', "INSERT INTO run_events (run_id, seq, type) VALUES (1, 2, 'chat')", /CHECK/],
 		['Run-Event-Payload kein JSON', "INSERT INTO run_events (run_id, seq, type, payload) VALUES (1, 2, 'log', '{kaputt')", /CHECK/],
 		['Idempotenz-Schlüssel doppelt', "INSERT INTO run_events (run_id, seq, type, idempotency_key) VALUES (1, 2, 'log', 'k'), (1, 3, 'log', 'k')", /UNIQUE/],
-		['Kommentar mit unbekanntem Run', "INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 99)", /FOREIGN KEY/]
+		['Kommentar mit unbekanntem Run', "INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 99)", /FOREIGN KEY/],
+		['question with four options', "INSERT INTO questions (ticket_id, question, options) VALUES (100, 'q', '[1, 2, 3, 4]')", /CHECK/],
+		['answer without answered_at', `INSERT INTO questions (ticket_id, question, answer) VALUES (100, 'q', '{"option": 1}')`, /CHECK/],
+		['answer collected before it was given', "INSERT INTO questions (ticket_id, question, collected_at) VALUES (100, 'q', CURRENT_TIMESTAMP)", /CHECK/]
 	])('weist ab: %s', (_, sql, error) => {
 		expect(() => db.exec(sql)).toThrow(error);
 	});

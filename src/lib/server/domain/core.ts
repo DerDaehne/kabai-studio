@@ -6,6 +6,9 @@ export { DomainError } from './error';
 /** Wer eine Mutation auslöst. Agents handeln immer in einem Run. */
 export type Actor = { kind: 'user' | 'agent' | 'system'; runId?: number };
 
+/** How an actor appears as comment author or assignee, e.g. "agent (Run 3)". */
+export const actorLabel = (actor: Actor) => (actor.runId === undefined ? actor.kind : `${actor.kind} (Run ${actor.runId})`);
+
 /**
  * Führt `fn` in einer Transaktion aus. Events, die `fn` über `emit` meldet, gehen erst nach dem COMMIT
  * auf den Bus — eine zurückgerollte Mutation meldet nichts.
