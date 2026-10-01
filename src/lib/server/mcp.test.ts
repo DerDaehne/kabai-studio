@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { randomBytes } from 'node:crypto';
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
@@ -39,12 +40,18 @@ function rpc(serve: Serve, token: string | undefined, method: string, params?: o
 	return serve(new Request('http://127.0.0.1:3000/mcp', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }) }));
 }
 
-async function resultOf(response: Response) {
+async function messageOf(response: Response) {
 	const text = await response.text();
 	const isStream = response.headers.get('content-type')?.startsWith('text/event-stream');
 	const json = isStream ? text.split('\n').find((line) => line.startsWith('data: '))!.slice('data: '.length) : text;
-	return JSON.parse(json).result;
+	return JSON.parse(json);
 }
+
+const resultOf = async (response: Response) => (await messageOf(response)).result;
+
+/** Everything a tool can write, to show that a refused call changed nothing. */
+const writableRows = (db: DatabaseSync) =>
+	JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
 
 /** What the agent sees of a tool call: the error flag and the text, parsed when it is JSON. */
 async function callTool(serve: Serve, token: string, name: string, args: object) {
@@ -87,6 +94,17 @@ describe('run token', () => {
 		const second = startRun(id, first.runId);
 		runs.finishRun(db, system, second.runId, { state: 'succeeded' });
 		expect((await rpc(serve, second.token, 'tools/list')).status).toBe(401);
+	});
+
+	it('answers 401 once the run was cancelled or has failed', async () => {
+		const { db, serve, startRun, ticket } = setup();
+		const id = ticket();
+		for (const end of [{ state: 'cancelled' }, { state: 'failed', error: 'executor crashed' }] as const) {
+			const { runId, token } = startRun(id);
+			expect((await rpc(serve, token, 'tools/list')).status).toBe(200);
+			runs.finishRun(db, system, runId, end);
+			expect((await rpc(serve, token, 'tools/list')).status).toBe(401);
+		}
 	});
 });
 
@@ -378,7 +396,7 @@ describe('secrets', () => {
 		await call(token, 'update_ticket', { description: `key ${secret}` });
 		await call(token, 'add_tasks', { titles: [`task ${secret}`] });
 		await call(token, 'request_human', { question: `use ${secret}?`, options: [{ label: secret }] });
-		const stored = JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
+		const stored = writableRows(db);
 		expect(stored).not.toContain(secret);
 		expect(stored).toContain('[secret:probe]');
 
@@ -386,6 +404,48 @@ describe('secrets', () => {
 		const view = JSON.stringify((await call(token, 'get_ticket')).body);
 		expect(view).not.toContain(secret);
 		expect(view).toContain('pasted by a human: [secret:probe]');
+	});
+});
+
+async function expectSchemaRefusal(_case: string, name: string, args: object) {
+	const { db, call, startRun, ticket } = setup();
+	const { token } = startRun(ticket());
+	const before = writableRows(db);
+	const refused = await call(token, name, args);
+	expect(refused.isError).toBe(true);
+	expect(refused.body).toMatch(/^Input validation error/);
+	expect(writableRows(db)).toBe(before);
+}
+
+describe('argument types', () => {
+	const mistyped: [string, string, object][] = [
+		['a fractional ticket', 'get_ticket', { ticket: 1.5 }],
+		['a null ticket', 'get_ticket', { ticket: null }],
+		['task ids given as strings', 'complete_tasks', { task_ids: ['1'] }],
+		['a number as comment text', 'add_comment', { text: 42 }],
+		['an array as comment text', 'add_comment', { text: ['a'] }],
+		['a constructor key', 'add_comment', { text: 'x', constructor: { prototype: { polluted: true } } }],
+		['a __proto__ key inside an option', 'request_human', JSON.parse('{"question": "q", "options": [{"label": "a", "__proto__": {"polluted": true}}]}')]
+	];
+
+	it.each(mistyped)('rejects %s in the schema, before anything is written', expectSchemaRefusal);
+
+	it('drops a top-level __proto__ key without polluting any prototype', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const written = await call(token, 'add_comment', JSON.parse('{"text": "x", "__proto__": {"polluted": true}}'));
+		expect(written.isError).toBe(false);
+		expect(db.prepare('SELECT body FROM comments').all()).toEqual([{ body: 'x' }]);
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+	});
+
+	it('answers arguments that are no object and unknown tools with a protocol error', async () => {
+		const { db, serve, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const callError = async (name: string, args: unknown) => (await messageOf(await rpc(serve, token, 'tools/call', { name, arguments: args }))).error;
+		expect(await callError('add_comment', ['a'])).toMatchObject({ code: -32602 });
+		expect(await callError('delete_ticket', {})).toMatchObject({ code: -32602, message: expect.stringContaining('delete_ticket') });
+		expect(db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(0);
 	});
 });
 
@@ -403,16 +463,7 @@ describe('size limits', () => {
 		['ticket ref', 'get_ticket', { ticket: 'STU-'.padEnd(21, '1') }]
 	];
 
-	it.each(oversized)('rejects an oversized %s in the schema, before anything is written', async (_, name, args) => {
-		const { db, call, startRun, ticket } = setup();
-		const { token } = startRun(ticket());
-		const state = () => JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
-		const before = state();
-		const refused = await call(token, name, args);
-		expect(refused.isError).toBe(true);
-		expect(refused.body).toMatch(/^Input validation error/);
-		expect(state()).toBe(before);
-	});
+	it.each(oversized)('rejects an oversized %s in the schema, before anything is written', expectSchemaRefusal);
 
 	it('accepts a comment of exactly the maximum length', async () => {
 		const { call, startRun, ticket } = setup();
@@ -467,6 +518,7 @@ describe('authorization header', () => {
 			).status;
 		expect(await statusWith(`bearer ${token}`)).toBe(200);
 		expect(await statusWith(`Bearer   ${token}`)).toBe(200);
+		expect(await statusWith(`Bearer ${token} `)).toBe(200);
 		expect(await statusWith(`Basic ${token}`)).toBe(401);
 		expect(await statusWith(token)).toBe(401);
 		expect(await statusWith(`Bearer ${token}, Bearer ${token}`)).toBe(401);
