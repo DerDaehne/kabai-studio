@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { assignAurae, type AuraCandidate } from '$lib/ui/aura';
+	import AuraList from '$lib/ui/AuraList.svelte';
 	import Badge, { type Tone } from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
+	import Kbd from '$lib/ui/Kbd.svelte';
+	import { tilt, travel } from '$lib/ui/motion';
+	import Nebula from '$lib/ui/Nebula.svelte';
+	import ProjectTag, { type ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 
@@ -32,6 +38,48 @@
 		{ key: 'STU-30', title: 'Onboarding-Assistent: Modellwahl', tone: 'neutral', state: 'in Warteschlange', role: 'Refiner', age: '2 h' }
 	];
 
+	const projects: { code: string; palette: ProjectPalette }[] = [
+		{ code: 'STU', palette: 1 },
+		{ code: 'WEB', palette: 2 },
+		{ code: 'API', palette: 3 },
+		{ code: 'DOC', palette: 4 },
+		{ code: 'OPS', palette: 5 }
+	];
+
+	type Lane = AuraCandidate & { project: ProjectPalette; code: string; ticket: string; title: string; state: string; badge: Tone };
+	const lanes: Lane[] = [
+		{ key: 'STU-41', code: 'STU', project: 1, ticket: '41', title: 'Anmeldeseite an Design-System anpassen', tone: 'running', badge: 'running', state: 'läuft' },
+		{ key: 'WEB-12', code: 'WEB', project: 2, ticket: '12', title: 'Shell-Freigabe für npm install', tone: 'waiting', badge: 'waiting', state: 'wartet auf Freigabe' },
+		{ key: 'API-7', code: 'API', project: 3, ticket: '7', title: 'Migration 004: Anhänge', tone: 'failed', badge: 'failed', state: 'fehlgeschlagen' },
+		{ key: 'DOC-3', code: 'DOC', project: 4, ticket: '3', title: 'Handbuch: Einrichtung', tone: 'running', badge: 'running', state: 'läuft' },
+		{ key: 'OPS-9', code: 'OPS', project: 5, ticket: '9', title: 'Backup-Rotation prüfen', tone: 'paused', badge: 'paused', state: 'pausiert' },
+		{ key: 'STU-35', code: 'STU', project: 1, ticket: '35', title: 'Review: Workflow-Regeln', tone: 'succeeded', badge: 'succeeded', state: 'erledigt' }
+	];
+	let focusedLane = $state<string | undefined>(undefined);
+	const aurae = $derived(assignAurae(lanes.map((lane) => ({ ...lane, focused: lane.key === focusedLane }))));
+	function focusNextLane() {
+		const next = lanes.findIndex((lane) => lane.key === focusedLane) + 1;
+		focusedLane = lanes[next]?.key;
+	}
+
+	type GlassStrength = 'bold' | 'frosted' | 'solid';
+	let glass = $state<GlassStrength>('bold');
+	$effect(() => {
+		const root = document.documentElement;
+		if (glass === 'bold') delete root.dataset.glass;
+		else root.dataset.glass = glass;
+		return () => delete root.dataset.glass;
+	});
+
+	const questions = ['Shell-Freigabe für npm install?', 'Migration 004 erneut starten?', 'Review-Ergebnis von STU-35 abnehmen?'];
+	let question = $state(0);
+	let undoing = $state(false);
+	let noteShown = $state(true);
+	function advance(step: 1 | -1) {
+		undoing = step < 0;
+		question = (question + step + questions.length) % questions.length;
+	}
+
 	function save() {
 		saving = true;
 		setTimeout(() => {
@@ -52,10 +100,10 @@
 
 	<section aria-labelledby="h-colors">
 		<h2 id="h-colors">Farben</h2>
-		<div class="swatches" role="list" aria-label="Akzentskala Moos">
+		<div class="swatches" role="list" aria-label="Akzentskala Frühling">
 			{#each scale as step (step)}
 				<div class="swatch" role="listitem">
-					<span style:background="var(--green-{step})"></span>
+					<span style:background="var(--a-{step})"></span>
 					<code>{step}</code>
 				</div>
 			{/each}
@@ -64,6 +112,76 @@
 			{#each statuses as [tone, label] (tone)}<Badge {tone}>{label}</Badge>{/each}
 			<Badge tone="accent">Epic</Badge>
 		</div>
+		<div class="row" role="list" aria-label="Projektpalette">
+			{#each projects as project (project.code)}<span role="listitem"><ProjectTag {...project} /></span>{/each}
+		</div>
+	</section>
+
+	<section aria-labelledby="h-keys">
+		<h2 id="h-keys">Tasten</h2>
+		<div class="row">
+			<span><Kbd key="j" /> <Kbd key="k" /> wählen</span>
+			<span><Kbd key="g" /> <Kbd key="g" /> zum Anfang</span>
+			<span><Kbd key=" " /> <Kbd key="S" /> Projekt-Fokus</span>
+			<span><Kbd key="1" /> <Kbd key="2" active /> <Kbd key="3" /> antworten</span>
+			<span><Kbd key="Enter" /> öffnen</span>
+			<span><Kbd key="Escape" /> zurück</span>
+		</div>
+	</section>
+
+	<section aria-labelledby="h-glass">
+		<h2 id="h-glass">Glas und Auren</h2>
+		<fieldset class="row">
+			<legend>Glas-Stärke</legend>
+			<label><input type="radio" bind:group={glass} value="bold" /> Mutig</label>
+			<label><input type="radio" bind:group={glass} value="frosted" /> Milchglas</label>
+			<label><input type="radio" bind:group={glass} value="solid" /> Solide</label>
+		</fieldset>
+		<p class="muted">
+			Eine starke Aura, höchstens zwei schwache; laufende Spuren nur in ihrer Projektfarbe.
+			<Button size="sm" onclick={focusNextLane}>Fokus weiter</Button>
+		</p>
+		<div class="stage">
+			<Nebula />
+			<AuraList items={lanes} {aurae} label="Spuren">
+				{#snippet item(lane)}
+					<article class="lane glass" class:selected={lane.key === focusedLane} aria-current={lane.key === focusedLane || undefined}>
+						<span class="mono"><ProjectTag code={lane.code} palette={lane.project} /> {lane.ticket}</span>
+						<span class="title">{lane.title}</span>
+						<Badge tone={lane.badge}>{lane.state}</Badge>
+					</article>
+				{/snippet}
+			</AuraList>
+			<div class="dock">
+				<span><Kbd key="j" /> <Kbd key="k" /> wählen</span>
+				<span><Kbd key=":" /> Befehl</span>
+				<span><Kbd key="/" /> Suche</span>
+			</div>
+		</div>
+	</section>
+
+	<section aria-labelledby="h-motion">
+		<h2 id="h-motion">Bewegung</h2>
+		<p class="muted">Bei reduzierter Bewegung (System oder Einstellung in der Seitenleiste) nur Überblendung.</p>
+		<div class="row">
+			<Button onclick={() => advance(1)}>Weiterrücken</Button>
+			<Button variant="ghost" onclick={() => advance(-1)}>Rückgängig</Button>
+			<Button variant="ghost" onclick={() => (noteShown = !noteShown)}>Hinweis {noteShown ? 'ausblenden' : 'einblenden'}</Button>
+		</div>
+		<div class="queue">
+			{#key question}
+				<article class="decision" in:tilt={{ reverse: undoing }} out:tilt={{ reverse: undoing }}>
+					<Badge tone="waiting">Frage {question + 1} von {questions.length}</Badge>
+					<p>{questions[question]}</p>
+					<div class="row">
+						<span><Kbd key="1" /> Ja</span>
+						<span><Kbd key="2" /> Nein</span>
+						<span><Kbd key="3" /> Später</span>
+					</div>
+				</article>
+			{/key}
+		</div>
+		{#if noteShown}<p class="note" transition:travel>Bewegung zeigt Herkunft und Ziel, der Zustand ändert sich sofort.</p>{/if}
 	</section>
 
 	<section aria-labelledby="h-actions">
@@ -236,6 +354,96 @@
 	td.title {
 		width: 100%;
 		font-weight: 520;
+	}
+	fieldset {
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	legend {
+		float: left;
+		margin-right: var(--space-2);
+		font-weight: 560;
+	}
+	fieldset label {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+	}
+	.stage {
+		position: relative;
+		isolation: isolate;
+		display: grid;
+		gap: var(--space-4);
+		padding: var(--space-6) var(--space-4) var(--space-4);
+		border-radius: var(--radius-xl);
+		background: var(--bg);
+		box-shadow: inset 0 0 0 1px var(--hairline);
+		overflow: hidden;
+	}
+	.glass,
+	.dock,
+	.decision {
+		border-radius: var(--radius-lg);
+		backdrop-filter: blur(var(--blur-card)) saturate(var(--glass-sat));
+	}
+	.lane {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--space-3);
+		padding: var(--space-3) var(--space-4);
+		background: var(--glass-card);
+		box-shadow: var(--shadow-card);
+	}
+	.lane.selected {
+		background: linear-gradient(var(--fill-sel), var(--fill-sel)), var(--glass-card);
+	}
+	.lane .title {
+		overflow: hidden;
+		font-weight: 520;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.dock {
+		display: flex;
+		flex-wrap: wrap;
+		justify-self: center;
+		gap: var(--space-4);
+		padding: var(--space-2) var(--space-4);
+		background: var(--glass-float);
+		backdrop-filter: blur(var(--blur-float)) saturate(var(--glass-sat));
+		box-shadow: var(--shadow-float);
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+	}
+	.queue {
+		display: grid;
+		max-width: 420px;
+	}
+	.decision {
+		display: grid;
+		grid-area: 1 / 1;
+		gap: var(--space-2);
+		padding: var(--space-4);
+		background: var(--glass-raised);
+		box-shadow: var(--shadow-float);
+	}
+	.decision p {
+		font-size: var(--text-lg);
+		font-weight: 600;
+	}
+	.note {
+		color: var(--text-muted);
+	}
+	@media (max-width: 719px) {
+		.lane {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+		.lane .title {
+			grid-row: 2;
+			grid-column: 1 / -1;
+		}
 	}
 	.form {
 		display: grid;
