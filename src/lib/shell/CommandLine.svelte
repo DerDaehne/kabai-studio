@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { parseInput, suggest, type Suggestion, type SuggestionSources } from './commands';
+	import { parseInput, suggestionsFor, type Suggestion, type SuggestionSources } from './commands';
 
 	let {
 		sources,
@@ -26,7 +26,7 @@
 	const id = $props.id();
 	let active = $state(0);
 	const parsed = $derived(parseInput(value));
-	const suggestions = $derived(parsed.mode ? suggest(parsed.mode, parsed.query, sources) : []);
+	const suggestions = $derived(suggestionsFor(value, sources));
 	const expanded = $derived(focused && suggestions.length > 0);
 	const optionId = (index: number) => `${id}-option-${index}`;
 

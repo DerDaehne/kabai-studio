@@ -94,6 +94,8 @@
 	}
 
 	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
+	// a narrow head dock fits only one chip, and a second one would hide whether an agent waits
+	const groupAgents = $derived(shell.agents.length >= (compact.current ? 2 : 3));
 
 	onNavigate(transitionPage);
 </script>
@@ -140,7 +142,7 @@
 				</span>
 			{/if}
 			<ul class="agents" aria-label="Agents">
-				{#if shell.agents.length >= 3}
+				{#if groupAgents}
 					<li class="chip" class:halt={waitingAgents > 0}>
 						<span class="dot" aria-hidden="true"></span>{shell.agents.length} Agents
 						{#if waitingAgents}<span class="state">· {waitingAgents} {waitingAgents === 1 ? 'hält' : 'halten'}</span>{/if}
@@ -436,7 +438,7 @@
 		translate: 0 0;
 	}
 
-	/* Handy/schmal: Ansichten und Befehlszeile als Tab-Dock unten (Daumenbereich), Attribution am Ende des Inhalts */
+	/* Phones: views and the command line move to a tab dock in thumb reach, the attribution to the end of the content */
 	@media (max-width: 719px) {
 		.head {
 			margin: var(--space-2) var(--space-2) 0;

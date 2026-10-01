@@ -24,7 +24,7 @@ const everywhere: KeyHint[] = [
 	{ keys: [['?']], label: 'alle Tasten' }
 ];
 
-const contextKeys: Record<KeyContext, KeyHint[]> = {
+export const contextKeys: Record<KeyContext, KeyHint[]> = {
 	stellwerk: [
 		{ keys: [['j'], ['k']], label: 'Spur', counted: true },
 		{ keys: [['h'], ['l']], label: 'Schritt', counted: true },
@@ -53,7 +53,8 @@ const contextKeys: Record<KeyContext, KeyHint[]> = {
 	]
 };
 
-function continuing(hint: KeyHint, prefix: string): KeyHint[] {
+/** The hint reduced to the sequences that continue `prefix`; empty when none does. */
+export function continuing(hint: KeyHint, prefix: string): KeyHint[] {
 	const keys = hint.keys.filter((sequence) => sequence.length > prefix.length && sequence.slice(0, prefix.length).join('') === prefix);
 	return keys.length ? [{ ...hint, keys }] : [];
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validKeys, type KeyHint } from './keys';
+import { continuing, validKeys, type KeyHint } from './keys';
 
 const sequences = (hints: KeyHint[]) => hints.map((hint) => hint.keys.map((sequence) => sequence.join('')).join('|'));
 
@@ -34,5 +34,16 @@ describe('validKeys', () => {
 		const started = validKeys('board', '5g');
 		expect(started).toMatchObject({ count: '5', prefix: 'g' });
 		expect(sequences(started.hints)).toEqual(['gg']);
+	});
+});
+
+describe('continuing', () => {
+	it('keeps only the sequences of a hint that continue the prefix', () => {
+		const hint: KeyHint = { keys: [['g', 'g'], ['G']], label: 'Anfang/Ende' };
+		expect(continuing(hint, 'g')).toEqual([{ keys: [['g', 'g']], label: 'Anfang/Ende' }]);
+	});
+
+	it('drops a hint without any continuation', () => {
+		expect(continuing({ keys: [['x']], label: 'stoppen' }, 'g')).toEqual([]);
 	});
 });

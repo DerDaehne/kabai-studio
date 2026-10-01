@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commands, matchesWordStart, parseInput, suggest, type Suggestion } from './commands';
+import { commands, matchesWordStart, parseInput, suggest, suggestionsFor, type Suggestion } from './commands';
 
 const view: Suggestion[] = [{ id: 'view-1', label: 'Spur von qwen3-coder', href: '/#spur' }];
 const tickets: Suggestion[] = [
@@ -37,6 +37,10 @@ describe('suggest', () => {
 		expect(found).not.toContain(':diff');
 	});
 
+	it('matches the description of a command, not only its name', () => {
+		expect(labels(suggest(':', 'änd', sources))).toContain(':diff');
+	});
+
 	it('offers every command for an empty command query', () => {
 		expect(suggest(':', '', sources)).toHaveLength(commands.length);
 	});
@@ -49,5 +53,19 @@ describe('suggest', () => {
 	it('keeps the modes apart', () => {
 		expect(labels(suggest('/', 'run', sources))).toEqual([]);
 		expect(labels(suggest(':', 'push', sources))).toEqual([]);
+	});
+});
+
+describe('suggestionsFor', () => {
+	it('lists every command while the line is empty', () => {
+		expect(suggestionsFor('', sources)).toEqual(commands);
+	});
+
+	it('suggests nothing for text without a mode', () => {
+		expect(suggestionsFor('run', sources)).toEqual([]);
+	});
+
+	it('follows the mode once one is typed', () => {
+		expect(labels(suggestionsFor('/push', sources))).toEqual(['Push bei neuer Freigabe']);
 	});
 });

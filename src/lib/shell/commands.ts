@@ -47,3 +47,10 @@ export function suggest(mode: CommandMode, query: string, sources: SuggestionSou
 	const candidates = mode === ':' ? sources.commands : [...sources.view, ...sources.tickets];
 	return candidates.filter((candidate) => matchesWordStart(`${candidate.label} ${candidate.detail ?? ''}`, query));
 }
+
+/** An empty line lists every command, so they can be discovered without knowing `:` (mobile has no key bar). */
+export function suggestionsFor(value: string, sources: SuggestionSources): Suggestion[] {
+	if (value === '') return sources.commands;
+	const { mode, query } = parseInput(value);
+	return mode ? suggest(mode, query, sources) : [];
+}
