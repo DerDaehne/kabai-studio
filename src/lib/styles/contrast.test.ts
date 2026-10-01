@@ -190,6 +190,15 @@ describe('the default, spring accent with bold glass', () => {
 	});
 });
 
+describe('focus ring', () => {
+	it('sits on a halo in the ground colour, which is what lets the check above use the ground as its only backdrop', () => {
+		const base = readFileSync(new URL('./base.css', import.meta.url), 'utf8');
+		const focusRule = base.match(/\n:focus-visible \{([^}]*)\}/)?.[1] ?? '';
+		expect(focusRule).toContain('outline: 2px solid var(--focus);');
+		expect(focusRule).toContain('box-shadow: 0 0 0 5px var(--bg);');
+	});
+});
+
 describe('prefers-reduced-transparency', () => {
 	it('switches to the solid glass values', () => {
 		expect(reducedTransparencyRule).not.toBeNull();

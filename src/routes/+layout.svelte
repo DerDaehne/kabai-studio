@@ -204,6 +204,7 @@
 	}
 	main:focus-visible {
 		outline: none; /* Ziel des Skip-Links, kein Bedienelement */
+		box-shadow: none;
 	}
 	.skip {
 		position: fixed;

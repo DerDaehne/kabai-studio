@@ -133,9 +133,9 @@
 		<h2 id="h-glass">Glas und Auren</h2>
 		<fieldset class="row">
 			<legend>Glas-Stärke</legend>
-			<label><input type="radio" bind:group={glass} value="bold" /> Mutig</label>
-			<label><input type="radio" bind:group={glass} value="frosted" /> Milchglas</label>
-			<label><input type="radio" bind:group={glass} value="solid" /> Solide</label>
+			<label><input type="radio" name="glass" bind:group={glass} value="bold" /> Mutig</label>
+			<label><input type="radio" name="glass" bind:group={glass} value="frosted" /> Milchglas</label>
+			<label><input type="radio" name="glass" bind:group={glass} value="solid" /> Solide</label>
 		</fieldset>
 		<p class="muted">
 			Eine starke Aura, höchstens zwei schwache; laufende Spuren nur in ihrer Projektfarbe.

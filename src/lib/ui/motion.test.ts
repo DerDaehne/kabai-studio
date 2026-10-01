@@ -18,6 +18,8 @@ const transitions = {
 	'tilt in': () => tilt(node, {}, { direction: 'in' }),
 	'tilt out': () => tilt(node, { reverse: true }, { direction: 'out' })
 };
+const navigation = (from: string, to: string) =>
+	({ complete: Promise.resolve(), from: { route: { id: from } }, to: { route: { id: to } } }) as unknown as OnNavigate;
 const startViewTransition = vi.fn((update: () => Promise<void>) => void update());
 const dataset: DOMStringMap = {};
 
@@ -46,7 +48,7 @@ describe.each([
 	});
 
 	it('swaps pages without a view transition', () => {
-		expect(transitionPage({ complete: Promise.resolve() } as OnNavigate)).toBeUndefined();
+		expect(transitionPage(navigation('/', '/settings'))).toBeUndefined();
 		expect(startViewTransition).not.toHaveBeenCalled();
 	});
 });
@@ -62,8 +64,13 @@ describe('with full motion', () => {
 	});
 
 	it('runs page swaps inside a view transition and resolves once the transition has started', async () => {
-		await transitionPage({ complete: Promise.resolve() } as OnNavigate);
+		await transitionPage(navigation('/', '/settings'));
 		expect(startViewTransition).toHaveBeenCalledOnce();
+	});
+
+	it('keeps parameter changes within the same route free of page transitions', () => {
+		expect(transitionPage(navigation('/projects/[id]', '/projects/[id]'))).toBeUndefined();
+		expect(startViewTransition).not.toHaveBeenCalled();
 	});
 });
 

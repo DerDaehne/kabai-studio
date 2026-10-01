@@ -72,9 +72,13 @@ export function tilt(
 	};
 }
 
-/** For onNavigate: swaps pages inside a view transition. Skipped with reduced motion or without browser support. */
+/**
+ * For onNavigate: swaps pages inside a view transition. Skipped within the same route (only parameters change),
+ * with reduced motion and without browser support.
+ */
 export function transitionPage(navigation: OnNavigate): Promise<void> | undefined {
-	if (!document.startViewTransition || motionMode() === 'reduced') return;
+	const samePage = navigation.from?.route.id === navigation.to?.route.id;
+	if (samePage || !document.startViewTransition || motionMode() === 'reduced') return;
 	return new Promise((resolve) => {
 		document.startViewTransition(async () => {
 			resolve();

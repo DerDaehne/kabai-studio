@@ -114,10 +114,11 @@ describe('AuraList', () => {
 
 		const glows = [...body.matchAll(/<li class="glow[^"]*" aria-hidden="true"([^>]*)>/g)].map((match) => match[1]);
 		expect(glows).toHaveLength(items.length);
-		expect(glows[0]).toMatch(/data-strength="strong".*grid-row: 1; opacity: 1; background-color: var\(--aura-waiting\)/);
+		expect(glows[0]).toMatch(/data-strength="strong".*grid-row: 1 \/ span 1; opacity: 1; background-color: var\(--aura-waiting\)/);
 		expect(glows[1]).toMatch(/data-strength="weak".*opacity: 0\.5; background-color: var\(--aura-failed\)/);
 		expect(glows[2]).toMatch(/data-strength="ambient".*opacity: 0\.3; background-color: var\(--aura-project-1\)/);
 		expect(glows[3]).toMatch(/opacity: 0/);
+		glows.forEach((glow, row) => expect(glow).toContain(`grid-row: ${row + 1} / span 1;`));
 		expect(body).toContain('<span>decision</span>');
 	});
 });

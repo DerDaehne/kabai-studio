@@ -17,7 +17,7 @@
 			class="glow"
 			aria-hidden="true"
 			data-strength={aura?.strength}
-			style:grid-row={row + 1}
+			style:grid-row="{row + 1} / span 1"
 			style:opacity={aura ? auraOpacity[aura.strength] : 0}
 			style:background-color={aura?.color}
 		></li>
@@ -40,7 +40,8 @@
 		overflow: clip;
 		overflow-clip-margin: 28px;
 	}
-	/* Out of flow, so it shares the grid row of its item without taking part in auto-placement */
+	/* Out of flow, so it shares the grid row of its item without taking part in auto-placement.
+	   The row needs an explicit span: for an out-of-flow child an auto end line is the container edge. */
 	.glow {
 		position: absolute;
 		z-index: -1;
