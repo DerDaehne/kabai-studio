@@ -49,7 +49,15 @@ try {
 	const src = process.argv[2];
 	if (!src) throw new Error(`Aufruf: npm run restore -- <backup-datei>. Sicherungen liegen unter ${backupDir()}.`);
 	if (!existsSync(src)) throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);
-	locked = lockDataDir();
+	try {
+		locked = lockDataDir();
+	} catch {
+		throw new DomainError(
+			'restore_fs_error',
+			`Das Datenverzeichnis ${resolve(dataDir())} lässt sich nicht sperren.`,
+			'Schreibrechte und Speicherplatz im Datenverzeichnis prüfen; restore als den Besitzer des Datenverzeichnis ausführen.'
+		);
+	}
 	if (!locked)
 		throw new Error(`Studio läuft noch mit dem Datenverzeichnis ${resolve(dataDir())} (oder ein anderes restore). Server stoppen und erneut ausführen.`);
 

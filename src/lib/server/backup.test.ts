@@ -513,11 +513,28 @@ describe('restore (fs error)', () => {
 		const source = join(tmp, 'unreadable-source.db');
 		const db = openDb(source);
 		db.close();
-		chmodSync(source, 0o000);
+		try {
+			chmodSync(source, 0o000);
+			const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+			expect(r.status).toBe(1);
+			expect(r.stderr).toMatch(/\[restore_fs_error\] Dateisystemfehler \(EACCES, copyfile, .*unreadable-source\.db/);
+			expect(r.stderr).toMatch(/muss lesbar sein\./);
+		} finally {
+			chmodSync(source, 0o600);
+		}
+	});
+
+	it('wraps a non-writable data dir (0500) as restore_fs_error naming the directory', () => {
+		if (process.getuid?.() === 0) return; // root ignores directory permissions
+		const data = join(tmp, 'data-0500');
+		mkdirSync(data, { mode: 0o500 });
+		const source = join(tmp, 'data-0500-source.db');
+		const db = openDb(source);
+		db.close();
 		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
 		expect(r.status).toBe(1);
-		expect(r.stderr).toMatch(/\[restore_fs_error\] Dateisystemfehler \(EACCES, copyfile, .*unreadable-source\.db/);
-		expect(r.stderr).toMatch(/muss lesbar sein\./);
-		chmodSync(source, 0o600);
+		expect(r.stderr.trim().split('\n')).toHaveLength(1);
+		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] /);
+		expect(r.stderr).toContain(data);
 	});
 });
