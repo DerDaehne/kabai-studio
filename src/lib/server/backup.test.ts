@@ -192,6 +192,16 @@ describe('Aufbewahrung', () => {
 		]);
 	});
 
+	it('räumt eine .tmp einer anderen Minute auf und behält die neueste Sicherung', () => {
+		const dir = join(tmp, 'prune-tmp');
+		mkdirSync(dir, { mode: 0o700 });
+		writeFileSync(join(dir, 'studio-20260101-0000.db.tmp'), 'halb geschrieben'); // abgebrochener Lauf um 00:00
+		backup(seed(join(tmp, 'prune-tmp.db')), dir, new Date('2026-01-01T00:05:00Z')); // Sicherung um 00:05
+		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0000.db.tmp', 'studio-20260101-0005.db']);
+		expect(prune(dir)).toEqual([]);
+		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0005.db']);
+	});
+
 	it('behält je Tag die neueste und löscht nie die jüngste Sicherung', () => {
 		const dir = join(tmp, 'keep');
 		const db = seed(join(tmp, 'keep.db'));
