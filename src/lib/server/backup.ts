@@ -83,12 +83,12 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
  * gezählt über Tage/Wochen, die überhaupt eine Sicherung haben — lange Pausen löschen also nichts. Die neueste bleibt immer.
  * Gibt die gelöschten Dateinamen zurück.
  */
-export function prune(dir: string, { daily, weekly } = RETENTION): string[] {
-	const all = listBackups(dir);
-	const keep = new Set(all.slice(0, 1));
+export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date()): string[] {
+	const present = listBackups(dir).filter((b) => b.at.getTime() <= now.getTime());
+	const keep = new Set(present.slice(0, 1));
 	const days = new Set<number>();
 	const weeks = new Set<number>();
-	for (const b of all) {
+	for (const b of present) {
 		const day = Math.floor(b.at.getTime() / DAY);
 		const week = Math.floor((day + 3) / 7); // Tag 0 (1970-01-01) war ein Donnerstag
 		if (!days.has(day) && days.size < daily) {
@@ -100,10 +100,10 @@ export function prune(dir: string, { daily, weekly } = RETENTION): string[] {
 			keep.add(b);
 		}
 	}
-	const gone = all.filter((b) => !keep.has(b));
+	const gone = present.filter((b) => !keep.has(b));
 	for (const b of gone) rmSync(join(dir, b.file));
 	// Aborted run: a .tmp with a different minute name than the newest backup is stale and gets removed.
-	const newest = all[0] ? minuteName(all[0].file) : null;
+	const newest = present[0] ? minuteName(present[0].file) : null;
 	for (const file of readdirSync(dir)) {
 		if (!file.endsWith('.tmp') || minuteName(file) === null) continue;
 		if (newest !== null && minuteName(file) === newest) continue;
@@ -120,7 +120,7 @@ export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
 	if (last && now.getTime() - last.at.getTime() < DAY) return;
 	try {
 		backup(db, dir, now);
-		prune(dir);
+		prune(dir, RETENTION, now);
 		lastError = null;
 	} catch (err) {
 		lastError = (err as Error).message;

@@ -236,6 +236,31 @@ describe('Frische trotz Sicherung in der Zukunft', () => {
         expect(status.last).not.toBeNull();
         expect(names(dir)).toHaveLength(1);
     });
+
+    it('keeps the present backup and every future-dated one when a future backup shares the day', () => {
+        const dir = join(tmp, 'repro-a');
+        const db = seed(join(tmp, 'repro-a.db'));
+        const now = new Date('2026-03-01T12:00:00Z');
+        const future = 'studio-20260301-1500.db';
+        backup(db, dir, new Date(now.getTime() + 3 * HOUR)); // future backup on the same UTC day
+        backupIfDue(db, dir, now); // creates the present backup
+        expect(names(dir)).toContain('studio-20260301-1200.db');
+        expect(names(dir)).toContain(future);
+        backupIfDue(db, dir, new Date(now.getTime() + HOUR)); // within 24 h: no second one
+        expect(names(dir)).toContain('studio-20260301-1200.db');
+        expect(names(dir)).toContain(future);
+    });
+
+    it('does not let future-dated backups take retention slots', () => {
+        const dir = join(tmp, 'repro-b');
+        const db = seed(join(tmp, 'repro-b.db'));
+        const now = new Date('2026-03-01T12:00:00Z');
+        const future = names(dir);
+        for (let d = 30; d < 60; d++) backup(db, dir, new Date(now.getTime() + d * DAY)); // 30 future-dated backups
+        for (let h = 0; h < 3; h++) backupIfDue(db, dir, new Date(now.getTime() + h * HOUR)); // 3 hourly ticks
+        expect(names(dir)).toContain('studio-20260301-1200.db'); // present backup survives
+        expect(names(dir)).toEqual(expect.arrayContaining(future)); // no future-dated backup deleted
+    });
 });
 
 describe('Rechte', () => {
