@@ -107,7 +107,7 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<!-- Attribution nach LICENSE (Zusatzbedingung §7b): Originalprojekt und -autor bleiben sichtbar -->
+<!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
 {#snippet attribution()}
 	<p class="attribution">
 		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne · Freie Software, AGPL-3.0
@@ -366,7 +366,7 @@
 		scroll-padding-block: var(--space-6);
 	}
 	main:focus-visible {
-		outline: none; /* Ziel des Skip-Links, kein Bedienelement */
+		outline: none; /* target of the skip link, not a control */
 		box-shadow: none;
 	}
 	.page-end {
@@ -511,7 +511,7 @@
 		overflow: visible;
 		padding: 0;
 	}
-	/* Formulare der Anmelde-/Einrichtungsseiten: Abstand zwischen Feldern, Label über dem Feld, Fehler hervorgehoben */
+	/* Login and setup forms: spacing between fields, label above its field, errors stand out */
 	.bare main :global(form) {
 		display: grid;
 		gap: var(--space-3);
