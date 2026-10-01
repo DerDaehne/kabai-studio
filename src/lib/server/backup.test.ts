@@ -267,22 +267,26 @@ describe('Einzelinstanz', () => {
 	it('eine zweite Instanz bricht vor jeder DB-Aktion ab und lässt die Sperre der ersten stehen; nach kill -9 ist sie frei', async () => {
 		const dir = join(tmp, 'instanz'); // existiert noch nicht
 		const first = await holdLock(dir); // wie ein laufender Server
-		expect(mode(dir)).toBe(0o700); // von Studio angelegt → nur für den eigenen Nutzer
+		let saved: string;
+		try {
+			expect(mode(dir)).toBe(0o700); // von Studio angelegt → nur für den eigenen Nutzer
 
-		// zweiter Server-Start auf demselben Verzeichnis (versehentlich doppelt gestartet)
-		const second = spawnSync(...nodeWithDb(dir, 'studio.db();'));
-		expect(second.status).not.toBe(0);
-		expect(second.stderr).toMatch(/Studio läuft bereits mit dem Datenverzeichnis .*instanz \(zweiter Server oder laufendes restore\)\. Die laufende Instanz verwenden oder beenden/);
-		expect(readdirSync(dir)).not.toContain('studio.db'); // nichts geöffnet, migriert oder gesichert
+			// zweiter Server-Start auf demselben Verzeichnis (versehentlich doppelt gestartet)
+			const second = spawnSync(...nodeWithDb(dir, 'studio.db();'));
+			expect(second.status).not.toBe(0);
+			expect(second.stderr).toMatch(/Studio läuft bereits mit dem Datenverzeichnis .*instanz \(zweiter Server oder laufendes restore\)\. Die laufende Instanz verwenden oder beenden/);
+			expect(readdirSync(dir)).not.toContain('studio.db'); // nichts geöffnet, migriert oder gesichert
 
-		// die erste Instanz ist weiter geschützt: restore erkennt sie (Szenario aus dem Review)
-		const saved = backup(seed(join(tmp, 'instanz-quelle.db')), join(tmp, 'instanz-backups'));
-		const blocked = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
-		expect(blocked.status).toBe(1);
-		expect(blocked.stderr).toMatch(/^restore: Studio läuft noch mit dem Datenverzeichnis .* Server stoppen und erneut ausführen\.\n$/);
-		expect(readdirSync(dir)).not.toContain('studio.db');
+			// die erste Instanz ist weiter geschützt: restore erkennt sie (Szenario aus dem Review)
+			saved = backup(seed(join(tmp, 'instanz-quelle.db')), join(tmp, 'instanz-backups'));
+			const blocked = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
+			expect(blocked.status).toBe(1);
+			expect(blocked.stderr).toMatch(/^restore: Studio läuft noch mit dem Datenverzeichnis .* Server stoppen und erneut ausführen\.\n$/);
+			expect(readdirSync(dir)).not.toContain('studio.db');
+		} finally {
+			await stop(first); // auch beim fehlerhaften Durchlauf beenden, damit kein Kindprozess offen bleibt
+		}
 
-		await stop(first); // Absturz: keine Aufräumlogik läuft
 		const ok = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
 		expect(ok.stderr).toBe('');
 		expect(ok.status).toBe(0);
