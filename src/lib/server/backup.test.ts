@@ -41,15 +41,19 @@ const DB_TS = JSON.stringify(resolve('src/lib/server/db.ts'));
 const nodeWithDb = (dir: string, code: string) =>
 	[process.execPath, ['--input-type=module', '-e', `import * as studio from ${DB_TS}; ${code}`], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' }] as const;
 
-/** Hält die Sperre des Datenverzeichnisses wie ein laufender Server, bis `stop`. */
+/** Terminates hard like a crash (kill -9) — the kernel releases the lock. */
+const stop = (child: ChildProcess) => new Promise((res) => child.once('exit', res).kill('SIGKILL'));
+
+/** Holds the data-dir lock like a running server, until `stop`. */
 async function holdLock(dir: string): Promise<ChildProcess> {
 	const child = spawn(...nodeWithDb(dir, 'console.log(studio.lockDataDir()); setInterval(() => {}, 1e6);'));
 	const out = await new Promise<string>((res) => child.stdout!.once('data', (chunk) => res(String(chunk))));
-	expect(out.trim()).toBe('true');
+	if (out.trim() !== 'true') {
+		await stop(child);
+		throw new Error(`Could not hold the lock (${out.trim()}).`);
+	}
 	return child;
 }
-/** Beendet hart wie ein Absturz (kill -9) — der Kernel gibt die Sperre dabei frei. */
-const stop = (child: ChildProcess) => new Promise((res) => child.once('exit', res).kill('SIGKILL'));
 
 /** Schema + alle Zeilen aller Tabellen; Zeilen sortiert, weil VACUUM Rowids ohne INTEGER PRIMARY KEY neu vergeben darf. */
 function dump(db: DatabaseSync) {
