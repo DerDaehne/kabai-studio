@@ -502,4 +502,21 @@ describe('cold start of a model', () => {
 		expect(fake.call(cold).io.signal.aborted).toBe(true);
 		expect(s.state(waiting)).toBe('running');
 	});
+
+	it('stops watching a run that ends before its model answered', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const consoleError = vi.spyOn(console, 'error');
+		const id = s.queue(s.local);
+		await flush();
+
+		fake.call(id).done();
+		await flush();
+		vi.advanceTimersByTime(coldStart.failAfterMs);
+
+		expect(s.state(id)).toBe('succeeded');
+		expect(phaseEvents(id)).toEqual([]);
+		expect(consoleError).not.toHaveBeenCalled();
+	});
 });
