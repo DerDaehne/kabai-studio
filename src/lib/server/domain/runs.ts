@@ -41,6 +41,11 @@ export type Profile = {
 /** Maximum active (running or waiting_approval) runs, overall and per pool; a pool without an entry gets 1 because a local GPU is scarce. */
 export type Limits = { global: number; pools: Record<string, number> };
 
+/** Claim order of queued runs, most urgent first; equal priorities are claimed oldest first. Running runs are never preempted. */
+export const PRIORITIES = ['human', 'blocker', 'review', 'normal'] as const;
+export type Priority = (typeof PRIORITIES)[number];
+const rank = (column: string) => `CASE ${column} ${PRIORITIES.map((p, i) => `WHEN '${p}' THEN ${i}`).join(' ')} END`;
+
 type Emit = (event: StudioEvent) => void;
 type Run = { id: number; ticket_id: number; project_id: number; state: RunState };
 
@@ -109,12 +114,79 @@ export function createRun(
 					'Lege den Run ohne resumedFromRunId an oder nenne den pausierten Run dieses Tickets.'
 				);
 		}
+		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
 		const { id } = db
-			.prepare('INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, resumed_from_run_id) VALUES (?, ?, ?, ?, ?) RETURNING id')
-			.get(t.id, t.column_id, r.profileId, r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume', r.resumedFromRunId ?? null) as { id: number };
+			.prepare('INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, priority, resumed_from_run_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
+			.get(t.id, t.column_id, r.profileId, trigger, derivePriority(db, t.id, t.column_id, trigger), r.resumedFromRunId ?? null) as { id: number };
 		emit({ type: 'run.created', projectId: t.project_id, ticketId: t.id, actor, runId: id });
 		return { id };
 	});
+}
+
+// ponytail: derived once at creation; recompute at claim time if successors finishing first turns out to matter in practice.
+function derivePriority(db: DatabaseSync, ticketId: number, columnId: number, trigger: 'manual' | 'on_enter' | 'resume'): Priority {
+	const hasWaitingSuccessor = db
+		.prepare(
+			`SELECT 1 FROM ticket_relations r JOIN tickets s ON s.id = r.to_ticket_id JOIN columns c ON c.id = s.column_id
+			WHERE r.from_ticket_id = ? AND r.type = 'blocks' AND c.kind <> 'done'`
+		)
+		.get(ticketId);
+	if (hasWaitingSuccessor) return 'blocker';
+	const inReviewColumn = db.prepare('SELECT review FROM columns WHERE id = ?').get(columnId)?.review === 1;
+	if (inReviewColumn && trigger !== 'manual') return 'review';
+	return 'normal';
+}
+
+/** Moves a queued run ahead of all agent-triggered work in its pool. Only the human may: it outranks everything agents queue. */
+export function prioritizeRun(db: DatabaseSync, actor: Actor, runId: number) {
+	tx(db, (emit) => {
+		if (actor.kind !== 'user')
+			throw new DomainError('requires_human', 'Runs priorisiert nur der Mensch.', 'Ist etwas dringend: Frage als Kommentar, dann in die human_intervention-Spalte.');
+		const r = run(db, runId);
+		if (r.state !== 'queued')
+			throw new DomainError('run_not_queued', `Run ${r.id} ist „${r.state}“ — priorisieren lässt sich nur ein wartender Run.`, 'Ein gestarteter Run wird nicht verdrängt; priorisiere einen Run in der Queue.');
+		db.prepare("UPDATE runs SET priority = 'human' WHERE id = ?").run(r.id);
+		emit({ type: 'run.prioritized', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id });
+	});
+}
+
+export type WaitReason = {
+	pool: string;
+	priority: Priority;
+	activeInPool: number;
+	poolLimit: number;
+	active: number;
+	globalLimit: number;
+	/** Queued runs of the same pool that will be claimed first. */
+	ahead: number;
+	text: string;
+};
+
+/** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
+export function waitReason(db: DatabaseSync, runId: number, limits: Limits): WaitReason | undefined {
+	const row = db
+		.prepare(
+			`SELECT r.priority, p.pool,
+				(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
+				(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
+					WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
+				(SELECT count(*) FROM runs q JOIN agent_profiles qp ON qp.id = q.agent_profile_id
+					WHERE q.state = 'queued' AND qp.pool = p.pool AND (${rank('q.priority')}, q.id) < (${rank('r.priority')}, r.id)) AS ahead
+			FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.id = ? AND r.state = 'queued'`
+		)
+		.get(runId) as Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> | undefined;
+	if (!row) return undefined;
+	const reason = { ...row, poolLimit: limits.pools[row.pool] ?? 1, globalLimit: limits.global };
+	return { ...reason, text: waitText(reason) };
+}
+
+function waitText(r: Omit<WaitReason, 'text'>) {
+	const causes = [
+		r.activeInPool >= r.poolLimit && `Pool „${r.pool}“ ist voll (${r.activeInPool} von ${r.poolLimit} aktiv)`,
+		r.active >= r.globalLimit && `das globale Limit ist erreicht (${r.active} von ${r.globalLimit} aktiv)`,
+		r.ahead > 0 && `vor ihm in der Queue: ${r.ahead} ${r.ahead === 1 ? 'Run' : 'Runs'}`
+	].filter(Boolean);
+	return causes.length ? `wartet: ${causes.join(', ')}.` : 'wartet auf den nächsten Claim des Runners.';
 }
 
 /**
@@ -145,10 +217,10 @@ SELECT r.id, r.ticket_id AS ticketId, r.agent_profile_id AS profileId FROM runs 
 WHERE r.state = 'queued'
 	AND (SELECT count(*) FROM active) < ?1
 	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), 1)
-ORDER BY r.id LIMIT 1`;
+ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
 
 /**
- * Starts the oldest queued run (FIFO) whose pool and the global limit have room, or returns undefined.
+ * Starts the most urgent queued run (oldest among equal priorities) whose pool and the global limit have room, or returns undefined.
  * Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
  */
 export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits) {

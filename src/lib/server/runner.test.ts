@@ -292,3 +292,95 @@ describe('startRunner', () => {
 		expect(consoleError).toHaveBeenCalledOnce(); // finishing the vanished run fails and is logged
 	});
 });
+
+describe('priority queue', () => {
+	function withPriorities() {
+		const s = setup();
+		const reviewColumn = s.db.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'Review'").get(s.projectId)!.id as number;
+		const ticketIn = (columnId?: number) => board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
+		const blockingTicket = ticketIn();
+		board.linkRelation(s.db, user, blockingTicket, ticketIn(), 'blocks');
+		const reviewTicket = ticketIn(reviewColumn);
+		const queueWith = (ticketId: number, trigger: 'manual' | 'on_enter') => runs.createRun(s.db, user, { ticketId, profileId: s.local, trigger }).id;
+		const priority = (id: number) => s.row(id).priority;
+		return { ...s, blockingTicket, reviewTicket, queueWith, priority };
+	}
+
+	it('derives the priority when a run is created: normal by default, blocker for a ticket with waiting successors, review for a run triggered in a review column', () => {
+		const s = withPriorities();
+		expect(s.priority(s.queue(s.local))).toBe('normal');
+		expect(s.priority(s.queueWith(s.blockingTicket, 'manual'))).toBe('blocker');
+		expect(s.priority(s.queueWith(s.reviewTicket, 'on_enter'))).toBe('review');
+		expect(s.priority(s.queueWith(s.reviewTicket, 'manual'))).toBe('normal');
+	});
+
+	it('lets only the human prioritize a queued run; an agent gets requires_human', () => {
+		const s = withPriorities();
+		const run = s.queue(s.local);
+		expect(() => runs.prioritizeRun(s.db, { kind: 'agent', runId: run }, run)).toThrow(expect.objectContaining({ code: 'requires_human' }));
+		expect(s.priority(run)).toBe('normal');
+		runs.prioritizeRun(s.db, user, run);
+		expect(s.priority(run)).toBe('human');
+	});
+
+	it('claims the queued run with the highest priority once a full pool frees a slot, and the older run among equal priorities', async () => {
+		const s = withPriorities();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 4, pools: { local: 1 } });
+		const first = s.queue(s.local);
+		await flush();
+		const [normal, review, olderBlocker, newerBlocker, human] = [
+			s.queue(s.local),
+			s.queueWith(s.reviewTicket, 'on_enter'),
+			s.queueWith(s.blockingTicket, 'manual'),
+			s.queueWith(s.blockingTicket, 'manual'),
+			s.queue(s.local)
+		];
+		runs.prioritizeRun(s.db, user, human);
+
+		for (const run of [first, human, olderBlocker, newerBlocker, review]) {
+			await flush();
+			expect(s.state(run)).toBe('running');
+			fake.call(run).done();
+		}
+		await flush();
+		expect(fake.calls.map((c) => c.run.id)).toEqual([first, human, olderBlocker, newerBlocker, review, normal]);
+	});
+
+	it('never aborts a running run for a queued run with a higher priority', async () => {
+		const s = withPriorities();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 4, pools: { local: 1 } });
+		const running = s.queue(s.local);
+		await flush();
+		const urgent = s.queue(s.local);
+		runs.prioritizeRun(s.db, user, urgent);
+		await flush();
+		expect([running, urgent].map(s.state)).toEqual(['running', 'queued']);
+		expect(fake.call(running).io.signal.aborted).toBe(false);
+	});
+
+	it('tells why a queued run waits: its pool, how full it is and how many queued runs of the pool come first', async () => {
+		const s = withPriorities();
+		const limits = { global: 4, pools: { local: 1 } };
+		const running = s.queue(s.local);
+		runs.claimRun(s.db, system, limits);
+		const [normal, blocker] = [s.queue(s.local), s.queueWith(s.blockingTicket, 'manual')];
+		const human = s.queue(s.local);
+		runs.prioritizeRun(s.db, user, human);
+
+		expect(runs.waitReason(s.db, normal, limits)).toEqual({
+			pool: 'local',
+			priority: 'normal',
+			activeInPool: 1,
+			poolLimit: 1,
+			active: 1,
+			globalLimit: 4,
+			ahead: 2,
+			text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv), vor ihm in der Queue: 2 Runs.'
+		});
+		expect(runs.waitReason(s.db, human, limits)).toMatchObject({ priority: 'human', ahead: 0, text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv).' });
+		expect(runs.waitReason(s.db, blocker, limits)).toMatchObject({ ahead: 1 });
+		expect(runs.waitReason(s.db, running, limits)).toBeUndefined();
+	});
+});

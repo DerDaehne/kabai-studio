@@ -181,8 +181,8 @@ const reaches = (db: DatabaseSync, start: number, goal: number, type: RelationTy
 export function createProject(db: DatabaseSync, actor: Actor, p: { key: string; name: string; description?: string }): { id: number } {
 	return tx(db, (emit) => {
 		const { id } = db.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id').get(p.key, p.name, p.description ?? '') as { id: number };
-		const col = db.prepare('INSERT INTO columns (project_id, name, position, kind) VALUES (?, ?, ?, ?) RETURNING id');
-		const ids = DEFAULT_COLUMNS.map(([name, kind], i) => (col.get(id, name, i, kind) as { id: number }).id);
+		const col = db.prepare('INSERT INTO columns (project_id, name, position, kind, review) VALUES (?, ?, ?, ?, ?) RETURNING id');
+		const ids = DEFAULT_COLUMNS.map(([name, kind], i) => (col.get(id, name, i, kind, name === 'Review' ? 1 : 0) as { id: number }).id);
 		const tr = db.prepare('INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)');
 		const edge = (a: number, b: number) => tr.run(id, ids[a], ids[b], humanOnly(DEFAULT_COLUMNS[b][1]) ? 1 : 0);
 		for (let i = 0; i < 3; i++) {
