@@ -212,6 +212,32 @@ describe('Aufbewahrung', () => {
 	});
 });
 
+describe('Frische trotz Sicherung in der Zukunft', () => {
+    it('blockiert eine Sicherung mit Zeitstempel in der Zukunft die tägliche nicht — genau eine neue, dann wieder 24-h-Takt', () => {
+        const dir = join(tmp, 'future-cadence');
+        const db = seed(join(tmp, 'future-cadence.db'));
+        const now = new Date('2026-03-01T12:00:00Z');
+        backup(db, dir, new Date(now.getTime() + 5 * DAY)); // newest backup is five days ahead
+        backupIfDue(db, dir, now); // still runs: the fresh backup is not in the past
+        expect(names(dir)).toHaveLength(2);
+        backupIfDue(db, dir, new Date(now.getTime() + 2 * HOUR)); // within 24 h: no second one
+        expect(names(dir)).toHaveLength(2);
+        backupIfDue(db, dir, new Date(now.getTime() + DAY)); // next day: one more
+        expect(names(dir)).toHaveLength(3);
+    });
+
+    it('warns about a backup in the future and does not delete it', () => {
+        const dir = join(tmp, 'future-status');
+        const db = seed(join(tmp, 'future-status.db'));
+        const now = new Date('2026-03-01T12:00:00Z');
+        backup(db, dir, new Date(now.getTime() + 5 * DAY));
+        const status = backupStatus(dir, now);
+        expect(status.error).toMatch(/in der Zukunft.*Uhr prüfen/);
+        expect(status.last).not.toBeNull();
+        expect(names(dir)).toHaveLength(1);
+    });
+});
+
 describe('Rechte', () => {
 	it('Sicherungen 0600 in einem Verzeichnis mit 0700', () => {
 		const dir = join(tmp, 'rechte', 'backups');
