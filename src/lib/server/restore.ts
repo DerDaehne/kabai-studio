@@ -26,6 +26,19 @@ function check(file: string) {
 	}
 }
 
+/** A raw filesystem error (EACCES, ENOSPC, EISDIR, …) as a DomainError with a stable code and a way out; anything else passes through. */
+function fsError(err: unknown): unknown {
+	if (err instanceof DomainError) return err;
+	const code = (err as { code?: unknown } | undefined)?.code;
+	if (typeof code === 'string' && /^E[A-Z]+$/.test(code))
+		return new DomainError(
+			'restore_fs_error',
+			`Dateisystemfehler (${code}) beim Schreiben der Datenbank.`,
+			'Speicherplatz und Schreibrechte prüfen; das Ziel darf kein Verzeichnis sein.'
+		);
+	return err;
+}
+
 const file = join(dataDir(), 'studio.db');
 const tmp = `${file}.restore`;
 let locked = false; // erst mit der Sperre gehört die Temp-Kopie diesem Lauf
@@ -70,6 +83,6 @@ try {
 	console.log(`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`);
 } catch (err) {
 	if (locked) rmSync(tmp, { force: true });
-	console.error(`restore: ${formatError(err)}`);
+	console.error(`restore: ${formatError(fsError(err))}`);
 	process.exitCode = 1;
 }
