@@ -288,3 +288,15 @@ export const COLD_START_HINTS: readonly string[] = [
 	'A server started with -hf downloads the model from its Hugging Face repo on first use.',
 	'A proxy such as llama-swap unloads an idle model after its configured ttl and reloads it on the next request.'
 ];
+
+/**
+ * How long a model may take to answer a run's first request: after `hintAfterMs` the run reports that the model is
+ * loading, after `failAfterMs` it fails with `model_loading_timeout`.
+ */
+export interface ColdStartLimits {
+	readonly hintAfterMs: number;
+	readonly failAfterMs: number;
+}
+
+// The hint already shows during an ordinary reload after an idle unload; the limit leaves room for a one-time download of a large model.
+export const COLD_START_LIMITS: ColdStartLimits = { hintAfterMs: 30_000, failAfterMs: 30 * 60_000 };

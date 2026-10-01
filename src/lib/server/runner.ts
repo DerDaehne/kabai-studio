@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
 import { addComment } from './domain/board';
 import { DomainError, type Actor } from './domain/core';
 import { appendEvent, claimRun, finishRun, type Limits, type Profile, type Usage } from './domain/runs';
@@ -12,6 +13,8 @@ export type Executor = {
 	/**
 	 * Resolving ends the run (default `succeeded`); throwing fails it, and a thrown DomainError supplies code and hint.
 	 * `signal` fires on cancel: the run is already `cancelled` by then and `emit` throws `run_not_active`.
+	 * Until the first event other than `log` the runner treats the model as loading and applies the cold start limits,
+	 * so an executor's own inactivity timeout should only start after the model's first byte.
 	 */
 	execute(run: RunContext, io: { signal: AbortSignal; emit: EmitRunEvent }): Promise<ExecutorResult>;
 };
@@ -21,11 +24,18 @@ export const LIMITS: Limits = { global: 4, pools: { cloud: 3, local: 1 } };
 
 const SYSTEM: Actor = { kind: 'system' };
 
+const duration = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
+
 /**
  * Fails runs left active by the previous server process, then claims queued runs whenever a run is created or ends.
  * Start it once per data directory: it treats every active run as orphaned, which the single-instance lock guarantees.
  */
-export function startRunner(db: DatabaseSync, executors: Partial<Record<Profile['executor'], Executor>>, limits = LIMITS) {
+export function startRunner(
+	db: DatabaseSync,
+	executors: Partial<Record<Profile['executor'], Executor>>,
+	limits = LIMITS,
+	coldStart: ColdStartLimits = COLD_START_LIMITS
+) {
 	const controllers = new Map<number, AbortController>();
 	let stopped = false;
 	let wakeScheduled = false;
@@ -58,16 +68,56 @@ export function startRunner(db: DatabaseSync, executors: Partial<Record<Profile[
 		);
 	}
 
+	/**
+	 * Until the model's first answer a silent run is loading or downloading its model, not hanging: after the soft threshold
+	 * it reports the loading phase, after the hard limit it fails. Returns the function that ends the watch.
+	 */
+	function watchColdStart(run: RunContext, controller: AbortController) {
+		const reportLoading = setTimeout(() => {
+			const hint = `Das Modell hat nach ${duration(coldStart.hintAfterMs)} noch nicht geantwortet — es wird geladen oder heruntergeladen. Warten oder den Run abbrechen; nach ${duration(coldStart.failAfterMs)} schlägt der Run mit model_loading_timeout fehl.`;
+			const payload = { phase: 'model_loading', text: 'Modell wird geladen …', hint };
+			try {
+				appendEvent(db, { kind: 'system', runId: run.id }, run.id, { type: 'log', payload, key: 'model_loading' });
+			} catch (err) {
+				console.error(`Runner: Ladephase von Run ${run.id} nicht gemeldet:`, err);
+			}
+		}, coldStart.hintAfterMs);
+		const failLoading = setTimeout(() => {
+			const model = run.profile.model ?? run.profile.name;
+			const timeout = new DomainError(
+				'model_loading_timeout',
+				`Das Modell „${model}“ hat nach ${duration(coldStart.failAfterMs)} noch nicht geantwortet.`,
+				'Im Log des Modell-Servers prüfen, ob er das Modell laden bzw. herunterladen kann, dann einen neuen Run starten.'
+			);
+			try {
+				failRun(run.id, run.ticketId, timeout);
+			} catch (err) {
+				console.error(`Runner: Run ${run.id} nach Lade-Timeout nicht beendet:`, err);
+			}
+			controller.abort(); // after failRun, so the executor's late end is ignored like after a cancel
+		}, coldStart.failAfterMs);
+		// unref: a model that is still loading must not keep a stopping server alive
+		[reportLoading, failLoading].forEach((timer) => timer.unref());
+		const end = () => [reportLoading, failLoading].forEach(clearTimeout);
+		controller.signal.addEventListener('abort', end); // a cancelled run is over even if its executor never settles
+		return end;
+	}
+
 	async function execute(run: RunContext) {
 		const controller = new AbortController();
 		controllers.set(run.id, controller);
+		const endColdStart = watchColdStart(run, controller);
 		try {
-			const emit: EmitRunEvent = (event) => appendEvent(db, { kind: 'agent', runId: run.id }, run.id, event);
+			const emit: EmitRunEvent = (event) => {
+				if (event.type !== 'log') endColdStart();
+				return appendEvent(db, { kind: 'agent', runId: run.id }, run.id, event);
+			};
 			const result = (await executorFor(run.profile).execute(run, { signal: controller.signal, emit })) ?? {};
 			if (!controller.signal.aborted) finishRun(db, SYSTEM, run.id, { state: result.state ?? 'succeeded', usage: result.usage });
 		} catch (err) {
 			if (!controller.signal.aborted) failRun(run.id, run.ticketId, err); // after cancel() the run has already ended
 		} finally {
+			endColdStart();
 			controllers.delete(run.id);
 			wake(); // deleting the ticket removes the run without any event, so the executor's end has to free the slot
 		}

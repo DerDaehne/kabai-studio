@@ -8,7 +8,8 @@ import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import { DomainError, type Actor } from './domain/core';
 import * as runs from './domain/runs';
-import { startRunner, type Executor, type RunContext } from './runner';
+import { subscribe, type StudioEvent } from './events';
+import { LIMITS, startRunner, type Executor, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
@@ -53,6 +54,7 @@ const stopRunners: (() => void)[] = [];
 afterEach(() => {
 	stopRunners.splice(0).forEach((stop) => stop());
 	vi.restoreAllMocks();
+	vi.useRealTimers();
 });
 function start(...args: Parameters<typeof startRunner>) {
 	const runner = startRunner(...args);
@@ -408,5 +410,96 @@ describe('priority queue', () => {
 		runs.claimRun(s.db, system, limits);
 		const waiting = s.queue(s.local);
 		expect(runs.waitReason(s.db, waiting, limits)?.text).toBe('wartet: das globale Limit ist erreicht (1 von 1 aktiv).');
+	});
+});
+
+describe('cold start of a model', () => {
+	const coldStart = { hintAfterMs: 30_000, failAfterMs: 30 * 60_000 };
+	const loadingHint =
+		'Das Modell hat nach 30 s noch nicht geantwortet — es wird geladen oder heruntergeladen. Warten oder den Run abbrechen; nach 30 min schlägt der Run mit model_loading_timeout fehl.';
+
+	function startCold(...args: Parameters<typeof start>) {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const events: StudioEvent[] = [];
+		stopRunners.push(subscribe((event) => events.push(event)));
+		const runner = start(...args);
+		const phaseEvents = (runId: number) =>
+			events
+				.filter((e) => e.type === 'run.event' && e.runId === runId && (e.payload as { phase?: string }).phase)
+				.map(({ eventType, payload }) => ({ eventType, payload }));
+		return { runner, phaseEvents };
+	}
+
+	it('keeps a run whose model is still loading running and reports the loading phase on the bus once the soft threshold passes', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const id = s.queue(s.local);
+		await flush();
+		const { io } = fake.call(id);
+		io.emit({ type: 'log', payload: { msg: 'request sent' } }); // a log line is not the model's answer
+
+		vi.advanceTimersByTime(coldStart.hintAfterMs - 1);
+		expect(phaseEvents(id)).toEqual([]);
+		vi.advanceTimersByTime(1);
+		expect(phaseEvents(id)).toEqual([{ eventType: 'log', payload: { phase: 'model_loading', text: 'Modell wird geladen …', hint: loadingHint } }]);
+
+		vi.advanceTimersByTime(20_000); // the model answers after 50 s, between the soft threshold and the hard limit
+		expect(s.state(id)).toBe('running');
+		io.emit({ type: 'message', payload: { text: 'first answer' } });
+		vi.advanceTimersByTime(coldStart.failAfterMs); // the first answer ends the cold start, so its limit no longer applies
+		await flush();
+		expect(s.state(id)).toBe('running');
+		fake.call(id).done();
+		await flush();
+		expect(s.state(id)).toBe('succeeded');
+		expect(phaseEvents(id)).toHaveLength(1);
+	});
+
+	it('offers to wait or cancel after the soft threshold, and a run cancelled while loading stays cancelled past the hard limit', async () => {
+		const s = setup();
+		const ignoresSignal: Executor = { execute: () => new Promise(() => {}) };
+		const { runner, phaseEvents } = startCold(s.db, { builtin: ignoresSignal }, LIMITS, coldStart);
+		const consoleError = vi.spyOn(console, 'error');
+		const id = s.queue(s.local);
+		await flush();
+
+		vi.advanceTimersByTime(coldStart.hintAfterMs);
+		expect(phaseEvents(id)).toMatchObject([{ payload: { hint: loadingHint } }]);
+		runner.cancel(id);
+		vi.advanceTimersByTime(coldStart.failAfterMs);
+		await flush();
+
+		expect(s.row(id)).toMatchObject({ state: 'cancelled', error: null });
+		expect(s.comments()).toEqual([]);
+		expect(consoleError).not.toHaveBeenCalled();
+	});
+
+	it('fails a run whose model does not answer within the hard limit with model_loading_timeout, a masked way out and a system comment, and frees its slot', async () => {
+		const s = setup();
+		const secret = 'sk-model-name-secret-0815';
+		setSecret(s.db, 'model-secret', secret, false, randomBytes(32));
+		const leaky = runs.createProfile(s.db, user, { name: 'Leaky', executor: 'builtin', provider: 'openai-compatible', model: secret }).id;
+		const fake = fakeExecutor();
+		startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const [cold, waiting] = [s.queue(leaky), s.queue(s.local)];
+		await flush();
+
+		vi.advanceTimersByTime(coldStart.failAfterMs - 1);
+		expect(s.state(cold)).toBe('running');
+		vi.advanceTimersByTime(1);
+		await flush();
+
+		const error = '[model_loading_timeout] Das Modell „[secret:model-secret]“ hat nach 30 min noch nicht geantwortet.';
+		expect(s.row(cold)).toMatchObject({ state: 'failed', token_hash: null, error });
+		expect(s.comments()).toEqual([
+			{
+				author_kind: 'system',
+				run_id: cold,
+				body: `Run ${cold} ist fehlgeschlagen: ${error}\nAusweg: Im Log des Modell-Servers prüfen, ob er das Modell laden bzw. herunterladen kann, dann einen neuen Run starten.`
+			}
+		]);
+		expect(fake.call(cold).io.signal.aborted).toBe(true);
+		expect(s.state(waiting)).toBe('running');
 	});
 });
