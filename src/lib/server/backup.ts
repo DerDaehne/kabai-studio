@@ -104,7 +104,7 @@ export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date
 
 let lastError: string | null = null;
 
-/** Sichert, wenn die neueste Sicherung mindestens einen Tag alt ist (oder fehlt), und räumt auf. Fehler landen im Status. */
+/** Backs up when the newest backup with at <= now is at least a day old (or missing), then prunes; errors land in the status. */
 export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
 	const last = listBackups(dir).find((b) => b.at.getTime() <= now.getTime());
 	if (last && now.getTime() - last.at.getTime() < DAY) return;

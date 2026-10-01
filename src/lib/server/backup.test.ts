@@ -222,7 +222,7 @@ describe('freshness ignores a backup in the future', () => {
 		const db = seed(join(tmp, 'future-cadence.db'));
 		const now = new Date('2026-03-01T12:00:00Z');
 		backup(db, dir, new Date(now.getTime() + 5 * DAY)); // newest backup is five days ahead
-		backupIfDue(db, dir, now); // still runs: the fresh backup is not in the past
+		backupIfDue(db, dir, now); // freshness ignores the future backup, so this still runs
 		expect(names(dir)).toHaveLength(2);
 		backupIfDue(db, dir, new Date(now.getTime() + 2 * HOUR)); // within 24 h: no second one
 		expect(names(dir)).toHaveLength(2);
