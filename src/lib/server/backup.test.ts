@@ -493,15 +493,31 @@ describe('restore run from a directory other than the package root', () => {
 });
 
 describe('restore (fs error)', () => {
-	it('reports a raw fs error (EISDIR) with a stable code, one line and a non-zero exit', () => {
+	it('reports a raw fs error (EISDIR) with a stable code, the source path, a hint, one line and a non-zero exit', () => {
 		const data = join(tmp, 'fs-error');
 		mkdirSync(data, { mode: 0o700 });
 		const source = join(tmp, 'source-is-a-directory');
 		mkdirSync(source);
 		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
 		expect(r.status).toBe(1);
-		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] Dateisystemfehler \(EISDIR\).*\n$/);
+		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] Dateisystemfehler \(EISDIR, copyfile, .*source-is-a-directory, .*studio\.db\.restore\) beim Kopieren der Quelle\./);
+		expect(r.stderr).toMatch(/die Quelle darf kein Verzeichnis sein und muss lesbar sein\./);
 		expect(r.stderr.trim().split('\n')).toHaveLength(1);
 		expect(readdirSync(data).filter((f) => f.includes('.restore'))).toEqual([]);
+	});
+
+	it('reports an unreadable source (EACCES) with the source path and a hint', () => {
+		if (process.getuid?.() === 0) return; // root ignores file permissions
+		const data = join(tmp, 'fs-error-acc');
+		mkdirSync(data, { mode: 0o700 });
+		const source = join(tmp, 'unreadable-source.db');
+		const db = openDb(source);
+		db.close();
+		chmodSync(source, 0o000);
+		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		expect(r.status).toBe(1);
+		expect(r.stderr).toMatch(/\[restore_fs_error\] Dateisystemfehler \(EACCES, copyfile, .*unreadable-source\.db/);
+		expect(r.stderr).toMatch(/muss lesbar sein\./);
+		chmodSync(source, 0o600);
 	});
 });

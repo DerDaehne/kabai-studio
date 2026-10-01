@@ -30,13 +30,16 @@ function check(file: string) {
 function fsError(err: unknown): unknown {
 	if (err instanceof DomainError) return err;
 	const code = (err as { code?: unknown } | undefined)?.code;
-	if (typeof code === 'string' && /^E[A-Z]+$/.test(code))
-		return new DomainError(
-			'restore_fs_error',
-			`Dateisystemfehler (${code}) beim Schreiben der Datenbank.`,
-			'Speicherplatz und Schreibrechte prüfen; das Ziel darf kein Verzeichnis sein.'
-		);
-	return err;
+	if (typeof code !== 'string' || !/^E[A-Z]+$/.test(code)) return err;
+	const syscall = (err as { syscall?: unknown } | undefined)?.syscall;
+	const from = (err as { path?: unknown } | undefined)?.path;
+	const to = (err as { dest?: unknown } | undefined)?.dest;
+	const detail = [syscall, from, to].filter((x): x is string => typeof x === 'string').join(', ');
+	return new DomainError(
+		'restore_fs_error',
+		`Dateisystemfehler (${code}${detail ? `, ${detail}` : ''}) beim Kopieren der Quelle.`,
+		'Schreibrechte und Speicherplatz im Datenverzeichnis prüfen; die Quelle darf kein Verzeichnis sein und muss lesbar sein.'
+	);
 }
 
 const file = join(dataDir(), 'studio.db');
