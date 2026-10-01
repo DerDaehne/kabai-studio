@@ -196,11 +196,11 @@ describe('Aufbewahrung', () => {
 		]);
 	});
 
-	it('räumt eine .tmp einer anderen Minute auf und behält die neueste Sicherung', () => {
+	it('cleans a .tmp of a different minute and keeps the newest backup', () => {
 		const dir = join(tmp, 'prune-tmp');
 		mkdirSync(dir, { mode: 0o700 });
-		writeFileSync(join(dir, 'studio-20260101-0000.db.tmp'), 'halb geschrieben'); // abgebrochener Lauf um 00:00
-		backup(seed(join(tmp, 'prune-tmp.db')), dir, new Date('2026-01-01T00:05:00Z')); // Sicherung um 00:05
+		writeFileSync(join(dir, 'studio-20260101-0000.db.tmp'), 'halb geschrieben'); // aborted run at 00:00
+		backup(seed(join(tmp, 'prune-tmp.db')), dir, new Date('2026-01-01T00:05:00Z')); // backup at 00:05
 		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0000.db.tmp', 'studio-20260101-0005.db']);
 		expect(prune(dir)).toEqual([]);
 		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0005.db']);
@@ -216,55 +216,55 @@ describe('Aufbewahrung', () => {
 	});
 });
 
-describe('Frische trotz Sicherung in der Zukunft', () => {
-    it('blockiert eine Sicherung mit Zeitstempel in der Zukunft die tägliche nicht — genau eine neue, dann wieder 24-h-Takt', () => {
-        const dir = join(tmp, 'future-cadence');
-        const db = seed(join(tmp, 'future-cadence.db'));
-        const now = new Date('2026-03-01T12:00:00Z');
-        backup(db, dir, new Date(now.getTime() + 5 * DAY)); // newest backup is five days ahead
-        backupIfDue(db, dir, now); // still runs: the fresh backup is not in the past
-        expect(names(dir)).toHaveLength(2);
-        backupIfDue(db, dir, new Date(now.getTime() + 2 * HOUR)); // within 24 h: no second one
-        expect(names(dir)).toHaveLength(2);
-        backupIfDue(db, dir, new Date(now.getTime() + DAY)); // next day: one more
-        expect(names(dir)).toHaveLength(3);
-    });
+describe('freshness ignores a backup in the future', () => {
+	it('a backup in the future does not block the daily cadence - one new backup, then back to 24 hours', () => {
+		const dir = join(tmp, 'future-cadence');
+		const db = seed(join(tmp, 'future-cadence.db'));
+		const now = new Date('2026-03-01T12:00:00Z');
+		backup(db, dir, new Date(now.getTime() + 5 * DAY)); // newest backup is five days ahead
+		backupIfDue(db, dir, now); // still runs: the fresh backup is not in the past
+		expect(names(dir)).toHaveLength(2);
+		backupIfDue(db, dir, new Date(now.getTime() + 2 * HOUR)); // within 24 h: no second one
+		expect(names(dir)).toHaveLength(2);
+		backupIfDue(db, dir, new Date(now.getTime() + DAY)); // next day: one more
+		expect(names(dir)).toHaveLength(3);
+	});
 
-    it('warns about a backup in the future and does not delete it', () => {
-        const dir = join(tmp, 'future-status');
-        const db = seed(join(tmp, 'future-status.db'));
-        const now = new Date('2026-03-01T12:00:00Z');
-        backup(db, dir, new Date(now.getTime() + 5 * DAY));
-        const status = backupStatus(dir, now);
-        expect(status.error).toMatch(/in der Zukunft.*Uhr prüfen/);
-        expect(status.last).not.toBeNull();
-        expect(names(dir)).toHaveLength(1);
-    });
+	it('warns about a backup in the future and does not delete it', () => {
+		const dir = join(tmp, 'future-status');
+		const db = seed(join(tmp, 'future-status.db'));
+		const now = new Date('2026-03-01T12:00:00Z');
+		backup(db, dir, new Date(now.getTime() + 5 * DAY));
+		const status = backupStatus(dir, now);
+		expect(status.error).toMatch(/in der Zukunft.*Uhr prüfen/);
+		expect(status.last).not.toBeNull();
+		expect(names(dir)).toHaveLength(1);
+	});
 
-    it('keeps the present backup and every future-dated one when a future backup shares the day', () => {
-        const dir = join(tmp, 'repro-a');
-        const db = seed(join(tmp, 'repro-a.db'));
-        const now = new Date('2026-03-01T12:00:00Z');
-        const future = 'studio-20260301-1500.db';
-        backup(db, dir, new Date(now.getTime() + 3 * HOUR)); // future backup on the same UTC day
-        backupIfDue(db, dir, now); // creates the present backup
-        expect(names(dir)).toContain('studio-20260301-1200.db');
-        expect(names(dir)).toContain(future);
-        backupIfDue(db, dir, new Date(now.getTime() + HOUR)); // within 24 h: no second one
-        expect(names(dir)).toContain('studio-20260301-1200.db');
-        expect(names(dir)).toContain(future);
-    });
+	it('keeps the present backup and every future-dated one when a future backup shares the day', () => {
+		const dir = join(tmp, 'repro-a');
+		const db = seed(join(tmp, 'repro-a.db'));
+		const now = new Date('2026-03-01T12:00:00Z');
+		const future = 'studio-20260301-1500.db';
+		backup(db, dir, new Date(now.getTime() + 3 * HOUR)); // future backup on the same UTC day
+		backupIfDue(db, dir, now); // creates the present backup
+		expect(names(dir)).toContain('studio-20260301-1200.db');
+		expect(names(dir)).toContain(future);
+		backupIfDue(db, dir, new Date(now.getTime() + HOUR)); // within 24 h: no second one
+		expect(names(dir)).toContain('studio-20260301-1200.db');
+		expect(names(dir)).toContain(future);
+	});
 
-    it('does not let future-dated backups take retention slots', () => {
-        const dir = join(tmp, 'repro-b');
-        const db = seed(join(tmp, 'repro-b.db'));
-        const now = new Date('2026-03-01T12:00:00Z');
-        const future = names(dir);
-        for (let d = 30; d < 60; d++) backup(db, dir, new Date(now.getTime() + d * DAY)); // 30 future-dated backups
-        for (let h = 0; h < 3; h++) backupIfDue(db, dir, new Date(now.getTime() + h * HOUR)); // 3 hourly ticks
-        expect(names(dir)).toContain('studio-20260301-1200.db'); // present backup survives
-        expect(names(dir)).toEqual(expect.arrayContaining(future)); // no future-dated backup deleted
-    });
+	it('does not let future-dated backups take retention slots', () => {
+		const dir = join(tmp, 'repro-b');
+		const db = seed(join(tmp, 'repro-b.db'));
+		const now = new Date('2026-03-01T12:00:00Z');
+		const future = names(dir);
+		for (let d = 30; d < 60; d++) backup(db, dir, new Date(now.getTime() + d * DAY)); // 30 future-dated backups
+		for (let h = 0; h < 3; h++) backupIfDue(db, dir, new Date(now.getTime() + h * HOUR)); // 3 hourly ticks
+		expect(names(dir)).toContain('studio-20260301-1200.db'); // present backup survives
+		expect(names(dir)).toEqual(expect.arrayContaining(future)); // no future-dated backup deleted
+	});
 });
 
 describe('Rechte', () => {
@@ -313,7 +313,7 @@ describe('Einzelinstanz', () => {
 			expect(blocked.stderr).toMatch(/^restore: Studio läuft noch mit dem Datenverzeichnis .* Server stoppen und erneut ausführen\.\n$/);
 			expect(readdirSync(dir)).not.toContain('studio.db');
 		} finally {
-			await stop(first); // auch beim fehlerhaften Durchlauf beenden, damit kein Kindprozess offen bleibt
+			await stop(first); // stop it on the failing path too, so no child process stays open
 		}
 
 		const ok = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
