@@ -30,4 +30,8 @@
 			animation-iteration-count: infinite !important;
 		}
 	}
+	:global(:root[data-motion='reduced']) .spinner {
+		animation-duration: 2.4s !important;
+		animation-iteration-count: infinite !important;
+	}
 </style>

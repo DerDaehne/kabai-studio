@@ -1,14 +1,12 @@
 /*
- * Design-Tokens von kabai studio — „Calm Utility", dicht.
- * Ruhige Graphit-/Slate-Neutraltöne, genau ein Akzent (entsättigtes Moosgrün, Solarized-Familie),
- * Statusfarben im selben Charakter. Hell/dunkel über light-dark(): folgt prefers-color-scheme,
- * <html data-theme="light|dark"> übersteuert. Kontrast (WCAG AA) prüft src/lib/styles/contrast.test.ts.
- * Farbwerte nur über die semantischen Tokens verwenden, nicht über die Skalen.
+ * Design tokens of kabai studio: calm slate neutrals, one accent ("spring" green), glass layers lit by auras.
+ * Light/dark via light-dark(): follows prefers-color-scheme, <html data-theme="light|dark"> overrides it.
+ * contrast.test.ts checks every text and control pair against WCAG AA in every glass strength.
+ * Components use the semantic tokens only, never the scales.
  */
 :root {
 	color-scheme: light dark;
 
-	/* Skalen (OKLCH-abgeleitet, als Hex) */
 	--gray-0: #fcfefe;
 	--gray-25: #f6fafb;
 	--gray-50: #f1f5f7;
@@ -26,64 +24,123 @@
 	--gray-925: #14191b;
 	--gray-950: #0f1315;
 
-	--green-50: #f2f9ea;
-	--green-100: #e4f1d6;
-	--green-200: #cde2b4;
-	--green-300: #b2ce8f;
-	--green-400: #98b86e;
-	--green-500: #7d9d51;
-	--green-600: #67843d;
-	--green-700: #526c2f;
-	--green-800: #405324;
-	--green-900: #2e3c1a;
-	--green-950: #202a13;
+	/* Accent "spring": OKLCH hue 152, chroma 0.15 */
+	--a-50: #eafcee;
+	--a-100: #d6f7dd;
+	--a-200: #b4edc2;
+	--a-300: #89dea1;
+	--a-400: #60c981;
+	--a-500: #3eb268;
+	--a-600: #1a9951;
+	--a-700: #007e3f;
+	--a-800: #006430;
+	--a-900: #004b22;
+	--a-950: #003315;
 
-	/* Flächen, Linien, Text */
-	--bg: light-dark(var(--gray-0), var(--gray-900));
-	--bg-chrome: light-dark(var(--gray-50), var(--gray-925));
-	--surface: light-dark(var(--gray-0), var(--gray-850));
-	--surface-hover: light-dark(var(--gray-100), var(--gray-800));
+	/* Opaque surfaces: ground < surface < raised; sunken for tracks, code and the command line */
+	--bg: light-dark(var(--gray-25), var(--gray-950));
+	--surface: light-dark(var(--gray-0), var(--gray-900));
+	--surface-raised: light-dark(var(--gray-0), var(--gray-850));
+	--surface-sunken: light-dark(var(--gray-50), var(--gray-925));
+	--surface-hover: light-dark(var(--gray-50), var(--gray-800));
+	--text: light-dark(var(--gray-900), var(--gray-100));
+
+	/* Borders only on input fields and diff tables; cards float without one */
 	--border: light-dark(var(--gray-150), var(--gray-800));
 	--border-control: light-dark(var(--gray-400), var(--gray-500));
-	--text: light-dark(var(--gray-900), var(--gray-100));
-	--text-muted: light-dark(var(--gray-600), #a3adb1);
+	--hairline: light-dark(rgb(20 30 35 / 0.07), rgb(255 255 255 / 0.05));
 
-	/* Akzent: Aktives, Fokus, Primäraktion */
-	--accent: light-dark(var(--green-700), var(--green-400));
-	--accent-hover: light-dark(var(--green-800), var(--green-300));
-	--on-accent: light-dark(#ffffff, var(--gray-950));
-	--accent-text: light-dark(var(--green-700), var(--green-300));
-	--accent-tint: light-dark(var(--green-100), #252d1a);
-	--focus: light-dark(var(--green-600), var(--green-400));
-
-	/* Status: Text/Punkt + Hintergrund-Tönung */
-	--status-running: light-dark(#1b659a, #89beeb);
-	--status-running-tint: light-dark(#e3f2ff, #1b2c3a);
-	--status-waiting: light-dark(#7a5b01, #d4b36a);
-	--status-waiting-tint: light-dark(#f8efde, #322915);
-	--status-failed: light-dark(#95443d, #e9a39a);
-	--status-failed-tint: light-dark(#ffeae7, #3a2321);
-	--status-succeeded: var(--accent-text);
-	--status-succeeded-tint: light-dark(var(--green-50), #252d1a);
-	--status-paused: light-dark(#5b569c, #b1b0ec);
-	--status-paused-tint: light-dark(#eeeeff, #28283b);
-	--status-neutral: var(--text-muted);
-	--status-neutral-tint: light-dark(var(--gray-100), var(--gray-800));
-
+	/* Depth from light instead of borders: a highlight on the top edge, soft long shadows */
+	--edge-hi: light-dark(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.06));
+	--shade-1: light-dark(rgb(20 30 35 / 0.06), rgb(0 0 0 / 0.32));
+	--shade-2: light-dark(rgb(20 30 35 / 0.1), rgb(0 0 0 / 0.5));
+	--shadow-card: inset 0 1px 0 var(--edge-hi), 0 1px 2px var(--shade-1), 0 10px 30px -8px var(--shade-2);
+	--shadow-float: inset 0 1px 0 var(--edge-hi), 0 24px 60px -16px var(--shade-2), 0 6px 16px -6px var(--shade-1);
 	--shadow-overlay: 0 8px 28px light-dark(rgb(20 30 35 / 0.16), rgb(0 0 0 / 0.5)), 0 1px 3px rgb(0 0 0 / 0.12);
 	--scrim: rgb(10 15 18 / 0.45);
 
-	/* Typo: Inter, falls installiert, sonst System-UI. Mono nur für IDs, Code, Logs. */
+	--kbd-bg: light-dark(var(--gray-0), var(--gray-850));
+	--kbd-edge: light-dark(var(--gray-300), var(--gray-700));
+
+	/* Accent: selection, focus, the one primary action, "done" */
+	--accent: light-dark(var(--a-500), var(--a-400));
+	--accent-hover: light-dark(var(--a-400), var(--a-300));
+	--on-accent: var(--gray-950);
+	--accent-text: light-dark(var(--a-800), var(--a-300));
+	--accent-tint: light-dark(var(--a-100), #17321f);
+	--focus: light-dark(var(--a-600), var(--a-400));
+	--fill-sel: light-dark(rgb(62 178 104 / 0.1), rgb(96 201 129 / 0.13));
+	--fill-soft: light-dark(rgb(20 30 35 / 0.05), rgb(255 255 255 / 0.05));
+
+	/* Status: text and dot, plus a background tint. Always paired with a symbol and text, never colour alone. */
+	--status-running: light-dark(#23639f, #8dc3fb);
+	--status-running-tint: light-dark(#e5f2ff, #14283c);
+	--status-waiting: light-dark(#805800, #f1c683);
+	--status-waiting-tint: light-dark(#fceeda, #32230a);
+	--status-failed: light-dark(#7d2c46, #ed9db0);
+	--status-failed-tint: light-dark(#ffeaee, #391d24);
+	--status-succeeded: light-dark(var(--a-800), var(--a-300));
+	--status-succeeded-tint: light-dark(var(--a-50), #17321f);
+	--status-paused: light-dark(#5e4f79, #b6a9d2);
+	--status-paused-tint: light-dark(#f2edff, #292333);
+	--status-neutral: var(--text-muted);
+	--status-neutral-tint: light-dark(var(--gray-100), var(--gray-800));
+
+	/* Project palette: text / fill / dot per slot, hues at least 45 degrees away from the accent */
+	--project-1: light-dark(#00686a, #7edddf);
+	--project-1-fill: light-dark(#d0f1f1, #003b3c);
+	--project-1-dot: light-dark(#009395, #15bbbe);
+	--project-2: light-dark(#3a5898, #b1cbff);
+	--project-2-fill: light-dark(#dfeaff, #24324f);
+	--project-2-dot: light-dark(#6c93e5, #98baff);
+	--project-3: light-dark(#7e4176, #eeb5e5);
+	--project-3-fill: light-dark(#f8e1f4, #43283f);
+	--project-3-dot: light-dark(#9c5293, #c078b6);
+	--project-4: light-dark(#8d4128, #feb79f);
+	--project-4-fill: light-dark(#ffe2d9, #4b281d);
+	--project-4-dot: light-dark(#9b4020, #bf674a);
+	--project-5: light-dark(#625e00, #d1cf89);
+	--project-5-fill: light-dark(#ececd1, #363510);
+	--project-5-dot: light-dark(#938e14, #b7b352);
+
+	/* Auras: soft light under a layer. Signal colours plus ambient project tints. */
+	--aura-accent: light-dark(rgb(62 178 104 / 0.22), rgb(96 201 129 / 0.34));
+	--aura-running: light-dark(rgb(35 99 159 / 0.2), rgb(141 195 251 / 0.26));
+	--aura-waiting: light-dark(rgb(128 88 0 / 0.2), rgb(241 198 131 / 0.26));
+	--aura-failed: light-dark(rgb(125 44 70 / 0.2), rgb(237 157 176 / 0.26));
+	--aura-succeeded: light-dark(rgb(0 100 48 / 0.2), rgb(137 222 161 / 0.26));
+	--aura-paused: light-dark(rgb(94 79 121 / 0.2), rgb(182 169 210 / 0.26));
+	--aura-project-1: light-dark(rgb(0 147 149 / 0.22), rgb(21 187 190 / 0.3));
+	--aura-project-2: light-dark(rgb(108 147 229 / 0.22), rgb(152 186 255 / 0.3));
+	--aura-project-3: light-dark(rgb(156 82 147 / 0.22), rgb(192 120 182 / 0.3));
+	--aura-project-4: light-dark(rgb(155 64 32 / 0.22), rgb(191 103 74 / 0.3));
+	--aura-project-5: light-dark(rgb(147 142 20 / 0.22), rgb(183 179 82 / 0.3));
+	--nebula-1: light-dark(rgb(62 178 104 / 0.1), rgb(96 201 129 / 0.1));
+	--nebula-2: light-dark(rgb(35 99 159 / 0.08), rgb(141 195 251 / 0.07));
+
+	/* Glass, default strength "bold". Cards and docks only ever lie over ground, nebula and auras
+	   (content scrolls in its own area, never under a dock); overlays may lie over text. */
+	--glass-card: light-dark(rgb(252 254 254 / 0.6), rgb(25 31 34 / 0.6));
+	--glass-raised: light-dark(rgb(252 254 254 / 0.64), rgb(33 40 43 / 0.62));
+	--glass-float: light-dark(rgb(252 254 254 / 0.56), rgb(20 25 27 / 0.54));
+	--glass-overlay: light-dark(rgb(252 254 254 / 0.84), rgb(20 25 27 / 0.82));
+	--blur-card: 30px;
+	--blur-float: 34px;
+	--glass-sat: 1.9;
+	/* Bold glass lets more of the ground through, so secondary text needs more weight */
+	--text-muted: light-dark(#48535a, #b4bec2);
+
 	--font-sans: Inter, 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 	--font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
 	--text-sm: 12.5px;
 	--text-base: 14px;
 	--text-lg: 16px;
 	--text-xl: 19px;
+	--text-display: 23px;
 	--leading: 1.43;
 	--leading-tight: 1.25;
 
-	/* Dichte: 4-px-Raster, 28-px-Controls (Touch: größer, siehe unten) */
+	/* Density: 4 px grid, 28 px controls (larger on touch, see below) */
 	--space-05: 2px;
 	--space-1: 4px;
 	--space-2: 8px;
@@ -94,13 +151,64 @@
 	--control-h: 28px;
 	--control-h-sm: 24px;
 	--radius-sm: 4px;
-	--radius: 6px;
-	--radius-lg: 10px;
+	--radius: 8px;
+	--radius-lg: 14px;
+	--radius-xl: 20px;
 	--sidebar-w: 200px;
 	--tabbar-h: 56px;
 
-	--duration: 160ms;
-	--ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+	/* Motion; motion.ts mirrors these for script-driven transitions */
+	--dur-micro: 90ms;
+	--dur-fast: 140ms;
+	--dur-base: 220ms;
+	--dur-slow: 320ms;
+	--dur-glide: 380ms;
+	--dur-pulse: 1600ms;
+	--dur-sweep: 1400ms;
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+	--ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+	--ease-spring: linear(0, 0.074, 0.239, 0.432, 0.614, 0.767, 0.882, 0.962, 1.011, 1.036, 1.045, 1.044, 1.038, 1.029, 1.021, 1.013, 1.007, 1.003, 1, 0.999, 1);
+	--shift-sm: 6px;
+	--shift-md: 14px;
+	--shift-lg: 32px;
+}
+
+:root[data-glass='frosted'] {
+	--glass-card: light-dark(rgb(252 254 254 / 0.72), rgb(25 31 34 / 0.7));
+	--glass-raised: light-dark(rgb(252 254 254 / 0.8), rgb(33 40 43 / 0.78));
+	--glass-float: light-dark(rgb(252 254 254 / 0.72), rgb(20 25 27 / 0.7));
+	--glass-overlay: light-dark(rgb(252 254 254 / 0.86), rgb(20 25 27 / 0.86));
+	--blur-card: 22px;
+	--blur-float: 26px;
+	--glass-sat: 1.5;
+	--text-muted: light-dark(var(--gray-600), #a3adb1);
+}
+
+:root[data-glass='solid'] {
+	--glass-card: light-dark(rgb(252 254 254 / 1), rgb(25 31 34 / 1));
+	--glass-raised: light-dark(rgb(252 254 254 / 1), rgb(33 40 43 / 1));
+	--glass-float: light-dark(rgb(252 254 254 / 0.94), rgb(20 25 27 / 0.94));
+	--glass-overlay: light-dark(rgb(252 254 254 / 0.94), rgb(20 25 27 / 0.94));
+	--blur-card: 0px;
+	--blur-float: 12px;
+	--glass-sat: 1.2;
+	--text-muted: light-dark(var(--gray-600), #a3adb1);
+}
+
+/* The system wish for less transparency wins over any glass choice: same values as solid, declared last */
+@media (prefers-reduced-transparency: reduce) {
+	:root,
+	:root[data-glass] {
+		--glass-card: light-dark(rgb(252 254 254 / 1), rgb(25 31 34 / 1));
+		--glass-raised: light-dark(rgb(252 254 254 / 1), rgb(33 40 43 / 1));
+		--glass-float: light-dark(rgb(252 254 254 / 0.94), rgb(20 25 27 / 0.94));
+		--glass-overlay: light-dark(rgb(252 254 254 / 0.94), rgb(20 25 27 / 0.94));
+		--blur-card: 0px;
+		--blur-float: 12px;
+		--glass-sat: 1.2;
+		--text-muted: light-dark(var(--gray-600), #a3adb1);
+	}
 }
 
 :root[data-theme='light'] {

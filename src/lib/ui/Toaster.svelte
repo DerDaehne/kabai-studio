@@ -55,8 +55,8 @@
 		background: var(--surface);
 		box-shadow: var(--shadow-overlay);
 		transition:
-			opacity var(--duration) var(--ease),
-			translate var(--duration) var(--ease);
+			opacity var(--dur-fast) var(--ease-out),
+			translate var(--dur-fast) var(--ease-out);
 	}
 	@starting-style {
 		.toast {

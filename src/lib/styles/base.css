@@ -61,9 +61,11 @@ kbd,
 	color: var(--text-muted);
 }
 
+/* Ring plus a halo in the ground colour: the ring keeps 3:1 on any surface, glass or aura */
 :focus-visible {
 	outline: 2px solid var(--focus);
 	outline-offset: 2px;
+	box-shadow: 0 0 0 5px var(--bg);
 }
 
 .visually-hidden {
@@ -125,8 +127,8 @@ input[type='radio'] {
 	white-space: nowrap;
 	cursor: pointer;
 	transition:
-		background-color var(--duration) var(--ease),
-		border-color var(--duration) var(--ease);
+		background-color var(--dur-fast) var(--ease-out),
+		border-color var(--dur-fast) var(--ease-out);
 }
 :where(button:not([class])):hover,
 .btn:hover {
@@ -172,7 +174,43 @@ input[type='radio'] {
 	padding: 0;
 }
 
+/* Page swaps (motion.ts starts the view transition): the old page sinks back, the new one rises into place */
+.shell > main {
+	view-transition-name: page;
+}
+::view-transition-old(page) {
+	animation: var(--dur-fast) var(--ease-in) both page-out;
+}
+::view-transition-new(page) {
+	animation: var(--dur-slow) var(--ease-out) both page-in;
+}
+@keyframes page-out {
+	to {
+		opacity: 0;
+		scale: 0.985;
+	}
+}
+@keyframes page-in {
+	from {
+		opacity: 0;
+		translate: 0 var(--shift-md);
+		scale: 1.01;
+	}
+}
+
+/* Reduced motion, from the system or the in-app setting: state changes at once, nothing drifts or glides.
+   Script transitions go through motion.ts, which applies the same switch. */
 @media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+:root[data-motion='reduced'] {
 	*,
 	*::before,
 	*::after {

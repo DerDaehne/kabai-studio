@@ -5,10 +5,11 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="text-scale" content="scale" />
 		<script>
-			// Gewähltes Farbschema vor dem ersten Paint setzen (sonst blitzt das System-Schema auf)
+			// Restore appearance preferences before the first paint, otherwise the system scheme flashes up
 			try {
-				const t = localStorage.getItem('studio-theme');
-				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+				const theme = localStorage.getItem('studio-theme');
+				if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+				if (localStorage.getItem('studio-motion') === 'reduced') document.documentElement.dataset.motion = 'reduced';
 			} catch {}
 		</script>
 		%sveltekit.head%

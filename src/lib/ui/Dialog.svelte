@@ -61,10 +61,10 @@
 		opacity: 0;
 		translate: 0 8px;
 		transition:
-			opacity var(--duration) var(--ease),
-			translate var(--duration) var(--ease),
-			overlay var(--duration) allow-discrete,
-			display var(--duration) allow-discrete;
+			opacity var(--dur-fast) var(--ease-out),
+			translate var(--dur-fast) var(--ease-out),
+			overlay var(--dur-fast) allow-discrete,
+			display var(--dur-fast) allow-discrete;
 	}
 	dialog[open] {
 		opacity: 1;
@@ -99,9 +99,9 @@
 		-webkit-backdrop-filter: blur(4px);
 		opacity: 0;
 		transition:
-			opacity var(--duration) var(--ease),
-			overlay var(--duration) allow-discrete,
-			display var(--duration) allow-discrete;
+			opacity var(--dur-fast) var(--ease-out),
+			overlay var(--dur-fast) allow-discrete,
+			display var(--dur-fast) allow-discrete;
 	}
 	dialog[open]::backdrop {
 		opacity: 1;

@@ -2,9 +2,11 @@
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
 	import { onMount } from 'svelte';
+	import { onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
 	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
+	import { transitionPage } from '$lib/ui/motion';
 	import Toaster from '$lib/ui/Toaster.svelte';
 
 	let { children } = $props();
@@ -20,24 +22,29 @@
 	const isActive = (href: string) =>
 		href === '/' ? path === '/' || path.startsWith('/projects') : path === href || path.startsWith(`${href}/`);
 
-	// Farbschema: System (prefers-color-scheme) oder fest; app.html setzt den gespeicherten Wert vor dem ersten Paint.
+	// Appearance preferences are data attributes on <html> (read by the stylesheets and motion.ts) and are kept in
+	// localStorage; app.html restores them before the first paint. "system" follows the operating system.
 	type Theme = 'system' | 'light' | 'dark';
+	type Motion = 'system' | 'reduced';
 	let theme = $state<Theme>('system');
+	let motion = $state<Motion>('system');
 	onMount(() => {
 		theme = (document.documentElement.dataset.theme as Theme | undefined) ?? 'system';
+		motion = (document.documentElement.dataset.motion as Motion | undefined) ?? 'system';
 	});
-	function setTheme(value: Theme) {
-		theme = value;
+	function storePreference(name: 'theme' | 'motion', value: string) {
 		const root = document.documentElement;
-		if (value === 'system') delete root.dataset.theme;
-		else root.dataset.theme = value;
+		if (value === 'system') delete root.dataset[name];
+		else root.dataset[name] = value;
 		try {
-			if (value === 'system') localStorage.removeItem('studio-theme');
-			else localStorage.setItem('studio-theme', value);
+			if (value === 'system') localStorage.removeItem(`studio-${name}`);
+			else localStorage.setItem(`studio-${name}`, value);
 		} catch {
-			// ohne Speicher (privater Modus) gilt die Wahl nur bis zum Neuladen
+			// without storage (private mode) the choice lasts until the next reload
 		}
 	}
+
+	onNavigate(transitionPage);
 </script>
 
 <svelte:head>
@@ -77,10 +84,29 @@
 		<footer class="foot">
 			<label class="theme">
 				Farbschema
-				<select value={theme} onchange={(e) => setTheme(e.currentTarget.value as Theme)}>
+				<select
+					value={theme}
+					onchange={(e) => {
+						theme = e.currentTarget.value as Theme;
+						storePreference('theme', theme);
+					}}
+				>
 					<option value="system">System</option>
 					<option value="light">Hell</option>
 					<option value="dark">Dunkel</option>
+				</select>
+			</label>
+			<label class="theme">
+				Bewegung
+				<select
+					value={motion}
+					onchange={(e) => {
+						motion = e.currentTarget.value as Motion;
+						storePreference('motion', motion);
+					}}
+				>
+					<option value="system">System</option>
+					<option value="reduced">Reduziert</option>
 				</select>
 			</label>
 			{@render attribution()}
@@ -109,7 +135,7 @@
 	.shell > .brand,
 	nav,
 	.foot {
-		background: var(--bg-chrome);
+		background: var(--surface-sunken);
 		border-right: 1px solid var(--border);
 	}
 	.shell > .brand {
