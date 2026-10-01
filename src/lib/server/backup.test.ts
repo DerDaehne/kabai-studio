@@ -462,3 +462,17 @@ describe('restore run from a directory other than the package root', () => {
 		expect(r.status).toBe(0);
 	});
 });
+
+describe('restore (fs error)', () => {
+	it('reports a raw fs error (EISDIR) with a stable code, one line and a non-zero exit', () => {
+		const data = join(tmp, 'fs-error');
+		mkdirSync(data, { mode: 0o700 });
+		const source = join(tmp, 'source-is-a-directory');
+		mkdirSync(source);
+		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		expect(r.status).toBe(1);
+		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] Dateisystemfehler \(EISDIR\).*\n$/);
+		expect(r.stderr.trim().split('\n')).toHaveLength(1);
+		expect(readdirSync(data).filter((f) => f.includes('.restore'))).toEqual([]);
+	});
+});
