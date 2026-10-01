@@ -11,6 +11,13 @@ export const RETENTION = { daily: 7, weekly: 4 };
 
 // Nur fertige Sicherungen passen: eine abgebrochene endet auf .tmp und gilt nie als Backup.
 const NAME = /^studio-(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(?:-(\d+))?\.db$/;
+const SLOT = /^studio-(\d{8})-(\d{4})(?:-\d+)?\.db(?:\.tmp)?$/;
+
+/** The minute name (YYYYMMDD-HHMM) of a backup or temp file, or null if the name does not match. */
+function minuteName(file: string): string | null {
+	const m = SLOT.exec(file);
+	return m ? `${m[1]}-${m[2]}` : null;
+}
 
 export type Backup = { file: string; at: Date; n: number };
 
@@ -95,6 +102,13 @@ export function prune(dir: string, { daily, weekly } = RETENTION): string[] {
 	}
 	const gone = all.filter((b) => !keep.has(b));
 	for (const b of gone) rmSync(join(dir, b.file));
+	// Aborted run: a .tmp with a different minute name than the newest backup is stale and gets removed.
+	const newest = all[0] ? minuteName(all[0].file) : null;
+	for (const file of readdirSync(dir)) {
+		if (!file.endsWith('.tmp') || minuteName(file) === null) continue;
+		if (newest !== null && minuteName(file) === newest) continue;
+		rmSync(join(dir, file));
+	}
 	return gone.map((b) => b.file);
 }
 
