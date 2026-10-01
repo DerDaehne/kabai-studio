@@ -442,8 +442,12 @@
 			margin: var(--space-2) var(--space-2) 0;
 		}
 		.head .views,
-		.commands {
+		.commands,
+		.agents .muted {
 			display: none;
+		}
+		.agents {
+			justify-content: flex-start;
 		}
 		main {
 			padding: var(--space-4) var(--space-3);

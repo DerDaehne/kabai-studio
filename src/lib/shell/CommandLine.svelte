@@ -56,7 +56,7 @@
 
 <div class="commandline" class:floating>
 	<label class="field">
-		<span class="prompt" aria-hidden="true">{parsed.mode ?? '›'}</span>
+		<span class="prompt" aria-hidden="true">›</span>
 		<span class="visually-hidden">Befehlszeile</span>
 		<!-- svelte-ignore a11y_autofocus -->
 		<input
@@ -156,6 +156,9 @@
 		z-index: 20;
 		width: min(520px, calc(100vw - 2 * var(--space-4)));
 		margin: 0;
+		/* the dock is a backdrop root, so a nested backdrop-filter would only blur the dock itself */
+		background: var(--surface-raised);
+		backdrop-filter: none;
 	}
 	.suggestions[hidden] {
 		display: none;
