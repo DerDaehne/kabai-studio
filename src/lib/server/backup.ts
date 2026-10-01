@@ -116,7 +116,7 @@ let lastError: string | null = null;
 
 /** Sichert, wenn die neueste Sicherung mindestens einen Tag alt ist (oder fehlt), und räumt auf. Fehler landen im Status. */
 export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
-	const last = listBackups(dir)[0];
+	const last = listBackups(dir).find((b) => b.at.getTime() <= now.getTime());
 	if (last && now.getTime() - last.at.getTime() < DAY) return;
 	try {
 		backup(db, dir, now);
@@ -142,11 +142,17 @@ export type BackupStatus = { dir: string; last: { path: string; size: number; at
 
 /** Für den System-Check (#812 übernimmt ihn in seine Prüfungs-Registry): letzte Sicherung, Größe, Pfad, Problem mit Ausweg. */
 export function backupStatus(dir: string, now = new Date()): BackupStatus {
-	const b = listBackups(dir)[0];
-	const last = b ? { path: join(dir, b.file), size: statSync(join(dir, b.file)).size, at: b.at.toISOString() } : null;
-	const stale = !b || now.getTime() - b.at.getTime() > DAY + HOUR;
+	const all = listBackups(dir);
+	const recent = all.find((b) => b.at.getTime() <= now.getTime());
+	const future = all.find((b) => b.at.getTime() > now.getTime());
+	const last = all[0] ? { path: join(dir, all[0].file), size: statSync(join(dir, all[0].file)).size, at: all[0].at.toISOString() } : null;
+	const stale = !recent || now.getTime() - recent.at.getTime() > DAY + HOUR;
 	const error =
 		lastError ??
-		(stale ? `Keine Sicherung aus den letzten 24 Stunden. Studio sichert stündlich nach — Server-Log und Schreibrechte in ${dir} prüfen.` : null);
+		(future
+			? `Neueste Sicherung liegt mit ${future.at.toISOString()} in der Zukunft — die Frische zählt nur Sicherungen bis jetzt. Uhr prüfen (fehlerhafte Uhr oder Restore von einem anderen Host).`
+			: stale
+			? `Keine Sicherung aus den letzten 24 Stunden. Studio sichert stündlich nach — Server-Log und Schreibrechte in ${dir} prüfen.`
+			: null);
 	return { dir, last, error };
 }
