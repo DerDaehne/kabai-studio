@@ -182,6 +182,24 @@ describe('migrate', () => {
 			{ id: 101, docs_required: 0 } // gewöhnliches Ticket unberührt
 		]);
 	});
+
+	it('009 marks existing Review columns and gives existing runs the normal priority', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true });
+		const db = openDb(':memory:');
+		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/009')));
+		db.exec(`
+			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'In Arbeit'), (11, 1, 'Review');
+			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 11, 'Old');
+			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'p', 'builtin', 'openai-compatible', 'm');
+			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger) VALUES (7, 100, 11, 1, 'on_enter');
+		`);
+		expect(migrate(db)).toEqual(['009_run_priority.sql']);
+		expect(db.prepare('SELECT name, review FROM columns ORDER BY id').all()).toEqual([{ name: 'In Arbeit', review: 0 }, { name: 'Review', review: 1 }]);
+		expect(db.prepare('SELECT priority FROM runs').all()).toEqual([{ priority: 'normal' }]);
+		expect(migrate(db)).toEqual([]);
+		expect(() => db.exec("UPDATE runs SET priority = 'urgent'")).toThrow(/CHECK/);
+	});
 });
 
 describe('Kernschema', () => {

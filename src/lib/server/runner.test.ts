@@ -296,14 +296,15 @@ describe('startRunner', () => {
 describe('priority queue', () => {
 	function withPriorities() {
 		const s = setup();
-		const reviewColumn = s.db.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'Review'").get(s.projectId)!.id as number;
+		const column = (name: string) => s.db.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?').get(s.projectId, name)!.id as number;
+		const reviewColumn = column('Review');
 		const ticketIn = (columnId?: number) => board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
 		const blockingTicket = ticketIn();
 		board.linkRelation(s.db, user, blockingTicket, ticketIn(), 'blocks');
 		const reviewTicket = ticketIn(reviewColumn);
 		const queueWith = (ticketId: number, trigger: 'manual' | 'on_enter') => runs.createRun(s.db, user, { ticketId, profileId: s.local, trigger }).id;
 		const priority = (id: number) => s.row(id).priority;
-		return { ...s, blockingTicket, reviewTicket, queueWith, priority };
+		return { ...s, column, ticketIn, blockingTicket, reviewTicket, queueWith, priority };
 	}
 
 	it('derives the priority when a run is created: normal by default, blocker for a ticket with waiting successors, review for a run triggered in a review column', () => {
@@ -312,6 +313,22 @@ describe('priority queue', () => {
 		expect(s.priority(s.queueWith(s.blockingTicket, 'manual'))).toBe('blocker');
 		expect(s.priority(s.queueWith(s.reviewTicket, 'on_enter'))).toBe('review');
 		expect(s.priority(s.queueWith(s.reviewTicket, 'manual'))).toBe('normal');
+	});
+
+	it('gives a ticket whose blocks successors are all done the normal priority', () => {
+		const s = withPriorities();
+		const [predecessor, successor] = [s.ticketIn(), s.ticketIn()];
+		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		for (const name of ['In Arbeit', 'Review', 'Done']) board.moveTicket(s.db, user, successor, s.column(name));
+		expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('normal');
+	});
+
+	it('rejects prioritizing a run that already runs with run_not_queued and keeps its priority', () => {
+		const s = withPriorities();
+		const run = s.queue(s.local);
+		runs.claimRun(s.db, system, { global: 4, pools: {} });
+		expect(() => runs.prioritizeRun(s.db, user, run)).toThrow(expect.objectContaining({ code: 'run_not_queued' }));
+		expect(s.priority(run)).toBe('normal');
 	});
 
 	it('lets only the human prioritize a queued run; an agent gets requires_human', () => {
@@ -382,5 +399,14 @@ describe('priority queue', () => {
 		expect(runs.waitReason(s.db, human, limits)).toMatchObject({ priority: 'human', ahead: 0, text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv).' });
 		expect(runs.waitReason(s.db, blocker, limits)).toMatchObject({ ahead: 1 });
 		expect(runs.waitReason(s.db, running, limits)).toBeUndefined();
+	});
+
+	it('names a reached global limit as the wait reason', () => {
+		const s = setup();
+		const limits = { global: 1, pools: { local: 2, cloud: 2 } };
+		s.queue(s.cloud);
+		runs.claimRun(s.db, system, limits);
+		const waiting = s.queue(s.local);
+		expect(runs.waitReason(s.db, waiting, limits)?.text).toBe('wartet: das globale Limit ist erreicht (1 von 1 aktiv).');
 	});
 });
