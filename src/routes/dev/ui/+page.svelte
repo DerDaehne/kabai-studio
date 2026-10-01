@@ -13,6 +13,7 @@
 	import ProjectTag, { type ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
 
 	// Übersicht aller Bausteine zum Prüfen (nicht verlinkt). ?open=dialog|panel öffnet ein Overlay direkt.
 	let dialogOpen = $state(page.url.searchParams.get('open') === 'dialog');
@@ -80,6 +81,23 @@
 		question = (question + step + questions.length) % questions.length;
 	}
 
+	const demoAgents: AgentChip[] = [
+		{ name: 'Claude', location: 'online', project: { code: 'WEB', palette: 2, name: 'Webseite' }, state: 'running' },
+		{ name: 'qwen3-coder', location: 'lokal', project: { code: 'STU', palette: 1, name: 'kabai studio' }, state: 'waiting' },
+		{ name: 'gpt-oss', location: 'lokal', project: { code: 'API', palette: 3, name: 'Schnittstelle' }, state: 'running' }
+	];
+	let agentCount = $state(2);
+	$effect(() => {
+		shell.agents = demoAgents.slice(0, agentCount);
+		shell.viewItems = lanes.map((lane) => ({ id: lane.key, label: `${lane.key} ${lane.title}`, detail: lane.state, href: '#h-glass' }));
+		return () => {
+			shell.agents = [];
+			shell.viewItems = [];
+			shell.focus = null;
+			shell.pendingKeys = '';
+		};
+	});
+
 	function save() {
 		saving = true;
 		setTimeout(() => {
@@ -114,6 +132,18 @@
 		</div>
 		<div class="row" role="list" aria-label="Projektpalette">
 			{#each projects as project (project.code)}<span role="listitem"><ProjectTag {...project} /></span>{/each}
+		</div>
+	</section>
+
+	<section aria-labelledby="h-shell">
+		<h2 id="h-shell">Shell</h2>
+		<p class="muted">Füttert Kopf-Dock, Tastenleiste und Suche (/) mit Beispieldaten.</p>
+		<div class="row">
+			<Button variant="secondary" size="sm" onclick={() => (agentCount = agentCount === 2 ? 3 : 2)}>{agentCount === 2 ? '3 Agents' : '2 Agents'}</Button>
+			<Button variant="secondary" size="sm" onclick={() => (shell.focus = { code: 'STU', palette: 1, name: 'kabai studio' })}>Projekt-Fokus</Button>
+			<Button variant="secondary" size="sm" onclick={announceSignal}>Neues Signal</Button>
+			<Button variant="secondary" size="sm" onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : 'g')}>Präfix g</Button>
+			<Button variant="secondary" size="sm" onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : '3')}>Zähler 3</Button>
 		</div>
 	</section>
 

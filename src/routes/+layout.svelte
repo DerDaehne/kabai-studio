@@ -1,38 +1,79 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
-	import { onMount } from 'svelte';
-	import { onNavigate } from '$app/navigation';
+	import { goto, onNavigate, pushState } from '$app/navigation';
 	import { page } from '$app/state';
+	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
+	import CommandLine from '$lib/shell/CommandLine.svelte';
+	import { commands, type Suggestion } from '$lib/shell/commands';
+	import { contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
+	import { shell } from '$lib/shell/shell.svelte';
+	import Dialog from '$lib/ui/Dialog.svelte';
 	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
+	import Kbd from '$lib/ui/Kbd.svelte';
 	import { transitionPage } from '$lib/ui/motion';
+	import Nebula from '$lib/ui/Nebula.svelte';
+	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 
 	let { children } = $props();
 
-	const nav: { href: string; label: string; icon: IconName }[] = [
-		{ href: '/', label: 'Projekte', icon: 'projects' },
-		{ href: '/inbox', label: 'Inbox', icon: 'inbox' },
-		{ href: '/notes', label: 'Notes', icon: 'notes' },
-		{ href: '/settings', label: 'Einstellungen', icon: 'settings' }
+	const views: { href: string; label: string; icon: IconName; context: KeyContext }[] = [
+		{ href: '/', label: 'Stellwerk', icon: 'projects', context: 'stellwerk' },
+		{ href: '/takt', label: 'Takt', icon: 'inbox', context: 'takt' },
+		{ href: '/board', label: 'Board', icon: 'notes', context: 'board' }
 	];
 	const path: string = $derived(page.url.pathname);
-	const bare = $derived(path === '/login' || path === '/setup'); // Anmeldung und Einrichtung ohne Navigation
-	const isActive = (href: string) =>
-		href === '/' ? path === '/' || path.startsWith('/projects') : path === href || path.startsWith(`${href}/`);
+	const bare = $derived(path === '/login' || path === '/setup');
+	const currentView = $derived(views.find((view) => (view.href === '/' ? path === '/' : path.startsWith(view.href))));
+
+	let commandValue = $state('');
+	let commandInput = $state<HTMLInputElement>();
+	let commandFocused = $state(false);
+	const keyContext: KeyContext = $derived(commandFocused ? 'commandline' : (currentView?.context ?? 'page'));
+	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys));
+	const sources = $derived({ commands, view: shell.viewItems, tickets: shell.tickets });
+
+	const compact = new MediaQuery('max-width: 719px');
+	const overlayOpen = $derived(page.state.commandLine === true);
+
+	function openCommandLine(mode: string) {
+		commandValue = mode;
+		if (compact.current) {
+			if (!overlayOpen) pushState('', { commandLine: true });
+		} else {
+			commandInput?.focus();
+		}
+	}
+
+	/** The overlay is a history entry, so the back gesture closes it like Escape or a tap outside. */
+	async function closeOverlay() {
+		if (!page.state.commandLine) return;
+		const popped = new Promise((resolve) => addEventListener('popstate', resolve, { once: true }));
+		history.back();
+		await popped;
+	}
+
+	function onWindowKeydown(event: KeyboardEvent) {
+		if ((event.key !== ':' && event.key !== '/') || event.ctrlKey || event.metaKey || event.altKey) return;
+		if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return;
+		event.preventDefault();
+		openCommandLine(event.key);
+	}
+
+	type Preference = { name: 'theme' | 'motion'; value: string };
+	const preferences: Record<string, Preference> = {
+		'theme-light': { name: 'theme', value: 'light' },
+		'theme-dark': { name: 'theme', value: 'dark' },
+		'theme-system': { name: 'theme', value: 'system' },
+		'motion-reduced': { name: 'motion', value: 'reduced' },
+		'motion-system': { name: 'motion', value: 'system' }
+	};
 
 	// Appearance preferences are data attributes on <html> (read by the stylesheets and motion.ts) and are kept in
 	// localStorage; app.html restores them before the first paint. "system" follows the operating system.
-	type Theme = 'system' | 'light' | 'dark';
-	type Motion = 'system' | 'reduced';
-	let theme = $state<Theme>('system');
-	let motion = $state<Motion>('system');
-	onMount(() => {
-		theme = (document.documentElement.dataset.theme as Theme | undefined) ?? 'system';
-		motion = (document.documentElement.dataset.motion as Motion | undefined) ?? 'system';
-	});
-	function storePreference(name: 'theme' | 'motion', value: string) {
+	function storePreference({ name, value }: Preference) {
 		const root = document.documentElement;
 		if (value === 'system') delete root.dataset[name];
 		else root.dataset[name] = value;
@@ -44,6 +85,16 @@
 		}
 	}
 
+	async function execute(suggestion: Suggestion) {
+		await closeOverlay();
+		commandInput?.blur();
+		if (suggestion.href) await goto(suggestion.href);
+		else if (suggestion.id === 'fokus-aus') shell.focus = null;
+		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
+	}
+
+	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
+
 	onNavigate(transitionPage);
 </script>
 
@@ -52,10 +103,12 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 <!-- Attribution nach LICENSE (Zusatzbedingung §7b): Originalprojekt und -autor bleiben sichtbar -->
 {#snippet attribution()}
 	<p class="attribution">
-		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne<br />Freie Software, AGPL-3.0
+		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne · Freie Software, AGPL-3.0
 	</p>
 {/snippet}
 
@@ -67,64 +120,123 @@
 	</div>
 {:else}
 	<div class="shell">
+		<Nebula />
 		<a class="skip btn" href="#main">Zum Inhalt springen</a>
-		<div class="brand"><img src={favicon} alt="" width="20" height="20" />kabai studio</div>
-		<nav aria-label="Hauptnavigation">
-			<ul>
-				{#each nav as item (item.href)}
+
+		<header class="head dock">
+			<a class="brand" href="/" aria-label="kabai studio, Stellwerk"><img src={favicon} alt="" width="18" height="18" /></a>
+			<nav class="views" aria-label="Ansichten">
+				{#each views as view (view.href)}
+					<a href={view.href} aria-current={view === currentView ? 'page' : undefined}>{view.label}</a>
+				{/each}
+			</nav>
+			{#if shell.focus}
+				<span class="chip focus-chip">
+					Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
+					<span class="focus-name">{shell.focus.name}</span>
+					<button class="clear" aria-label="Projekt-Fokus aufheben" onclick={() => (shell.focus = null)}>
+						<Icon name="x" size={14} />
+					</button>
+				</span>
+			{/if}
+			<ul class="agents" aria-label="Agents">
+				{#if shell.agents.length >= 3}
+					<li class="chip" class:halt={waitingAgents > 0}>
+						<span class="dot" aria-hidden="true"></span>{shell.agents.length} Agents
+						{#if waitingAgents}<span class="state">· {waitingAgents} {waitingAgents === 1 ? 'hält' : 'halten'}</span>{/if}
+					</li>
+				{:else}
+					{#each shell.agents as agent (agent.name)}
+						<li class="chip" class:halt={agent.state === 'waiting'}>
+							<span class="dot" aria-hidden="true"></span>{agent.name}
+							<span class="muted">{agent.location}</span>
+							<ProjectTag code={agent.project.code} palette={agent.project.palette} />
+							<span class="state">{agent.state === 'waiting' ? 'hält' : 'arbeitet'}</span>
+						</li>
+					{/each}
+				{/if}
+			</ul>
+			<a class="btn btn-ghost btn-icon" href="/settings" aria-label="Einstellungen"><Icon name="settings" /></a>
+			{#key shell.signals}
+				{#if shell.signals}<span class="wave" aria-hidden="true"></span>{/if}
+			{/key}
+		</header>
+
+		<main id="main" tabindex="-1">
+			{@render children()}
+			<footer class="page-end">{@render attribution()}</footer>
+		</main>
+
+		<footer class="commands dock">
+			<CommandLine
+				{sources}
+				floating
+				bind:value={commandValue}
+				bind:input={commandInput}
+				bind:focused={commandFocused}
+				onexecute={execute}
+				onescape={() => commandInput?.blur()}
+			/>
+			<p class="context"><strong>{contextLabels[keyContext]}</strong></p>
+			<ul class="keys" aria-label="Gültige Tasten">
+				{#if keyBar.count || keyBar.prefix}
+					<li class="pending">
+						{#each [...keyBar.count, ...keyBar.prefix] as key, index (index)}<Kbd {key} active />{/each}
+					</li>
+				{/if}
+				{#each keyBar.hints as hint (hint.label)}
 					<li>
-						<a href={item.href} aria-current={isActive(item.href) ? 'page' : undefined}>
-							<Icon name={item.icon} /><span>{item.label}</span>
-						</a>
+						{#each hint.keys as sequence, index (index)}
+							{#each sequence as key, position (position)}<Kbd {key} />{/each}
+						{/each}
+						<span>{hint.label}</span>
 					</li>
 				{/each}
 			</ul>
-		</nav>
-		<main id="main" tabindex="-1">{@render children()}</main>
-		<footer class="foot">
-			<label class="theme">
-				Farbschema
-				<select
-					value={theme}
-					onchange={(e) => {
-						theme = e.currentTarget.value as Theme;
-						storePreference('theme', theme);
-					}}
-				>
-					<option value="system">System</option>
-					<option value="light">Hell</option>
-					<option value="dark">Dunkel</option>
-				</select>
-			</label>
-			<label class="theme">
-				Bewegung
-				<select
-					value={motion}
-					onchange={(e) => {
-						motion = e.currentTarget.value as Motion;
-						storePreference('motion', motion);
-					}}
-				>
-					<option value="system">System</option>
-					<option value="reduced">Reduziert</option>
-				</select>
-			</label>
 			{@render attribution()}
 		</footer>
+
+		<nav class="tabs dock" aria-label="Ansichten">
+			{#each views as view (view.href)}
+				<a href={view.href} aria-current={view === currentView ? 'page' : undefined}><Icon name={view.icon} />{view.label}</a>
+			{/each}
+			<button type="button" onclick={() => openCommandLine('')}><span class="glyph" aria-hidden="true">:/</span>Befehl</button>
+		</nav>
 	</div>
+
+	<Dialog bind:open={() => overlayOpen, (open) => !open && closeOverlay()} title="Befehlszeile">
+		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
+	</Dialog>
 {/if}
 
 <Toaster />
 
 <style>
 	.shell {
+		position: relative;
+		isolation: isolate;
 		display: grid;
-		grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
-		grid-template-rows: auto 1fr auto;
-		grid-template-areas: 'brand main' 'nav main' 'foot main';
+		grid-template-rows: auto minmax(0, 1fr) auto;
 		height: 100dvh;
+		background: var(--bg);
 	}
-	/* .brand und main gibt es in Shell und bare-Ansicht: Raster/Chrome nur über .shell > … */
+	.dock {
+		background: var(--glass-float);
+		backdrop-filter: blur(var(--blur-float)) saturate(var(--glass-sat));
+		box-shadow: var(--shadow-float);
+	}
+	.head {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		min-width: 0;
+		margin: var(--space-3) var(--space-3) 0;
+		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+		border-radius: 18px;
+		overflow: hidden;
+		view-transition-name: head-dock;
+	}
 	.brand {
 		display: flex;
 		align-items: center;
@@ -132,139 +244,246 @@
 		font-weight: 650;
 		letter-spacing: -0.01em;
 	}
-	.shell > .brand,
-	nav,
-	.foot {
-		background: var(--surface-sunken);
-		border-right: 1px solid var(--border);
-	}
-	.shell > .brand {
-		grid-area: brand;
-		height: 48px;
-		padding: 0 var(--space-4);
-	}
-	nav {
-		grid-area: nav;
-		padding: var(--space-1) var(--space-2);
-		overflow-y: auto;
-	}
-	nav ul {
+	.head .brand {
 		display: grid;
-		gap: var(--space-05);
-		padding: 0;
-		list-style: none;
+		place-items: center;
+		flex-shrink: 0;
+		width: 32px;
+		height: 32px;
+		border-radius: 11px;
+		background: var(--accent-tint);
 	}
-	nav a {
+	.views {
 		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		height: var(--control-h);
-		padding: 0 var(--space-2);
-		border-radius: var(--radius);
+		gap: var(--space-05);
+		padding: 3px;
+		border-radius: 12px;
+		background: var(--fill-soft);
+	}
+	.views a {
+		padding: var(--space-1) var(--space-3);
+		border-radius: 9px;
 		color: var(--text-muted);
 		font-weight: 560;
 		text-decoration: none;
 	}
-	nav a:hover {
-		background: var(--surface-hover);
+	.views a:hover {
 		color: var(--text);
 	}
-	nav a[aria-current='page'] {
-		background: var(--accent-tint);
-		color: var(--accent-text);
+	.views a[aria-current='page'] {
+		background: var(--glass-raised);
+		box-shadow: var(--shadow-card);
+		color: var(--text);
 	}
-	.foot {
-		grid-area: foot;
-		display: grid;
-		gap: var(--space-3);
-		padding: var(--space-3) var(--space-4) var(--space-4);
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-	.theme {
-		display: grid;
-		gap: var(--space-1);
-	}
-	.theme select {
-		min-height: var(--control-h-sm);
-		font-size: var(--text-sm);
-	}
-	.attribution {
-		line-height: 1.4;
-	}
-	.attribution a {
-		color: inherit;
-		font-weight: 600;
-	}
-	.shell > main {
-		grid-area: main;
+	.agents {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-2);
+		flex: 1;
 		min-width: 0;
+		margin: 0;
+		padding: 0;
+		overflow: hidden;
+		list-style: none;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 30px;
+		padding: 0 var(--space-3) 0 10px;
+		border-radius: 15px;
+		background: var(--fill-soft);
+		font-size: var(--text-sm);
+		white-space: nowrap;
+	}
+	.chip .dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--status-running);
+	}
+	.chip .state {
+		color: var(--status-running);
+	}
+	.chip.halt .dot {
+		background: var(--status-waiting);
+	}
+	.chip.halt .state {
+		color: var(--status-waiting);
+	}
+	.focus-chip {
+		flex-shrink: 0;
+		padding-right: var(--space-1);
+		background: var(--fill-sel);
+	}
+	.clear {
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 0;
+		border-radius: 50%;
+		background: transparent;
+		color: var(--text-muted);
+	}
+	.wave {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+	}
+	.wave::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		width: 30%;
+		background: linear-gradient(90deg, transparent, var(--aura-waiting), transparent);
+		transform: translateX(-100%);
+		animation: wave var(--dur-sweep) var(--ease-inout) both;
+	}
+	@keyframes wave {
+		to {
+			transform: translateX(400%);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.wave {
+			display: none;
+		}
+	}
+	:global(:root[data-motion='reduced']) .wave {
+		display: none;
+	}
+
+	main {
+		min-width: 0;
+		min-height: 0;
 		overflow: auto;
-		padding: var(--space-4) var(--space-6) var(--space-8);
+		padding: var(--space-6) var(--space-6) var(--space-4);
+		scroll-padding-block: var(--space-6);
 	}
 	main:focus-visible {
 		outline: none; /* Ziel des Skip-Links, kein Bedienelement */
 		box-shadow: none;
 	}
+	.page-end {
+		display: none;
+		margin-top: var(--space-8);
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+	}
+
+	.commands {
+		display: flex;
+		align-items: center;
+		gap: var(--space-4);
+		min-width: 0;
+		margin: 0 var(--space-3) var(--space-3);
+		padding: var(--space-2) var(--space-3);
+		border-radius: 18px;
+		view-transition-name: command-dock;
+	}
+	.commands > :global(.commandline) {
+		flex: 0 0 260px;
+	}
+	.context {
+		flex-shrink: 0;
+		font-size: var(--text-sm);
+	}
+	.keys {
+		display: flex;
+		gap: var(--space-3);
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		overflow: hidden;
+		list-style: none;
+		font-size: var(--text-sm);
+		white-space: nowrap;
+	}
+	.keys li {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+	}
+	.keys span {
+		margin-left: 3px;
+		color: var(--text-muted);
+	}
+	.commands .attribution {
+		flex-shrink: 0;
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+	}
+	.attribution a {
+		color: inherit;
+		font-weight: 600;
+	}
+
+	.tabs {
+		display: none;
+	}
 	.skip {
 		position: fixed;
 		top: var(--space-2);
 		left: var(--space-2);
-		z-index: 10;
+		z-index: 30;
 		translate: 0 -200%;
 	}
 	.skip:focus {
 		translate: 0 0;
 	}
 
-	/* Handy/schmal: Marke oben, Navigation als Tab-Leiste unten (Daumenbereich), Fußzeile am Seitenende */
+	/* Handy/schmal: Ansichten und Befehlszeile als Tab-Dock unten (Daumenbereich), Attribution am Ende des Inhalts */
 	@media (max-width: 719px) {
-		.shell {
-			grid-template-columns: minmax(0, 1fr);
-			grid-template-areas: 'brand' 'main' 'foot';
-			height: auto;
-			min-height: 100dvh;
-			padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+		.head {
+			margin: var(--space-2) var(--space-2) 0;
 		}
-		.shell > .brand,
-		.foot {
-			border-right: 0;
+		.head .views,
+		.commands {
+			display: none;
 		}
-		.shell > .brand {
-			height: 44px;
-			border-bottom: 1px solid var(--border);
+		main {
+			padding: var(--space-4) var(--space-3);
 		}
-		.foot {
-			border-top: 1px solid var(--border);
+		.page-end {
+			display: block;
 		}
-		.shell > main {
-			overflow: visible;
-			padding: var(--space-3);
-		}
-		nav {
-			position: fixed;
-			inset: auto 0 0;
-			z-index: 5;
-			padding: 0 0 env(safe-area-inset-bottom);
-			border-right: 0;
-			border-top: 1px solid var(--border);
-		}
-		nav ul {
+		.tabs {
+			display: grid;
 			grid-template-columns: repeat(4, minmax(0, 1fr));
-			gap: 0;
+			margin: 0 var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
+			border-radius: 18px;
+			view-transition-name: command-dock;
 		}
-		nav a {
+		.tabs a,
+		.tabs button {
+			display: flex;
 			flex-direction: column;
+			align-items: center;
 			justify-content: center;
 			gap: 3px;
 			height: var(--tabbar-h);
-			border-radius: 0;
-			font-size: var(--text-sm);
-		}
-		nav a[aria-current='page'] {
+			padding: 0;
+			border: 0;
 			background: transparent;
-			box-shadow: inset 0 2px 0 var(--accent);
+			color: var(--text-muted);
+			font-size: var(--text-sm);
+			text-decoration: none;
 		}
+		.tabs a[aria-current='page'] {
+			color: var(--accent-text);
+		}
+		.glyph {
+			font: 700 15px / 16px var(--font-mono);
+		}
+	}
+
+	:global(::view-transition-group(head-dock)),
+	:global(::view-transition-group(command-dock)) {
+		animation: none;
 	}
 
 	.bare {
@@ -283,6 +502,8 @@
 		display: grid;
 		gap: var(--space-3);
 		width: min(360px, 100%);
+		overflow: visible;
+		padding: 0;
 	}
 	/* Formulare der Anmelde-/Einrichtungsseiten: Abstand zwischen Feldern, Label über dem Feld, Fehler hervorgehoben */
 	.bare main :global(form) {
