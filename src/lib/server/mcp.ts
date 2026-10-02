@@ -57,6 +57,7 @@ const object = (properties: Record<string, JsonSchemaType>, required?: string[])
 });
 const text = (maxLength: number): JsonSchemaType => ({ type: 'string', minLength: 1, maxLength });
 const list = (items: JsonSchemaType): JsonSchemaType => ({ type: 'array', items, minItems: 1, maxItems: MAX_ITEMS });
+const tags: JsonSchemaType = { type: 'array', items: text(50), maxItems: 20 };
 
 type ToolDefinition<Args> = { description: string; inputSchema: StandardSchemaWithJSON<Args, Args> };
 const define = <Args>(description: string, schema: JsonSchemaType): ToolDefinition<Args> => ({ description, inputSchema: fromJsonSchema<Args>(schema) });
@@ -109,9 +110,16 @@ const TOOLS = {
 				title: text(MAX_TITLE),
 				body: { type: 'string', maxLength: MAX_TEXT },
 				kind: { enum: ['note', 'adr', 'hub'] },
-				tags: list(text(50))
+				tags
 			},
 			['slug', 'title', 'body']
+		)
+	),
+	notes_update: define<{ slug: string; expected_version: number; title?: string; body?: string; tags?: string[] }>(
+		'Change a note. expected_version: its version from notes_get; if it moved on, someone else changed the note meanwhile.',
+		object(
+			{ slug: text(MAX_SLUG), expected_version: { type: 'integer' }, title: text(MAX_TITLE), body: { type: 'string', maxLength: MAX_TEXT }, tags },
+			['slug', 'expected_version']
 		)
 	),
 	notes_link: define<{ slug: string; type: notes.NoteLinkType; target: string }>(
@@ -227,6 +235,12 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
 	});
 
+	tool('notes_update', ({ slug, expected_version, ...patch }) => {
+		const id = noteIdOf(db, ctx, slug);
+		const { warnings } = notes.updateNote(db, ctx.actor, id, patch, expected_version);
+		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
+	});
+
 	tool('notes_link', ({ slug, type, target }) => {
 		notes.linkNote(db, ctx.actor, noteIdOf(db, ctx, slug), noteIdOf(db, ctx, target), type);
 		return { linked: true };
@@ -275,6 +289,8 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 			return 'Freigeben gehört zur Review-Rolle; halte dein Ergebnis mit add_comment fest.';
 		case 'self_approval':
 			return 'Eigene Arbeit gibt ein anderer Run oder der Mensch frei; halte dein Ergebnis mit add_comment fest.';
+		case 'conflict':
+			return 'Lies die Note mit notes_get neu und wende deine Änderung auf deren aktuelle version an.';
 		case 'slug_taken':
 			return 'Die Note gibt es schon: lies sie mit notes_get und ändere sie mit notes_update.';
 		case 'cycle':

@@ -470,6 +470,46 @@ describe('notes', () => {
 	});
 });
 
+describe('notes_search', () => {
+	it('takes special characters, operators and wildcards as plain words', async () => {
+		const { db, call, startRun, ticket } = setup();
+		notes.createNote(db, user, { slug: 'tools', title: 'Werkzeuge', body: 'nutzt kb.ai_tools' });
+		notes.createNote(db, user, { slug: 'alpha', title: 'Alpha', body: 'alpha' });
+		notes.createNote(db, user, { slug: 'omega', title: 'Omega', body: 'omega' });
+		notes.createNote(db, user, { slug: 'architecture', title: 'Architektur', body: 'architecture' });
+		const { token } = startRun(ticket());
+		const slugs = async (query: string) => {
+			const { isError, body } = await call(token, 'notes_search', { query });
+			expect(isError).toBe(false);
+			return body.notes.map((n: { slug: string }) => n.slug);
+		};
+
+		expect(await slugs('kb.ai_tools')).toEqual(['tools']);
+		expect(await slugs('alpha OR omega')).toEqual([]);
+		expect(await slugs('NOT alpha')).toEqual([]);
+		expect(await slugs('arch*')).toEqual([]);
+		for (const query of ['say "hi', 'title:(x', 'NEAR(a b)', '^alpha', 'a + b', '-alpha']) expect(await slugs(query)).toEqual(expect.any(Array));
+	});
+});
+
+describe('notes_update', () => {
+	it('detects a concurrent change through expected_version and links [[slug]] from the new body', async () => {
+		const { db, call, startRun, ticket } = setup();
+		notes.createNote(db, user, { slug: 'arch-base', title: 'Basis', body: '' });
+		const { token } = startRun(ticket());
+		await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'v1' });
+
+		expect(await call(token, 'notes_update', { slug: 'arch-api', expected_version: 1, body: 'nutzt [[arch-base]]' })).toEqual({ isError: false, body: { version: 2 } });
+		const stale = await call(token, 'notes_update', { slug: 'arch-api', expected_version: 1, title: 'Überschrieben' });
+		expect(stale).toMatchObject({ isError: true, body: { error: 'conflict', message: expect.stringContaining('aktuelle Version 2'), hint: expect.stringContaining('notes_get') } });
+		expect(stale.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+		expect((await call(token, 'notes_get', { slug: 'arch-api' })).body).toMatchObject({ title: 'API', version: 2, references: ['arch-base'] });
+
+		expect((await call(token, 'notes_update', { slug: 'arch-api', title: 'Ohne Version' })).body).toMatch(/^Input validation error/);
+		expect(await call(token, 'notes_update', { slug: 'arch-api', expected_version: 2, tags: [] })).toEqual({ isError: false, body: { version: 3 } });
+	});
+});
+
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();
