@@ -327,6 +327,43 @@ describe('link_tickets', () => {
 	});
 });
 
+describe('list_workable', () => {
+	it('lists only tickets whose predecessors are done, or approved (acceptance) when the project counts review_ok', async () => {
+		const { db, projectId, call, startRun, ticket, place, col } = setup();
+		const own = ticket('Eigenes');
+		const [done, approved, open] = [ticket('Fertig'), ticket('Freigegeben'), ticket('Offen')];
+		const [afterDone, afterApproved, afterOpen] = [ticket('Nach Fertig'), ticket('Nach Freigabe'), ticket('Nach Offen')];
+		place(done, 'Done');
+		place(approved, 'Review');
+		board.approveReview(db, user, approved);
+		board.linkRelation(db, user, done, afterDone, 'blocks');
+		board.linkRelation(db, user, approved, afterApproved, 'blocks');
+		board.linkRelation(db, user, open, afterOpen, 'blocks');
+		place(ticket('Wartet auf den Menschen'), 'Human Intervention');
+		const { runId, token } = startRun(own);
+		const workable = async (args = {}) => (await call(token, 'list_workable', args)).body;
+
+		expect((await workable()).tickets).toEqual([
+			{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', assignee: `agent (Run ${runId})` },
+			{ ref: 'STU-4', title: 'Offen', column: 'Backlog' },
+			{ ref: 'STU-5', title: 'Nach Fertig', column: 'Backlog' },
+			{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }
+		]);
+		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
+		expect((await workable()).tickets.map((t: { ref: string }) => t.ref)).toEqual(['STU-1', 'STU-4', 'STU-5', 'STU-6', 'STU-3']);
+		expect(await workable({ column_id: col.Review })).toEqual({ tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }] });
+	});
+
+	it('answers with at most 50 tickets and says how many more there are', async () => {
+		const { call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		for (let i = 0; i < 52; i++) ticket();
+		const { body } = await call(token, 'list_workable');
+		expect(body.tickets).toHaveLength(50);
+		expect(body.more).toBe(3);
+	});
+});
+
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();

@@ -89,6 +89,10 @@ const TOOLS = {
 		'Link your ticket: waits_for = it waits for these tickets; blocks = these wait for it.',
 		object({ waits_for: list({ type: 'string', maxLength: MAX_REF }), blocks: list({ type: 'string', maxLength: MAX_REF }) })
 	),
+	list_workable: define<{ column_id?: number }>(
+		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
+		object({ column_id: { type: 'integer' } })
+	),
 	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
 		object({ title: text(MAX_TITLE), description: { type: 'string', maxLength: MAX_TEXT }, docs_required: { type: 'boolean' } })
@@ -173,6 +177,8 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 			return { ref: board.ticket(db, ctx.ticketId).ref };
 		})
 	);
+
+	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
 
 	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
 
@@ -287,6 +293,16 @@ function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTick
 		);
 		return { refs: ids.map((id) => board.ticket(db, id).ref) };
 	});
+}
+
+/** At most MAX_ITEMS tickets, so a large backlog does not flood a small model's context; `more` says what was left out. */
+function workableView(db: DatabaseSync, ctx: ToolContext, columnId?: number) {
+	const columnName = new Map(db.prepare('SELECT id, name FROM columns WHERE project_id = ?').all(ctx.projectId).map((c) => [c.id as number, c.name as string]));
+	const rows = board.workableTickets(db, ctx.projectId, columnId);
+	return {
+		tickets: rows.slice(0, MAX_ITEMS).map((t) => ({ ref: t.ref, title: t.title, column: columnName.get(t.column_id), ...(t.assignee && { assignee: t.assignee }) })),
+		...(rows.length > MAX_ITEMS && { more: rows.length - MAX_ITEMS })
+	};
 }
 
 /** Names the item a refusal concerns, so the agent knows which one to fix. */
