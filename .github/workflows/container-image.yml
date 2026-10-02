@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # nur dieser Job: Push nach GHCR
+      packages: write # only this job: push to GHCR
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,12 +31,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Kein docker/metadata-action: bei nur zwei Auslösern (Tag v*, manuell) reichen ein
-      # paar Zeilen Shell für die Tag-Liste, ohne eine weitere Action zu vertrauen.
-      - name: Tags bestimmen
+      # No docker/metadata-action: with only two triggers (tag v*, manual) a few lines of
+      # shell cover the tag list without trusting another action.
+      - name: Determine tags
         id: tags
         run: |
-          image="ghcr.io/${{ github.repository }}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}" # image names must be lowercase; the account name isn't
           tags="$image:sha-${GITHUB_SHA:0:7},$image:latest"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             tags="$image:${GITHUB_REF#refs/tags/v},$tags"

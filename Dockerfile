@@ -9,9 +9,8 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Runtime: only build/. adapter-node bundles every dependency into it (no "dependencies" in
-# package.json, confirmed by running "node build" with node_modules removed), so no npm
-# install and no node_modules are needed here.
+# Runtime: only build/. adapter-node bundles every dependency into it (no "dependencies"
+# entry in package.json), so no npm install or node_modules are needed here.
 FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 AS runtime
 WORKDIR /app
 COPY --from=build /app/build ./build
@@ -20,10 +19,13 @@ COPY --from=build /app/build ./build
 RUN mkdir -p /data && chown node:node /data && chmod 0700 /data
 USER node
 
-# STUDIO_DATA_DIR matches the volume below. HOST/PORT/ORIGIN stay optional, same defaults as
-# bare-metal (see README "Container"): HOST defaults to 127.0.0.1, PORT to 3000, ORIGIN is
-# only required for login/setup (hooks.server.ts logs the exact fix when it's missing).
+# STUDIO_DATA_DIR matches the volume below. HOST defaults to 0.0.0.0 here (unlike bare metal):
+# the container's network namespace is already the isolation boundary, so binding wide open
+# inside it needs no extra config — what actually controls reachability from the host is the
+# -p publish address (see README "Container"). PORT/ORIGIN stay optional; ORIGIN is only
+# required for login/setup (hooks.server.ts logs the exact fix when it's missing).
 ENV STUDIO_DATA_DIR=/data
+ENV HOST=0.0.0.0
 VOLUME ["/data"]
 EXPOSE 3000
 

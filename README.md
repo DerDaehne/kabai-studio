@@ -60,22 +60,24 @@ A container image is published to `ghcr.io/derdaehne/kabai-studio` on every tagg
 release (and manually via the "Container image" workflow). It runs the same server
 as `node build` above, as a non-root user, with the data directory as a volume.
 
-The server only ever binds inside the container to `127.0.0.1` unless `HOST` says
-otherwise (same default as bare metal) — two ways to reach it from the host:
+Inside the image, `HOST` defaults to `0.0.0.0` — safe by itself, because the
+container's own network namespace is already the boundary; what actually controls
+reachability from the host is the publish address. Two ways to run it:
 
 ```sh
-# Bridge network (default): bind to all interfaces inside the container, but
-# publish the port only to the host's own loopback.
+# Bridge network (default): the safe default publishes only to the host's own
+# loopback — expose further only deliberately (e.g. -p 0.0.0.0:3000:3000).
 docker run -d --name kabai-studio \
-  -e HOST=0.0.0.0 -e ORIGIN=http://127.0.0.1:3000 \
+  -e ORIGIN=http://127.0.0.1:3000 \
   -p 127.0.0.1:3000:3000 \
   -v kabai-studio-data:/data \
   ghcr.io/derdaehne/kabai-studio:latest
 
-# Host network: the container shares the host's own loopback, so the default
-# HOST=127.0.0.1 is reachable directly and no -p is needed.
+# Host network: the container shares the host's network namespace directly, so
+# the image default (0.0.0.0) would bind on every host interface — override it
+# back to loopback-only and skip -p.
 docker run -d --name kabai-studio --network host \
-  -e ORIGIN=http://127.0.0.1:3000 \
+  -e HOST=127.0.0.1 -e ORIGIN=http://127.0.0.1:3000 \
   -v kabai-studio-data:/data \
   ghcr.io/derdaehne/kabai-studio:latest
 ```
