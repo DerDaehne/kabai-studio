@@ -10,6 +10,7 @@ import {
 import type { DatabaseSync } from 'node:sqlite';
 import * as board from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
+import * as notes from './domain/notes';
 import { collectAnswer, requestHuman, type QuestionOption } from './domain/questions';
 import { runForToken } from './domain/runs';
 import { mask } from './secrets';
@@ -32,6 +33,7 @@ const MAX_TEXT = 20_000;
 const MAX_TITLE = 200;
 const MAX_ITEMS = 50;
 const MAX_REF = 20;
+const MAX_SLUG = 100;
 const UNAUTHORIZED = {
 	error: 'unauthorized',
 	hint: 'Sende den Run-Token als „Authorization: Bearer <token>“. Ein Token gilt nur, solange sein Run läuft.'
@@ -93,6 +95,32 @@ const TOOLS = {
 	list_workable: define<{ column_id?: number }>(
 		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
 		object({ column_id: { type: 'integer' } })
+	),
+	notes_search: define<{ query: string; kind?: notes.NoteKind }>(
+		'Search the notes (knowledge base); words are taken literally. Returns slugs and snippets.',
+		object({ query: text(200), kind: { enum: ['note', 'adr', 'hub'] } }, ['query'])
+	),
+	notes_get: define<{ slug: string }>('One note: body, tags, version (for notes_update), links, tickets.', object({ slug: text(MAX_SLUG) }, ['slug'])),
+	notes_create: define<{ slug: string; title: string; body: string; kind?: notes.NoteKind; tags?: string[] }>(
+		'Create a note in your project. [[slug]] in the body links that note.',
+		object(
+			{
+				slug: { ...text(MAX_SLUG), description: 'kebab-case, permanent' },
+				title: text(MAX_TITLE),
+				body: { type: 'string', maxLength: MAX_TEXT },
+				kind: { enum: ['note', 'adr', 'hub'] },
+				tags: list(text(50))
+			},
+			['slug', 'title', 'body']
+		)
+	),
+	notes_link: define<{ slug: string; type: notes.NoteLinkType; target: string }>(
+		'Link two notes: slug <type> target, e.g. new-adr supersedes old-adr.',
+		object({ slug: text(MAX_SLUG), type: { enum: ['references', 'contains', 'supersedes', 'contradicts'] }, target: text(MAX_SLUG) }, ['slug', 'type', 'target'])
+	),
+	link_note_to_ticket: define<{ slug: string; relation: Exclude<notes.NoteTicketRelation, 'verified_by'> }>(
+		'Link a note to your ticket; documents = it describes what the ticket built.',
+		object({ slug: text(MAX_SLUG), relation: { enum: ['documents', 'created_by', 'references'] } }, ['slug', 'relation'])
 	),
 	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
@@ -186,6 +214,29 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		return { review_approved: true };
 	});
 
+	tool('notes_search', ({ query, kind }) => ({
+		notes: notes
+			.searchNotes(db, query, { kind, visibleIn: ctx.projectId })
+			.map((n) => ({ slug: n.slug, title: n.title, kind: n.kind, ...(n.status !== null && { status: n.status }), snippet: n.snippet, chars: n.bodyChars }))
+	}));
+
+	tool('notes_get', ({ slug }) => noteView(db, ctx, slug));
+
+	tool('notes_create', ({ slug, title, body, kind, tags }) => {
+		const { id, warnings } = notes.createNote(db, ctx.actor, { slug, title, body, kind, tags, projectIds: [ctx.projectId] });
+		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
+	});
+
+	tool('notes_link', ({ slug, type, target }) => {
+		notes.linkNote(db, ctx.actor, noteIdOf(db, ctx, slug), noteIdOf(db, ctx, target), type);
+		return { linked: true };
+	});
+
+	tool('link_note_to_ticket', ({ slug, relation }) => {
+		notes.linkTicket(db, ctx.actor, noteIdOf(db, ctx, slug), ctx.ticketId, relation);
+		return { linked: true };
+	});
+
 	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
 
 	tool('complete_tasks', ({ task_ids }) => {
@@ -224,6 +275,8 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 			return 'Freigeben gehört zur Review-Rolle; halte dein Ergebnis mit add_comment fest.';
 		case 'self_approval':
 			return 'Eigene Arbeit gibt ein anderer Run oder der Mensch frei; halte dein Ergebnis mit add_comment fest.';
+		case 'slug_taken':
+			return 'Die Note gibt es schon: lies sie mit notes_get und ändere sie mit notes_update.';
 		case 'cycle':
 			return 'Prüfe die Richtung von waits_for und blocks: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
 	}
@@ -387,6 +440,74 @@ function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number) {
 	return relations;
 }
 
+/** Notes resolve by slug among the caller's project notes and the global ones, so a note of another project stays out of reach. */
+function noteIdOf(db: DatabaseSync, ctx: ToolContext, slug: string): number {
+	const found = db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND ${notes.noteVisibleIn('?2')}`).get(slug, ctx.projectId) as { id: number } | undefined;
+	if (!found)
+		throw new Refusal({
+			error: 'not_found',
+			message: `Eine Note „${slug}“ gibt es in deinem Projekt nicht.`,
+			hint: 'notes_search findet vorhandene Notes; eine neue legst du mit notes_create an.'
+		});
+	return found.id;
+}
+
+const noteVersion = (db: DatabaseSync, noteId: number) => (db.prepare('SELECT version FROM notes WHERE id = ?').get(noteId) as { version: number }).version;
+
+const NOTE_LINK_KEYS: Record<string, string> = {
+	'references:out': 'references',
+	'references:in': 'referenced_by',
+	'contains:out': 'contains',
+	'contains:in': 'contained_in',
+	'supersedes:out': 'supersedes',
+	'supersedes:in': 'superseded_by',
+	'contradicts:out': 'contradicts',
+	'contradicts:in': 'contradicted_by'
+};
+
+type NoteRow = { slug: string; title: string; kind: string; status: string | null; archived: 0 | 1; tags: string[]; version: number; body: string };
+
+/** A note with its links named from its own point of view, like the relations of a ticket. */
+function noteView(db: DatabaseSync, ctx: ToolContext, slug: string) {
+	const id = noteIdOf(db, ctx, slug);
+	const n = notes.getNote(db, id) as unknown as NoteRow;
+	const links = db
+		.prepare(
+			`SELECT l.type, l.from_note_id = ?1 AS outgoing, n.slug FROM note_links l JOIN notes n ON n.id = iif(l.from_note_id = ?1, l.to_note_id, l.from_note_id)
+			WHERE ?1 IN (l.from_note_id, l.to_note_id) AND ${notes.noteVisibleIn('?2')} ORDER BY n.slug`
+		)
+		.all(id, ctx.projectId) as { type: string; outgoing: 0 | 1; slug: string }[];
+	const linked: Record<string, string[]> = {};
+	for (const l of links) (linked[NOTE_LINK_KEYS[`${l.type}:${l.outgoing ? 'out' : 'in'}`]] ??= []).push(l.slug);
+	const tickets = db
+		.prepare(
+			`SELECT p.key || '-' || t.number AS ref, nt.relation FROM note_tickets nt JOIN tickets t ON t.id = nt.ticket_id JOIN projects p ON p.id = t.project_id
+			WHERE nt.note_id = ? ORDER BY t.project_id, t.number, nt.relation`
+		)
+		.all(id);
+	return {
+		slug: n.slug,
+		title: n.title,
+		kind: n.kind,
+		...(n.status !== null && { status: n.status }),
+		...(n.archived === 1 && { archived: true }),
+		tags: n.tags,
+		version: n.version,
+		body: n.body,
+		...linked,
+		...(tickets.length > 0 && { tickets })
+	};
+}
+
+/** The notes linked to a ticket that the caller can read; archived ones no longer document anything. */
+const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number) =>
+	db
+		.prepare(
+			`SELECT n.slug, n.title, nt.relation FROM note_tickets nt JOIN notes n ON n.id = nt.note_id
+			WHERE nt.ticket_id = ?1 AND n.archived = 0 AND ${notes.noteVisibleIn('?2')} ORDER BY n.slug, nt.relation`
+		)
+		.all(ticketId, ctx.projectId);
+
 type CommentRow = { id: number; by: string; at: string; text: string };
 
 /** Long comments are cut so that one oversized write does not inflate every later read of the ticket. */
@@ -421,6 +542,7 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
 		.get(id) as { ref: string; title: string; type: string; column: string; description: string; docs_required: 0 | 1; review_approved_at: string | null };
+	const ticketNotes = linkedNotes(db, ctx, id);
 	const view = {
 		ref: t.ref,
 		title: t.title,
@@ -433,7 +555,8 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 			(k) => ({ id: k.id, title: k.title, done: k.done === 1 })
 		),
 		comments: recentComments(db, id),
-		...relationsOf(db, ctx, id)
+		...relationsOf(db, ctx, id),
+		...(ticketNotes.length > 0 && { notes: ticketNotes })
 	};
 	if (id !== ctx.ticketId) return view;
 	const latest = collectAnswer(db, ctx.actor, id);

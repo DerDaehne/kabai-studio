@@ -203,7 +203,11 @@ export function verifyNote(db: DatabaseSync, actor: Actor, noteId: number, ticke
 	});
 }
 
-export type NoteSearchHit = { id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
+/** SQL condition: note `n` belongs to the project bound to `projectParam`, or to no project at all (a global note). */
+export const noteVisibleIn = (projectParam: string) =>
+	`(NOT EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id) OR EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id AND vp.project_id = ${projectParam}))`;
+
+export type NoteSearchHit ={ id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
 
 /**
  * Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts.
@@ -228,7 +232,7 @@ function ftsQuery(query: string): string {
 export function searchNotes(
 	db: DatabaseSync,
 	query: string,
-	opts: { kind?: NoteKind; projectId?: number; tag?: string; limit?: number; includeArchived?: boolean } = {}
+	opts: { kind?: NoteKind; projectId?: number; visibleIn?: number; tag?: string; limit?: number; includeArchived?: boolean } = {}
 ): NoteSearchHit[] {
 	const match = ftsQuery(query);
 	if (!match) return [];
@@ -242,8 +246,9 @@ export function searchNotes(
 				AND (?4 IS NULL OR EXISTS (SELECT 1 FROM note_projects np WHERE np.note_id = n.id AND np.project_id = ?4))
 				AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(n.tags) WHERE value = ?5))
 				AND (n.archived = 0 OR ?6 = 1)
+				AND (?7 IS NULL OR ${noteVisibleIn('?7')})
 			ORDER BY n.archived, n.status IS 'superseded', notes_fts.rank
 			LIMIT ?3`
 		)
-		.all(match, opts.kind ?? null, opts.limit ?? 20, opts.projectId ?? null, opts.tag ?? null, opts.includeArchived ? 1 : 0) as NoteSearchHit[];
+		.all(match, opts.kind ?? null, opts.limit ?? 20, opts.projectId ?? null, opts.tag ?? null, opts.includeArchived ? 1 : 0, opts.visibleIn ?? null) as NoteSearchHit[];
 }

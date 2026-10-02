@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
+import * as notes from './domain/notes';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
 import { mcpEndpoint } from './mcp';
@@ -51,7 +52,11 @@ const resultOf = async (response: Response) => (await messageOf(response)).resul
 
 /** Everything a tool can write, to show that a refused call changed nothing. */
 const writableRows = (db: DatabaseSync) =>
-	JSON.stringify(['comments', 'tickets', 'tasks', 'questions', 'ticket_relations'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
+	JSON.stringify(
+		['comments', 'tickets', 'tasks', 'questions', 'ticket_relations', 'notes', 'note_links', 'note_tickets', 'note_projects'].map((table) =>
+			db.prepare(`SELECT * FROM ${table}`).all()
+		)
+	);
 
 /** What the agent sees of a tool call: the error flag and the text, parsed when it is JSON. */
 async function callTool(serve: Serve, token: string, name: string, args: object) {
@@ -66,7 +71,8 @@ async function callTool(serve: Serve, token: string, name: string, args: object)
 	return { isError: result.isError === true, body };
 }
 
-const DOMAIN_FUNCTION_NAMES = /\b(completeTask|deleteTask|allowedMoves|workableTickets|unlinkRelation|createNote|linkTicket|moveTicket|addTask)\b/;
+const DOMAIN_FUNCTION_NAMES =
+	/\b(completeTask|deleteTask|allowedMoves|workableTickets|unlinkRelation|createNote|updateNote|getNote|searchNotes|archiveNote|linkTicket|moveTicket|addTask)\b/;
 
 describe('run token', () => {
 	it('answers 401 without a token or with an unknown one', async () => {
@@ -395,6 +401,72 @@ describe('approve_review', () => {
 		const reviewer = startRun(own);
 		expect((await call(reviewer.token, 'approve_review')).isError).toBe(false);
 		expect(approved()).toBe(true);
+	});
+});
+
+describe('notes', () => {
+	it('creates a note in your project, links [[slug]] from its body and links it to notes and to your ticket', async () => {
+		const { db, projectId, call, startRun, ticket } = setup();
+		const own = ticket('Eigenes');
+		notes.createNote(db, user, { slug: 'arch-base', title: 'Basis', body: 'Grundlage für alles' });
+		const { token } = startRun(own);
+
+		const created = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'Baut auf [[arch-base]] und [[missing-note]] auf.', tags: ['api'] });
+		expect(created).toEqual({ isError: false, body: { version: 1, warnings: ['Unbekannter Slug „missing-note“ im Wikilink — kein Link angelegt.'] } });
+		expect(await call(token, 'notes_create', { slug: 'api-hub', title: 'Hub', body: 'Einstieg', kind: 'hub' })).toEqual({ isError: false, body: { version: 1 } });
+		expect(await call(token, 'notes_link', { slug: 'api-hub', type: 'contains', target: 'arch-api' })).toEqual({ isError: false, body: { linked: true } });
+		expect(await call(token, 'link_note_to_ticket', { slug: 'arch-api', relation: 'documents' })).toEqual({ isError: false, body: { linked: true } });
+
+		expect((await call(token, 'notes_get', { slug: 'arch-api' })).body).toEqual({
+			slug: 'arch-api',
+			title: 'API',
+			kind: 'note',
+			tags: ['api'],
+			version: 1,
+			body: 'Baut auf [[arch-base]] und [[missing-note]] auf.',
+			references: ['arch-base'],
+			contained_in: ['api-hub'],
+			tickets: [{ ref: 'STU-1', relation: 'documents' }]
+		});
+		expect((await call(token, 'notes_get', { slug: 'arch-base' })).body.referenced_by).toEqual(['arch-api']);
+		expect((await call(token, 'get_ticket')).body.notes).toEqual([{ slug: 'arch-api', title: 'API', relation: 'documents' }]);
+		expect(db.prepare("SELECT np.project_id FROM note_projects np JOIN notes n ON n.id = np.note_id WHERE n.slug = 'arch-api'").all()).toEqual([{ project_id: projectId }]);
+
+		const found = (await call(token, 'notes_search', { query: 'Grundlage' })).body.notes;
+		expect(found).toEqual([{ slug: 'arch-base', title: 'Basis', kind: 'note', snippet: expect.stringContaining('Grundlage'), chars: 19 }]);
+	});
+
+	it('reads and links notes of your project and global ones, never those of another project', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'plan', projectIds: [other] });
+		notes.createNote(db, user, { slug: 'global-plan', title: 'Globaler Plan', body: 'plan' });
+		const { token } = startRun(ticket());
+		await call(token, 'notes_create', { slug: 'own-plan', title: 'Eigener Plan', body: 'plan' });
+		const before = writableRows(db);
+
+		expect((await call(token, 'notes_search', { query: 'plan' })).body.notes.map((n: { slug: string }) => n.slug).sort()).toEqual(['global-plan', 'own-plan']);
+		for (const [name, args] of [
+			['notes_get', { slug: 'secret-plan' }],
+			['notes_link', { slug: 'own-plan', type: 'references', target: 'secret-plan' }],
+			['notes_link', { slug: 'secret-plan', type: 'references', target: 'own-plan' }],
+			['link_note_to_ticket', { slug: 'secret-plan', relation: 'references' }]
+		] as const) {
+			const refused = await call(token, name, args);
+			expect(refused).toMatchObject({ isError: true, body: { error: 'not_found', hint: expect.stringContaining('notes_search') } });
+			expect(JSON.stringify(refused.body)).not.toContain('Geheimer Plan');
+		}
+		expect(writableRows(db)).toBe(before);
+	});
+
+	it('answers an existing slug with the way to notes_get and notes_update', async () => {
+		const { db, call, startRun, ticket } = setup();
+		notes.createNote(db, user, { slug: 'arch-api', title: 'API', body: '' });
+		const { token } = startRun(ticket());
+		const { body } = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'neu' });
+		expect(body.error).toBe('slug_taken');
+		expect(body.hint).toContain('notes_update');
+		expect(body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
 	});
 });
 
