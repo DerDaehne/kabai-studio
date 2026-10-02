@@ -10,6 +10,7 @@ import {
 import type { DatabaseSync } from 'node:sqlite';
 import * as board from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
+import { once } from './domain/idempotency';
 import * as notes from './domain/notes';
 import { collectAnswer, requestHuman, type QuestionOption } from './domain/questions';
 import { runForToken } from './domain/runs';
@@ -58,6 +59,8 @@ const object = (properties: Record<string, JsonSchemaType>, required?: string[])
 const text = (maxLength: number): JsonSchemaType => ({ type: 'string', minLength: 1, maxLength });
 const list = (items: JsonSchemaType): JsonSchemaType => ({ type: 'array', items, minItems: 1, maxItems: MAX_ITEMS });
 const tags: JsonSchemaType = { type: 'array', items: text(50), maxItems: 20 };
+const idempotencyKey: JsonSchemaType = { ...text(100), description: 'retry-safe: a repeat with this key returns the first result' };
+type Idempotent = { idempotency_key?: string };
 
 type ToolDefinition<Args> = { description: string; inputSchema: StandardSchemaWithJSON<Args, Args> };
 const define = <Args>(description: string, schema: JsonSchemaType): ToolDefinition<Args> => ({ description, inputSchema: fromJsonSchema<Args>(schema) });
@@ -68,7 +71,7 @@ const TOOLS = {
 		"Your ticket: tasks, recent comments, relations, allowed moves, the human's latest answer. Another ticket of your project by ref; one full comment by id.",
 		object({ ticket: { type: 'string', maxLength: MAX_REF, description: 'e.g. STU-12; default: your ticket' }, comment: { type: 'integer' } })
 	),
-	create_child_tickets: define<{ items: ChildTicket[] }>(
+	create_child_tickets: define<{ items: ChildTicket[] } & Idempotent>(
 		'Create child tickets of your ticket, all or none. waits_for: tickets like STU-3, or $ref of an item in this call.',
 		object(
 			{
@@ -83,7 +86,8 @@ const TOOLS = {
 						},
 						['title']
 					)
-				)
+				),
+				idempotency_key: idempotencyKey
 			},
 			['items']
 		)
@@ -134,12 +138,18 @@ const TOOLS = {
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
 		object({ title: text(MAX_TITLE), description: { type: 'string', maxLength: MAX_TEXT }, docs_required: { type: 'boolean' } })
 	),
-	add_tasks: define<{ titles: string[] }>('Add acceptance criteria as tasks to your ticket.', object({ titles: list(text(MAX_TITLE)) }, ['titles'])),
+	add_tasks: define<{ titles: string[] } & Idempotent>(
+		'Add acceptance criteria as tasks to your ticket.',
+		object({ titles: list(text(MAX_TITLE)), idempotency_key: idempotencyKey }, ['titles'])
+	),
 	complete_tasks: define<{ task_ids: number[] }>(
 		'Mark tasks of your ticket done. Returns the ids still open.',
 		object({ task_ids: list({ type: 'integer' }) }, ['task_ids'])
 	),
-	add_comment: define<{ text: string }>('Add a work-log comment to your ticket.', object({ text: text(MAX_TEXT) }, ['text'])),
+	add_comment: define<{ text: string } & Idempotent>(
+		'Add a work-log comment to your ticket.',
+		object({ text: text(MAX_TEXT), idempotency_key: idempotencyKey }, ['text'])
+	),
 	move_ticket: define<{ column_id: number }>('Move your ticket to a column from allowed_moves.', object({ column_id: { type: 'integer' } }, ['column_id'])),
 	request_human: define<{ question: string; options?: QuestionOption[] }>(
 		'Ask the human and wait: moves your ticket to human intervention. Offer 1-3 decidable options when possible. End your turn afterwards.',
@@ -189,7 +199,9 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 	function tool<Name extends ToolName>(name: Name, work: (args: ArgsOf<Name>) => unknown) {
 		server.registerTool(name, TOOLS[name] as ToolDefinition<ArgsOf<Name>>, async (args: ArgsOf<Name>) => {
 			try {
-				return reply(work(mask(args)));
+				const input = mask(args);
+				const { idempotency_key: key, ...request } = input as Idempotent;
+				return reply(key === undefined ? work(input) : once(db, ctx.actor, key, { tool: name, ...request }, () => work(input)));
 			} catch (err) {
 				if (err instanceof Refusal) return reply(err.body, true);
 				if (err instanceof DomainError) return reply({ error: err.code, message: err.message, hint: toolHint(db, ctx, name, err.code) ?? err.hint }, true);

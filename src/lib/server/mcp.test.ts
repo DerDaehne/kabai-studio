@@ -510,6 +510,65 @@ describe('notes_update', () => {
 	});
 });
 
+describe('idempotency_key', () => {
+	const count = (db: DatabaseSync, table: string) => db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
+
+	it('answers a repeat with the same key with the first result instead of writing twice', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const repeated = [
+			['add_comment', { text: 'Angefangen', idempotency_key: 'c1' }],
+			['add_tasks', { titles: ['A', 'B'], idempotency_key: 't1' }],
+			['create_child_tickets', { items: [{ title: 'Kind', tasks: ['K'] }], idempotency_key: 'k1' }]
+		] as const;
+		for (const [name, args] of repeated) {
+			const first = await call(token, name, args);
+			expect(first.isError).toBe(false);
+			expect(await call(token, name, args)).toEqual(first);
+		}
+		expect([count(db, 'comments'), count(db, 'tasks'), count(db, 'tickets')]).toEqual([1, 3, 2]);
+
+		await call(token, 'add_comment', { text: 'Ohne Schlüssel' });
+		await call(token, 'add_comment', { text: 'Ohne Schlüssel' });
+		expect(count(db, 'comments')).toBe(3);
+	});
+
+	it('refuses a key reused for another call, and one used more than a day ago', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		await call(token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+
+		expect((await call(token, 'add_comment', { text: 'B', idempotency_key: 'k' })).body.error).toBe('idempotency_key_reused');
+		expect((await call(token, 'add_tasks', { titles: ['A'], idempotency_key: 'k' })).body.error).toBe('idempotency_key_reused');
+		db.exec("UPDATE idempotent_calls SET created_at = datetime('now', '-25 hours')");
+		const expired = await call(token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+		expect(expired).toMatchObject({ isError: true, body: { error: 'idempotency_key_expired', message: expect.stringContaining('24 Stunden') } });
+		expect([count(db, 'comments'), count(db, 'tasks')]).toEqual([1, 0]);
+	});
+
+	it('remembers nothing for a refused call, so a corrected retry with the same key runs', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		expect((await call(token, 'add_tasks', { titles: ['A', ' '], idempotency_key: 'x' })).body.error).toBe('empty_title');
+		expect((await call(token, 'add_tasks', { titles: ['A', 'B'], idempotency_key: 'x' })).body.task_ids).toHaveLength(2);
+		expect(count(db, 'tasks')).toBe(2);
+	});
+
+	it('binds a key to its run, so the resumed run may use it again; the keys go with the ticket', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const first = startRun(own);
+		await call(first.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+		runs.finishRun(db, system, first.runId, { state: 'paused' });
+		const resumed = startRun(own, first.runId);
+		await call(resumed.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+		expect(count(db, 'comments')).toBe(2);
+
+		board.deleteTicket(db, user, own);
+		expect(count(db, 'idempotent_calls')).toBe(0);
+	});
+});
+
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();

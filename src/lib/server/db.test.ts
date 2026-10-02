@@ -194,7 +194,7 @@ describe('migrate', () => {
 			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'p', 'builtin', 'openai-compatible', 'm');
 			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger) VALUES (7, 100, 11, 1, 'on_enter');
 		`);
-		expect(migrate(db)).toEqual(['009_run_priority.sql']);
+		expect(migrate(db)[0]).toBe('009_run_priority.sql');
 		expect(db.prepare('SELECT name, review FROM columns ORDER BY id').all()).toEqual([{ name: 'In Arbeit', review: 0 }, { name: 'Review', review: 1 }]);
 		expect(db.prepare('SELECT priority FROM runs').all()).toEqual([{ priority: 'normal' }]);
 		expect(migrate(db)).toEqual([]);
