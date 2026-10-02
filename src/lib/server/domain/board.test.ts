@@ -196,7 +196,7 @@ describe('moveTicket', () => {
 		const id = ticket();
 		const err = caught(() => board.moveTicket(db, user, id, col.Review));
 		expect(err.code).toBe('transition_not_allowed');
-		expect(err.message).toBe('STU-1 darf nicht von „Backlog“ nach „Review“ wechseln. Erlaubte Ziele: „In Arbeit“, „Human Intervention“.');
+		expect(err.message).toBe('STU-1 darf nicht von „Backlog“ nach „Review“ wechseln. Erlaubte Ziele: „Refine“, „Human Intervention“.');
 		expect(err.hint).toContain('allowedMoves');
 		expect(columnOf(id)).toBe('Backlog');
 	});
@@ -212,8 +212,11 @@ describe('moveTicket', () => {
 		place(id, 'Human Answered');
 		expect(board.allowedMoves(db, id, dev).map((m) => [m.name, m.requiresHuman])).toEqual([
 			['Backlog', false],
+			['Refine', false],
+			['Ready', false],
 			['In Arbeit', false],
 			['Review', false],
+			['Abnahme', false],
 			['Done', true],
 			['Human Intervention', false]
 		]);
@@ -225,7 +228,7 @@ describe('moveTicket', () => {
 	it('weist den Wechsel in eine done-Spalte mit offenen Tasks ab', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		const { id: task } = board.addTask(db, dev, id, 'Tests grün');
 		const err = caught(() => board.moveTicket(db, user, id, col.Done));
 		expect(err.code).toBe('open_tasks');
@@ -238,7 +241,7 @@ describe('moveTicket', () => {
 	it('lässt nur user in eine done-Spalte und nach human_answered verschieben', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		const err = caught(() => board.moveTicket(db, dev, id, col.Done));
 		expect(err.code).toBe('requires_human');
 		expect(err.message).toBe('Nur ein Mensch darf STU-1 nach „Done“ verschieben.');
@@ -254,14 +257,14 @@ describe('moveTicket', () => {
 		const id = ticket();
 		place(id, 'Done');
 		expect(board.allowedMoves(db, id, dev).map((m) => [m.name, m.requiresHuman, m.blockers.map((b) => b.code)])).toEqual([
-			['Review', true, ['requires_human']],
+			['Abnahme', true, ['requires_human']],
 			['Human Intervention', true, ['requires_human']]
 		]);
-		const err = caught(() => board.moveTicket(db, dev, id, col.Review));
+		const err = caught(() => board.moveTicket(db, dev, id, col.Abnahme));
 		expect(err.message).toBe('Nur ein Mensch darf STU-1 aus „Done“ wieder öffnen.');
 		expect(err.hint).toContain('Folgeticket');
-		board.moveTicket(db, user, id, col.Review);
-		expect(columnOf(id)).toBe('Review');
+		board.moveTicket(db, user, id, col.Abnahme);
+		expect(columnOf(id)).toBe('Abnahme');
 	});
 
 	it('weist Epic → done mit offenem Kind ab', () => {
@@ -271,7 +274,7 @@ describe('moveTicket', () => {
 		notes.linkTicket(db, user, noteId, epic, 'documents'); // Epics sind immer docs_required — Note vorab verknüpft, damit nur open_children prüft
 		const child = ticket();
 		board.linkRelation(db, user, epic, child, 'parent_of');
-		place(epic, 'Review');
+		place(epic, 'Abnahme');
 		const err = caught(() => board.moveTicket(db, user, epic, col.Done));
 		expect(err.code).toBe('open_children');
 		expect(err.message).toBe('STU-1 hat nicht abgeschlossene Kind-Tickets: STU-2.');
@@ -283,7 +286,7 @@ describe('moveTicket', () => {
 	it('weist done mit fehlender docs_required-Note ab und lässt es mit verknüpfter Note zu', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket({ docs_required: 1 });
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		const err = caught(() => board.moveTicket(db, user, id, col.Done));
 		expect(err.code).toBe('docs_required');
 		expect(err.hint).toContain('createNote');
@@ -300,19 +303,19 @@ describe('moveTicket', () => {
 		const { id: noteId } = notes.createNote(db, user, { slug: 'n-2', title: 'N', body: '' });
 		notes.linkTicket(db, user, noteId, id, 'documents');
 		notes.archiveNote(db, user, noteId);
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		expect(caught(() => board.moveTicket(db, user, id, col.Done)).code).toBe('docs_required');
 	});
 
 	it('gilt auch für einen Agent-Actor, unabhängig von der requires_human-Kante (#771: Transitionen sind konfigurierbar)', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const id = ticket({ docs_required: 1 });
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		const done = board.allowedMoves(db, id, dev).find((m) => m.name === 'Done');
 		expect(done?.blockers.map((b) => b.code)).toEqual(['requires_human', 'docs_required']);
 
-		// Isoliert von requires_human: die Kante Review -> Done probeweise für Agents freigegeben (#771 noch nicht als API vorhanden).
-		db.prepare('UPDATE transitions SET requires_human = 0 WHERE project_id = ? AND from_column_id = ? AND to_column_id = ?').run(projectId, col.Review, col.Done);
+		// Isoliert von requires_human: die Kante Abnahme -> Done probeweise für Agents freigegeben (#771 noch nicht als API vorhanden).
+		db.prepare('UPDATE transitions SET requires_human = 0 WHERE project_id = ? AND from_column_id = ? AND to_column_id = ?').run(projectId, col.Abnahme, col.Done);
 		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('docs_required');
 	});
 });
@@ -341,11 +344,11 @@ describe('allowedMoves', () => {
 	it('liefert Ziele inkl. human_*-Kanten mit Sperrgründen je Actor', () => {
 		const { db, ticket, place } = setup();
 		const id = ticket();
-		place(id, 'Review');
+		place(id, 'Abnahme');
 		board.addTask(db, dev, id, 'offen');
 		const view = (actor: Actor) => board.allowedMoves(db, id, actor).map((m) => [m.name, m.requiresHuman, m.blockers.map((b) => b.code)]);
 		expect(view(dev)).toEqual([
-			['In Arbeit', false, []],
+			['Review', false, []],
 			['Done', true, ['requires_human', 'open_tasks']],
 			['Human Intervention', false, []]
 		]);
@@ -399,6 +402,8 @@ describe('Review-Freigabe', () => {
 
 		board.moveTicket(db, dev, id, col.Review);
 		board.approveReview(db, reviewer, id);
+		board.moveTicket(db, user, id, col.Abnahme); // past Review a normal column still clears the approval
+		board.approveReview(db, user, id); // past Review, only the human approves
 		board.moveTicket(db, user, id, col.Done);
 		expect(approved(id)).toBe(true);
 	});
