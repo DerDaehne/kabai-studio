@@ -292,6 +292,41 @@ describe('create_child_tickets', () => {
 	});
 });
 
+describe('link_tickets', () => {
+	it('links your ticket in the words get_ticket shows them in: waits_for and blocks', async () => {
+		const { serve, call, startRun, ticket } = setup();
+		const own = ticket('Eigenes');
+		ticket('Vorher');
+		ticket('Nachher');
+		const { token } = startRun(own);
+		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
+		expect(Object.keys(tools.find((t: { name: string }) => t.name === 'link_tickets').inputSchema.properties)).toEqual(['waits_for', 'blocks']);
+
+		expect(await call(token, 'link_tickets', { waits_for: ['STU-2'], blocks: ['STU-3'] })).toEqual({ isError: false, body: { ref: 'STU-1' } });
+		const { body } = await call(token, 'get_ticket');
+		expect(body.waits_for).toEqual([{ ref: 'STU-2', title: 'Vorher', column: 'Backlog', blocking: true }]);
+		expect(body.blocks).toEqual([{ ref: 'STU-3', title: 'Nachher', column: 'Backlog' }]);
+		expect((await call(token, 'get_ticket', { ticket: 'STU-3' })).body.waits_for).toEqual([{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', blocking: true }]);
+		expect((await call(token, 'link_tickets', { waits_for: ['STU-2'] })).isError).toBe(false);
+	});
+
+	it('links all or none and explains a cycle in tool words', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const predecessor = ticket();
+		ticket();
+		board.linkRelation(db, user, predecessor, own, 'blocks');
+		const { token } = startRun(own);
+		const before = writableRows(db);
+
+		const cycle = await call(token, 'link_tickets', { blocks: ['STU-3', 'STU-2'] });
+		expect(cycle).toMatchObject({ isError: true, body: { error: 'cycle', hint: expect.stringContaining('waits_for') } });
+		expect(cycle.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+		expect((await call(token, 'link_tickets', { waits_for: ['STU-3', 'STU-9'] })).body.error).toBe('not_found');
+		expect(writableRows(db)).toBe(before);
+	});
+});
+
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();

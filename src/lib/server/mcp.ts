@@ -85,6 +85,10 @@ const TOOLS = {
 			['items']
 		)
 	),
+	link_tickets: define<{ waits_for?: string[]; blocks?: string[] }>(
+		'Link your ticket: waits_for = it waits for these tickets; blocks = these wait for it.',
+		object({ waits_for: list({ type: 'string', maxLength: MAX_REF }), blocks: list({ type: 'string', maxLength: MAX_REF }) })
+	),
 	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
 		object({ title: text(MAX_TITLE), description: { type: 'string', maxLength: MAX_TEXT }, docs_required: { type: 'boolean' } })
@@ -162,6 +166,14 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 
 	tool('create_child_tickets', ({ items }) => createChildTickets(db, ctx, items));
 
+	tool('link_tickets', ({ waits_for = [], blocks = [] }) =>
+		tx(db, () => {
+			for (const ref of waits_for) board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
+			for (const ref of blocks) board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
+			return { ref: board.ticket(db, ctx.ticketId).ref };
+		})
+	);
+
 	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
 
 	tool('complete_tasks', ({ task_ids }) => {
@@ -197,7 +209,7 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 		case 'transition_not_allowed':
 			return 'get_ticket zeigt die erreichbaren Spalten unter allowed_moves.';
 		case 'cycle':
-			return 'Prüfe waits_for: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
+			return 'Prüfe die Richtung von waits_for und blocks: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
 	}
 }
 
