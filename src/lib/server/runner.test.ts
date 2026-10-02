@@ -322,7 +322,7 @@ describe('priority queue', () => {
 		const s = withPriorities();
 		const [predecessor, successor] = [s.ticketIn(), s.ticketIn()];
 		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
-		for (const name of ['In Arbeit', 'Review', 'Done']) board.moveTicket(s.db, user, successor, s.column(name));
+		for (const name of ['Refine', 'Ready', 'In Arbeit', 'Review', 'Abnahme', 'Done']) board.moveTicket(s.db, user, successor, s.column(name));
 		expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('normal');
 	});
 
