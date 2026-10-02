@@ -5,6 +5,7 @@ import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
 import { DomainError, tx, type Actor } from './core';
 import * as notes from './notes';
+import { requestHuman } from './questions';
 import * as runs from './runs';
 
 const user: Actor = { kind: 'user' };
@@ -499,6 +500,29 @@ describe('Event-Bus', () => {
 		expect(titles()).toEqual(['A', 'B']);
 		expect(events.map((e) => e.type)).toEqual(['ticket.created', 'ticket.created']);
 		expect(inTx).toEqual([false, false]);
+	});
+
+	it('rolls back a joined mutation that fails even when the caller catches its error, and keeps the caller\'s own writes', () => {
+		const { db, projectId, ticket, place } = setup();
+		const closed = ticket();
+		place(closed, 'Done');
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+
+		tx(db, () => {
+			board.createTicket(db, user, projectId, { title: 'Bleibt' });
+			try {
+				requestHuman(db, dev, closed, { question: 'Nacharbeit?' }); // writes comment and question, then the move out of done is refused
+			} catch {
+				// the caller decides to go on without the question
+			}
+		});
+		off();
+
+		expect(db.prepare('SELECT count(*) AS n FROM questions').get()?.n).toBe(0);
+		expect(db.prepare('SELECT count(*) AS n FROM comments WHERE ticket_id = ?').get(closed)?.n).toBe(0);
+		expect(db.prepare("SELECT count(*) AS n FROM tickets WHERE title = 'Bleibt'").get()?.n).toBe(1);
+		expect(events.map((e) => e.type)).toEqual(['ticket.created']);
 	});
 });
 
