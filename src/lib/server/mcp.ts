@@ -17,7 +17,7 @@ import { runForToken } from './domain/runs';
 import { mask } from './secrets';
 
 /** Who calls the tools and what they may touch. Each endpoint builds it per request from its own authentication. */
-type ToolContext = {
+export type ToolContext = {
 	actor: Actor;
 	/** Reads stay within this project. */
 	projectId: number;
@@ -26,7 +26,7 @@ type ToolContext = {
 };
 type ToolError = { error: string; message: string; hint: string };
 type ChildTicket = { ref?: string; title: string; description?: string; tasks?: string[]; waits_for?: string[] };
-type AgentMove = { columnId: number; name: string; refusals: ToolError[] };
+export type AgentMove = { columnId: number; name: string; refusals: ToolError[] };
 
 const RECENT_COMMENTS = 10;
 const COMMENT_PREVIEW = 1500;
@@ -325,7 +325,7 @@ const openTaskIds = (db: DatabaseSync, ticketId: number) =>
 		.map((r) => r.id as number);
 
 /** Domain moves plus the rule only agents get: a blocked ticket must not enter a work column. */
-function agentMoves(db: DatabaseSync, ctx: ToolContext): AgentMove[] {
+export function agentMoves(db: DatabaseSync, ctx: ToolContext): AgentMove[] {
 	const waitingFor = board.blockingPredecessors(db, ctx.ticketId);
 	return board.allowedMoves(db, ctx.ticketId, ctx.actor).map((m) => ({
 		columnId: m.columnId,
@@ -445,6 +445,8 @@ function ticketIdOf(db: DatabaseSync, ctx: ToolContext, ref: string): number {
 	return found.id;
 }
 
+export type RelatedTicket = { ref: string; title?: string; column?: string; other_project?: boolean; blocking?: boolean };
+
 const RELATION_KEYS: Record<string, string> = {
 	'blocks:in': 'waits_for',
 	'blocks:out': 'blocks',
@@ -457,7 +459,7 @@ const RELATION_KEYS: Record<string, string> = {
 };
 
 /** Relations named from this ticket's point of view, so their direction cannot be misread. Other projects show only the ref. */
-function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number) {
+export function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number) {
 	const blocking = new Set(board.blockingPredecessors(db, ticketId).map((p) => p.id));
 	const rows = db
 		.prepare(
@@ -467,7 +469,7 @@ function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number) {
 			WHERE ?1 IN (r.from_ticket_id, r.to_ticket_id) ORDER BY o.project_id, o.number`
 		)
 		.all(ticketId) as { type: string; outgoing: 0 | 1; id: number; project_id: number; ref: string; title: string; column: string }[];
-	const relations: Record<string, object[]> = {};
+	const relations: Record<string, RelatedTicket[]> = {};
 	for (const r of rows) {
 		const key = RELATION_KEYS[`${r.type}:${r.outgoing ? 'out' : 'in'}`];
 		const other = r.project_id === ctx.projectId ? { ref: r.ref, title: r.title, column: r.column } : { ref: r.ref, other_project: true };
@@ -577,10 +579,15 @@ const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number) =>
 		)
 		.all(ticketId, ctx.projectId);
 
+export const tasksOf = (db: DatabaseSync, ticketId: number) =>
+	(db.prepare('SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(ticketId) as { id: number; title: string; done: 0 | 1 }[]).map(
+		(k) => ({ id: k.id, title: k.title, done: k.done === 1 })
+	);
+
 type CommentRow = { id: number; by: string; at: string; text: string };
 
 /** Long comments are cut so that one oversized write does not inflate every later read of the ticket. */
-function recentComments(db: DatabaseSync, ticketId: number) {
+export function recentComments(db: DatabaseSync, ticketId: number) {
 	const rows = db
 		.prepare('SELECT id, author AS "by", created_at AS "at", body AS text FROM comments WHERE ticket_id = ? ORDER BY id DESC LIMIT ?')
 		.all(ticketId, RECENT_COMMENTS) as CommentRow[];
@@ -620,9 +627,7 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 		description: t.description,
 		docs_required: t.docs_required === 1,
 		review_approved: t.review_approved_at !== null,
-		tasks: (db.prepare('SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(id) as { id: number; title: string; done: 0 | 1 }[]).map(
-			(k) => ({ id: k.id, title: k.title, done: k.done === 1 })
-		),
+		tasks: tasksOf(db, id),
 		comments: recentComments(db, id),
 		...relationsOf(db, ctx, id),
 		...(ticketNotes.length > 0 && { notes: ticketNotes })
