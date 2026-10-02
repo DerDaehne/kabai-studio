@@ -13,7 +13,7 @@ export function once<T>(db: DatabaseSync, actor: Actor, key: string, request: ob
 	if (actor.runId === undefined)
 		throw new DomainError('idempotency_needs_run', 'Ein idempotency_key gilt nur innerhalb eines Runs.', 'Lass idempotency_key weg.');
 	const runId = actor.runId;
-	const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+	const requestHash = createHash('sha256').update(canonicalJson(request)).digest('hex');
 	return tx(db, () => {
 		const earlier = db
 			.prepare("SELECT request_hash, result, created_at > datetime('now', '-1 day') AS fresh FROM idempotent_calls WHERE run_id = ? AND key = ?")
@@ -24,6 +24,12 @@ export function once<T>(db: DatabaseSync, actor: Actor, key: string, request: ob
 		return result;
 	});
 }
+
+/** JSON with the keys of every object sorted, so the same arguments sent in another order hash alike. */
+const canonicalJson = (value: unknown) =>
+	JSON.stringify(value, (_key, nested: unknown) =>
+		nested && typeof nested === 'object' && !Array.isArray(nested) ? Object.fromEntries(Object.entries(nested).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : nested
+	);
 
 function earlierResult<T>(key: string, earlier: EarlierCall, requestHash: string): T {
 	if (earlier.request_hash !== requestHash)

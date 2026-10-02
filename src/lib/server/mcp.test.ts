@@ -645,6 +645,14 @@ describe('idempotency_key', () => {
 		expect(count(db, 'comments')).toBe(3);
 	});
 
+	it('treats a retry with the same arguments in another key order as the same call', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const first = await call(token, 'create_child_tickets', { items: [{ title: 'Kind', tasks: ['a'] }], idempotency_key: 'r' });
+		expect(await call(token, 'create_child_tickets', { idempotency_key: 'r', items: [{ tasks: ['a'], title: 'Kind' }] })).toEqual(first);
+		expect(count(db, 'tickets')).toBe(2);
+	});
+
 	it('refuses a key reused for another call, and one used more than a day ago', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
