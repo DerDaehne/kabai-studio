@@ -251,6 +251,7 @@ describe('freshness ignores a backup in the future', () => {
 		expect(names(dir)).toContain('studio-20260301-1200.db');
 		expect(names(dir)).toContain(future);
 		backupIfDue(db, dir, new Date(now.getTime() + HOUR)); // within 24 h: no second one
+		expect(names(dir)).toHaveLength(2);
 		expect(names(dir)).toContain('studio-20260301-1200.db');
 		expect(names(dir)).toContain(future);
 	});
@@ -259,11 +260,13 @@ describe('freshness ignores a backup in the future', () => {
 		const dir = join(tmp, 'repro-b');
 		const db = seed(join(tmp, 'repro-b.db'));
 		const now = new Date('2026-03-01T12:00:00Z');
-		const future = names(dir);
 		for (let d = 30; d < 60; d++) backup(db, dir, new Date(now.getTime() + d * DAY)); // 30 future-dated backups
+		const future = names(dir);
+		expect(future).toHaveLength(30);
 		for (let h = 0; h < 3; h++) backupIfDue(db, dir, new Date(now.getTime() + h * HOUR)); // 3 hourly ticks
 		expect(names(dir)).toContain('studio-20260301-1200.db'); // present backup survives
 		expect(names(dir)).toEqual(expect.arrayContaining(future)); // no future-dated backup deleted
+		expect(names(dir).filter((n) => !future.includes(n))).toEqual(['studio-20260301-1200.db']);
 	});
 });
 
