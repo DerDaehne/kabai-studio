@@ -97,7 +97,7 @@ export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date
 	for (const b of gone) rmSync(join(dir, b.file));
 	// Aborted runs leave a .tmp behind; prune runs right after backup() in the only process holding the data-dir lock, so nothing is in flight.
 	for (const file of readdirSync(dir)) {
-		if (file.endsWith('.tmp')) rmSync(join(dir, file));
+		if (file.endsWith('.db.tmp')) rmSync(join(dir, file));
 	}
 	return gone.map((b) => b.file);
 }
