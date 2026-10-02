@@ -696,6 +696,25 @@ describe('token budget', () => {
 		const { serve, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
 		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
+		expect(tools.map((t: { name: string }) => t.name).sort()).toEqual([
+			'add_comment',
+			'add_tasks',
+			'approve_review',
+			'complete_tasks',
+			'create_child_tickets',
+			'get_ticket',
+			'link_note_to_ticket',
+			'link_tickets',
+			'list_workable',
+			'move_ticket',
+			'notes_create',
+			'notes_get',
+			'notes_link',
+			'notes_search',
+			'notes_update',
+			'request_human',
+			'update_ticket'
+		]);
 		const definitions = JSON.stringify(tools.map(({ name, description, inputSchema }: Record<string, unknown>) => ({ name, description, inputSchema })));
 		expect(estimateTokens(definitions)).toBeLessThanOrEqual(4000);
 	});
@@ -739,6 +758,23 @@ describe('secrets', () => {
 		const view = JSON.stringify((await call(token, 'get_ticket')).body);
 		expect(view).not.toContain(secret);
 		expect(view).toContain('pasted by a human: [secret:probe]');
+	});
+
+	it('masks secret values in the message of an unexpected error', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const secret = 'sk-test-mcp-secret-0815';
+		setSecret(db, 'probe', secret, false, randomBytes(32));
+		const { token } = startRun(ticket());
+		const prepare = db.prepare.bind(db);
+		const failingInsert = vi.spyOn(db, 'prepare').mockImplementation((sql: string) => {
+			if (sql.startsWith('INSERT INTO comments')) throw new Error(`database said: ${secret}`);
+			return prepare(sql);
+		});
+		try {
+			expect(await call(token, 'add_comment', { text: 'x' })).toEqual({ isError: true, body: 'database said: [secret:probe]' });
+		} finally {
+			failingInsert.mockRestore();
+		}
 	});
 });
 
