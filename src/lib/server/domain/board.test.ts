@@ -322,6 +322,21 @@ describe('Review-Freigabe', () => {
 		board.approveReview(db, user, id); // der Mensch darf immer
 	});
 
+	it('lets an agent approve only in a column flagged as review column, the human in any column', () => {
+		const { db, ticket, place, col } = setup();
+		const id = ticket();
+		const err = caught(() => board.approveReview(db, reviewer, id));
+		expect(err.code).toBe('not_in_review');
+		expect(err.message).toContain('STU-1');
+		expect(err.message).toContain('„Backlog“');
+		expect(db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at).toBeNull();
+		board.approveReview(db, user, id);
+
+		db.prepare("UPDATE columns SET name = 'Prüfung' WHERE id = ?").run(col.Review);
+		place(id, 'Review');
+		board.approveReview(db, reviewer, id);
+	});
+
 	it('erlischt beim Zurückschieben nach „In Arbeit“, bleibt beim Wechsel nach done', () => {
 		const { db, ticket, place, col } = setup();
 		const approved = (id: number) => db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at !== null;
@@ -407,7 +422,7 @@ describe('Event-Bus', () => {
 		board.updateTicket(db, dev, a, { description: 'x' });
 		const inArbeit = board.allowedMoves(db, a, dev)[0].columnId;
 		board.moveTicket(db, dev, a, inArbeit);
-		board.approveReview(db, reviewer, a);
+		board.approveReview(db, user, a);
 		const task = board.addTask(db, dev, a, 'K').id;
 		board.completeTask(db, dev, task);
 		board.reopenTask(db, dev, task);

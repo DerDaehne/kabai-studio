@@ -364,6 +364,40 @@ describe('list_workable', () => {
 	});
 });
 
+describe('approve_review', () => {
+	it('approves your ticket in a review column; get_ticket shows it until the ticket returns to a normal column', async () => {
+		const { call, startRun, ticket, place, col } = setup();
+		const own = ticket();
+		place(own, 'Review');
+		const { token } = startRun(own);
+
+		expect(await call(token, 'approve_review')).toEqual({ isError: false, body: { review_approved: true } });
+		expect((await call(token, 'get_ticket')).body.review_approved).toBe(true);
+		await call(token, 'move_ticket', { column_id: col['In Arbeit'] });
+		expect((await call(token, 'get_ticket')).body.review_approved).toBe(false);
+	});
+
+	it('refuses outside a review column and for your own work, naming the ticket and a way out in tool words', async () => {
+		const { db, call, startRun, ticket, place, col } = setup();
+		const own = ticket();
+		place(own, 'In Arbeit');
+		const developer = startRun(own);
+		const approved = () => db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(own)?.at !== null;
+
+		const outside = await call(developer.token, 'approve_review');
+		expect(outside).toMatchObject({ isError: true, body: { error: 'not_in_review', message: expect.stringContaining('STU-1'), hint: expect.stringContaining('add_comment') } });
+		await call(developer.token, 'move_ticket', { column_id: col.Review });
+		const ownWork = await call(developer.token, 'approve_review');
+		expect(ownWork).toMatchObject({ isError: true, body: { error: 'self_approval', message: expect.stringContaining('STU-1'), hint: expect.stringContaining('add_comment') } });
+		expect(approved()).toBe(false);
+
+		runs.finishRun(db, system, developer.runId, { state: 'succeeded' });
+		const reviewer = startRun(own);
+		expect((await call(reviewer.token, 'approve_review')).isError).toBe(false);
+		expect(approved()).toBe(true);
+	});
+});
+
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
 		const { db, call, startRun, ticket, col } = setup();

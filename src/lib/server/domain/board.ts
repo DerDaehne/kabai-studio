@@ -280,10 +280,17 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 	emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
 }
 
-/** Review-Freigabe (ADR studio-012). Der Mensch darf immer; ein Agent nicht, wenn er das Ticket zuletzt verschoben hat. */
+/** Review approval. The human may always; an agent only in a review column and not after it moved the ticket last. */
 export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
+		const inReviewColumn = db.prepare('SELECT review FROM columns WHERE id = ?').get(t.column_id)?.review === 1;
+		if (actor.kind !== 'user' && !inReviewColumn)
+			throw new DomainError(
+				'not_in_review',
+				`${t.ref} liegt in „${t.column_name}“, keiner Review-Spalte; ein Agent gibt nur im Review frei.`,
+				'Freigeben gehört zur Review-Rolle. Halte dein Ergebnis als Kommentar fest; freigeben kann ein Review-Run oder der Mensch.'
+			);
 		const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
 		// ponytail: „Autor der letzten Arbeit“ ≈ wer zuletzt verschoben hat; mit Runs (#779) den letzten Arbeits-Run bzw. dessen Profil vergleichen
 		if (actor.kind !== 'user' && last?.kind === actor.kind && last.runId === actor.runId)

@@ -89,6 +89,7 @@ const TOOLS = {
 		'Link your ticket: waits_for = it waits for these tickets; blocks = these wait for it.',
 		object({ waits_for: list({ type: 'string', maxLength: MAX_REF }), blocks: list({ type: 'string', maxLength: MAX_REF }) })
 	),
+	approve_review: define<Record<string, never>>('Approve the review of your ticket: only in a review column, never your own work.', object({})),
 	list_workable: define<{ column_id?: number }>(
 		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
 		object({ column_id: { type: 'integer' } })
@@ -180,6 +181,11 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 
 	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
 
+	tool('approve_review', () => {
+		board.approveReview(db, ctx.actor, ctx.ticketId);
+		return { review_approved: true };
+	});
+
 	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
 
 	tool('complete_tasks', ({ task_ids }) => {
@@ -214,6 +220,10 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 			return 'Vor dem Abschluss muss eine Note mit dem Ticket verknüpft sein; bitte den Menschen mit request_human darum.';
 		case 'transition_not_allowed':
 			return 'get_ticket zeigt die erreichbaren Spalten unter allowed_moves.';
+		case 'not_in_review':
+			return 'Freigeben gehört zur Review-Rolle; halte dein Ergebnis mit add_comment fest.';
+		case 'self_approval':
+			return 'Eigene Arbeit gibt ein anderer Run oder der Mensch frei; halte dein Ergebnis mit add_comment fest.';
 		case 'cycle':
 			return 'Prüfe die Richtung von waits_for und blocks: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
 	}
