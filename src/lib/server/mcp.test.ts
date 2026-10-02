@@ -51,7 +51,7 @@ const resultOf = async (response: Response) => (await messageOf(response)).resul
 
 /** Everything a tool can write, to show that a refused call changed nothing. */
 const writableRows = (db: DatabaseSync) =>
-	JSON.stringify(['comments', 'tickets', 'tasks', 'questions'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
+	JSON.stringify(['comments', 'tickets', 'tasks', 'questions', 'ticket_relations'].map((table) => db.prepare(`SELECT * FROM ${table}`).all()));
 
 /** What the agent sees of a tool call: the error flag and the text, parsed when it is JSON. */
 async function callTool(serve: Serve, token: string, name: string, args: object) {
@@ -231,6 +231,64 @@ describe('batch tools', () => {
 
 		expect((await call(token, 'add_tasks', { titles: ['D', ' '] })).body.error).toBe('empty_title');
 		expect(db.prepare('SELECT count(*) AS n FROM tasks').get()?.n).toBe(3);
+	});
+});
+
+describe('create_child_tickets', () => {
+	it('creates children of your ticket with tasks and a blocks chain over local refs in one call', async () => {
+		const { call, startRun, ticket } = setup();
+		const own = ticket('Epic');
+		ticket('Vorhanden');
+		const { token } = startRun(own);
+
+		const created = await call(token, 'create_child_tickets', {
+			items: [
+				{ ref: 'schema', title: 'Schema', tasks: ['Migration', 'Test'] },
+				{ ref: 'domain', title: 'Domain', waits_for: ['$schema', 'STU-2'] },
+				{ title: 'UI', description: 'Board', waits_for: ['$domain'] }
+			]
+		});
+		expect(created).toEqual({ isError: false, body: { refs: ['STU-3', 'STU-4', 'STU-5'] } });
+
+		expect((await call(token, 'get_ticket')).body.children.map((c: { ref: string }) => c.ref)).toEqual(['STU-3', 'STU-4', 'STU-5']);
+		const schema = (await call(token, 'get_ticket', { ticket: 'STU-3' })).body;
+		expect(schema.tasks.map((t: { title: string; done: boolean }) => [t.title, t.done])).toEqual([
+			['Migration', false],
+			['Test', false]
+		]);
+		expect(schema.blocks).toEqual([{ ref: 'STU-4', title: 'Domain', column: 'Backlog' }]);
+		const domain = (await call(token, 'get_ticket', { ticket: 'STU-4' })).body;
+		expect(domain.waits_for).toEqual([
+			{ ref: 'STU-2', title: 'Vorhanden', column: 'Backlog', blocking: true },
+			{ ref: 'STU-3', title: 'Schema', column: 'Backlog', blocking: true }
+		]);
+		expect(domain.parent).toEqual([{ ref: 'STU-1', title: 'Epic', column: 'Backlog' }]);
+		const ui = (await call(token, 'get_ticket', { ticket: 'STU-5' })).body;
+		expect(ui).toMatchObject({ description: 'Board', waits_for: [{ ref: 'STU-4', blocking: true }] });
+	});
+
+	const invalid: [string, object[], string][] = [
+		['a blank title', [{ title: 'A' }, { title: '  ' }], 'items[1]'],
+		['a blank task', [{ title: 'A', tasks: ['ok', ' '] }], 'items[0]'],
+		['an unknown local ref', [{ ref: 'a', title: 'A' }, { title: 'B' }, { title: 'C', waits_for: ['$b'] }], 'items[2]'],
+		['a ticket of another project', [{ title: 'A' }, { title: 'B', waits_for: ['OTH-1'] }], 'items[1]'],
+		['a local ref used twice', [{ ref: 'a', title: 'A' }, { ref: 'a', title: 'B' }], 'items[1]'],
+		['a cycle over local refs', [{ ref: 'a', title: 'A', waits_for: ['$b'] }, { ref: 'b', title: 'B', waits_for: ['$a'] }], 'items[1]'],
+		['an item waiting for itself', [{ ref: 'a', title: 'A', waits_for: ['$a'] }], 'items[0]']
+	];
+
+	it.each(invalid)('creates nothing for %s and names the item', async (_case, items, item) => {
+		const { db, call, startRun, ticket } = setup();
+		board.createTicket(db, user, board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id, { title: 'Fremd' });
+		const { token } = startRun(ticket());
+		const before = writableRows(db);
+
+		const refused = await call(token, 'create_child_tickets', { items });
+		expect(refused.isError).toBe(true);
+		expect(refused.body.message).toContain(item);
+		expect(refused.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+		expect(writableRows(db)).toBe(before);
+		expect((await call(token, 'create_child_tickets', { items: [{ title: 'Danach' }] })).body.refs).toEqual(['STU-2']);
 	});
 });
 
@@ -539,12 +597,13 @@ describe('tool schemas', () => {
 	it('hands every request the same schema objects, so the validator cache does not grow with requests', async () => {
 		const { serve, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
+		const toolCount = (await resultOf(await rpc(serve, token, 'tools/list'))).tools.length;
 		const registerTool = vi.spyOn(McpServer.prototype, 'registerTool');
 		try {
 			for (let i = 0; i < 3; i++) await rpc(serve, token, 'tools/list');
 			const schemas = registerTool.mock.calls.map(([, config]) => (config as { inputSchema: unknown }).inputSchema);
-			expect(schemas).toHaveLength(3 * 7);
-			expect(new Set(schemas).size).toBe(7);
+			expect(schemas).toHaveLength(3 * toolCount);
+			expect(new Set(schemas).size).toBe(toolCount);
 		} finally {
 			registerTool.mockRestore();
 		}

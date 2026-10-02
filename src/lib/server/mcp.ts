@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/server';
 import type { DatabaseSync } from 'node:sqlite';
 import * as board from './domain/board';
-import { DomainError, type Actor } from './domain/core';
+import { DomainError, tx, type Actor } from './domain/core';
 import { collectAnswer, requestHuman, type QuestionOption } from './domain/questions';
 import { runForToken } from './domain/runs';
 import { mask } from './secrets';
@@ -23,6 +23,7 @@ type ToolContext = {
 	ticketId: number;
 };
 type ToolError = { error: string; message: string; hint: string };
+type ChildTicket = { ref?: string; title: string; description?: string; tasks?: string[]; waits_for?: string[] };
 type AgentMove = { columnId: number; name: string; refusals: ToolError[] };
 
 const RECENT_COMMENTS = 10;
@@ -30,6 +31,7 @@ const COMMENT_PREVIEW = 1500;
 const MAX_TEXT = 20_000;
 const MAX_TITLE = 200;
 const MAX_ITEMS = 50;
+const MAX_REF = 20;
 const UNAUTHORIZED = {
 	error: 'unauthorized',
 	hint: 'Sende den Run-Token als „Authorization: Bearer <token>“. Ein Token gilt nur, solange sein Run läuft.'
@@ -61,7 +63,27 @@ const define = <Args>(description: string, schema: JsonSchemaType): ToolDefiniti
 const TOOLS = {
 	get_ticket: define<{ ticket?: string; comment?: number }>(
 		"Your ticket: tasks, recent comments, relations, allowed moves, the human's latest answer. Another ticket of your project by ref; one full comment by id.",
-		object({ ticket: { type: 'string', maxLength: 20, description: 'e.g. STU-12; default: your ticket' }, comment: { type: 'integer' } })
+		object({ ticket: { type: 'string', maxLength: MAX_REF, description: 'e.g. STU-12; default: your ticket' }, comment: { type: 'integer' } })
+	),
+	create_child_tickets: define<{ items: ChildTicket[] }>(
+		'Create child tickets of your ticket, all or none. waits_for: tickets like STU-3, or $ref of an item in this call.',
+		object(
+			{
+				items: list(
+					object(
+						{
+							ref: { type: 'string', maxLength: MAX_REF, description: 'local name, used as $ref' },
+							title: text(MAX_TITLE),
+							description: { type: 'string', maxLength: MAX_TEXT },
+							tasks: list(text(MAX_TITLE)),
+							waits_for: list({ type: 'string', maxLength: MAX_REF + 1 })
+						},
+						['title']
+					)
+				)
+			},
+			['items']
+		)
 	),
 	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
@@ -138,6 +160,8 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		return { ref: board.ticket(db, ctx.ticketId).ref };
 	});
 
+	tool('create_child_tickets', ({ items }) => createChildTickets(db, ctx, items));
+
 	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
 
 	tool('complete_tasks', ({ task_ids }) => {
@@ -172,6 +196,8 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 			return 'Vor dem Abschluss muss eine Note mit dem Ticket verknüpft sein; bitte den Menschen mit request_human darum.';
 		case 'transition_not_allowed':
 			return 'get_ticket zeigt die erreichbaren Spalten unter allowed_moves.';
+		case 'cycle':
+			return 'Prüfe waits_for: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
 	}
 }
 
@@ -225,6 +251,54 @@ function moveOwnTicket(db: DatabaseSync, ctx: ToolContext, columnId: number) {
 		});
 	board.moveTicket(db, ctx.actor, ctx.ticketId, columnId);
 	return { column: move.name };
+}
+
+/** Creates all children with their tasks first, then the blocks relations, so a $ref may point to a later item. */
+function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTicket[]) {
+	return tx(db, () => {
+		const idByRef = new Map<string, number>();
+		const ids = items.map((item, index) =>
+			forItem(index, () => {
+				if (item.ref !== undefined && idByRef.has(item.ref))
+					throw new Refusal({ error: 'duplicate_ref', message: `ref „${item.ref}“ kommt mehrfach vor.`, hint: 'Gib jedem Item einen eigenen ref.' });
+				const { id } = board.createTicket(db, ctx.actor, ctx.projectId, { title: item.title, description: item.description });
+				if (item.tasks) board.addTasks(db, ctx.actor, id, item.tasks);
+				board.linkRelation(db, ctx.actor, ctx.ticketId, id, 'parent_of');
+				if (item.ref !== undefined) idByRef.set(item.ref, id);
+				return id;
+			})
+		);
+		items.forEach((item, index) =>
+			forItem(index, () => {
+				for (const predecessor of item.waits_for ?? []) board.linkRelation(db, ctx.actor, localOrTicketId(db, ctx, idByRef, predecessor), ids[index], 'blocks');
+			})
+		);
+		return { refs: ids.map((id) => board.ticket(db, id).ref) };
+	});
+}
+
+/** Names the item a refusal concerns, so the agent knows which one to fix. */
+function forItem<T>(index: number, work: () => T): T {
+	try {
+		return work();
+	} catch (err) {
+		const where = `items[${index}]: `;
+		if (err instanceof Refusal) throw new Refusal({ ...err.body, message: where + err.body.message });
+		if (err instanceof DomainError) throw new DomainError(err.code, where + err.message, err.hint);
+		throw err;
+	}
+}
+
+function localOrTicketId(db: DatabaseSync, ctx: ToolContext, idByRef: Map<string, number>, ref: string): number {
+	if (!ref.startsWith('$')) return ticketIdOf(db, ctx, ref);
+	const id = idByRef.get(ref.slice(1));
+	if (id === undefined)
+		throw new Refusal({
+			error: 'unknown_ref',
+			message: `„${ref}“ ist kein ref eines Items in diesem Aufruf.`,
+			hint: `Gib dem Item, auf das gewartet wird, ref: "${ref.slice(1)}", oder nenne ein vorhandenes Ticket wie „STU-12“.`
+		});
+	return id;
 }
 
 /** A ticket ref is only resolved within the caller's project, so "OTH-1" never silently reads STU-1. */
