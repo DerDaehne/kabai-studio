@@ -1,0 +1,24 @@
+# Build artifacts (rebuilt inside the image)
+node_modules
+build
+.svelte-kit
+
+# Runtime data — never ships in the image
+data
+
+# VCS and CI
+.git
+.github
+
+# Local / internal / secret files — must never reach a public image
+CLAUDE.local.md
+.privacy-patterns
+.env
+.env.*
+!.env.example
+!.env.test
+.direnv
+result
+
+.vscode
+*.log

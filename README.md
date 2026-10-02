@@ -54,6 +54,46 @@ On first start the server prints a one-time setup link; open it to create the ow
 account. Open studio at exactly the address given in `ORIGIN` — form posts from any
 other address are rejected.
 
+## Container
+
+A container image is published to `ghcr.io/derdaehne/kabai-studio` on every tagged
+release (and manually via the "Container image" workflow). It runs the same server
+as `node build` above, as a non-root user, with the data directory as a volume.
+
+The server only ever binds inside the container to `127.0.0.1` unless `HOST` says
+otherwise (same default as bare metal) — two ways to reach it from the host:
+
+```sh
+# Bridge network (default): bind to all interfaces inside the container, but
+# publish the port only to the host's own loopback.
+docker run -d --name kabai-studio \
+  -e HOST=0.0.0.0 -e ORIGIN=http://127.0.0.1:3000 \
+  -p 127.0.0.1:3000:3000 \
+  -v kabai-studio-data:/data \
+  ghcr.io/derdaehne/kabai-studio:latest
+
+# Host network: the container shares the host's own loopback, so the default
+# HOST=127.0.0.1 is reachable directly and no -p is needed.
+docker run -d --name kabai-studio --network host \
+  -e ORIGIN=http://127.0.0.1:3000 \
+  -v kabai-studio-data:/data \
+  ghcr.io/derdaehne/kabai-studio:latest
+```
+
+On first start, the one-time setup link is in the container's logs
+(`docker logs kabai-studio`) — open it the same way as above to create the owner
+account.
+
+**Update:** pull the new image, then recreate the container on the same volume. The
+owner, secrets and data survive (a backup also runs automatically before any
+migration, see above):
+
+```sh
+docker pull ghcr.io/derdaehne/kabai-studio:latest
+docker stop kabai-studio && docker rm kabai-studio
+docker run …   # same command as above, same -v kabai-studio-data:/data
+```
+
 ## Local models
 
 Recommendations and parameters for local models (llama.cpp, LM Studio, Ollama,
