@@ -35,13 +35,30 @@ export type TicketFields = {
 	effort_unit: string | null;
 };
 
-const DEFAULT_COLUMNS: [string, Kind][] = [
-	['Backlog', 'normal'],
-	['In Arbeit', 'normal'],
-	['Review', 'normal'],
-	['Done', 'done'],
-	['Human Intervention', 'human_intervention'],
-	['Human Answered', 'human_answered']
+// Generic role prompts for the default "Software" template: short, English, no product, project, tool or path names
+// (#897) — an agent's role comes from the prompt's role block (assemblePrompt), built from this text, never from
+// the column name.
+const BACKLOG_ROLE = 'Capture new work with enough detail that someone else could size it. Move it along once it is ready for scope and acceptance criteria to be worked out.';
+const REFINE_ROLE =
+	'Make the scope, the effort and the acceptance criteria explicit before moving a ticket on. Leave a title only ticket for someone else to flesh out instead of advancing it as is.';
+const READY_ROLE = 'Pick up a ticket only once every blocker is finished. If the description no longer matches reality, send it back for refinement with a comment explaining why.';
+const IN_PROGRESS_ROLE =
+	'For a bug, reproduce it with a failing test before you fix it. A probe someone used to demonstrate a finding becomes a permanent regression test. Move the ticket on once every acceptance criterion is met.';
+const REVIEW_ROLE = 'Check the work against its acceptance criteria, not your own taste. Leave findings as a comment and send it back, or approve it and move it on.';
+const ACCEPTANCE_ROLE = 'Finished work waits here for a human to accept it in a batch. Do not act on a ticket sitting in this column.';
+const HUMAN_INTERVENTION_ROLE = 'A question is open and blocks this ticket. Read it in the comments and wait for an answer instead of resuming work.';
+const HUMAN_ANSWERED_ROLE = 'An open question now has an answer. Read it in the comments, then move the ticket back into work.';
+
+const DEFAULT_COLUMNS: [string, Kind, string][] = [
+	['Backlog', 'normal', BACKLOG_ROLE],
+	['Refine', 'normal', REFINE_ROLE],
+	['Ready', 'normal', READY_ROLE],
+	['In Arbeit', 'normal', IN_PROGRESS_ROLE],
+	['Review', 'normal', REVIEW_ROLE],
+	['Abnahme', 'normal', ACCEPTANCE_ROLE],
+	['Done', 'done', ''],
+	['Human Intervention', 'human_intervention', HUMAN_INTERVENTION_ROLE],
+	['Human Answered', 'human_answered', HUMAN_ANSWERED_ROLE]
 ];
 
 /** Default für requires_human: Abschließen und „der Mensch hat geantwortet“ darf nur ein Mensch. */
@@ -177,19 +194,23 @@ const reaches = (db: DatabaseSync, start: number, goal: number, type: RelationTy
 		)
 		.get(start, goal, type);
 
-/** Legt ein Projekt mit Default-Board an: Backlog ↔ In Arbeit ↔ Review ↔ Done, dazu human_intervention → human_answered. */
+/** Creates a project with the default "Software" board: Backlog ↔ Refine ↔ Ready ↔ In Arbeit ↔ Review ↔ Abnahme ↔ Done, plus human_intervention → human_answered. */
 export function createProject(db: DatabaseSync, actor: Actor, p: { key: string; name: string; description?: string }): { id: number } {
 	return tx(db, (emit) => {
 		const { id } = db.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id').get(p.key, p.name, p.description ?? '') as { id: number };
-		const col = db.prepare('INSERT INTO columns (project_id, name, position, kind, review) VALUES (?, ?, ?, ?, ?) RETURNING id');
-		const ids = DEFAULT_COLUMNS.map(([name, kind], i) => (col.get(id, name, i, kind, name === 'Review' ? 1 : 0) as { id: number }).id);
+		const col = db.prepare('INSERT INTO columns (project_id, name, position, kind, role_prompt, review) VALUES (?, ?, ?, ?, ?, ?) RETURNING id');
+		const ids = DEFAULT_COLUMNS.map(([name, kind, rolePrompt], i) => (col.get(id, name, i, kind, rolePrompt, name === 'Review' ? 1 : 0) as { id: number }).id);
 		const tr = db.prepare('INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)');
 		const edge = (a: number, b: number) => tr.run(id, ids[a], ids[b], humanOnly(DEFAULT_COLUMNS[b][1]) ? 1 : 0);
-		for (let i = 0; i < 3; i++) {
+		const doneIndex = DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'done');
+		for (let i = 0; i < doneIndex; i++) {
 			edge(i, i + 1);
 			edge(i + 1, i);
 		}
-		edge(4, 5);
+		edge(
+			DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'human_intervention'),
+			DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'human_answered')
+		);
 		emit({ type: 'project.created', projectId: id, actor });
 		return { id };
 	});

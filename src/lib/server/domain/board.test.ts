@@ -45,13 +45,16 @@ function caught(fn: () => unknown): DomainError {
 }
 
 describe('createProject / createTicket', () => {
-	it('legt Default-Spalten und lineare Transitionen an (Wechsel nach done und human_answered nur durch Menschen)', () => {
+	it('legt die Software-Vorlage mit linearen Transitionen an (Wechsel nach done und human_answered nur durch Menschen)', () => {
 		const { db, projectId } = setup();
 		const cols = db.prepare('SELECT name, kind FROM columns WHERE project_id = ? ORDER BY position').all(projectId);
 		expect(cols.map((c) => `${c.name}:${c.kind}`)).toEqual([
 			'Backlog:normal',
+			'Refine:normal',
+			'Ready:normal',
 			'In Arbeit:normal',
 			'Review:normal',
+			'Abnahme:normal',
 			'Done:done',
 			'Human Intervention:human_intervention',
 			'Human Answered:human_answered'
@@ -63,14 +66,26 @@ describe('createProject / createTicket', () => {
 			)
 			.all(projectId);
 		expect(edges.map((e) => `${e.from} → ${e.to}${e.rh ? ' (Mensch)' : ''}`)).toEqual([
-			'Backlog → In Arbeit',
-			'In Arbeit → Backlog',
+			'Backlog → Refine',
+			'Refine → Backlog',
+			'Refine → Ready',
+			'Ready → Refine',
+			'Ready → In Arbeit',
+			'In Arbeit → Ready',
 			'In Arbeit → Review',
 			'Review → In Arbeit',
-			'Review → Done (Mensch)',
-			'Done → Review',
+			'Review → Abnahme',
+			'Abnahme → Review',
+			'Abnahme → Done (Mensch)',
+			'Done → Abnahme',
 			'Human Intervention → Human Answered (Mensch)'
 		]);
+	});
+
+	it('marks exactly the Review column with the review flag (migration 009)', () => {
+		const { db, projectId } = setup();
+		const flagged = db.prepare('SELECT name FROM columns WHERE project_id = ? AND review = 1').all(projectId) as { name: string }[];
+		expect(flagged.map((c) => c.name)).toEqual(['Review']);
 	});
 
 	it('vergibt Ticketnummern fortlaufend pro Projekt und nie doppelt, auch nach Löschen', () => {
@@ -120,6 +135,41 @@ describe('createProject / createTicket', () => {
 		const err = caught(() => board.updateTicket(db, user, plain, { docs_required: 0 }));
 		expect(err.code).toBe('epic_docs_required');
 		expect(err.message).toContain('STU-'); // Meldung nennt den Ticket-Ref
+	});
+
+	describe('default role prompts', () => {
+		const rolePrompts = (db: DatabaseSync, projectId: number) =>
+			Object.fromEntries(
+				(db.prepare('SELECT name, role_prompt AS rolePrompt FROM columns WHERE project_id = ? ORDER BY position').all(projectId) as { name: string; rolePrompt: string }[]).map(
+					(r) => [r.name, r.rolePrompt]
+				)
+			) as Record<string, string>;
+
+		it('gives every column a non-empty English role prompt, except Done', () => {
+			const { db, projectId } = setup();
+			const prompts = rolePrompts(db, projectId);
+			for (const name of ['Backlog', 'Refine', 'Ready', 'In Arbeit', 'Review', 'Abnahme', 'Human Intervention', 'Human Answered']) expect(prompts[name].trim()).not.toBe('');
+			expect(prompts.Done.trim()).toBe('');
+		});
+
+		// Stand-in for the shared board pattern check (not yet merged into this repository): no ticket/comment
+		// numbers, no note slugs, no known product/tool names, ASCII English only. Switch to the shared check
+		// once it lands.
+		const FORBIDDEN_PATTERNS: RegExp[] = [
+			/#\d/, // ticket or comment number
+			/\b(adr|arch|concept)-[a-z]+(-[a-z]+)*\b/i, // note slug prefixes
+			/\b(kabai|studio|svelte|sveltekit|sqlite|claude|anthropic|mcp|github|codeberg|vite)\b/i, // product/tool names
+			/[^\x00-\x7F]/, // non-ASCII
+			/\//, // a path
+			/\\/ // a path
+		];
+
+		it('keeps every role prompt generic: no ticket numbers, slugs, product or tool names, ASCII English only', () => {
+			const { db, projectId } = setup();
+			const prompts = Object.values(rolePrompts(db, projectId)).filter((text) => text !== '');
+			expect(prompts.length).toBeGreaterThan(0);
+			for (const text of prompts) for (const pattern of FORBIDDEN_PATTERNS) expect(text).not.toMatch(pattern);
+		});
 	});
 
 	it('ein unbeteiligtes Update eines Epics schmuggelt docs_required nicht als geändertes Feld ins Event', () => {
