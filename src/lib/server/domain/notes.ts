@@ -207,7 +207,7 @@ export function verifyNote(db: DatabaseSync, actor: Actor, noteId: number, ticke
 export const noteVisibleIn = (projectParam: string) =>
 	`(NOT EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id) OR EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id AND vp.project_id = ${projectParam}))`;
 
-export type NoteSearchHit ={ id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
+export type NoteSearchHit = { id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
 
 /**
  * Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts.

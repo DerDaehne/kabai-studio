@@ -498,7 +498,7 @@ type NoteRow = { slug: string; title: string; kind: string; status: string | nul
 /** A note with its links named from its own point of view, like the relations of a ticket. */
 function noteView(db: DatabaseSync, ctx: ToolContext, slug: string) {
 	const id = noteIdOf(db, ctx, slug);
-	const n = notes.getNote(db, id) as unknown as NoteRow;
+	const n = notes.getNote(db, id) as NoteRow;
 	const links = db
 		.prepare(
 			`SELECT l.type, l.from_note_id = ?1 AS outgoing, n.slug FROM note_links l JOIN notes n ON n.id = iif(l.from_note_id = ?1, l.to_note_id, l.from_note_id)
