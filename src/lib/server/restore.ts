@@ -55,7 +55,7 @@ try {
 		throw new DomainError(
 			'restore_fs_error',
 			`Das Datenverzeichnis ${resolve(dataDir())} lässt sich nicht sperren.`,
-			'Schreibrechte und Speicherplatz im Datenverzeichnis prüfen; restore als den Besitzer des Datenverzeichnis ausführen.'
+			'Schreibrechte und Speicherplatz im Datenverzeichnis prüfen; restore als Besitzer des Datenverzeichnisses ausführen.'
 		);
 	}
 	if (!locked)
