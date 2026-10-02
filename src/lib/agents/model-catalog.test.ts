@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MODEL_ROLES, MODELS, matchModel, type ModelEntry } from './model-catalog.ts';
+import { contextBudget, MODEL_ROLES, MODELS, matchModel, type ModelEntry } from './model-catalog.ts';
 
 const catalog: readonly ModelEntry[] = MODELS;
 
@@ -117,5 +117,23 @@ describe('MODELS', () => {
 
 	it('does not read Q8_0 as a recommended quantization', () => {
 		expect(catalog.find((m) => m.id === 'ornith-1.5-35b')?.quantization).toBeUndefined();
+	});
+});
+
+describe('contextBudget', () => {
+	it("plans with the model's contextMinimum while the catalog names no contextBudget", () => {
+		expect(contextBudget({ model: 'qwen3.6-35b' })).toBe(131072);
+		expect(contextBudget({ model: 'Ornith-1.5-35B-A3B-GGUF:Q8_0' })).toBe(32768);
+	});
+
+	it('prefers a contextBudget over the contextMinimum', () => {
+		const measured: ModelEntry = { ...catalog[0], contextBudget: 65536 };
+		expect(contextBudget({ model: catalog[0].id }, [measured])).toBe(65536);
+	});
+
+	it('falls back to 32k for an unknown model, a model without contextMinimum, or none at all', () => {
+		expect(contextBudget({ model: 'some-unknown-model' })).toBe(32768);
+		expect(contextBudget({ model: 'qwen3.8-27b' })).toBe(32768);
+		expect(contextBudget({ model: null })).toBe(32768);
 	});
 });

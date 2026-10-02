@@ -61,6 +61,8 @@ export interface ModelEntry {
 	readonly thinking: ThinkingConfig;
 	readonly maxTokensMinimum?: number;
 	readonly contextMinimum?: number;
+	/** The context size Studio plans prompts and fresh runs with, in tokens; without one it plans with `contextMinimum`. */
+	readonly contextBudget?: number;
 	readonly quantization?: string;
 	readonly serverHints: ServerHints;
 	readonly pitfalls: readonly Pitfall[];
@@ -256,6 +258,12 @@ export function matchModel(query: string, catalog: readonly ModelEntry[] = MODEL
 	const queryTokens = new Set(tokenize(query));
 	const matches = catalog.filter((entry) => canonicalTokens(entry).every((token) => queryTokens.has(token)));
 	return matches.length === 1 ? matches[0] : null;
+}
+
+/** The context size in tokens that prompts for this profile's model are planned with. */
+export function contextBudget(profile: { model: string | null }, catalog: readonly ModelEntry[] = MODELS): number {
+	const entry = profile.model === null ? null : matchModel(profile.model, catalog);
+	return entry?.contextBudget ?? entry?.contextMinimum ?? STUDIO_CONTEXT_MINIMUM;
 }
 
 export interface RuntimeEndpoint {
