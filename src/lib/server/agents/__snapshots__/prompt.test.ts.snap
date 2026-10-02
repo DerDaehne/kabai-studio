@@ -73,3 +73,21 @@ Lines are key=value; # starts a comment.
 ## Assignment
 Work STU-1 as your role says. The internal context above is current: start with the work, not with \`get_ticket\`."
 `;
+
+exports[`previous state > shows a resumed run the handoff, the human's answer and what not to try again of the run it continues 1`] = `
+"## Previous state — continuation 1
+This run continues run 1, which paused because it got stuck. Go on from its state instead of starting over.
+
+### Human answer — act on it
+Question: Reject or merge duplicate keys?
+Answer: 1. Reject them — a parse error names the line
+
+### What got the previous run stuck — do not try it again
+The exact edit of src/parser.ts failed 3 times.
+Do not inspect bytes; replace by line number or rewrite the block.
+
+### Handoff of run 1
+Summary: the parser reads key=value lines.
+Open: duplicate keys.
+Next: reject duplicate keys."
+`;

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
+import { answerQuestion } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
@@ -326,6 +327,58 @@ describe('builtin executor', () => {
 		await ended(() => run(runId).state);
 
 		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[step_limit\]/) });
+	});
+
+	it('generates the handoff from the events, marked as generated, when the model ends without a closing text', async () => {
+		const { db, queue, run, events, ticketId, columns } = setup();
+		const [headerRow, oneLinePerTicket] = board.addTasks(db, user, ticketId, ['Export the header row', 'Export one line per ticket']).ids;
+		board.completeTask(db, user, headerRow);
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
+			{ chunks: [call('call-2', 'add_comment', { text: 'Header row done.' })] },
+			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['In Arbeit'] })] },
+			{ chunks: [] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(events(runId).find((e) => e.key === 'handoff')!.payload).toEqual({
+			text: [
+				"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
+				'Tools: move_ticket 2× (1 failed), add_comment 1×',
+				'Ticket: moved to In Arbeit',
+				'Open tasks:',
+				`- ${oneLinePerTicket}: Export one line per ticket`
+			].join('\n'),
+			generated: true
+		});
+	});
+
+	it("collects the human's answer only once the prompt showing it has gone to the model", async () => {
+		const { db, queue, run, ticketId, profileId } = setup();
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'request_human', { question: 'Which columns go into the export?', options: [{ label: 'All' }, { label: 'Only id and title' }] })] },
+			{ chunks: [{ text: 'Exporting id and title.' }] }
+		);
+		const collectedAt = () => (db.prepare('SELECT collected_at FROM questions').get() as { collected_at: string | null } | undefined)?.collected_at;
+		const collectedWhenSent: unknown[] = [];
+		const fetch: typeof globalThis.fetch = (input, init) => {
+			collectedWhenSent.push(collectedAt());
+			return provider.fetch(input, init);
+		};
+		startBuiltin(db, { fetch });
+		const asked = queue();
+		await ended(() => run(asked).state);
+		const { id } = db.prepare('SELECT id FROM questions').get() as { id: number };
+		answerQuestion(db, user, id, { option: 2 });
+		const resumed = runs.createRun(db, user, { ticketId, profileId, resumedFromRunId: asked }).id;
+		await ended(() => run(resumed).state);
+
+		expect(provider.requests[1].body.messages).toMatchObject([{ role: 'system' }, { role: 'user', content: expect.stringContaining('Answer: 2. Only id and title') }]);
+		expect(collectedWhenSent).toEqual([undefined, null]);
+		expect(collectedAt()).not.toBeNull();
 	});
 
 	it('keeps working when asking the human fails', async () => {

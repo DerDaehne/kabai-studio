@@ -2,8 +2,10 @@ import { isStepCount, streamText, type FinishReason, type LanguageModel, type St
 import type { DatabaseSync } from 'node:sqlite';
 import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
 import { assemblePrompt, type AssembledPrompt } from '../agents/prompt';
+import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
-import { mcpEndpoint } from '../mcp';
+import { collectAnswer } from '../domain/questions';
+import { mcpEndpoint, tasksOf } from '../mcp';
 import type { Executor, ExecutorIo, ExecutorResult, ParkReason, Phase, RunContext } from '../runner';
 import { mask } from '../secrets';
 import { modelFor, requestSettings } from './provider';
@@ -32,12 +34,13 @@ export function builtinExecutor(db: DatabaseSync, { fetch = globalThis.fetch, in
 	return {
 		async execute(run, io) {
 			const prompt = assemblePrompt(db, run);
-			const model = modelFor(db, run.profile, fetch);
+			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
+			const model = modelFor(db, run.profile, prompt.showsHumanAnswer ? afterFirstRequest(fetch, collect) : fetch);
 			const studio = await studioTools(endpoint, run.token, io.signal);
 			try {
 				io.emit({ type: 'log', payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens: studio.toolTokens } });
 				const log = await runSteps({ model, prompt, tools: studio.tools, run, io, inactivityMs });
-				return endOfRun(run, io, log);
+				return endOfRun(db, run, io, log);
 			} finally {
 				await studio.close();
 			}
@@ -71,9 +74,21 @@ const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS
 const isErrorResult = (output: unknown) => (output as { isError?: unknown } | undefined)?.isError === true;
 const askedHuman: StopCondition<ToolSet> = ({ steps }) => steps.at(-1)?.toolResults.some((r) => r.toolName === 'request_human' && !isErrorResult(r.output)) ?? false;
 
-function endOfRun(run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
+/** Calls `sent` once the first request to the model server has gone out. */
+function afterFirstRequest(fetch: typeof globalThis.fetch, sent: () => void): typeof globalThis.fetch {
+	let first = true;
+	return (input, init) => {
+		const response = fetch(input, init);
+		if (first) sent();
+		first = false;
+		return response;
+	};
+}
+
+function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
 	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
-	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: { text: log.lastMessage } }).seq;
+	const handoff = log.lastMessage ? { text: log.lastMessage } : { text: generatedHandoff(db, run, log), generated: true };
+	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: handoff }).seq;
 	if (log.succeeded('request_human')) return { state: 'paused' };
 	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
 	if (io.park.aborted && log.endedWithToolCalls()) return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
@@ -84,6 +99,29 @@ function endOfRun(run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult
 			'Erhöhe max_steps im Agent-Profil oder schneide das Ticket kleiner, dann starte einen neuen Run.'
 		);
 	return { state: 'succeeded' };
+}
+
+/** A handoff from the run's events, so that a model ending without a closing text never leaves an empty trace. */
+function generatedHandoff(db: DatabaseSync, run: RunContext, log: StepLog): string {
+	const column = board.ticket(db, run.ticketId).column_name;
+	const openTasks = tasksOf(db, run.ticketId).filter((task) => !task.done);
+	return [
+		"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
+		`Tools: ${toolUse(log.records) || 'none'}`,
+		`Ticket: ${log.succeeded('move_ticket') ? `moved to ${column}` : `not moved, still in ${column}`}`,
+		`Open tasks:${openTasks.length ? '' : ' none'}`,
+		...openTasks.map((task) => `- ${task.id}: ${task.title}`)
+	].join('\n');
+}
+
+/** Each tool with how often the run called it and how often that failed, in the order of first use. */
+function toolUse(records: StepRecord[]): string {
+	const uses = new Map<string, { calls: number; failed: number }>();
+	for (const call of records.flatMap((record) => record.calls)) {
+		const use = uses.get(call.tool) ?? { calls: 0, failed: 0 };
+		uses.set(call.tool, { calls: use.calls + 1, failed: use.failed + Number(call.isError) });
+	}
+	return [...uses].map(([tool, { calls, failed }]) => `${tool} ${calls}×${failed ? ` (${failed} failed)` : ''}`).join(', ');
 }
 
 /** Turns the stream of the tool loop into run events (one set per step) and live phases. */

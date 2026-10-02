@@ -5,12 +5,13 @@ import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import { DomainError, type Actor } from '../domain/core';
 import * as notes from '../domain/notes';
+import { answerQuestion, requestHuman, retractAnswer } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
 import { setSecret } from '../secrets';
 import { BASE_PROMPT, HANDOFF_TEMPLATE } from './base-prompt';
-import { assemblePrompt, type PromptRun } from './prompt';
+import { assemblePrompt, type AssembledPrompt, type PromptRun } from './prompt';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
@@ -370,5 +371,106 @@ describe('boundaries shared with get_ticket', () => {
 		unsubscribe();
 		expect(changes()).toBe(before);
 		expect(events).toEqual([]);
+	});
+});
+
+/** Runs of STU-1 for the previous state; each one continues the run before it, as the runner queues a resumed run. */
+function runsOf(w: World) {
+	const profileId = runs.createProfile(w.db, user, { name: 'resuming', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	const queued = (resumedFrom?: number) =>
+		runs.createRun(w.db, user, { ticketId: w.parser, profileId, resumedFromRunId: resumedFrom, resumeReason: resumedFrom === undefined ? undefined : 'recovery' }).id;
+	const started = (resumedFrom?: number) => {
+		const id = queued(resumedFrom);
+		runs.startRun(w.db, system, id);
+		return id;
+	};
+	const event = (runId: number, e: Parameters<typeof runs.appendEvent>[3]) => runs.appendEvent(w.db, { kind: 'agent', runId }, runId, e);
+	const pause = (runId: number, handoff: { text: string; generated?: true }) => {
+		event(runId, { type: 'message', key: 'handoff', payload: handoff });
+		runs.finishRun(w.db, system, runId, { state: 'paused' });
+	};
+	return { queued, started, event, pause };
+}
+
+const assembleRun = (w: World, runId: number) => assemblePrompt(w.db, { id: runId, ticketId: w.parser, profile: cloud });
+const previousState = (prompt: AssembledPrompt) => prompt.user.slice(prompt.user.indexOf('## Previous state'), prompt.user.indexOf('\n\n## Assignment'));
+
+/** A run that asked the human, got stuck twice and was paused; the human answered its question. */
+function answeredRun(w: World, r: ReturnType<typeof runsOf>) {
+	const first = r.started();
+	const intervention = (attempt: number, reason: string, hint: string) =>
+		r.event(first, { type: 'intervention', payload: { kind: 'stagnation', attempt, max: 2, reason, hint } });
+	intervention(1, 'The same search ran 6 times without progress.', 'Search once, then decide.');
+	intervention(2, 'The exact edit of src/parser.ts failed 3 times.', 'Do not inspect bytes; replace by line number or rewrite the block.');
+	const question = requestHuman(w.db, { kind: 'agent', runId: first }, w.parser, {
+		question: 'Reject or merge duplicate keys?',
+		options: [{ label: 'Reject them', effect: 'a parse error names the line' }, { label: 'Merge them' }]
+	}).id;
+	r.pause(first, { text: 'Summary: the parser reads key=value lines.\nOpen: duplicate keys.\nNext: reject duplicate keys.' });
+	answerQuestion(w.db, user, question, { option: 1 });
+	return { first, question };
+}
+
+describe('previous state', () => {
+	it("shows a resumed run the handoff, the human's answer and what not to try again of the run it continues", () => {
+		const w = world();
+		const r = runsOf(w);
+		const { first } = answeredRun(w, r);
+		const prompt = assembleRun(w, r.queued(first));
+		expect(previousState(prompt)).toMatchSnapshot();
+		expect(previousState(prompt)).not.toContain('Search once');
+		expect(prompt.blocks.map((b) => b.name).slice(-2)).toEqual(['previous_state', 'assignment']);
+	});
+
+	it('is left out for a run that continues no other run and for the preview without a run', () => {
+		const w = world();
+		const run = runsOf(w).started();
+		expect(assembleRun(w, run).blocks.map((b) => b.name)).not.toContain('previous_state');
+		expect(assemble(w).user).not.toContain('## Previous state');
+	});
+
+	it('shows only the handoff of the last run of a chain of three and counts the continuations', () => {
+		const w = world();
+		const r = runsOf(w);
+		const first = r.started();
+		r.pause(first, { text: 'Handoff of the first run.' });
+		const second = r.started(first);
+		r.pause(second, { text: 'Handoff of the second run.', generated: true });
+		const block = previousState(assembleRun(w, r.queued(second)));
+		expect(block).toContain('## Previous state — continuation 2');
+		expect(block).toContain('Handoff of the second run.');
+		expect(block).toContain('generated from its events');
+		expect(block).not.toContain('Handoff of the first run.');
+		expect(block.length / 4).toBeLessThanOrEqual(1500);
+	});
+
+	it('stays within 1,500 tokens by cutting the end of an overlong handoff, and keeps what not to try again', () => {
+		const w = world();
+		const r = runsOf(w);
+		const { first } = answeredRun(w, r);
+		w.db.prepare("UPDATE run_events SET payload = json_object('text', ?) WHERE run_id = ? AND idempotency_key = 'handoff'").run('h'.repeat(20_000), first);
+		const prompt = assembleRun(w, r.queued(first));
+		const block = prompt.blocks.find((b) => b.name === 'previous_state')!;
+		expect(block.chars / 4).toBeLessThanOrEqual(1500);
+		expect(block.truncated).toBe(true);
+		expect(previousState(prompt)).toContain('replace by line number');
+		expect(previousState(prompt)).toMatch(/h\n\[handoff cut to fit 1,500 tokens\]$/);
+	});
+
+	it("reads the human's answer without collecting it, so the human can still retract it until the prompt is sent", () => {
+		const w = world();
+		const r = runsOf(w);
+		const { first, question } = answeredRun(w, r);
+		const resumed = r.queued(first);
+		const events: StudioEvent[] = [];
+		const unsubscribe = subscribe((event) => events.push(event));
+		const changes = () => (w.db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+		const before = changes();
+		const prompt = assembleRun(w, resumed);
+		unsubscribe();
+		expect(changes()).toBe(before);
+		expect(events).toEqual([]);
+		expect(prompt.showsHumanAnswer).toBe(true);
+		expect(() => retractAnswer(w.db, user, question)).not.toThrow();
 	});
 });
