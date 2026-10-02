@@ -66,13 +66,20 @@ function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) 
 		throw new DomainError('invalid_status', `status ist nur bei kind="adr" erlaubt (kind ist "${kind}").`, 'Lass status weg, oder setze kind auf "adr".');
 }
 
+/**
+ * Which notes a caller may see. `visibleIn` limits that to the notes of one project plus the global ones: [[slug]] links
+ * then neither reach nor reveal nor remove notes of other projects.
+ */
+export type NoteScope = { visibleIn?: number };
+
 /** [[slug]] bzw. [[slug|Anzeigetext]]-Verweise im Body: bekannte Slugs (ohne sich selbst) → Ziel-ID, unbekannte separat. */
-function wikilinks(db: DatabaseSync, selfId: number, body: string): { known: Map<string, number>; unknown: string[] } {
+function wikilinks(db: DatabaseSync, selfId: number, body: string, scope: NoteScope): { known: Map<string, number>; unknown: string[] } {
 	const slugs = [...new Set([...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)].map((m) => m[1].trim()))].filter(Boolean);
 	const known = new Map<string, number>();
 	const unknown: string[] = [];
+	const find = db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND (?2 IS NULL OR ${noteVisibleIn('?2')})`);
 	for (const slug of slugs) {
-		const row = db.prepare('SELECT id FROM notes WHERE slug = ?').get(slug) as { id: number } | undefined;
+		const row = find.get(slug, scope.visibleIn ?? null) as { id: number } | undefined;
 		if (!row) unknown.push(slug);
 		else if (row.id !== selfId) known.set(slug, row.id);
 	}
@@ -83,10 +90,15 @@ function wikilinks(db: DatabaseSync, selfId: number, body: string): { known: Map
  * Gleicht automatische (origin=wikilink) references-Kanten mit den [[slug]]-Verweisen im Body ab. Manuelle Kanten bleiben unberührt.
  * ponytail: reine Note-Note-Kanten lösen kein Bus-Event aus (kein Ticket, also kein projectId) — wie Agent-Profile in domain/runs.ts.
  */
-function syncWikilinks(db: DatabaseSync, fromId: number, body: string): string[] {
-	const { known, unknown } = wikilinks(db, fromId, body);
+function syncWikilinks(db: DatabaseSync, fromId: number, body: string, scope: NoteScope): string[] {
+	const { known, unknown } = wikilinks(db, fromId, body, scope);
 	const targets = new Set(known.values());
-	const existing = db.prepare("SELECT to_note_id FROM note_links WHERE from_note_id = ? AND type = 'references' AND origin = 'wikilink'").all(fromId) as { to_note_id: number }[];
+	const existing = db
+		.prepare(
+			`SELECT l.to_note_id FROM note_links l JOIN notes n ON n.id = l.to_note_id
+			WHERE l.from_note_id = ?1 AND l.type = 'references' AND l.origin = 'wikilink' AND (?2 IS NULL OR ${noteVisibleIn('?2')})`
+		)
+		.all(fromId, scope.visibleIn ?? null) as { to_note_id: number }[];
 	for (const { to_note_id } of existing)
 		if (!targets.has(to_note_id)) db.prepare("DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'").run(fromId, to_note_id);
 	for (const to_note_id of targets)
@@ -97,7 +109,8 @@ function syncWikilinks(db: DatabaseSync, fromId: number, body: string): string[]
 export function createNote(
 	db: DatabaseSync,
 	actor: Actor,
-	fields: { slug: string; title: string; body: string; kind?: NoteKind; status?: NoteStatus; tags?: string[]; projectIds?: number[] }
+	fields: { slug: string; title: string; body: string; kind?: NoteKind; status?: NoteStatus; tags?: string[]; projectIds?: number[] },
+	scope: NoteScope = {}
 ): { id: number; warnings: string[] } {
 	return tx(db, () => {
 		const { slug, projectIds, ...rest } = fields;
@@ -108,7 +121,7 @@ export function createNote(
 			.prepare(`INSERT INTO notes (slug, ${f.map(([k]) => k).join(', ')}) VALUES (?, ${f.map(() => '?').join(', ')}) RETURNING id`)
 			.get(slug, ...f.map(([, v]) => v)) as { id: number };
 		for (const projectId of projectIds ?? []) db.prepare('INSERT INTO note_projects (note_id, project_id) VALUES (?, ?)').run(id, projectId);
-		const warnings = syncWikilinks(db, id, rest.body);
+		const warnings = syncWikilinks(db, id, rest.body, scope);
 		return { id, warnings };
 	});
 }
@@ -118,7 +131,14 @@ export function createNote(
  * ein `updated_at`-Vergleich reicht nicht, `CURRENT_TIMESTAMP` löst nur sekundengenau auf und zwei schnelle Agent-Schreiber
  * träfen sonst denselben Wert). Jede angewandte Änderung erhöht `version` um 1. Body geändert → Wikilinks werden neu abgeglichen.
  */
-export function updateNote(db: DatabaseSync, actor: Actor, noteId: number, patch: Partial<NoteFields>, expectedVersion?: number): { warnings: string[] } {
+export function updateNote(
+	db: DatabaseSync,
+	actor: Actor,
+	noteId: number,
+	patch: Partial<NoteFields>,
+	expectedVersion?: number,
+	scope: NoteScope = {}
+): { warnings: string[] } {
 	return tx(db, () => {
 		const n = note(db, noteId);
 		if (expectedVersion !== undefined && expectedVersion !== n.version)
@@ -131,7 +151,7 @@ export function updateNote(db: DatabaseSync, actor: Actor, noteId: number, patch
 		const f = fieldsOf(patch);
 		if (f.length) db.prepare(`UPDATE notes SET ${f.map(([k]) => `${k} = ?`).join(', ')}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), n.id);
 		if (patch.body === undefined) return { warnings: [] };
-		return { warnings: syncWikilinks(db, n.id, patch.body) };
+		return { warnings: syncWikilinks(db, n.id, patch.body, scope) };
 	});
 }
 

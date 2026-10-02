@@ -316,6 +316,12 @@ describe('link_tickets', () => {
 		expect((await call(token, 'link_tickets', { waits_for: ['STU-2'] })).isError).toBe(false);
 	});
 
+	it('refuses a call that names nothing to link, with a way out', async () => {
+		const { call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		expect(await call(token, 'link_tickets', {})).toMatchObject({ isError: true, body: { error: 'nothing_to_link', hint: expect.stringContaining('waits_for') } });
+	});
+
 	it('links all or none and explains a cycle in tool words', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket();
@@ -459,14 +465,120 @@ describe('notes', () => {
 		expect(writableRows(db)).toBe(before);
 	});
 
-	it('answers an existing slug with the way to notes_get and notes_update', async () => {
+	it('answers a slug taken in your project with the way to notes_get and notes_update, without the internal note id', async () => {
+		const { db, projectId, call, startRun, ticket } = setup();
+		notes.createNote(db, user, { slug: 'arch-api', title: 'API', body: '', projectIds: [projectId] });
+		const { token } = startRun(ticket());
+		const { body } = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'neu' });
+		expect(body.error).toBe('slug_taken');
+		expect(body.message).not.toMatch(/Note \d+/);
+		expect(body.hint).toContain('notes_update');
+		expect(body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+	});
+
+	it('answers a slug taken by a global note with reading it and proposing a change, not with notes_update', async () => {
 		const { db, call, startRun, ticket } = setup();
 		notes.createNote(db, user, { slug: 'arch-api', title: 'API', body: '' });
 		const { token } = startRun(ticket());
 		const { body } = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'neu' });
 		expect(body.error).toBe('slug_taken');
-		expect(body.hint).toContain('notes_update');
-		expect(body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+		expect(body.hint).toContain('request_human');
+		expect(body.hint).not.toContain('notes_update');
+	});
+
+	it('answers a slug taken in another project without the note id and with a way out that does not loop through notes_get', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
+		const { token } = startRun(ticket());
+		const { body } = await call(token, 'notes_create', { slug: 'secret-plan', title: 'Plan', body: 'x' });
+		expect(body.error).toBe('slug_taken');
+		expect(body.message).not.toMatch(/Note \d+/);
+		expect(body.hint).not.toContain('notes_get');
+		expect(body.hint).toContain('anderen Slug');
+		expect(JSON.stringify(body)).not.toContain('Geheimer Plan');
+	});
+
+	it('links [[slug]] only to notes the run can see and warns about another project\'s slug like about an unknown one', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
+		const { token } = startRun(ticket());
+		const linksToSecret = () => db.prepare("SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'").get()?.n;
+
+		const unknown = await call(token, 'notes_create', { slug: 'probe-a', title: 'A', body: '[[no-such-slug]]' });
+		const foreign = await call(token, 'notes_create', { slug: 'probe-b', title: 'B', body: '[[secret-plan]]' });
+		expect(foreign.body.warnings).toEqual([unknown.body.warnings[0].replace('no-such-slug', 'secret-plan')]);
+		const updated = await call(token, 'notes_update', { slug: 'probe-a', expected_version: 1, body: 'jetzt [[secret-plan]]' });
+		expect(updated.body.warnings).toEqual(foreign.body.warnings);
+		expect(linksToSecret()).toBe(0);
+	});
+
+	it('keeps a link a human made from a visible note to a note of another project when the run edits the body', async () => {
+		const { db, projectId, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
+		notes.createNote(db, user, { slug: 'own-plan', title: 'Plan', body: 'siehe [[secret-plan]]', projectIds: [projectId] });
+		const { token } = startRun(ticket());
+		const edges = () => db.prepare("SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'").get()?.n;
+		expect(edges()).toBe(1);
+
+		await call(token, 'notes_update', { slug: 'own-plan', expected_version: 1, body: 'siehe [[secret-plan]], ergänzt' });
+		expect(edges()).toBe(1);
+	});
+
+	it('lists no note of another project in get_ticket, even one a human linked to your ticket', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		const foreign = notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] }).id;
+		notes.linkTicket(db, user, foreign, own, 'references');
+		const { token } = startRun(own);
+		const view = JSON.stringify((await call(token, 'get_ticket')).body);
+		expect(view).not.toContain('secret-plan');
+		expect(view).not.toContain('Geheimer Plan');
+	});
+
+	it('names no linked note of another project in notes_get, in either direction', async () => {
+		const { db, projectId, call, startRun, ticket } = setup();
+		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
+		const visible = notes.createNote(db, user, { slug: 'own-plan', title: 'Plan', body: 'x', projectIds: [projectId] }).id;
+		const foreign = notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] }).id;
+		notes.linkNote(db, user, foreign, visible, 'references');
+		notes.linkNote(db, user, visible, foreign, 'contains');
+		const { token } = startRun(ticket());
+		const view = (await call(token, 'notes_get', { slug: 'own-plan' })).body;
+		expect(JSON.stringify(view)).not.toContain('secret-plan');
+		expect(view).not.toHaveProperty('referenced_by');
+	});
+});
+
+describe('global notes are read-only for runs', () => {
+	it('lets a run read, reference and link a global ADR to its ticket, but not change or supersede it', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const adr = notes.createNote(db, user, { slug: 'adr-global', title: 'Globale ADR', body: 'v1', kind: 'adr', status: 'accepted' }).id;
+		const { token } = startRun(own);
+
+		expect((await call(token, 'notes_get', { slug: 'adr-global' })).body).toMatchObject({ body: 'v1', status: 'accepted', version: 1 });
+		expect((await call(token, 'notes_create', { slug: 'adr-own', title: 'Eigene ADR', body: 'nach [[adr-global]]', kind: 'adr' })).isError).toBe(false);
+		expect((await call(token, 'notes_link', { slug: 'adr-own', type: 'references', target: 'adr-global' })).isError).toBe(false);
+		expect((await call(token, 'link_note_to_ticket', { slug: 'adr-global', relation: 'references' })).isError).toBe(false);
+		expect((await call(token, 'get_ticket')).body.notes).toEqual([{ slug: 'adr-global', title: 'Globale ADR', relation: 'references' }]);
+
+		const before = writableRows(db);
+		for (const [name, args] of [
+			['notes_update', { slug: 'adr-global', expected_version: 1, body: 'v2' }],
+			['notes_link', { slug: 'adr-own', type: 'supersedes', target: 'adr-global' }],
+			['notes_link', { slug: 'adr-global', type: 'references', target: 'adr-own' }]
+		] as const) {
+			const refused = await call(token, name, args);
+			expect(refused).toMatchObject({ isError: true, body: { error: 'note_read_only', message: expect.stringContaining('adr-global'), hint: expect.stringContaining('request_human') } });
+		}
+		expect(writableRows(db)).toBe(before);
+
+		notes.updateNote(db, user, adr, { body: 'v2' }, 1);
+		expect(notes.getNote(db, adr)).toMatchObject({ body: 'v2', status: 'accepted' });
 	});
 });
 
@@ -796,7 +908,8 @@ describe('argument types', () => {
 		['a number as comment text', 'add_comment', { text: 42 }],
 		['an array as comment text', 'add_comment', { text: ['a'] }],
 		['a constructor key', 'add_comment', { text: 'x', constructor: { prototype: { polluted: true } } }],
-		['a __proto__ key inside an option', 'request_human', JSON.parse('{"question": "q", "options": [{"label": "a", "__proto__": {"polluted": true}}]}')]
+		['a __proto__ key inside an option', 'request_human', JSON.parse('{"question": "q", "options": [{"label": "a", "__proto__": {"polluted": true}}]}')],
+		['the relation verified_by, which only verifying a note sets', 'link_note_to_ticket', { slug: 'arch-api', relation: 'verified_by' }]
 	];
 
 	it.each(mistyped)('rejects %s in the schema, before anything is written', expectSchemaRefusal);

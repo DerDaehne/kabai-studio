@@ -219,13 +219,19 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 
 	tool('create_child_tickets', ({ items }) => createChildTickets(db, ctx, items));
 
-	tool('link_tickets', ({ waits_for = [], blocks = [] }) =>
-		tx(db, () => {
+	tool('link_tickets', ({ waits_for = [], blocks = [] }) => {
+		if (!waits_for.length && !blocks.length)
+			throw new Refusal({
+				error: 'nothing_to_link',
+				message: 'link_tickets ohne waits_for und blocks verknüpft nichts.',
+				hint: 'Nenne in waits_for die Tickets, auf die dein Ticket wartet, oder in blocks die, die auf dein Ticket warten.'
+			});
+		return tx(db, () => {
 			for (const ref of waits_for) board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
 			for (const ref of blocks) board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
 			return { ref: board.ticket(db, ctx.ticketId).ref };
-		})
-	);
+		});
+	});
 
 	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
 
@@ -243,18 +249,22 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 	tool('notes_get', ({ slug }) => noteView(db, ctx, slug));
 
 	tool('notes_create', ({ slug, title, body, kind, tags }) => {
-		const { id, warnings } = notes.createNote(db, ctx.actor, { slug, title, body, kind, tags, projectIds: [ctx.projectId] });
+		refuseTakenSlug(db, ctx, slug);
+		const { id, warnings } = notes.createNote(db, ctx.actor, { slug, title, body, kind, tags, projectIds: [ctx.projectId] }, { visibleIn: ctx.projectId });
 		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
 	});
 
 	tool('notes_update', ({ slug, expected_version, ...patch }) => {
-		const id = noteIdOf(db, ctx, slug);
-		const { warnings } = notes.updateNote(db, ctx.actor, id, patch, expected_version);
+		const id = ownNoteIdOf(db, ctx, slug);
+		const { warnings } = notes.updateNote(db, ctx.actor, id, patch, expected_version, { visibleIn: ctx.projectId });
 		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
 	});
 
 	tool('notes_link', ({ slug, type, target }) => {
-		notes.linkNote(db, ctx.actor, noteIdOf(db, ctx, slug), noteIdOf(db, ctx, target), type);
+		const from = ownNoteIdOf(db, ctx, slug);
+		// superseding marks the target note as replaced, so it changes the target too
+		const to = type === 'supersedes' ? ownNoteIdOf(db, ctx, target) : noteIdOf(db, ctx, target);
+		notes.linkNote(db, ctx.actor, from, to, type);
 		return { linked: true };
 	});
 
@@ -303,8 +313,6 @@ function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: stri
 			return 'Eigene Arbeit gibt ein anderer Run oder der Mensch frei; halte dein Ergebnis mit add_comment fest.';
 		case 'conflict':
 			return 'Lies die Note mit notes_get neu und wende deine Änderung auf deren aktuelle version an.';
-		case 'slug_taken':
-			return 'Die Note gibt es schon: lies sie mit notes_get und ändere sie mit notes_update.';
 		case 'cycle':
 			return 'Prüfe die Richtung von waits_for und blocks: Ein Ticket kann nicht, auch nicht über andere, auf sich selbst warten.';
 	}
@@ -470,14 +478,47 @@ function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number) {
 
 /** Notes resolve by slug among the caller's project notes and the global ones, so a note of another project stays out of reach. */
 function noteIdOf(db: DatabaseSync, ctx: ToolContext, slug: string): number {
-	const found = db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND ${notes.noteVisibleIn('?2')}`).get(slug, ctx.projectId) as { id: number } | undefined;
-	if (!found)
+	const id = visibleNoteId(db, ctx, slug);
+	if (id === undefined)
 		throw new Refusal({
 			error: 'not_found',
 			message: `Eine Note „${slug}“ gibt es in deinem Projekt nicht.`,
 			hint: 'notes_search findet vorhandene Notes; eine neue legst du mit notes_create an.'
 		});
-	return found.id;
+	return id;
+}
+
+const visibleNoteId = (db: DatabaseSync, ctx: ToolContext, slug: string) =>
+	(db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND ${notes.noteVisibleIn('?2')}`).get(slug, ctx.projectId) as { id: number } | undefined)?.id;
+
+const isOwnNote = (db: DatabaseSync, ctx: ToolContext, noteId: number) =>
+	db.prepare('SELECT 1 FROM note_projects WHERE note_id = ? AND project_id = ?').get(noteId, ctx.projectId) !== undefined;
+
+/** A run changes only notes of its own project; the global ones belong to the human and stay read-only for runs. */
+function ownNoteIdOf(db: DatabaseSync, ctx: ToolContext, slug: string): number {
+	const id = noteIdOf(db, ctx, slug);
+	if (!isOwnNote(db, ctx, id))
+		throw new Refusal({
+			error: 'note_read_only',
+			message: `Die Note „${slug}“ ist global; ein Run ändert nur Notes seines Projekts.`,
+			hint: 'Lesen und verweisen darfst du; eine Änderung schlägst du dem Menschen mit request_human vor.'
+		});
+	return id;
+}
+
+/** Names a taken slug without the internal note id, with a way out that fits what the run may do with that note. */
+function refuseTakenSlug(db: DatabaseSync, ctx: ToolContext, slug: string) {
+	if (!db.prepare('SELECT 1 FROM notes WHERE slug = ?').get(slug)) return;
+	const id = visibleNoteId(db, ctx, slug);
+	if (id === undefined)
+		throw new Refusal({ error: 'slug_taken', message: `Der Slug „${slug}“ ist schon vergeben.`, hint: 'Wähle einen anderen Slug, der dein Thema genauer benennt.' });
+	if (isOwnNote(db, ctx, id))
+		throw new Refusal({ error: 'slug_taken', message: `Die Note „${slug}“ gibt es schon.`, hint: 'Lies sie mit notes_get und ändere sie mit notes_update.' });
+	throw new Refusal({
+		error: 'slug_taken',
+		message: `Die Note „${slug}“ gibt es schon als globale Note.`,
+		hint: 'Lies sie mit notes_get; eine Änderung schlägst du dem Menschen mit request_human vor, sonst wähle einen anderen Slug.'
+	});
 }
 
 const noteVersion = (db: DatabaseSync, noteId: number) => (db.prepare('SELECT version FROM notes WHERE id = ?').get(noteId) as { version: number }).version;
