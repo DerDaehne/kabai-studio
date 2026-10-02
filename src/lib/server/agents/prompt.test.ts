@@ -1,10 +1,14 @@
+import { randomBytes } from 'node:crypto';
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import { DomainError, type Actor } from '../domain/core';
 import * as notes from '../domain/notes';
 import * as runs from '../domain/runs';
+import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
+import { setSecret } from '../secrets';
 import { BASE_PROMPT, HANDOFF_TEMPLATE } from './base-prompt';
 import { assemblePrompt, type PromptRun } from './prompt';
 
@@ -48,7 +52,40 @@ function world() {
 	return { db, projectId, parser, ticket, setRole, setDescription, comment, note };
 }
 
-const assemble = (w: ReturnType<typeof world>, profile = cloud, opts = {}) => assemblePrompt(w.db, { ticketId: w.parser, profile }, opts);
+type World = ReturnType<typeof world>;
+
+const assemble = (w: World, profile = cloud, opts = {}) => assemblePrompt(w.db, { ticketId: w.parser, profile }, opts);
+
+/** Brings the comments of STU-1 to ten, eight of them long enough to matter for the budget. */
+function tenComments(w: World) {
+	for (let day = 3; day <= 10; day++) w.comment(w.parser, `Comment ${day} `.padEnd(1500, 'x'), day);
+}
+
+/** A local-model prompt in which note bodies, comments and the description are all cut. */
+function fullyCutPrompt() {
+	const w = world();
+	w.note(w.parser, 'large-note', 'n'.repeat(16_000));
+	tenComments(w);
+	w.setDescription(w.parser, 'd'.repeat(60_000));
+	return assemble(w, local);
+}
+
+/** Calls the studio MCP endpoint as a run of the ticket and returns the JSON-RPC result, as an agent receives it. */
+async function asRunOf(db: DatabaseSync, ticketId: number, method: string, params?: object) {
+	const profileId = runs.createProfile(db, user, { name: `run-of-${ticketId}-${method}`, executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	const runId = runs.createRun(db, user, { ticketId, profileId }).id;
+	const { token } = runs.startRun(db, system, runId);
+	const response = await mcpEndpoint(db)(
+		new Request('http://127.0.0.1:3000/mcp', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
+			body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+		})
+	);
+	const text = await response.text();
+	const json = text.startsWith('{') ? text : text.split('\n').find((line) => line.startsWith('data: '))!.slice('data: '.length);
+	return JSON.parse(json).result;
+}
 
 function tooLargeError(work: () => unknown): DomainError {
 	try {
@@ -140,10 +177,6 @@ describe('internal context', () => {
 
 describe('budget', () => {
 	// The default context of 32k tokens gives a prompt budget of 11,468 tokens, about 45,800 characters.
-	const tenComments = (w: ReturnType<typeof world>) => {
-		for (let day = 3; day <= 10; day++) w.comment(w.parser, `Comment ${day} `.padEnd(1500, 'x'), day);
-	};
-
 	it('cuts note bodies to slug and title first and keeps every comment', () => {
 		const w = world();
 		w.note(w.parser, 'large-note', 'n'.repeat(48_000));
@@ -240,39 +273,78 @@ describe('blocks and estimate', () => {
 	});
 });
 
+
 describe('tool names', () => {
 	const SNAKE_CASE = /\b[a-z]+(?:_[a-z]+)+\b/g;
 	// The context also quotes domain messages, so only the names it puts in backticks claim to be tools.
 	const BACKTICKED_SNAKE_CASE = /(?<=`)[a-z]+(?:_[a-z]+)+(?=`)/g;
 
 	async function registeredToolVocabulary() {
-		const db = openDb(':memory:');
-		migrate(db);
-		const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
-		const profileId = runs.createProfile(db, user, { name: 'Test', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
-		const runId = runs.createRun(db, user, { ticketId, profileId }).id;
-		const { token } = runs.startRun(db, system, runId);
-		const response = await mcpEndpoint(db)(
-			new Request('http://127.0.0.1:3000/mcp', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
-				body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
-			})
-		);
-		const text = await response.text();
-		const json = text.startsWith('{') ? text : text.split('\n').find((line) => line.startsWith('data: '))!.slice('data: '.length);
-		const tools = JSON.parse(json).result.tools as { name: string; inputSchema: { properties?: object } }[];
+		const w = world();
+		const { tools } = (await asRunOf(w.db, w.parser, 'tools/list')) as { tools: { name: string; inputSchema: { properties?: object } }[] };
 		return new Set(tools.flatMap((t) => [t.name, ...Object.keys(t.inputSchema.properties ?? {})]));
 	}
 
-	it('names only registered studio MCP tools and their arguments, in the base prompt and the internal context', async () => {
+	it('names only registered studio MCP tools and their arguments, in the base prompt and the internal context, cut or not', async () => {
 		const vocabulary = await registeredToolVocabulary();
-		const { user: context } = assemble(world(), local);
+		const cut = fullyCutPrompt();
+		expect(cut.blocks.filter((b) => b.truncated).map((b) => b.name)).toEqual(['ticket', 'comments', 'notes']);
 		const inBase = [BASE_PROMPT.full, BASE_PROMPT.compact].flatMap((text) => text.match(SNAKE_CASE) ?? []);
-		const inContext = context.match(BACKTICKED_SNAKE_CASE) ?? [];
-		expect(inContext.length).toBeGreaterThan(0);
+		const inContext = [assemble(world(), local).user, cut.user].flatMap((text) => text.match(BACKTICKED_SNAKE_CASE) ?? []);
+		expect(inContext).toContain('notes_get');
 		const named = new Set([...inBase, ...inContext]);
 		expect([...named].filter((name) => !vocabulary.has(name))).toEqual([]);
+	});
+});
+
+describe('boundaries shared with get_ticket', () => {
+	it('masks a stored secret in the context before it reaches the model', () => {
+		const w = world();
+		const secret = 'sk-test-prompt-secret-4711';
+		setSecret(w.db, 'probe', secret, false, randomBytes(32));
+		w.comment(w.parser, `the key is ${secret}`, 3);
+		const { user: context } = assemble(w);
+		expect(context).not.toContain(secret);
+		expect(context).toContain('[secret:probe]');
+	});
+
+	it('leaves out a note of another project, even one a human linked to the ticket', () => {
+		const w = world();
+		const otherProject = board.createProject(w.db, user, { key: 'OTH', name: 'Other' }).id;
+		const foreign = notes.createNote(w.db, user, { slug: 'foreign-plan', title: 'Foreign plan', body: 'confidential body', projectIds: [otherProject] }).id;
+		notes.linkTicket(w.db, user, foreign, w.parser, 'references');
+		const { user: context } = assemble(w);
+		expect(context).not.toContain('foreign-plan');
+		expect(context).not.toContain('confidential body');
+	});
+
+	it('leaves out an archived note', () => {
+		const w = world();
+		const old = notes.createNote(w.db, user, { slug: 'old-plan', title: 'Old plan', body: 'outdated body', projectIds: [w.projectId] }).id;
+		notes.linkTicket(w.db, user, old, w.parser, 'references');
+		notes.archiveNote(w.db, user, old);
+		expect(assemble(w).user).not.toContain('old-plan');
+	});
+
+	it('lists the allowed moves as get_ticket shows them to the run, with human-only moves blocked', async () => {
+		const w = world();
+		const inReview = w.ticket('Review the config format', 'Review');
+		const { content } = await asRunOf(w.db, inReview, 'tools/call', { name: 'get_ticket', arguments: {} });
+		const moves = JSON.parse(content[0].text).allowed_moves as { column_id: number; name: string; blocked?: string }[];
+		const { user: context } = assemblePrompt(w.db, { ticketId: inReview, profile: local });
+		expect(moves.some((m) => m.blocked)).toBe(true);
+		for (const m of moves) expect(context).toContain(`- ${m.column_id}: ${m.name}${m.blocked ? ` — blocked: ${m.blocked}` : ''}`);
+	});
+
+	it('writes nothing and announces nothing', () => {
+		const w = world();
+		const events: StudioEvent[] = [];
+		const unsubscribe = subscribe((event) => events.push(event));
+		const changes = () => (w.db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+		const before = changes();
+		assemble(w);
+		unsubscribe();
+		expect(changes()).toBe(before);
+		expect(events).toEqual([]);
 	});
 });

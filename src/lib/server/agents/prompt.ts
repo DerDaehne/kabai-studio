@@ -2,9 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { contextBudget } from '../../agents/model-catalog';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
-import { noteVisibleIn } from '../domain/notes';
 import type { Profile } from '../domain/runs';
-import { agentMoves, recentComments, relationsOf, tasksOf, type AgentMove, type RelatedTicket, type ToolContext } from '../mcp';
+import { agentMoves, linkedNotes, recentComments, relationsOf, tasksOf, type AgentMove, type NoteLink, type RelatedTicket, type ToolContext } from '../mcp';
 import { mask } from '../secrets';
 import { BASE_PROMPT, type PromptVariant } from './base-prompt';
 
@@ -98,19 +97,20 @@ function readContext(db: DatabaseSync, ticketId: number): Context {
 		relations: relationsOf(db, scope, ticketId),
 		comments: recentComments(db, ticketId),
 		moves: agentMoves(db, scope),
-		notes: linkedNotes(db, t.project_id, ticketId)
+		notes: notesOf(linkedNotes(db, scope, ticketId))
 	};
 }
 
-/** Notes linked to the ticket that its project can read, one entry per note; archived ones no longer document anything. */
-const linkedNotes = (db: DatabaseSync, projectId: number, ticketId: number) =>
-	db
-		.prepare(
-			`SELECT n.slug, n.title, group_concat(nt.relation, ', ' ORDER BY nt.relation) AS relations, n.body
-			FROM note_tickets nt JOIN notes n ON n.id = nt.note_id
-			WHERE nt.ticket_id = ?1 AND n.archived = 0 AND ${noteVisibleIn('?2')} GROUP BY n.id ORDER BY n.slug`
-		)
-		.all(ticketId, projectId) as LinkedNote[];
+/** One entry per note with all its relations to the ticket; the links arrive sorted by slug and relation. */
+function notesOf(links: NoteLink[]): LinkedNote[] {
+	const bySlug = new Map<string, LinkedNote>();
+	for (const { slug, title, relation, body } of links) {
+		const note = bySlug.get(slug);
+		if (note) note.relations += `, ${relation}`;
+		else bySlug.set(slug, { slug, title, relations: relation, body });
+	}
+	return [...bySlug.values()];
+}
 
 /** Secrets are masked, and blocks without content are left out of text and list. */
 function joined(systemBlocks: Block[], userBlocks: Block[]): AssembledPrompt {
@@ -187,8 +187,11 @@ function relationsText(relations: Context['relations']): string {
 	return ['### Relations — A blocks B = A must be finished before B starts', ...lines].join('\n');
 }
 
-const relatedTicket = (t: RelatedTicket) =>
-	t.other_project ? `${t.ref} (other project)` : `${t.ref} "${t.title}" (${t.column})${t.blocking ? ', still blocking' : ''}`;
+function relatedTicket(t: RelatedTicket): string {
+	if (t.other_project) return `${t.ref} (other project)`;
+	const stillBlocking = t.blocking ? ', still blocking' : '';
+	return `${t.ref} "${t.title}" (${t.column})${stillBlocking}`;
+}
 
 function commentsBlock(comments: Comment[], cut: Cut): Block {
 	if (!comments.length) return block('comments', '');
@@ -200,11 +203,21 @@ function commentsBlock(comments: Comment[], cut: Cut): Block {
 	return block('comments', [heading, ...shown.map(commentText)].join('\n\n'), left > 0);
 }
 
-const commentText = (c: Comment) => `[${c.id}] ${c.by} · ${c.at}\n${c.text}${'more' in c ? `\n(cut; ${c.more} reads it in full)` : ''}`;
+function commentText(c: Comment): string {
+	const header = `[${c.id}] ${c.by} · ${c.at}`;
+	const readMore = 'more' in c ? `\n(cut; ${c.more} reads it in full)` : '';
+	return `${header}\n${c.text}${readMore}`;
+}
 
 function movesText(moves: AgentMove[]): string {
-	const lines = moves.map((m) => `- ${m.columnId}: ${m.name}${m.refusals.length ? ` — blocked: ${m.refusals.map((r) => r.message).join(' ')}` : ''}`);
+	const lines = moves.map(moveLine);
 	return ['### Allowed moves — `move_ticket` with column_id', ...(lines.length ? lines : ['(none)'])].join('\n');
+}
+
+function moveLine(m: AgentMove): string {
+	if (!m.refusals.length) return `- ${m.columnId}: ${m.name}`;
+	const reasons = m.refusals.map((r) => r.message).join(' ');
+	return `- ${m.columnId}: ${m.name} — blocked: ${reasons}`;
 }
 
 function notesBlock(notes: LinkedNote[], cut: Cut): Block {

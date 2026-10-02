@@ -570,14 +570,16 @@ function noteView(db: DatabaseSync, ctx: ToolContext, slug: string) {
 	};
 }
 
-/** The notes linked to a ticket that the caller can read; archived ones no longer document anything. */
-const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number) =>
+export type NoteLink = { slug: string; title: string; relation: string; body: string };
+
+/** The links from a ticket to the notes the caller can read, one per relation; archived notes no longer document anything. */
+export const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number) =>
 	db
 		.prepare(
-			`SELECT n.slug, n.title, nt.relation FROM note_tickets nt JOIN notes n ON n.id = nt.note_id
+			`SELECT n.slug, n.title, nt.relation, n.body FROM note_tickets nt JOIN notes n ON n.id = nt.note_id
 			WHERE nt.ticket_id = ?1 AND n.archived = 0 AND ${notes.noteVisibleIn('?2')} ORDER BY n.slug, nt.relation`
 		)
-		.all(ticketId, ctx.projectId);
+		.all(ticketId, ctx.projectId) as NoteLink[];
 
 export const tasksOf = (db: DatabaseSync, ticketId: number) =>
 	(db.prepare('SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(ticketId) as { id: number; title: string; done: 0 | 1 }[]).map(
@@ -618,7 +620,8 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
 		.get(id) as { ref: string; title: string; type: string; column: string; description: string; docs_required: 0 | 1; review_approved_at: string | null };
-	const ticketNotes = linkedNotes(db, ctx, id);
+	// The note bodies stay out: notes_get reads one when it is needed.
+	const ticketNotes = linkedNotes(db, ctx, id).map(({ slug, title, relation }) => ({ slug, title, relation }));
 	const view = {
 		ref: t.ref,
 		title: t.title,
