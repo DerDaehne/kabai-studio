@@ -74,6 +74,7 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 /**
  * Aufbewahrung: die neueste Sicherung der letzten `daily` Tage und der letzten `weekly` Wochen (ab Montag, UTC), jeweils
  * gezählt über Tage/Wochen, die überhaupt eine Sicherung haben — lange Pausen löschen also nichts. Die neueste bleibt immer.
+ * Future-dated backups (at > now) are never deleted and take no retention slot, because they may be the only good state.
  * Gibt die gelöschten Dateinamen zurück.
  */
 export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date()): string[] {
