@@ -179,7 +179,7 @@ describe('get_ticket', () => {
 		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Backlog' }]);
 		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Backlog' }]);
 		expect(body.allowed_moves).toEqual([
-			{ column_id: expect.any(Number), name: 'In Arbeit', blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).' },
+			{ column_id: expect.any(Number), name: 'Refine', blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).' },
 			{ column_id: expect.any(Number), name: 'Human Intervention' }
 		]);
 
@@ -195,14 +195,14 @@ describe('move_ticket for agents', () => {
 		board.linkRelation(db, user, predecessor, own, 'blocks');
 		const { token } = startRun(own);
 
-		const refused = await call(token, 'move_ticket', { column_id: col['In Arbeit'] });
+		const refused = await call(token, 'move_ticket', { column_id: col['Refine'] });
 		expect(refused).toMatchObject({ isError: true, body: { error: 'blocked' } });
 		expect(refused.body.message).toContain('STU-1');
 		expect(refused.body.message).toContain('blocks_satisfied_at = done');
 		expect(refused.body.hint).toContain('request_human');
 		expect(columnOf(own)).toBe('Backlog');
 
-		board.moveTicket(db, user, own, col['In Arbeit']); // a human may start it deliberately
+		board.moveTicket(db, user, own, col['Refine']); // a human may start it deliberately
 		board.moveTicket(db, user, own, col.Backlog);
 		expect((await call(token, 'move_ticket', { column_id: col['Human Intervention'] })).isError).toBe(false);
 	});
@@ -214,13 +214,13 @@ describe('move_ticket for agents', () => {
 		place(predecessor, 'Review');
 		board.approveReview(db, user, predecessor);
 		const { token } = startRun(own);
-		const move = () => call(token, 'move_ticket', { column_id: col['In Arbeit'] });
+		const move = () => call(token, 'move_ticket', { column_id: col['Refine'] });
 
 		expect((await move()).body.error).toBe('blocked');
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
-		expect(await move()).toEqual({ isError: false, body: { column: 'In Arbeit' } });
-		expect(columnOf(own)).toBe('In Arbeit');
-		expect(await move()).toEqual({ isError: false, body: { column: 'In Arbeit' } }); // a retry is harmless
+		expect(await move()).toEqual({ isError: false, body: { column: 'Refine' } });
+		expect(columnOf(own)).toBe('Refine');
+		expect(await move()).toEqual({ isError: false, body: { column: 'Refine' } }); // a retry is harmless
 	});
 });
 
@@ -709,7 +709,7 @@ describe('identity from the run', () => {
 
 		const { body } = await call(token, 'add_comment', { text: 'Angefangen' });
 		expect(db.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?').get(body.comment_id)).toEqual({ author_kind: 'agent', author: label, run_id: runId });
-		await call(token, 'move_ticket', { column_id: col['In Arbeit'] });
+		await call(token, 'move_ticket', { column_id: col['Refine'] });
 		expect(db.prepare('SELECT moved_by, assignee FROM tickets WHERE id = ?').get(own)).toEqual({ moved_by: JSON.stringify({ kind: 'agent', runId }), assignee: label });
 	});
 
@@ -773,13 +773,13 @@ describe('errors reach the agent with a way out in tool vocabulary', () => {
 		const { token } = startRun(ticket());
 		const { body } = await call(token, 'move_ticket', { column_id: col.Review });
 		expect(body.error).toBe('transition_not_allowed');
-		expect(body.hint).toBe(`Erreichbar: column_id ${col['In Arbeit']} (In Arbeit), column_id ${col['Human Intervention']} (Human Intervention).`);
+		expect(body.hint).toBe(`Erreichbar: column_id ${col['Refine']} (Refine), column_id ${col['Human Intervention']} (Human Intervention).`);
 	});
 
 	it('points to complete_tasks with the open task ids and to request_human for what only the human can do', async () => {
 		const { db, call, startRun, ticket, place, col } = setup();
 		const own = ticket();
-		place(own, 'Review');
+		place(own, 'Abnahme');
 		board.updateTicket(db, user, own, { docs_required: 1 });
 		const [a, b] = board.addTasks(db, user, own, ['A', 'B']).ids;
 		const { token } = startRun(own);
