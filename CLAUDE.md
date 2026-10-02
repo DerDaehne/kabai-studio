@@ -49,6 +49,11 @@ People should understand intent and behaviour by reading the code.
 - **Readable code over comments.** Express intent through clear names, small
   well-named functions, explicit types and straightforward control flow. A few more
   lines that follow best practices beat a dense line plus a comment.
+- **Shallow nesting:** at most 2 levels of nested blocks inside a function, 3 only
+  as a justified exception. Flatten with early returns, guard clauses and extracted
+  functions.
+- **Short functions:** a function or method fits on one normal screen (about 40
+  lines). Longer → split into well-named steps.
 - **Comment only what the code cannot say:** a non-obvious *why*, a workaround
   (name the underlying cause), a security or concurrency invariant, or a deliberate
   simplification (`ponytail:` marker with its limit and upgrade path). Keep it to
