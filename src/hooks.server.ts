@@ -12,6 +12,7 @@ import {
 import { startBackups } from '$lib/server/backup';
 import { backupDir, db } from '$lib/server/db';
 import { DomainError, formatError } from '$lib/server/domain/error';
+import { builtinExecutor } from '$lib/server/executors/builtin';
 import { startRunner } from '$lib/server/runner';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
@@ -35,8 +36,8 @@ export const init: ServerInit = async () => {
 		// creates secret.key — once at startup
 		initSecrets(db());
 		startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
-		// no executors are installed yet, so queued runs fail with a clear reason instead of waiting forever
-		startRunner(db(), {});
+		// acp profiles fail with a clear reason until their executor is installed, instead of waiting forever
+		startRunner(db(), { builtin: builtinExecutor(db()) });
 		if (!hasOwner(db())) {
 			const token = issueSetupToken();
 			console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);

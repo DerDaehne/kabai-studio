@@ -308,3 +308,6 @@ export interface ColdStartLimits {
 
 // The hint already shows during an ordinary reload after an idle unload; the limit leaves room for a one-time download of a large model.
 export const COLD_START_LIMITS: ColdStartLimits = { hintAfterMs: 30_000, failAfterMs: 30 * 60_000 };
+
+/** Once a model has started to answer, a stream that stays silent this long has hung: the run fails with `provider_inactive`. */
+export const INACTIVITY_LIMIT_MS = 300_000;

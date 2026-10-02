@@ -1,0 +1,225 @@
+import { isStepCount, streamText, type FinishReason, type LanguageModel, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
+import type { DatabaseSync } from 'node:sqlite';
+import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
+import { assemblePrompt, type AssembledPrompt } from '../agents/prompt';
+import { DomainError } from '../domain/core';
+import { mcpEndpoint } from '../mcp';
+import type { Executor, ExecutorIo, ExecutorResult, ParkReason, Phase, RunContext } from '../runner';
+import { mask } from '../secrets';
+import { modelFor, requestSettings } from './provider';
+import { studioTools } from './studio-mcp-client';
+
+export type BuiltinOptions = {
+	/** The HTTP client for the model server. */
+	fetch?: typeof globalThis.fetch;
+	inactivityMs?: number;
+};
+/** What one step did, for deciding how the run ends and for spotting a stuck run. */
+export type StepRecord = { step: number; finishReason: FinishReason; inputTokens?: number; reasoningTokens?: number; calls: ToolCallRecord[] };
+type ToolCallRecord = { tool: string; isError: boolean };
+type Part = TextStreamPart<ToolSet>;
+type OpenStep = { number: number; startedAt: number; reasoning: string; text: string; textsRecorded: boolean; calls: ToolCallRecord[] };
+
+// ponytail: fixed limits; make them configurable once practice asks for it.
+const DEFAULT_MAX_STEPS = 24;
+const REASONING_LIMIT = 20_000;
+const RESULT_LIMIT = 8_000;
+const PHASE_INTERVAL_MS = 1000;
+
+/** Works a run in a tool loop on an OpenAI-compatible model server, with the studio MCP tools of the run. */
+export function builtinExecutor(db: DatabaseSync, { fetch = globalThis.fetch, inactivityMs = INACTIVITY_LIMIT_MS }: BuiltinOptions = {}): Executor {
+	const endpoint = mcpEndpoint(db);
+	return {
+		async execute(run, io) {
+			const prompt = assemblePrompt(db, run);
+			const model = modelFor(db, run.profile, fetch);
+			const studio = await studioTools(endpoint, run.token, io.signal);
+			try {
+				io.emit({ type: 'log', payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens: studio.toolTokens } });
+				const log = await runSteps({ model, prompt, tools: studio.tools, run, io, inactivityMs });
+				return endOfRun(run, io, log);
+			} finally {
+				await studio.close();
+			}
+		}
+	};
+}
+
+type Loop = { model: LanguageModel; prompt: AssembledPrompt; tools: ToolSet; run: RunContext; io: ExecutorIo; inactivityMs: number };
+
+async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): Promise<StepLog> {
+	const log = new StepLog(io, inactivityMs);
+	const result = streamText({
+		model,
+		instructions: prompt.system,
+		messages: [{ role: 'user', content: prompt.user }],
+		tools,
+		...requestSettings(run.profile),
+		abortSignal: io.signal,
+		// ponytail: chunkMs starts with a step's first output, so loading the model stays the cold start watch's job; a later
+		// step that never starts to answer is not caught — add firstChunkMs from the second step on if that shows up
+		timeout: { chunkMs: inactivityMs },
+		stopWhen: [isStepCount(maxSteps(run)), askedHuman, () => io.park.aborted],
+		onError: () => {} // errors arrive as stream parts and end the run there
+	});
+	for await (const part of result.fullStream) log.record(part);
+	return log;
+}
+
+const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS;
+const isErrorResult = (output: unknown) => (output as { isError?: unknown } | undefined)?.isError === true;
+const askedHuman: StopCondition<ToolSet> = ({ steps }) => steps.at(-1)?.toolResults.some((r) => r.toolName === 'request_human' && !isErrorResult(r.output)) ?? false;
+
+function endOfRun(run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
+	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
+	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: { text: log.lastMessage } }).seq;
+	if (log.succeeded('request_human')) return { state: 'paused' };
+	if (io.park.aborted) return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
+	if (log.endedWithToolCalls() && !log.succeeded('move_ticket'))
+		throw new DomainError(
+			'step_limit',
+			`Der Run hat nach ${maxSteps(run)} Schritten aufgehört, ohne das Ticket zu verschieben.`,
+			'Erhöhe max_steps im Agent-Profil oder schneide das Ticket kleiner, dann starte einen neuen Run.'
+		);
+	return { state: 'succeeded' };
+}
+
+/** Turns the stream of the tool loop into run events (one set per step) and live phases. */
+class StepLog {
+	readonly records: StepRecord[] = [];
+	lastMessage = '';
+	readonly #io: ExecutorIo;
+	readonly #inactivityMs: number;
+	#step: OpenStep = openStep(1);
+	#lastPhaseAt = -Infinity;
+
+	constructor(io: ExecutorIo, inactivityMs: number) {
+		this.#io = io;
+		this.#inactivityMs = inactivityMs;
+	}
+
+	succeeded(tool: string) {
+		return this.records.some((record) => record.calls.some((call) => call.tool === tool && !call.isError));
+	}
+
+	endedWithToolCalls() {
+		return (this.records.at(-1)?.calls.length ?? 0) > 0;
+	}
+
+	record(part: Part) {
+		switch (part.type) {
+			case 'start-step':
+				this.#step = openStep(this.records.length + 1);
+				return;
+			case 'reasoning-delta':
+				this.#step.reasoning += part.text;
+				return this.#showPhase('thinking', this.#step.reasoning);
+			case 'text-delta':
+				this.#step.text += part.text;
+				return this.#showPhase('writing', this.#step.text);
+			case 'tool-input-delta':
+				return this.#showPhase('writing', '');
+			case 'tool-call':
+				return this.#recordToolCall(part);
+			case 'tool-result':
+				return this.#recordToolResult(part.toolCallId, part.toolName, textOf(part.output), isErrorResult(part.output));
+			case 'tool-error':
+				return this.#recordToolResult(part.toolCallId, part.toolName, errorText(part.error), true);
+			case 'finish-step':
+				return this.#finishStep(part);
+			case 'abort':
+				if (this.#io.signal.aborted) return; // cancelled; otherwise only the inactivity timeout aborts the stream
+				throw inactiveProvider(this.#inactivityMs);
+			case 'error':
+				throw providerError(part.error);
+		}
+	}
+
+	/** Throttled to one update a second; the first one comes at once, because it ends the runner's cold start watch. */
+	#showPhase(name: Phase['name'], text: string) {
+		const now = Date.now();
+		if (now - this.#lastPhaseAt < PHASE_INTERVAL_MS) return;
+		this.#lastPhaseAt = now;
+		this.#io.phase({ name, elapsedMs: now - this.#step.startedAt, lastLine: lastCompleteLine(text) });
+	}
+
+	/** Reasoning and text of a step come before its first tool call; they are recorded once, with the step's first call or its end. */
+	#recordTexts() {
+		const step = this.#step;
+		if (step.textsRecorded) return;
+		step.textsRecorded = true;
+		if (step.reasoning) {
+			// masked before cutting, so that a secret cut in half is still recognised; the end of the reasoning leads to the step's action
+			const text = mask(step.reasoning).slice(-REASONING_LIMIT);
+			this.#io.emit({ type: 'reasoning', key: `step:${step.number}:reasoning`, payload: { step: step.number, text, charsTotal: step.reasoning.length } });
+		}
+		const text = step.text.trim();
+		if (!text) return;
+		this.lastMessage = text;
+		this.#io.emit({ type: 'message', key: `step:${step.number}:message`, payload: { step: step.number, text } });
+	}
+
+	#recordToolCall(part: Extract<Part, { type: 'tool-call' }>) {
+		this.#recordTexts();
+		this.#io.emit({ type: 'tool_call', key: part.toolCallId, payload: { step: this.#step.number, tool: part.toolName, args: part.input } });
+	}
+
+	#recordToolResult(callId: string, tool: string, result: string, isError: boolean) {
+		this.#step.calls.push({ tool, isError });
+		const payload = { step: this.#step.number, tool, result: mask(result).slice(0, RESULT_LIMIT), isError };
+		this.#io.emit({ type: 'tool_result', key: `${callId}:result`, payload });
+	}
+
+	#finishStep({ finishReason, usage }: Extract<Part, { type: 'finish-step' }>) {
+		this.#recordTexts();
+		const step = this.#step;
+		const reasoningTokens = usage.outputTokenDetails.reasoningTokens || undefined;
+		const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens || undefined;
+		this.#io.emit({
+			type: 'log',
+			key: `step:${step.number}`,
+			payload: { kind: 'step', step: step.number, finishReason, ms: Date.now() - step.startedAt, reasoningTokens, cachedInputTokens },
+			// ponytail: cost 0 while only local models are supported; priced providers bring their prices into the catalog
+			usage: { tokensIn: usage.inputTokens ?? 0, tokensOut: usage.outputTokens ?? 0, cost: 0 }
+		});
+		this.records.push({ step: step.number, finishReason, inputTokens: usage.inputTokens, reasoningTokens, calls: step.calls });
+	}
+}
+
+const openStep = (number: number): OpenStep => ({ number, startedAt: Date.now(), reasoning: '', text: '', textsRecorded: false, calls: [] });
+
+function lastCompleteLine(text: string) {
+	const completeLines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n');
+	return completeLines
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.at(-1);
+}
+
+/** The text an MCP tool answered with; other results as JSON. */
+function textOf(output: unknown): string {
+	const content = (output as { content?: { type: string; text?: string }[] } | undefined)?.content;
+	if (!Array.isArray(content)) return JSON.stringify(output) ?? '';
+	return content
+		.filter((c) => c.type === 'text')
+		.map((c) => c.text)
+		.join('\n');
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+function providerError(error: unknown) {
+	return new DomainError(
+		'provider_error',
+		mask(`Der Modell-Server hat mit einem Fehler geantwortet: ${errorText(error)}`),
+		'Prüfe im Agent-Profil base_url, model und api_key_ref und im Log des Modell-Servers die Ursache, dann starte einen neuen Run.'
+	);
+}
+
+function inactiveProvider(inactivityMs: number) {
+	return new DomainError(
+		'provider_inactive',
+		`Das Modell hat ${Math.round(inactivityMs / 1000)} s lang nichts mehr gesendet, nachdem es zu antworten begonnen hatte.`,
+		'Prüfe im Log des Modell-Servers, ob er hängt oder abgestürzt ist, dann starte einen neuen Run.'
+	);
+}
