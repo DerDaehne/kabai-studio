@@ -120,14 +120,14 @@ const TOOLS = {
 		)
 	),
 	notes_update: define<{ slug: string; expected_version: number; title?: string; body?: string; tags?: string[] }>(
-		'Change a note. expected_version: its version from notes_get; if it moved on, someone else changed the note meanwhile.',
+		'Change a note of your project (global notes are read-only). expected_version: its version from notes_get; if it moved on, someone else changed the note meanwhile.',
 		object(
 			{ slug: text(MAX_SLUG), expected_version: { type: 'integer' }, title: text(MAX_TITLE), body: { type: 'string', maxLength: MAX_TEXT }, tags },
 			['slug', 'expected_version']
 		)
 	),
 	notes_link: define<{ slug: string; type: notes.NoteLinkType; target: string }>(
-		'Link two notes: slug <type> target, e.g. new-adr supersedes old-adr.',
+		'Link two notes: slug <type> target, e.g. new-adr supersedes old-adr. slug (and a superseded target) must be a note of your project.',
 		object({ slug: text(MAX_SLUG), type: { enum: ['references', 'contains', 'supersedes', 'contradicts'] }, target: text(MAX_SLUG) }, ['slug', 'type', 'target'])
 	),
 	link_note_to_ticket: define<{ slug: string; relation: Exclude<notes.NoteTicketRelation, 'verified_by'> }>(
