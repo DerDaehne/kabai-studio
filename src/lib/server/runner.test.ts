@@ -667,7 +667,7 @@ describe('parking and resuming a run', () => {
 		expect(runsOf(s).at(-1)).toMatchObject({ resumed_from_run_id: resumedByHuman, resume_reason: 'recovery' });
 	});
 
-	it('fails the run instead of leaving it paused without a follow-up when the human cannot be asked', async () => {
+	it('fails the run instead of leaving it paused without a follow-up when the human cannot be asked, and tells the human why and where the handoff is', async () => {
 		const s = setup();
 		s.db.exec("DELETE FROM columns WHERE kind = 'human_intervention'");
 		const fake = fakeExecutor();
@@ -682,9 +682,14 @@ describe('parking and resuming a run', () => {
 		await flush();
 
 		expect(lastRunId(s)).toBe(fresh);
-		expect(s.row(fresh)).toMatchObject({ state: 'failed', error: expect.stringContaining('[no_escalation_column]') });
+		expect(s.state(fresh)).toBe('failed');
 		expect(s.db.prepare('SELECT count(*) AS n FROM questions').get()).toEqual({ n: 0 });
-		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: fresh, body: expect.stringContaining(`Run ${fresh} ist fehlgeschlagen: [no_escalation_column]`) }]);
+		const error =
+			`[no_escalation_column] Run ${fresh} kommt nicht weiter (Stillstand oder Längenlimit), und seine Kette hat ihren frischen Run schon verbraucht ` +
+			'(höchstens 1 je Kette). Die Frage an den Menschen ging nicht: Das Board von STU-1 hat keine human_intervention-Spalte.';
+		const wayOut = `Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; den Stand beschreibt der Handoff von Run ${fresh} (Event 2).`;
+		expect(s.row(fresh).error).toBe(error);
+		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: fresh, body: `Run ${fresh} ist fehlgeschlagen: ${error}\nAusweg: ${wayOut}` }]);
 	});
 
 	it('claims a follow-up run only once its notBefore has passed, also after a server restart, by one timer instead of polling', async () => {
@@ -710,11 +715,34 @@ describe('parking and resuming a run', () => {
 		expect([followUp, other].map(s.state)).toEqual(['queued', 'running']);
 		fake.call(other).done();
 		await flush();
+		expect(vi.getTimerCount()).toBe(1); // every wake-up replaces the one not_before timer instead of adding another
 
 		vi.advanceTimersByTime(3 * 3_600_000 - 1);
 		await flush();
 		expect(s.state(followUp)).toBe('queued');
 		vi.advanceTimersByTime(1);
+		await flush();
+		expect(s.state(followUp)).toBe('running');
+	});
+
+	it('waits for a notBefore beyond the longest timer delay by waking once per maximum delay, not at once', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const first = s.queue(s.local);
+		await flush();
+		fake.call(first).done({ state: 'paused', resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-11-01T12:00:00Z' } });
+		await flush();
+		const followUp = lastRunId(s);
+
+		const before = Date.now();
+		vi.advanceTimersToNextTimer();
+		await flush();
+		expect(Date.now() - before).toBe(2 ** 31 - 1); // setTimeout would fire at once for a longer delay and spin
+		expect(s.state(followUp)).toBe('queued');
+		vi.advanceTimersByTime(Date.parse('2026-11-01T12:00:00Z') - Date.now());
 		await flush();
 		expect(s.state(followUp)).toBe('running');
 	});

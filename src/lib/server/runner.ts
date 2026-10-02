@@ -52,6 +52,7 @@ const MAX_LAST_LINE = 120;
 // setTimeout fires at once beyond this delay; waking early only sets the timer again
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const FRESH_RUN_REASON_TEXT = { context_budget: 'Kontext-Budget erreicht', recovery: 'Stillstand oder Längenlimit' };
+type FreshRunReason = keyof typeof FRESH_RUN_REASON_TEXT;
 
 const duration = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
 
@@ -149,10 +150,23 @@ function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
 		createRun(db, actor, { ticketId: run.ticketId, profileId: run.profile.id, resumedFromRunId: run.id, resumeReason: resume.reason, notBefore: resume.notBefore });
 		return;
 	}
-	const question =
-		`Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[resume.reason]}), und seine Kette hat ihren frischen Run schon verbraucht ` +
-		`(höchstens ${FRESH_RUNS_PER_CHAIN} je Kette). Den Stand beschreibt der Handoff von Run ${run.id} (Event ${resume.handoffSeq}). Wie soll es weitergehen?`;
-	requestHuman(db, actor, run.ticketId, { question });
+	askHumanAfterUsedUpChain(db, actor, run, resume.reason, resume.handoffSeq);
+}
+
+/** Stage 3 of the recovery; if the board cannot take the question, the failed run carries it and a way out for the human. */
+function askHumanAfterUsedUpChain(db: DatabaseSync, actor: Actor, run: RunContext, reason: FreshRunReason, handoffSeq: number) {
+	const stuck = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht (höchstens ${FRESH_RUNS_PER_CHAIN} je Kette).`;
+	const handoff = `Handoff von Run ${run.id} (Event ${handoffSeq})`;
+	try {
+		requestHuman(db, actor, run.ticketId, { question: `${stuck} Den Stand beschreibt der ${handoff}. Wie soll es weitergehen?` });
+	} catch (err) {
+		if (!(err instanceof DomainError) || err.code !== 'no_escalation_column') throw err;
+		throw new DomainError(
+			err.code,
+			`${stuck} Die Frage an den Menschen ging nicht: ${err.message}`,
+			`Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; den Stand beschreibt der ${handoff}.`
+		);
+	}
 }
 
 /** One transaction: a paused run never stays without its follow-up run or the question to the human. */
