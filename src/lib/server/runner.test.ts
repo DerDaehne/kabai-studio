@@ -172,6 +172,7 @@ describe('startRunner', () => {
 		expect(s.row(cancelled)).toMatchObject({ state: 'cancelled', token_hash: null });
 		expect(runs.runForToken(s.db, run.token)).toBeUndefined();
 		expect(io.signal.aborted).toBe(true);
+		expect(io.park.aborted).toBe(false);
 		expect(() => io.emit({ type: 'log' })).toThrow(expect.objectContaining({ code: 'run_not_active' }));
 		await flush();
 		expect(s.state(cancelled)).toBe('cancelled');
@@ -427,7 +428,7 @@ describe('cold start of a model', () => {
 			events
 				.filter((e) => e.type === 'run.event' && e.runId === runId && (e.payload as { phase?: string }).phase)
 				.map(({ eventType, payload }) => ({ eventType, payload }));
-		return { runner, phaseEvents };
+		return { runner, events, phaseEvents };
 	}
 
 	it('keeps a run whose model is still loading running and reports the loading phase on the bus once the soft threshold passes', async () => {
@@ -518,5 +519,203 @@ describe('cold start of a model', () => {
 		expect(s.state(id)).toBe('succeeded');
 		expect(phaseEvents(id)).toEqual([]);
 		expect(consoleError).not.toHaveBeenCalled();
+	});
+
+	it('publishes executor phases masked on the bus without storing them, and only a phase other than model loading ends the cold start', async () => {
+		const s = setup();
+		const secret = 'sk-phase-line-secret-2718';
+		setSecret(s.db, 'phase-secret', secret, false, randomBytes(32));
+		const fake = fakeExecutor();
+		const { events } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const id = s.queue(s.local);
+		await flush();
+		const { io } = fake.call(id);
+		const storedEventTypes = () => s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(id).map((e) => [e.type, JSON.parse(e.payload as string).phase]);
+
+		io.phase({ name: 'model_downloading', elapsedMs: 5_000 });
+		io.phase({ name: 'model_loading', elapsedMs: 10_000 });
+		vi.advanceTimersByTime(coldStart.hintAfterMs); // still loading: the soft threshold reports the loading phase
+		expect(storedEventTypes()).toEqual([['log', 'model_loading']]);
+
+		const longLine = `checking ${secret} ${'x'.repeat(200)}`;
+		io.phase({ name: 'thinking', elapsedMs: 192_000, tokens: 4100, tokensPerSecond: 34, lastLine: longLine });
+		vi.advanceTimersByTime(coldStart.failAfterMs);
+		await flush();
+
+		expect(s.state(id)).toBe('running');
+		const agent = { kind: 'agent', runId: id };
+		const phase = { type: 'run.phase', projectId: s.projectId, ticketId: s.ticketId, actor: agent, runId: id };
+		expect(events.filter((e) => e.type === 'run.phase')).toEqual([
+			{ ...phase, name: 'model_downloading', elapsedMs: 5_000 },
+			{ ...phase, name: 'model_loading', elapsedMs: 10_000 },
+			{ ...phase, name: 'thinking', elapsedMs: 192_000, tokens: 4100, tokensPerSecond: 34, lastLine: `checking [secret:phase-secret] ${'x'.repeat(200)}`.slice(0, 120) }
+		]);
+		expect(storedEventTypes()).toEqual([['log', 'model_loading']]);
+	});
+
+	it('drops a phase reported after the run was cancelled', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const { runner, events } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const id = s.queue(s.local);
+		await flush();
+		runner.cancel(id);
+
+		fake.call(id).io.phase({ name: 'writing', elapsedMs: 1_000 });
+
+		expect(events.filter((e) => e.type === 'run.phase')).toEqual([]);
+	});
+});
+
+describe('parking and resuming a run', () => {
+	const runsOf = (s: ReturnType<typeof setup>) => s.db.prepare('SELECT id, state, trigger, resumed_from_run_id, resume_reason, not_before FROM runs ORDER BY id').all();
+	const lastRunId = (s: ReturnType<typeof setup>) => s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
+
+	it('raises io.park with reason and notBefore; the executor ends paused after its step, the token is revoked and the pool slot freed', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [parked, waiting] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		const { run, io } = fake.call(parked);
+		expect(io.park.aborted).toBe(false);
+
+		expect(runner.park(parked, 'quota', '2026-10-02T15:00:00.000Z')).toBe(true);
+
+		expect(io.park.aborted).toBe(true);
+		expect(io.park.reason).toEqual({ reason: 'quota', notBefore: '2026-10-02T15:00:00.000Z' });
+		expect(io.signal.aborted).toBe(false);
+		expect(s.state(parked)).toBe('running'); // parking lets the executor finish its step
+		fake.call(parked).done({ state: 'paused' });
+		await flush();
+		expect(s.row(parked)).toMatchObject({ state: 'paused', token_hash: null });
+		expect(runs.runForToken(s.db, run.token)).toBeUndefined();
+		expect(s.state(waiting)).toBe('running');
+		expect(runner.park(parked, 'quota')).toBe(false);
+	});
+
+	it('queues exactly one follow-up run for a run paused with resume, and none for a run paused without resume', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
+		const [resumed, waitsForHuman] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		const intervention: runs.Intervention = { kind: 'context_budget', attempt: 1, max: 1, reason: '72 % of the context used', hint: 'continue in a fresh run', stepTokens: 23_000 };
+		fake.call(resumed).io.emit({ type: 'intervention', payload: intervention });
+
+		fake.call(resumed).done({ state: 'paused', resume: { reason: 'context_budget', handoffSeq: 2 } });
+		fake.call(waitsForHuman).done({ state: 'paused' });
+		await flush();
+
+		const followUp = lastRunId(s);
+		expect(runsOf(s)).toEqual([
+			{ id: resumed, state: 'paused', trigger: 'manual', resumed_from_run_id: null, resume_reason: null, not_before: null },
+			{ id: waitsForHuman, state: 'paused', trigger: 'manual', resumed_from_run_id: null, resume_reason: null, not_before: null },
+			{ id: followUp, state: 'running', trigger: 'resume', resumed_from_run_id: resumed, resume_reason: 'context_budget', not_before: null }
+		]);
+		expect(fake.call(followUp).run).toMatchObject({ ticketId: s.ticketId, projectId: s.projectId, profile: { id: s.local } });
+		expect(s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(resumed)).toEqual([{ type: 'intervention', payload: JSON.stringify(intervention) }]);
+	});
+
+	it('allows one fresh run per chain and then asks the human with reason and handoff; parking for the quota neither counts nor is refused', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		const pauseLatest = async (resume: { reason: runs.ResumeReason; handoffSeq: number }) => {
+			fake.call(lastRunId(s)).done({ state: 'paused', resume });
+			await flush();
+		};
+		await flush();
+
+		await pauseLatest({ reason: 'quota', handoffSeq: 1 });
+		await pauseLatest({ reason: 'recovery', handoffSeq: 4 }); // the fresh run of the chain
+		await pauseLatest({ reason: 'quota', handoffSeq: 2 });
+		const exhausted = lastRunId(s);
+		await pauseLatest({ reason: 'context_budget', handoffSeq: 7 });
+
+		expect(runsOf(s).map((r) => [r.state, r.resume_reason])).toEqual([
+			['paused', null],
+			['paused', 'quota'],
+			['paused', 'recovery'],
+			['paused', 'quota']
+		]);
+		expect(lastRunId(s)).toBe(exhausted);
+		expect(s.db.prepare('SELECT c.kind FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?').get(s.ticketId)).toEqual({ kind: 'human_intervention' });
+		const question = `Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht (höchstens 1 je Kette). Den Stand beschreibt der Handoff von Run ${exhausted} (Event 7). Wie soll es weitergehen?`;
+		expect(s.db.prepare('SELECT run_id, question FROM questions').all()).toEqual([{ run_id: exhausted, question }]);
+		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: exhausted, body: question }]);
+	});
+
+	it('starts a new chain with a run the human resumes, so it gets its own fresh run', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const first = s.queue(s.local);
+		await flush();
+		fake.call(first).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		await flush();
+		const fresh = lastRunId(s);
+		fake.call(fresh).done({ state: 'paused' }); // e.g. after request_human
+		await flush();
+
+		const resumedByHuman = runs.createRun(s.db, user, { ticketId: s.ticketId, profileId: s.local, resumedFromRunId: fresh }).id;
+		await flush();
+		fake.call(resumedByHuman).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 3 } });
+		await flush();
+
+		expect(runsOf(s).at(-1)).toMatchObject({ resumed_from_run_id: resumedByHuman, resume_reason: 'recovery' });
+	});
+
+	it('fails the run instead of leaving it paused without a follow-up when the human cannot be asked', async () => {
+		const s = setup();
+		s.db.exec("DELETE FROM columns WHERE kind = 'human_intervention'");
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		await flush();
+		fake.call(lastRunId(s)).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		await flush();
+		const fresh = lastRunId(s);
+
+		fake.call(fresh).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		await flush();
+
+		expect(lastRunId(s)).toBe(fresh);
+		expect(s.row(fresh)).toMatchObject({ state: 'failed', error: expect.stringContaining('[no_escalation_column]') });
+		expect(s.db.prepare('SELECT count(*) AS n FROM questions').get()).toEqual({ n: 0 });
+		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: fresh, body: expect.stringContaining(`Run ${fresh} ist fehlgeschlagen: [no_escalation_column]`) }]);
+	});
+
+	it('claims a follow-up run only once its notBefore has passed, also after a server restart, by one timer instead of polling', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const first = s.queue(s.local);
+		await flush();
+		fake.call(first).done({ state: 'paused', resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-10-02T15:00:00Z' } });
+		await flush();
+		const followUp = lastRunId(s);
+		expect(s.row(followUp)).toMatchObject({ state: 'queued', resume_reason: 'quota', not_before: '2026-10-02T15:00:00.000Z' });
+		expect(vi.getTimerCount()).toBe(1);
+
+		runner.stop();
+		expect(vi.getTimerCount()).toBe(0);
+		start(s.db, { builtin: fake.executor });
+		expect(vi.getTimerCount()).toBe(1);
+		const other = s.queue(s.local); // a held-back run does not block its pool
+		await flush();
+		expect([followUp, other].map(s.state)).toEqual(['queued', 'running']);
+		fake.call(other).done();
+		await flush();
+
+		vi.advanceTimersByTime(3 * 3_600_000 - 1);
+		await flush();
+		expect(s.state(followUp)).toBe('queued');
+		vi.advanceTimersByTime(1);
+		await flush();
+		expect(s.state(followUp)).toBe('running');
 	});
 });
