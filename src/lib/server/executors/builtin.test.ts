@@ -161,6 +161,7 @@ describe('builtin executor', () => {
 		expect(events(runId).at(-1)!.payload).toEqual({ text: 'Done.' });
 		expect(comments()).toMatchObject([{ body: 'first' }, { body: 'second' }]);
 		expect(provider.requests[0].body).toMatchObject({ max_tokens: 32000, temperature: 0.6, chat_template_kwargs: { enable_thinking: true } });
+		expect(provider.requests[0].body.stream_options).toEqual({ include_usage: true });
 		expect(provider.requests[0].body.messages).toMatchObject([{ role: 'system' }, { role: 'user', content: expect.stringContaining('Refine the export') }]);
 	});
 
@@ -299,6 +300,68 @@ describe('builtin executor', () => {
 		expect(handoff.payload).toEqual({ text: 'Commenting now.' });
 		expect(executed[0].result).toEqual({ state: 'paused', resume: { reason: 'quota', notBefore: '2099-01-01T00:00:00Z', handoffSeq: handoff.seq } });
 		expect(db.prepare('SELECT state, resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId)).toEqual({ state: 'queued', resume_reason: 'quota' });
+	});
+
+	it('ends succeeded without a follow-up run when parked during its final step', async () => {
+		const { db, queue, run, columns } = setup();
+		let park = () => {};
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['In Arbeit'] })] },
+			{ chunks: [{ pause: () => park() }, { text: 'Moved the ticket, done.' }] }
+		);
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		park = () => runner.park(runId, 'quota', '2099-01-01T00:00:00Z');
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
+	});
+
+	it('fails with step_limit when the only move of the run was rejected', async () => {
+		const { db, queue, run } = setup({ max_steps: 2 });
+		const provider = fakeProvider({ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] }, { chunks: [call('call-2', 'add_comment', { text: 'two' })] });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[step_limit\]/) });
+	});
+
+	it('keeps working when asking the human fails', async () => {
+		const { db, queue, run } = setup();
+		const provider = fakeProvider({ chunks: [call('call-1', 'request_human', { question: '  ' })] }, { chunks: [{ text: 'Done.' }] });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(provider.requests).toHaveLength(2);
+	});
+
+	it('records a call of an unknown tool as a failed tool result and goes on', async () => {
+		const { db, queue, run, events } = setup();
+		const provider = fakeProvider({ chunks: [call('call-1', 'no_such_tool', { x: 1 })] }, { chunks: [{ text: 'Done.' }] });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(events(runId).find((e) => e.key === 'call-1:result')!.payload).toMatchObject({ tool: 'no_such_tool', isError: true, result: expect.stringContaining('no_such_tool') });
+	});
+
+	it('keeps the last 20,000 characters of the reasoning and the first 8,000 of a tool result', async () => {
+		const { db, queue, run, events, ticketId } = setup();
+		board.updateTicket(db, user, ticketId, { description: 'd'.repeat(9000) });
+		const provider = fakeProvider({ chunks: [{ reasoning: 'a'.repeat(5000) + 'b'.repeat(20_000) }, call('call-1', 'get_ticket')] }, { chunks: [{ text: 'Done.' }] });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(events(runId).find((e) => e.type === 'reasoning')!.payload).toMatchObject({ text: 'b'.repeat(20_000), charsTotal: 25_000 });
+		const result = events(runId).find((e) => e.key === 'call-1:result')!.payload.result as string;
+		expect(result).toHaveLength(8000);
+		expect(result.startsWith('{')).toBe(true);
 	});
 
 	it('keeps a secret out of every event, phase, error and comment, even where the reasoning is cut', async () => {

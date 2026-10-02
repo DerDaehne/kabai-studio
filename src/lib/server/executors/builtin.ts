@@ -57,7 +57,8 @@ async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): 
 		...requestSettings(run.profile),
 		abortSignal: io.signal,
 		// ponytail: chunkMs starts with a step's first output, so loading the model stays the cold start watch's job; a later
-		// step that never starts to answer is not caught — add firstChunkMs from the second step on if that shows up
+		// step that never starts to answer is not caught (add firstChunkMs from the second step on), and the timer keeps running
+		// while a tool executes, so a tool slower than the limit ends as provider_inactive (pause it between tool call and result)
 		timeout: { chunkMs: inactivityMs },
 		stopWhen: [isStepCount(maxSteps(run)), askedHuman, () => io.park.aborted],
 		onError: () => {} // errors arrive as stream parts and end the run there
@@ -74,7 +75,8 @@ function endOfRun(run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult
 	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
 	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: { text: log.lastMessage } }).seq;
 	if (log.succeeded('request_human')) return { state: 'paused' };
-	if (io.park.aborted) return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
+	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
+	if (io.park.aborted && log.endedWithToolCalls()) return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
 	if (log.endedWithToolCalls() && !log.succeeded('move_ticket'))
 		throw new DomainError(
 			'step_limit',
