@@ -459,6 +459,32 @@ describe('Event-Bus', () => {
 		expect(events).toEqual([]);
 		expect(db.isTransaction).toBe(false);
 	});
+
+	it('lets mutations called inside a transaction join it: all or nothing, events after the outer commit', () => {
+		const { db, projectId } = setup();
+		const titles = () => db.prepare('SELECT title FROM tickets WHERE project_id = ? ORDER BY id').all(projectId).map((r) => r.title);
+		const events: StudioEvent[] = [];
+		const inTx: boolean[] = [];
+		const off = subscribe((e) => {
+			events.push(e);
+			inTx.push(db.isTransaction);
+		});
+		const batch = (second: string) =>
+			tx(db, () => {
+				board.createTicket(db, user, projectId, { title: 'A' });
+				board.createTicket(db, user, projectId, { title: second });
+			});
+
+		expect(() => batch(' ')).toThrow(DomainError);
+		expect(titles()).toEqual([]);
+		expect(events).toEqual([]);
+
+		batch('B');
+		off();
+		expect(titles()).toEqual(['A', 'B']);
+		expect(events.map((e) => e.type)).toEqual(['ticket.created', 'ticket.created']);
+		expect(inTx).toEqual([false, false]);
+	});
 });
 
 describe('blockingPredecessors', () => {
