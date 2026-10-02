@@ -241,7 +241,7 @@ describe('builtin executor', () => {
 	it('succeeds when max_steps runs out after the run has moved its ticket', async () => {
 		const { db, queue, run, columns } = setup({ max_steps: 2 });
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['In Arbeit'] })] },
+			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Refine'] })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'moved' })] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -307,7 +307,7 @@ describe('builtin executor', () => {
 		const { db, queue, run, columns } = setup();
 		let park = () => {};
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['In Arbeit'] })] },
+			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Refine'] })] },
 			{ chunks: [{ pause: () => park() }, { text: 'Moved the ticket, done.' }] }
 		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
@@ -336,7 +336,7 @@ describe('builtin executor', () => {
 		const provider = fakeProvider(
 			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'Header row done.' })] },
-			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['In Arbeit'] })] },
+			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['Refine'] })] },
 			{ chunks: [] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -348,7 +348,7 @@ describe('builtin executor', () => {
 			text: [
 				"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
 				'Tools: move_ticket 2× (1 failed), add_comment 1×',
-				'Ticket: moved to In Arbeit',
+				'Ticket: moved to Refine',
 				'Open tasks:',
 				`- ${oneLinePerTicket}: Export one line per ticket`
 			].join('\n'),
