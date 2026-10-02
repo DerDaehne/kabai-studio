@@ -411,6 +411,16 @@ describe('approve_review', () => {
 });
 
 describe('notes', () => {
+	it('lists no archived note in get_ticket', async () => {
+		const { db, projectId, call, startRun, ticket } = setup();
+		const own = ticket();
+		const old = notes.createNote(db, user, { slug: 'old-plan', title: 'Old plan', body: 'x', projectIds: [projectId] }).id;
+		notes.linkTicket(db, user, old, own, 'references');
+		notes.archiveNote(db, user, old);
+		const { token } = startRun(own);
+		expect((await call(token, 'get_ticket')).body.notes).toBeUndefined();
+	});
+
 	it('creates a note in your project, links [[slug]] from its body and links it to notes and to your ticket', async () => {
 		const { db, projectId, call, startRun, ticket } = setup();
 		const own = ticket('Eigenes');

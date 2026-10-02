@@ -173,6 +173,31 @@ describe('internal context', () => {
 		expect(text).toMatch(/- \d+: Review\b/);
 		expect(text).toContain('Lines are key=value; # starts a comment.');
 	});
+
+	it('shows a note linked to the ticket twice once, with both relations', () => {
+		const w = world();
+		const { id } = w.db.prepare("SELECT id FROM notes WHERE slug = 'config-format'").get() as { id: number };
+		notes.linkTicket(w.db, user, id, w.parser, 'documents');
+		const { user: context } = assemble(w);
+		expect(context).toContain('#### config-format: About config-format (documents, references)');
+		expect(context.match(/#### config-format:/g)).toHaveLength(1);
+	});
+
+	it('names the way to the full text of a comment longer than the preview', () => {
+		const w = world();
+		const { id } = board.addComment(w.db, user, w.parser, 'L'.repeat(2000));
+		expect(assemble(w).user).toContain(`(cut; get_ticket {"comment": ${id}} reads it in full)`);
+	});
+
+	it('shows a related ticket of another project only by its ref', () => {
+		const w = world();
+		const otherProject = board.createProject(w.db, user, { key: 'OTH', name: 'Other' }).id;
+		const foreign = board.createTicket(w.db, user, otherProject, { title: 'Foreign plan' }).id;
+		board.linkRelation(w.db, user, foreign, w.parser, 'blocks');
+		const { user: context } = assemble(w);
+		expect(context).toContain('- waits for OTH-1 (other project)');
+		expect(context).not.toContain('Foreign plan');
+	});
 });
 
 describe('budget', () => {
@@ -272,7 +297,6 @@ describe('blocks and estimate', () => {
 		expect(prompt.estimate).toBe(Math.ceil((prompt.system.length + prompt.user.length) / 4));
 	});
 });
-
 
 describe('tool names', () => {
 	const SNAKE_CASE = /\b[a-z]+(?:_[a-z]+)+\b/g;
