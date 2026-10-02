@@ -200,6 +200,43 @@ describe('migrate', () => {
 		expect(migrate(db)).toEqual([]);
 		expect(() => db.exec("UPDATE runs SET priority = 'urgent'")).toThrow(/CHECK/);
 	});
+
+	it('011 keeps existing run events with their keys, accepts intervention, still refuses unknown event types and adds the resume columns', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true });
+		const db = openDb(':memory:');
+		migrate(db, Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/011')));
+		db.exec(`
+			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'In Arbeit');
+			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Old');
+			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'p', 'builtin', 'openai-compatible', 'm');
+			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger) VALUES (7, 100, 10, 1, 'manual');
+			INSERT INTO run_events (run_id, seq, type, payload, idempotency_key, created_at) VALUES
+				(7, 1, 'log', '{"msg":"request sent"}', NULL, '2026-10-01 10:00:00'),
+				(7, 2, 'tool_call', '{"tool":"move_ticket"}', 'call-1', '2026-10-01 10:00:01');
+		`);
+		const before = db.prepare('SELECT * FROM run_events ORDER BY seq').all();
+
+		expect(migrate(db)[0]).toBe('011_executor_contract_v2.sql');
+
+		expect(db.prepare('SELECT * FROM run_events ORDER BY seq').all()).toEqual(before);
+		db.exec(`INSERT INTO run_events (run_id, seq, type, payload) VALUES (7, 3, 'intervention', '{"kind":"stagnation","attempt":1,"max":2}')`);
+		expect(() => db.exec("INSERT INTO run_events (run_id, seq, type) VALUES (7, 4, 'nudge')")).toThrow(/CHECK/);
+		expect(() => db.exec("INSERT INTO run_events (run_id, seq, type, idempotency_key) VALUES (7, 4, 'log', 'call-1')")).toThrow(/UNIQUE/);
+		expect(() => db.exec("INSERT INTO run_events (run_id, seq, type) VALUES (7, 1, 'log')")).toThrow(/UNIQUE/);
+		expect(() => db.exec("INSERT INTO run_events (run_id, seq, type) VALUES (8, 1, 'log')")).toThrow(/FOREIGN KEY/);
+
+		expect(db.prepare('SELECT resume_reason, not_before FROM runs').all()).toEqual([{ resume_reason: null, not_before: null }]);
+		expect(() => db.exec("UPDATE runs SET resume_reason = 'boredom'")).toThrow(/CHECK/);
+		// claimRun compares the canonical ISO form as text, so any other spelling of a time is refused
+		for (const notCanonical of ['2026-10-02 15:00:00', '2026-10-02T15:00:00Z', 'soon'])
+			expect(() => db.prepare('UPDATE runs SET not_before = ?').run(notCanonical)).toThrow(/CHECK/);
+		db.exec("UPDATE runs SET resume_reason = 'quota', not_before = '2026-10-02T15:00:00.000Z'");
+
+		db.exec('DELETE FROM runs WHERE id = 7');
+		expect(db.prepare('SELECT count(*) AS n FROM run_events').get()).toEqual({ n: 0 });
+		expect(migrate(db)).toEqual([]);
+	});
 });
 
 describe('Kernschema', () => {

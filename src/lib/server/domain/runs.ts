@@ -16,7 +16,19 @@ export type RunEventType =
 	| 'permission_decision'
 	| 'diff'
 	| 'log'
-	| 'error';
+	| 'error'
+	| 'intervention';
+/** Payload of an `intervention` event: a recovery step taken in a run, the `attempt` of at most `max`. */
+export type Intervention = {
+	kind: 'length_stop' | 'stagnation' | 'context_budget' | 'quota';
+	attempt: number;
+	max: number;
+	reason: string;
+	hint: string;
+	stepTokens?: number;
+};
+/** Why a paused run continues in a new run; `quota` is a clean stop before a usage limit, the others are fresh runs after getting stuck. */
+export type ResumeReason = 'context_budget' | 'recovery' | 'quota';
 /** Verbrauch ist additiv: pro Schritt mit dem Event melden (live sichtbar, übersteht Abstürze) oder gesammelt bei finishRun. Kosten in USD. */
 export type Usage = { tokensIn?: number; tokensOut?: number; cost?: number };
 
@@ -100,7 +112,7 @@ function transition(db: DatabaseSync, emit: Emit, actor: Actor, runId: number, t
 export function createRun(
 	db: DatabaseSync,
 	actor: Actor,
-	r: { ticketId: number; profileId: number; trigger?: 'manual' | 'on_enter'; resumedFromRunId?: number }
+	r: { ticketId: number; profileId: number; trigger?: 'manual' | 'on_enter'; resumedFromRunId?: number; resumeReason?: ResumeReason; notBefore?: string }
 ): { id: number } {
 	return tx(db, (emit) => {
 		const t = ticket(db, r.ticketId);
@@ -115,12 +127,42 @@ export function createRun(
 				);
 		}
 		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
+		const priority = derivePriority(db, t.id, t.column_id, trigger);
+		const notBefore = r.notBefore === undefined ? null : canonicalTime(r.notBefore);
 		const { id } = db
-			.prepare('INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, priority, resumed_from_run_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
-			.get(t.id, t.column_id, r.profileId, trigger, derivePriority(db, t.id, t.column_id, trigger), r.resumedFromRunId ?? null) as { id: number };
+			.prepare(
+				`INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, priority, resumed_from_run_id, resume_reason, not_before)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+			)
+			.get(t.id, t.column_id, r.profileId, trigger, priority, r.resumedFromRunId ?? null, r.resumeReason ?? null, notBefore) as { id: number };
 		emit({ type: 'run.created', projectId: t.project_id, ticketId: t.id, actor, runId: id });
 		return { id };
 	});
+}
+
+/** The form runs.not_before stores, so that claimRun can compare it as text. */
+function canonicalTime(time: string) {
+	const date = new Date(time);
+	if (Number.isNaN(date.getTime()))
+		throw new DomainError('invalid_not_before', `„${time}“ ist kein Zeitpunkt.`, 'Gib notBefore als ISO-8601-Zeitpunkt an, z. B. 2026-10-02T15:00:00Z.');
+	return date.toISOString();
+}
+
+/**
+ * Fresh runs (resumed for context_budget or recovery) in the chain of resumes that ends with this run. The chain starts at the
+ * nearest run without a resume reason, so a run the human starts or resumes begins a new one.
+ */
+export function freshRunsInChain(db: DatabaseSync, runId: number): number {
+	const { fresh } = db
+		.prepare(
+			`WITH RECURSIVE chain (id, resumed_from, reason) AS (
+				SELECT id, resumed_from_run_id, resume_reason FROM runs WHERE id = ?
+				UNION ALL
+				SELECT r.id, r.resumed_from_run_id, r.resume_reason FROM runs r JOIN chain c ON r.id = c.resumed_from WHERE c.reason IS NOT NULL)
+			SELECT count(*) AS fresh FROM chain WHERE reason IN ('context_budget', 'recovery')`
+		)
+		.get(runId) as { fresh: number };
+	return fresh;
 }
 
 // ponytail: derived once at creation; recompute at claim time if successors finishing first turns out to matter in practice.
@@ -213,20 +255,26 @@ function assignTicketToRun(db: DatabaseSync, emit: Emit, actor: Actor, r: Run) {
 // An active run without a profile counts towards the global limit only.
 const CLAIM = `WITH active AS (
 	SELECT p.pool FROM runs r LEFT JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state IN ('running', 'waiting_approval'))
-SELECT r.id, r.ticket_id AS ticketId, r.agent_profile_id AS profileId FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id
+SELECT r.id, r.ticket_id AS ticketId, t.project_id AS projectId, r.agent_profile_id AS profileId
+FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id JOIN tickets t ON t.id = r.ticket_id
 WHERE r.state = 'queued'
+	AND (r.not_before IS NULL OR r.not_before <= ?3)
 	AND (SELECT count(*) FROM active) < ?1
 	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), 1)
 ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
 
 /**
- * Starts the most urgent queued run (oldest among equal priorities) whose pool and the global limit have room, or returns undefined.
- * Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
+ * Starts the most urgent queued run (oldest among equal priorities) whose pool and the global limit have room and whose not_before
+ * has passed, or returns undefined. Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
  */
-export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits) {
+export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = new Date()) {
 	return tx(db, (emit) => {
-		const next = db.prepare(CLAIM).get(limits.global, JSON.stringify(limits.pools)) as { id: number; ticketId: number; profileId: number } | undefined;
-		return next && { id: next.id, ticketId: next.ticketId, profile: getProfile(db, next.profileId), ...start(db, emit, actor, next.id) };
+		const next = db.prepare(CLAIM).get(limits.global, JSON.stringify(limits.pools), now.toISOString()) as
+			| { id: number; ticketId: number; projectId: number; profileId: number }
+			| undefined;
+		if (!next) return undefined;
+		const { profileId, ...claimed } = next;
+		return { ...claimed, profile: getProfile(db, profileId), ...start(db, emit, actor, claimed.id) };
 	});
 }
 
