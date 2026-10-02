@@ -353,10 +353,10 @@ describe('boundaries shared with get_ticket', () => {
 
 	it('lists the allowed moves as get_ticket shows them to the run, with human-only moves blocked', async () => {
 		const w = world();
-		const inReview = w.ticket('Review the config format', 'Review');
-		const { content } = await asRunOf(w.db, inReview, 'tools/call', { name: 'get_ticket', arguments: {} });
+		const inAcceptance = w.ticket('Review the config format', 'Abnahme'); // next to Done, the one human-only move from here
+		const { content } = await asRunOf(w.db, inAcceptance, 'tools/call', { name: 'get_ticket', arguments: {} });
 		const moves = JSON.parse(content[0].text).allowed_moves as { column_id: number; name: string; blocked?: string }[];
-		const { user: context } = assemblePrompt(w.db, { ticketId: inReview, profile: local });
+		const { user: context } = assemblePrompt(w.db, { ticketId: inAcceptance, profile: local });
 		expect(moves.some((m) => m.blocked)).toBe(true);
 		for (const m of moves) expect(context).toContain(`- ${m.column_id}: ${m.name}${m.blocked ? ` — blocked: ${m.blocked}` : ''}`);
 	});

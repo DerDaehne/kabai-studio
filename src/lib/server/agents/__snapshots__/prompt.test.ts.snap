@@ -61,9 +61,9 @@ Keep the parser free of dependencies.
 Duplicate keys are an error, not a warning.
 
 ### Allowed moves — \`move_ticket\` with column_id
-- 1: Backlog — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
-- 3: Review — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
-- 5: Human Intervention
+- 3: Ready — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
+- 5: Review — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
+- 8: Human Intervention
 
 ### Linked notes
 
