@@ -163,10 +163,8 @@
 <style>
 	.runs {
 		display: grid;
-		grid-template-columns: minmax(
-			0,
-			1fr
-		); /* lets the tab row scroll inside instead of widening the page */
+		/* lets the tab row scroll inside instead of widening the page */
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-3);
 		margin-top: var(--space-3);
 	}
