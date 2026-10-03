@@ -52,7 +52,7 @@ const base: TicketDetail = {
 		{
 			columnId: 12,
 			name: 'Abnahme',
-			kind: 'done',
+			kind: 'normal',
 			position: 5,
 			blockers: [
 				{ code: 'open_tasks', message: 'STU-1 hat 1 offene Tasks.', hint: 'Erledige sie zuerst.' }
@@ -139,6 +139,8 @@ it.each(['addTask', 'addComment', 'move', 'update'])(
 		const body = page(base, { action, code: 'x', message: 'Die Nachricht.', hint: 'Der Ausweg.' });
 		expect(body).toContain('Die Nachricht.');
 		expect(body).toContain('Der Ausweg.');
+		// exactly once: the error belongs to the form that caused it, not to every form on the page
+		expect(body.split('Die Nachricht.').length - 1).toBe(1);
 	}
 );
 

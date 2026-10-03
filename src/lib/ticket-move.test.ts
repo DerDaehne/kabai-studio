@@ -28,7 +28,7 @@ it('returns undefined when no move is reachable at all', () => {
 	expect(nextMove([], 2, false)).toBeUndefined();
 });
 
-// N1: a human column (human_intervention/human_answered) is never a `>`/`<` step target — only normal/done are.
+// A human column (human_intervention/human_answered) is never a `>`/`<` step target — only normal/done are.
 it('steps onto the nearest normal/done column even if it is blocked, never past it onto a human column', () => {
 	const abnahme = [
 		{ columnId: 6, position: 6, kind: 'done' as const }, // Done, blocked by open tasks (nextMove does not see blockers)
