@@ -13,6 +13,7 @@
 	import ProjectTag, { type ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import { agentChips, live } from '$lib/shell/live.svelte';
 	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
 
 	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
@@ -199,21 +200,24 @@
 
 	const demoAgents: AgentChip[] = [
 		{
+			id: 1,
 			name: 'Claude',
 			location: 'online',
-			project: { code: 'WEB', palette: 2, name: 'Webseite' },
+			project: { id: 2, code: 'WEB', palette: 2, name: 'Webseite' },
 			state: 'running'
 		},
 		{
+			id: 2,
 			name: 'qwen3-coder',
 			location: 'lokal',
-			project: { code: 'STU', palette: 1, name: 'kabai studio' },
+			project: { id: 1, code: 'STU', palette: 1, name: 'kabai studio' },
 			state: 'waiting'
 		},
 		{
+			id: 3,
 			name: 'gpt-oss',
 			location: 'lokal',
-			project: { code: 'API', palette: 3, name: 'Schnittstelle' },
+			project: { id: 3, code: 'API', palette: 3, name: 'Schnittstelle' },
 			state: 'running'
 		}
 	];
@@ -227,7 +231,7 @@
 			href: '#h-glass'
 		}));
 		return () => {
-			shell.agents = [];
+			shell.agents = agentChips(live.runs);
 			shell.viewItems = [];
 			shell.focus = null;
 			shell.pendingKeys = '';
@@ -283,7 +287,7 @@
 			<Button
 				variant="secondary"
 				size="sm"
-				onclick={() => (shell.focus = { code: 'STU', palette: 1, name: 'kabai studio' })}
+				onclick={() => (shell.focus = { id: 1, code: 'STU', palette: 1, name: 'kabai studio' })}
 				>Projekt-Fokus</Button
 			>
 			<Button variant="secondary" size="sm" onclick={announceSignal}>Neues Signal</Button>

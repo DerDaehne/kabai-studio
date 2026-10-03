@@ -15,7 +15,8 @@ type LiveUpdatesOptions = {
 };
 
 /**
- * Connects to the project's SSE endpoint (`/api/events?project=<id>`) and keeps the connection open.
+ * Connects to the SSE endpoint for one project (`/api/events?project=<id>`) or, with `null`, for all projects, and keeps
+ * the connection open.
  * Native `EventSource` reconnects are not enough: a fixed ~3 s rhythm without backoff and no signal for
  * "gave up for good" — so this helper closes the connection on every error and reconnects with exponential backoff.
  *
@@ -28,10 +29,11 @@ type LiveUpdatesOptions = {
  * error toast "connection lost" that stays until the reconnect or until closed.
  */
 export function connectLiveUpdates(
-	projectId: number,
+	projectId: number | null,
 	options: LiveUpdatesOptions
 ): LiveUpdatesHandle {
-	const connection = new LiveConnection(`/api/events?project=${projectId}`, options);
+	const url = projectId === null ? '/api/events' : `/api/events?project=${projectId}`;
+	const connection = new LiveConnection(url, options);
 	connection.connect();
 	return { close: () => connection.close() };
 }

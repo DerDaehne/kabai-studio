@@ -1,9 +1,11 @@
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 import type { Suggestion } from './commands';
 
-export type ProjectRef = { code: string; palette: ProjectPalette; name: string };
+export type ProjectRef = { id: number; code: string; palette: ProjectPalette; name: string };
 
 export type AgentChip = {
+	/** The run the agent works in. */
+	id: number;
 	name: string;
 	location: 'lokal' | 'online';
 	project: ProjectRef;

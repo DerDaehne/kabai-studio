@@ -1,13 +1,20 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
-	import { goto, onNavigate, pushState } from '$app/navigation';
+	import { goto, invalidate, onNavigate, pushState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
 	import { commands, type Suggestion } from '$lib/shell/commands';
 	import { contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
+	import {
+		connectLive,
+		live,
+		LIVE_DEPENDENCY,
+		openQuestionsLabel,
+		showLive
+	} from '$lib/shell/live.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
@@ -17,9 +24,10 @@
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 
-	let { children } = $props();
+	let { data, children } = $props();
 
-	const views: { href: string; label: string; icon: IconName; context: KeyContext }[] = [
+	type View = { href: string; label: string; icon: IconName; context: KeyContext };
+	const views: View[] = [
 		{ href: '/', label: 'Stellwerk', icon: 'projects', context: 'stellwerk' },
 		{ href: '/takt', label: 'Takt', icon: 'inbox', context: 'takt' },
 		{ href: '/board', label: 'Board', icon: 'notes', context: 'board' }
@@ -103,6 +111,24 @@
 	const groupAgents = $derived(shell.agents.length >= (compact.current ? 2 : 3));
 
 	onNavigate(transitionPage);
+
+	const openQuestionsOf = (view: View) => (view.context === 'takt' ? live.openQuestions : 0);
+	// a bare number would be read out as "Takt 2"; with a count the link's name says what is counted
+	const accessibleViewName = (view: View) =>
+		openQuestionsOf(view)
+			? `${view.label}, ${openQuestionsLabel(openQuestionsOf(view))}`
+			: undefined;
+
+	const signedIn = $derived(data.live !== undefined);
+	// pre: runs before the effects of the page, so a page that shows agents of its own (/dev/ui) is not overwritten
+	$effect.pre(() => {
+		if (data.live) showLive(data.live);
+	});
+	$effect(() => {
+		if (!signedIn) return;
+		const connection = connectLive(() => void invalidate(LIVE_DEPENDENCY));
+		return () => connection.close();
+	});
 </script>
 
 <svelte:head>
@@ -111,6 +137,11 @@
 </svelte:head>
 
 <svelte:window onkeydown={onWindowKeydown} />
+
+{#snippet viewLabel(view: View)}
+	{view.label}
+	{#if openQuestionsOf(view)}<span class="count">{openQuestionsOf(view)}</span>{/if}
+{/snippet}
 
 <!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
 {#snippet attribution()}
@@ -137,8 +168,10 @@
 			>
 			<nav class="views" aria-label="Ansichten">
 				{#each views as view (view.href)}
-					<a href={view.href} aria-current={view === currentView ? 'page' : undefined}
-						>{view.label}</a
+					<a
+						href={view.href}
+						aria-current={view === currentView ? 'page' : undefined}
+						aria-label={accessibleViewName(view)}>{@render viewLabel(view)}</a
 					>
 				{/each}
 			</nav>
@@ -164,7 +197,7 @@
 							>{/if}
 					</li>
 				{:else}
-					{#each shell.agents as agent (agent.name)}
+					{#each shell.agents as agent (agent.id)}
 						<li class="chip" class:halt={agent.state === 'waiting'}>
 							<span class="dot" aria-hidden="true"></span>{agent.name}
 							<span class="muted">{agent.location}</span>
@@ -221,8 +254,11 @@
 
 		<nav class="tabs dock" aria-label="Ansichten">
 			{#each views as view (view.href)}
-				<a href={view.href} aria-current={view === currentView ? 'page' : undefined}
-					><Icon name={view.icon} />{view.label}</a
+				<a
+					href={view.href}
+					aria-current={view === currentView ? 'page' : undefined}
+					aria-label={accessibleViewName(view)}
+					><Icon name={view.icon} />{@render viewLabel(view)}</a
 				>
 			{/each}
 			<button type="button" onclick={() => openCommandLine('')}
@@ -296,6 +332,17 @@
 	}
 	.views a:hover {
 		color: var(--text);
+	}
+	.count {
+		display: inline-block;
+		min-width: 18px;
+		margin-left: 6px;
+		padding: 0 5px;
+		border-radius: 9px;
+		background: var(--status-waiting-tint);
+		color: var(--status-waiting);
+		font: 700 12px / 18px var(--font-mono);
+		text-align: center;
 	}
 	.views a[aria-current='page'] {
 		background: var(--glass-raised);
@@ -506,6 +553,15 @@
 		}
 		.tabs a[aria-current='page'] {
 			color: var(--accent-text);
+		}
+		.tabs a {
+			position: relative;
+		}
+		.tabs .count {
+			position: absolute;
+			top: 6px;
+			left: calc(50% + 6px);
+			margin: 0;
 		}
 		.glyph {
 			font: 700 15px / 16px var(--font-mono);
