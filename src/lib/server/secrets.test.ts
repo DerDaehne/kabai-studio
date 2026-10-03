@@ -27,11 +27,11 @@ import {
 const tmp = mkdtempSync(join(tmpdir(), 'studio-secrets-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-// Nur offensichtliche Testwerte.
+// Obvious test values only.
 const KEY = randomBytes(32);
 const OTHER = randomBytes(32);
 const VALUE = 'test-token-0123456789';
-const MASKED = 'test-mask-value-42'; // eigener Wert: dieselbe Zeichenkette unter mehreren Namen trüge den zuletzt gemerkten
+const MASKED = 'test-mask-value-42'; // a distinct value: one string under several names would carry the most recently remembered name
 
 function setup() {
 	const db = openDb(':memory:');
@@ -55,17 +55,17 @@ const row = (db: ReturnType<typeof setup>, name: string) =>
 		Uint8Array
 	>;
 
-describe('Store', () => {
-	it('set/get-Roundtrip; in der DB steht nur Chiffrat, jeder Wert mit frischem IV', () => {
+describe('store', () => {
+	it('round-trips set/get while the DB holds only ciphertext, each value with a fresh IV', () => {
 		const db = setup();
-		setSecret(db, 'a', `  ${VALUE}\n`, false, KEY); // Leerraum vom Einfügen fällt weg
+		setSecret(db, 'a', `  ${VALUE}\n`, false, KEY); // whitespace from pasting is dropped
 		setSecret(db, 'b', VALUE, false, KEY);
 		expect(resolveRef(db, 'secret:a', KEY)).toBe(VALUE);
 		expect(Buffer.from(row(db, 'a').ciphertext).includes(VALUE)).toBe(false);
 		expect(Buffer.from(row(db, 'a').iv).equals(row(db, 'b').iv)).toBe(false);
 	});
 
-	it('falscher Schlüssel → sauberer Fehler mit Ausweg statt Datenmüll', () => {
+	it('reports a wrong key as a clean error with a way out instead of garbage data', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
 		const err = caught(() => resolveRef(db, 'secret:a', OTHER));
@@ -74,7 +74,7 @@ describe('Store', () => {
 		expect(`${err.message} ${err.hint}`).not.toContain(VALUE);
 	});
 
-	it('weist verändertes oder unter anderen Namen kopiertes Chiffrat ab (Auth-Tag, Name als AAD)', () => {
+	it('rejects ciphertext that was altered or copied under another name (auth tag, name as AAD)', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
 		setSecret(db, 'b', 'other-value-abcdef', false, KEY);
@@ -88,24 +88,24 @@ describe('Store', () => {
 		expect(caught(() => resolveRef(db, 'secret:a', KEY)).code).toBe('secret_undecryptable');
 	});
 
-	it('ungültige Eingaben: Fehler mit Code und Ausweg, ohne den eingegebenen Wert zu nennen', () => {
+	it('rejects invalid input with a code and a way out, without repeating the entered value', () => {
 		const db = setup();
 		const cases: [name: string, value: string, code: string, leak: string][] = [
-			[VALUE.toUpperCase(), 'some-value-123', 'secret_name_invalid', VALUE.toUpperCase()], // Key versehentlich ins Namensfeld
-			[VALUE, VALUE, 'secret_name_is_value', VALUE], // Key in beiden Feldern: wäre als Name überall sichtbar
+			[VALUE.toUpperCase(), 'some-value-123', 'secret_name_invalid', VALUE.toUpperCase()], // key pasted into the name field by mistake
+			[VALUE, VALUE, 'secret_name_is_value', VALUE], // key in both fields: as a name it would be visible everywhere
 			['a', '  \n', 'secret_empty', '\n'],
 			['a', 'kurz12', 'secret_too_short', 'kurz12']
 		];
 		for (const [name, value, code, leak] of cases) {
 			const err = caught(() => setSecret(db, name, value, false, KEY));
 			expect(err.code).toBe(code);
-			expect(err.hint.length).toBeGreaterThan(20); // Ausweg, nicht nur „Fehler“
+			expect(err.hint.length).toBeGreaterThan(20); // a way out, not just "error"
 			expect(`${err.message} ${err.hint}`).not.toContain(leak);
 		}
 		expect(listSecrets(db)).toEqual([]);
 	});
 
-	it('überschreibt nur ausdrücklich (replace), Ersetzen hält den neuen Wert', () => {
+	it('overwrites only when asked to (replace), and the replacement holds the new value', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
 		expect(caught(() => setSecret(db, 'a', 'second-value-xyz', false, KEY)).code).toBe(
@@ -116,7 +116,7 @@ describe('Store', () => {
 		expect(resolveRef(db, 'secret:a', KEY)).toBe('second-value-xyz');
 	});
 
-	it('listSecrets liefert nur Namen und Zeitstempel; deleteSecret ist idempotent', () => {
+	it('lists only names and timestamps, and deletes idempotently', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
 		expect(listSecrets(db).map((s) => Object.keys(s).sort())).toEqual([
@@ -127,7 +127,7 @@ describe('Store', () => {
 		expect(caught(() => resolveRef(db, 'secret:a', KEY)).code).toBe('secret_not_found');
 	});
 
-	it('die DB erzwingt Namensregel und Längen von IV/Auth-Tag', () => {
+	it('enforces the name rule and the IV/auth tag lengths in the DB', () => {
 		const db = setup();
 		const insert = (name: string, iv: number, tag: number) =>
 			db
@@ -141,27 +141,27 @@ describe('Store', () => {
 	});
 });
 
-describe('Schlüssel', () => {
-	it('secret.key entsteht mit Rechten 0600 und bleibt beim nächsten Start derselbe', () => {
+describe('key', () => {
+	it('creates secret.key with mode 0600 and keeps it across restarts', () => {
 		const dir = join(tmp, 'fresh');
 		const key = loadKey(dir, undefined);
 		const file = join(dir, 'secret.key');
-		// Reihenfolge bewusst: erst lesen (Nutzung), dann die Rechte prüfen — vermeidet das
-		// Check-then-use-Muster (stat vor read auf demselben Pfad), das CodeQL js/file-system-race meldet.
+		// Deliberate order: read first (use), then check the mode — avoids the
+		// check-then-use pattern (stat before read on the same path) that CodeQL reports as js/file-system-race.
 		expect(readFileSync(file, 'utf8').trim()).toBe(key.toString('base64'));
 		expect(statSync(file).mode & 0o777).toBe(0o600);
 		expect(key.length).toBe(32);
 		expect(loadKey(dir, undefined).equals(key)).toBe(true);
 	});
 
-	it('der Schlüssel selbst wird maskiert — aus der Datei wie aus STUDIO_SECRET_KEY', () => {
+	it('masks the key itself, from the file as well as from STUDIO_SECRET_KEY', () => {
 		const fileKey = loadKey(join(tmp, 'masked-key'), undefined).toString('base64');
 		const envKey = randomBytes(32).toString('base64');
 		loadKey(join(tmp, 'unused'), ` ${envKey}\n`);
 		expect(mask(`file=${fileKey} env=${envKey}`)).toBe('file=[secret-key] env=[secret-key]');
 	});
 
-	it('STUDIO_SECRET_KEY hat Vorrang vor secret.key und legt keine Datei an', () => {
+	it('prefers STUDIO_SECRET_KEY over secret.key and creates no file', () => {
 		const withFile = join(tmp, 'fresh-env');
 		const fileKey = loadKey(withFile, undefined);
 		expect(loadKey(withFile, KEY.toString('base64')).equals(KEY)).toBe(true);
@@ -171,7 +171,7 @@ describe('Schlüssel', () => {
 		expect(existsSync(join(noFile, 'secret.key'))).toBe(false);
 	});
 
-	it('ungültiger Schlüssel (Env leer/falsch, Datei kaputt) → Fehler mit Ausweg, ohne den Wert zu nennen', () => {
+	it('reports an invalid key (env empty or wrong, file broken) with a way out, without repeating the value', () => {
 		for (const env of ['', 'kein-base64-schluessel', randomBytes(16).toString('base64')]) {
 			const err = caught(() => loadKey(join(tmp, 'unused'), env));
 			expect(err.code).toBe('secret_key_invalid');
@@ -184,10 +184,10 @@ describe('Schlüssel', () => {
 		const err = caught(() => loadKey(broken, undefined));
 		expect(err.code).toBe('secret_key_invalid');
 		expect(err.hint).toContain('Backup');
-		expect(readFileSync(join(broken, 'secret.key'), 'utf8')).toBe('kaputt\n'); // nie überschrieben
+		expect(readFileSync(join(broken, 'secret.key'), 'utf8')).toBe('kaputt\n'); // never overwritten
 	});
 
-	it('warnt, wenn secret.key für andere lesbar ist', () => {
+	it('warns when secret.key is readable by others', () => {
 		const dir = join(tmp, 'open');
 		loadKey(dir, undefined);
 		chmodSync(join(dir, 'secret.key'), 0o644);
@@ -198,8 +198,8 @@ describe('Schlüssel', () => {
 	});
 });
 
-describe('Verweise', () => {
-	it('löst secret:<name> und ${ENV} an einer Stelle auf, übriger Text bleibt', () => {
+describe('references', () => {
+	it('resolves secret:<name> and ${ENV} in one place and keeps the other text', () => {
 		const db = setup();
 		setSecret(db, 'gh', VALUE, false, KEY);
 		process.env.TEST_API_TOKEN = 'env-token-abcdef';
@@ -211,7 +211,7 @@ describe('Verweise', () => {
 		expect(err.hint).toContain('secret:<name>');
 	});
 
-	it('verweigert Studio-Interna: ${STUDIO_SECRET_KEY} (auch klein geschrieben) liefert nie den Schlüssel', () => {
+	it('refuses Studio internals: ${STUDIO_SECRET_KEY} (in any case) never yields the key', () => {
 		const db = setup();
 		const before = process.env.STUDIO_SECRET_KEY;
 		process.env.STUDIO_SECRET_KEY = KEY.toString('base64');
@@ -232,7 +232,7 @@ describe('Verweise', () => {
 		}
 	});
 
-	it('nennt im Fehler nur gültige Secret-Namen — ein versehentlich eingefügter Key wird nicht wiederholt', () => {
+	it('names only valid secret names in errors, so a key pasted by mistake is not repeated', () => {
 		const db = setup();
 		expect(caught(() => resolveRef(db, 'secret:fehlt', KEY)).message).toContain('„fehlt“');
 		const pasted = 'sk-Test_NotARealKey.123';
@@ -243,11 +243,11 @@ describe('Verweise', () => {
 	});
 });
 
-describe('Maskierung', () => {
+describe('masking', () => {
 	const db = setup();
 	setSecret(db, 'anthropic', MASKED, false, KEY);
 
-	it('ersetzt Secret-Werte in einem Event-Payload (verschachtelt, Arrays, Schlüssel), Original bleibt', () => {
+	it('replaces secret values in an event payload (nested, arrays, keys) and leaves the original unchanged', () => {
 		const payload = {
 			type: 'tool_result',
 			data: { output: `key=${MASKED};`, args: [MASKED, 1], [MASKED]: true },
@@ -269,7 +269,7 @@ describe('Maskierung', () => {
 		expect(payload.data.output).toContain(MASKED);
 	});
 
-	it('maskiert per ${ENV} aufgelöste Werte und mehrzeilige Werte auch in escapter Form', () => {
+	it('masks values resolved through ${ENV} and multi-line values also in escaped form', () => {
 		process.env.TEST_API_TOKEN = 'env-token-abcdef';
 		resolveRef(db, '${TEST_API_TOKEN}', KEY);
 		expect(mask('Authorization: Bearer env-token-abcdef')).toBe(
@@ -280,13 +280,13 @@ describe('Maskierung', () => {
 		expect(mask(JSON.stringify({ pem }))).toBe('{"pem":"[secret:pem]"}');
 	});
 
-	it('längste Werte zuerst: enthält ein Secret ein anderes, bleibt vom längeren nichts stehen', () => {
-		setSecret(db, 'inner', 'test-inner-value-1', false, KEY); // zuerst gemerkt
+	it('masks the longest values first, so nothing of a longer secret that contains another one remains', () => {
+		setSecret(db, 'inner', 'test-inner-value-1', false, KEY); // remembered first
 		setSecret(db, 'outer', 'outer-start-test-inner-value-1-outer-end', false, KEY);
 		expect(mask('x outer-start-test-inner-value-1-outer-end y')).toBe('x [secret:outer] y');
 	});
 
-	it('Nicht-Plain-Objekte (URL, Date, Klasseninstanz, Map) laufen über ihre JSON- bzw. inspect-Form; Zyklen werfen nicht', () => {
+	it('masks non-plain objects (URL, Date, class instance, Map) through their JSON or inspect form, and cycles do not throw', () => {
 		class Client {
 			readonly apiKey: string;
 			constructor(apiKey: string) {
@@ -303,9 +303,9 @@ describe('Maskierung', () => {
 		expect(masked.url).toBe('https://api.example.test/v1?key=[secret:anthropic]');
 		expect(masked.client).toEqual({ apiKey: '[secret:anthropic]' });
 		expect(masked.at).toBe('1970-01-01T00:00:00.000Z');
-		expect(holder.url).toBeInstanceOf(URL); // Original unverändert
+		expect(holder.url).toBeInstanceOf(URL); // original unchanged
 
-		const big = { n: 1n, s: MASKED }; // ohne JSON-Form → inspect-Text
+		const big = { n: 1n, s: MASKED }; // no JSON form → inspect text
 		expect(
 			mask([new Map([['k', MASKED]]), { inner: Object.assign(Object.create({}), big) }])
 		).toEqual([{}, { inner: expect.stringContaining('[secret:anthropic]') }]);
@@ -316,7 +316,7 @@ describe('Maskierung', () => {
 		expect(mask({ cyclic, a: shared, b: shared })).toEqual({
 			cyclic: { s: '[secret:anthropic]', self: '[Circular]' },
 			a: { s: '[secret:anthropic]' },
-			b: { s: '[secret:anthropic]' } // mehrfach verwendet ist kein Zyklus
+			b: { s: '[secret:anthropic]' } // reused is not a cycle
 		});
 		const err = new Error(`kaputt ${MASKED}`);
 		(err as { cause?: unknown }).cause = err;
@@ -324,7 +324,7 @@ describe('Maskierung', () => {
 		expect(mask(err).message).toBe('kaputt [secret:anthropic]');
 	});
 
-	it('greift in Fehlermeldungen: Meldung, Stack, cause und code/hint — der Fehlertyp bleibt', () => {
+	it('masks errors in message, stack, cause and code/hint while keeping the error type', () => {
 		const plain = mask(
 			new Error(`401 für Key ${MASKED}`, { cause: new Error(`Upstream: ${MASKED}`) })
 		);
@@ -342,7 +342,7 @@ describe('Maskierung', () => {
 		]);
 	});
 
-	it('greift in Log-Zeilen: console.* formatiert erst und maskiert dann (auch Objekte, Errors, mehrzeilige Werte)', () => {
+	it('masks log lines: console.* formats first and then masks (objects, errors, multi-line values included)', () => {
 		const out: string[] = [];
 		const sink = (...args: unknown[]) => out.push(args.join('|'));
 		const fake = { log: sink, info: sink, warn: sink, error: sink, debug: sink };
@@ -358,11 +358,11 @@ describe('Maskierung', () => {
 });
 
 describe('initSecrets', () => {
-	it('lädt gespeicherte Secrets für die Maskierung und meldet nicht entschlüsselbare ohne Wert', async () => {
+	it('loads stored secrets for the masking and reports undecryptable ones without their value', async () => {
 		const db = setup();
 		setSecret(db, 'ok', 'stored-before-restart', false, KEY);
 		setSecret(db, 'fremd', 'stored-with-other-key', false, OTHER);
-		vi.resetModules(); // wie ein Neustart: leere Maskierungsliste
+		vi.resetModules(); // like a restart: empty masking list
 		const fresh = await import('./secrets');
 		expect(fresh.mask('stored-before-restart')).toBe('stored-before-restart');
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

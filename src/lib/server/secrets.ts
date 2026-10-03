@@ -6,13 +6,13 @@ import { format, inspect } from 'node:util';
 import { dataDir } from './db';
 import { DomainError } from './domain/core';
 
-// Secrets-Store (ADR studio-011): AES-256-GCM, Schlüssel in `secret.key` bzw. STUDIO_SECRET_KEY.
-// Klartext verlässt dieses Modul nur über resolveRef — für Provider-Clients und Prozess-Env, nie für UI, Prompts oder Agents.
+// Secrets store: AES-256-GCM, with the key in `secret.key` or STUDIO_SECRET_KEY.
+// Plain text leaves this module only through resolveRef — for provider clients and process env, never for UI, prompts or agents.
 
 const KEY_ENV = 'STUDIO_SECRET_KEY';
-const KEY_FORMAT = /^[A-Za-z0-9+/]{43}=$/; // 32 Bytes als Base64
-const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/; // wie der CHECK in migrations/004_secrets.sql
-/** Kürzere Werte ließen sich nicht maskieren, ohne gewöhnliche Wörter in Logs zu verdecken — und sind als Key/Token fast sicher unvollständig. */
+const KEY_FORMAT = /^[A-Za-z0-9+/]{43}=$/; // 32 bytes as Base64
+const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/; // same as the CHECK in migrations/004_secrets.sql
+/** Shorter values could not be masked without hiding ordinary words in logs, and as a key or token they are almost certainly incomplete. */
 export const MIN_LENGTH = 8;
 
 type Row = { name: string; ciphertext: Uint8Array; iv: Uint8Array; auth_tag: Uint8Array };
@@ -26,12 +26,12 @@ const invalidKey = (what: string, hint: string) =>
 	);
 
 /**
- * Lädt den Schlüssel: `STUDIO_SECRET_KEY` hat Vorrang, sonst `<dir>/secret.key` — fehlt die Datei, wird sie mit Rechten 0600
- * erzeugt. Beide enthalten denselben Base64-Text, der Schlüssel lässt sich also zwischen Datei und Env umziehen.
+ * Loads the key: `STUDIO_SECRET_KEY` wins, otherwise `<dir>/secret.key` — a missing file is created with mode 0600.
+ * Both hold the same Base64 text, so the key can move between file and env.
  */
 export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 	if (env !== undefined) {
-		// auch leer ist ein Fehler: sonst entstünde still eine neue secret.key, und die gespeicherten Secrets wären unlesbar
+		// empty is an error too: otherwise a new secret.key would appear silently and the stored secrets would be unreadable
 		if (!KEY_FORMAT.test(env.trim()))
 			throw invalidKey(
 				KEY_ENV,
@@ -42,7 +42,7 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 	const file = join(dir, 'secret.key');
 	mkdirSync(dir, { recursive: true });
 	try {
-		writeFileSync(file, randomBytes(32).toString('base64') + '\n', { mode: 0o600, flag: 'wx' }); // wx: nie einen Schlüssel überschreiben
+		writeFileSync(file, randomBytes(32).toString('base64') + '\n', { mode: 0o600, flag: 'wx' }); // wx: never overwrite a key
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
 	}
@@ -59,17 +59,17 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 	return keyFrom(text);
 }
 
-/** Base64-Text → Schlüssel. Der Text selbst geht in die Maskierung: auch der Schlüssel darf in keinem Log auftauchen. */
+/** Base64 text → key. The text itself is masked too: the key must not appear in any log either. */
 const keyFrom = (text: string) => Buffer.from(remember(text, '[secret-key]'), 'base64');
 
 let key: Buffer | undefined;
-/** Der Schlüssel des Prozesses — beim ersten Aufruf geladen bzw. erzeugt (nicht beim Import: der Build legt nichts an). */
+/** The process's key, loaded or created on the first call (not on import, so the build creates nothing). */
 export const secretKey = () => (key ??= loadKey());
 
-// Der Name ist Additional Authenticated Data: ein Chiffrat lässt sich nicht unbemerkt unter einen anderen Namen kopieren
-// (etwa den Anthropic-Key in das Token eines fremden MCP-Servers).
+// The name is additional authenticated data: a ciphertext cannot be copied unnoticed under another name
+// (say, the Anthropic key into the token of a foreign MCP server).
 function encrypt(key: Buffer, name: string, value: string) {
-	const iv = randomBytes(12); // frisch je Wert — GCM darf einen IV mit demselben Schlüssel nie wiederverwenden
+	const iv = randomBytes(12); // fresh per value — GCM must never reuse an IV with the same key
 	const cipher = createCipheriv('aes-256-gcm', key, iv).setAAD(Buffer.from(name));
 	const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
 	return { ciphertext, iv, tag: cipher.getAuthTag() };
@@ -83,7 +83,7 @@ function decrypt(key: Buffer, row: Row): string {
 		decipher.setAuthTag(row.auth_tag);
 		return Buffer.concat([decipher.update(row.ciphertext), decipher.final()]).toString('utf8');
 	} catch {
-		// GCM prüft den Auth-Tag: falscher Schlüssel oder veränderte Daten ergeben diesen Fehler, nie Datenmüll
+		// GCM checks the auth tag: a wrong key or altered data end up here, never as garbage data
 		throw new DomainError(
 			'secret_undecryptable',
 			`Secret „${row.name}“ lässt sich mit dem aktuellen Schlüssel nicht entschlüsseln.`,
@@ -92,32 +92,32 @@ function decrypt(key: Buffer, row: Row): string {
 	}
 }
 
-// ---- Maskierung ----
+// ---- Masking ----
 
-/** Bekannte Secret-Werte → Platzhalter. Gelöschte bleiben bis zum Neustart drin: zu viel maskieren schadet nicht. */
+/** Known secret values → placeholder. Deleted ones stay until a restart: masking too much does no harm. */
 const known = new Map<string, string>();
 
 function remember(value: string, label: string): string {
-	// auch die JSON-/inspect-escapte Form: mehrzeilige Werte (PEM) erscheinen in Logs als „…\n…“
+	// the JSON/inspect-escaped form too: multi-line values (PEM) appear in logs as "…\n…"
 	if (value.length >= MIN_LENGTH)
 		for (const v of [value, JSON.stringify(value).slice(1, -1)]) known.set(v, label);
 	return value;
 }
 
 function maskText(text: string): string {
-	// längste zuerst: enthält ein Secret ein anderes, bleibt kein Rest des längeren stehen
+	// longest first: if one secret contains another, no rest of the longer one is left
 	for (const [value, label] of [...known].sort(([a], [b]) => b.length - a.length))
 		text = text.replaceAll(value, () => label);
 	return text;
 }
 
 /**
- * Ersetzt bekannte Secret-Werte durch `[secret:<name>]`, `[env:<NAME>]` bzw. `[secret-key]` — in Strings, Arrays, einfachen
- * Objekten (Werte und Schlüssel) und Errors (Meldung, Stack, cause, eigene Felder wie code/hint; der Typ bleibt). Andere Objekte
- * (URL, Date, Map, Klasseninstanzen) kommen in ihrer JSON-Form zurück — so, wie sie gespeichert würden —, ohne JSON-Form als
- * maskierter inspect-Text; Zyklen werden zu `[Circular]`. Das Original bleibt unverändert.
- * Pflicht für alles, was ein Agent oder der Browser später lesen kann: run_events-Payloads, Fehlermeldungen, Tool-Ergebnisse.
- * Gleichwertig für schon serialisierte Payloads: `mask(JSON.stringify(payload))` (die JSON-escapte Form ist mit gemerkt).
+ * Replaces known secret values with `[secret:<name>]`, `[env:<NAME>]` or `[secret-key]` — in strings, arrays, plain
+ * objects (values and keys) and errors (message, stack, cause, own fields like code/hint; the type stays). Other objects
+ * (URL, Date, Map, class instances) come back in their JSON form, as they would be stored; without a JSON form as
+ * masked inspect text. Cycles become `[Circular]`. The original stays unchanged.
+ * Required for everything an agent or the browser can read later: run_events payloads, error messages, tool results.
+ * Works the same on serialised payloads: `mask(JSON.stringify(payload))` (the JSON-escaped form is remembered too).
  */
 export const mask = <T>(value: T): T => walk(value, new Set()) as T;
 
@@ -137,7 +137,7 @@ function walk(value: unknown, parents: Set<object>): unknown {
 		const json = tryStringify(value);
 		return json === undefined ? maskText(inspect(value)) : walk(JSON.parse(json), parents);
 	} finally {
-		parents.delete(value); // nur Vorfahren zählen: dasselbe Objekt zweimal nebeneinander ist kein Zyklus
+		parents.delete(value); // only ancestors count: the same object twice side by side is no cycle
 	}
 }
 
@@ -166,11 +166,11 @@ function tryStringify(value: object): string | undefined {
 const LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
 
 /**
- * Legt die Maskierung um console.* — jede Log-Zeile des Prozesses läuft hindurch, auch die von Bibliotheken und
- * SvelteKits Fehlerausgabe. Formatiert erst (Objekte, Errors samt cause), maskiert dann den fertigen Text.
+ * Wraps console.* in the masking, so every log line of the process passes through it, including those of libraries
+ * and SvelteKit's error output. Formats first (objects, errors with cause), then masks the finished text.
  */
 export function maskConsole(target: Pick<Console, (typeof LEVELS)[number]> = console): void {
-	// ponytail: direkte Schreibzugriffe auf process.stdout/stderr (z. B. Nodes Ausgabe bei uncaughtException) laufen vorbei — Hook ergänzen, falls das relevant wird.
+	// ponytail: direct writes to process.stdout/stderr (e.g. Node's output on uncaughtException) bypass this — add a hook if that becomes relevant.
 	for (const level of LEVELS) {
 		const write = target[level].bind(target);
 		target[level] = (...args: unknown[]) => write('%s', maskText(format(...args)));
@@ -179,16 +179,16 @@ export function maskConsole(target: Pick<Console, (typeof LEVELS)[number]> = con
 
 // ---- Store ----
 
-/** Namen und Zeitstempel, nie Werte oder Chiffrate — das Einzige, was das UI von Secrets zu sehen bekommt. */
+/** Names and timestamps, never values or ciphertexts — all the UI ever sees of secrets. */
 export const listSecrets = (db: DatabaseSync) =>
 	db
 		.prepare('SELECT name, created_at, updated_at FROM secrets ORDER BY name')
 		.all() as SecretMeta[];
 
 /**
- * Speichert ein Secret verschlüsselt. Einen vorhandenen Namen überschreibt es nur mit `replace` — Ersetzen ist unwiderruflich
- * und muss ausdrücklich gewollt sein. Leerraum am Rand (Einfügen aus der Zwischenablage) fällt weg.
- * Fehlermeldungen nennen den eingegebenen Wert nie — auch keinen ungültigen Namen, falls dort versehentlich der Key landete.
+ * Stores a secret encrypted. It overwrites an existing name only with `replace`, because replacing cannot be undone
+ * and must be intended. Surrounding whitespace (from pasting) is dropped.
+ * Error messages never repeat the entered value — not even an invalid name, in case the key ended up there by mistake.
  */
 export function setSecret(
 	db: DatabaseSync,
@@ -241,7 +241,7 @@ function assertStorable(name: string, value: string) {
 		);
 }
 
-/** Löscht ein Secret. Idempotent: `false`, wenn es keins (mehr) gab. */
+/** Deletes a secret. Idempotent: `false` if there was none (any more). */
 export const deleteSecret = (db: DatabaseSync, name: string) =>
 	db.prepare('DELETE FROM secrets WHERE name = ?').run(name).changes > 0;
 
@@ -256,7 +256,7 @@ function getSecret(db: DatabaseSync, name: string, key: Buffer): string {
 					`Secret „${name}“ gibt es nicht.`,
 					'Lege es unter Einstellungen → Secrets an oder korrigiere den Verweis secret:<name>.'
 				)
-			: // kein gültiger Name, vielleicht ein versehentlich eingefügter Key: nicht wiederholen
+			: // not a valid name, maybe a key pasted by mistake: do not repeat it
 				new DomainError(
 					'secret_ref_invalid',
 					'Der Verweis secret:<name> enthält keinen gültigen Secret-Namen.',
@@ -266,14 +266,14 @@ function getSecret(db: DatabaseSync, name: string, key: Buffer): string {
 }
 
 /**
- * Die eine Stelle, die Verweise in Konfigurationswerten auflöst: `secret:<name>` (ganzer Wert) → entschlüsseltes Secret;
- * sonst wird jedes `${ENV_NAME}` durch die Umgebungsvariable ersetzt, übriger Text bleibt (`Bearer ${TOKEN}`).
- * Aufgelöste Werte gehen in die Maskierung. `${STUDIO_*}` wird verweigert (Schlüssel und andere Interna).
+ * The one place that resolves references in configuration values: `secret:<name>` (the whole value) → decrypted secret;
+ * otherwise every `${ENV_NAME}` is replaced by the environment variable and other text stays (`Bearer ${TOKEN}`).
+ * Resolved values are masked. `${STUDIO_*}` is refused (the key and other internals).
  */
 export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): string {
 	if (ref.startsWith('secret:')) return getSecret(db, ref.slice('secret:'.length), key);
 	return ref.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => {
-		// Studio-Interna (allen voran STUDIO_SECRET_KEY) gehen nie an Provider oder MCP-Server; i: Windows-Env ignoriert Groß/klein
+		// Studio internals (above all STUDIO_SECRET_KEY) never go to providers or MCP servers; i: the Windows env ignores case
 		if (/^STUDIO_/i.test(name))
 			throw new DomainError(
 				'env_forbidden',
@@ -292,8 +292,8 @@ export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): st
 }
 
 /**
- * Beim Start: Schlüssel laden bzw. erzeugen und alle Secrets für die Maskierung entschlüsseln. Nicht entschlüsselbare
- * werden gemeldet, brechen den Start aber nicht ab — sie lassen sich im UI ersetzen.
+ * At startup: loads or creates the key and decrypts all secrets for the masking. Secrets that cannot be decrypted
+ * are reported but do not abort the start; they can be replaced in the UI.
  */
 export function initSecrets(db: DatabaseSync, key = secretKey()): void {
 	for (const row of db

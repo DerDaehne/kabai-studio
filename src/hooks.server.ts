@@ -23,15 +23,15 @@ import { builtinExecutor } from '$lib/server/executors/builtin';
 import { startRunner } from '$lib/server/runner';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
-// Sicherer Default: adapter-node bindet ohne HOST an 0.0.0.0, bei leerem HOST sogar an alle Interfaces (IPv4+IPv6) —
-// sonst wäre /setup im LAN offen (bis #810 die CLI liefert). `||=`, damit auch HOST= (leer) den Default bekommt.
-// Greift, weil build/index.js HOST erst liest, nachdem handler.js per `await server.init()` diese Datei geladen hat.
+// Safe default: without HOST, adapter-node binds to 0.0.0.0, with an empty HOST even to all interfaces (IPv4+IPv6),
+// which would open /setup to the LAN. `||=` so that an empty HOST= gets the default too.
+// It takes effect because build/index.js reads HOST only after handler.js has loaded this file via `await server.init()`.
 process.env.HOST ||= '127.0.0.1';
 
 export const init: ServerInit = async () => {
-	maskConsole(); // ab hier läuft jede Log-Zeile durch die Secret-Maskierung
-	// adapter-node nimmt ohne ORIGIN https an; Studio spricht selbst HTTP → SvelteKits CSRF-Check weist sonst jedes Formular ab.
-	// ORIGIN liest adapter-node vor den Hooks, ein Default hier käme zu spät.
+	maskConsole(); // from here on every log line passes through the secret masking
+	// Without ORIGIN adapter-node assumes https; Studio itself speaks HTTP, so SvelteKit's CSRF check would reject every form.
+	// adapter-node reads ORIGIN before the hooks, so a default here would come too late.
 	const origin = process.env.ORIGIN;
 	if (!dev && !origin)
 		console.log(
@@ -42,7 +42,7 @@ export const init: ServerInit = async () => {
 		// locks the data directory (a second instance aborts here), opens, backs up and migrates the DB, loads or
 		// creates secret.key — once at startup
 		initSecrets(db());
-		startBackups(db(), backupDir()); // sichert jetzt, falls fällig, dann stündliche Prüfung auf „älter als ein Tag"
+		startBackups(db(), backupDir()); // backs up now if due, then checks hourly for "older than a day"
 		// acp profiles fail with a clear reason until their executor is installed, instead of waiting forever
 		startRunner(db(), { builtin: builtinExecutor(db()) });
 		if (!hasOwner(db())) {
@@ -63,10 +63,10 @@ export const init: ServerInit = async () => {
 	}
 };
 
-// Öffentlich nur diese beiden. Statische Dateien liefert adapter-node vor den Hooks aus, /_app/* beantwortet SvelteKit
-// selbst vor handle — bis auf Remote Functions (/_app/remote), die deshalb bewusst NICHT ausgenommen sind.
-// SvelteKit entfernt /__data.json aus event.url.pathname, bevor handle läuft (respond.js) — /login/__data.json kommt
-// hier schon als /login an (Details dazu in der internen Wissensdatenbank, Auth-Architektur).
+// Only these two are public. adapter-node serves static files before the hooks, and SvelteKit answers /_app/* itself
+// before handle — except remote functions (/_app/remote), which are therefore deliberately NOT exempt.
+// SvelteKit strips /__data.json from event.url.pathname before handle runs (respond.js), so /login/__data.json
+// already arrives here as /login.
 const PUBLIC = new Set(['/login', '/setup']);
 /** Agents have no session: the MCP endpoint checks the run's bearer token on every request itself. */
 const RUN_TOKEN_PATH = '/mcp';

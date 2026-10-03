@@ -1,5 +1,5 @@
-// Auth für den einen Owner (ADR studio-009). Nur node:-Importe und Typ-Importe: die CLI reset-password
-// lädt diese Datei direkt mit Node, ohne Vite.
+// Auth for the single owner. node: and type imports only: the reset-password CLI
+// loads this file directly under Node, without Vite.
 import { createHash, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Cookies } from '@sveltejs/kit';
@@ -7,12 +7,12 @@ import type { Cookies } from '@sveltejs/kit';
 export type User = { id: number; name: string };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest();
-/** Zeitkonstanter Stringvergleich, auch bei unterschiedlicher Länge. */
+/** Constant-time string comparison, also for strings of different length. */
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b));
 
-// --- Passwort: scrypt, Parameter im Hash-String -------------------------------------------------
+// --- Password: scrypt, parameters inside the hash string ---
 
-// OWASP-Äquivalent zu N=2^17/p=1, aber 32 MiB statt 128 MiB pro Hash (weniger Speicher-DoS bei parallelen Logins).
+// OWASP equivalent of N=2^17/p=1, but 32 MiB instead of 128 MiB per hash (less memory DoS with parallel logins).
 const N = 2 ** 15,
 	R = 8,
 	P = 3;
@@ -25,7 +25,7 @@ function derive(
 	keylen: number,
 	opts: ScryptOptions
 ): Promise<Buffer> {
-	// maxmem: Nodes Default (32 MiB) liegt genau auf 128·N·r und reicht mit OpenSSLs Zusatzbedarf nicht.
+	// maxmem: Node's default (32 MiB) equals 128·N·r exactly and is too small once OpenSSL adds its overhead.
 	return new Promise((resolve, reject) =>
 		scrypt(password, salt, keylen, { ...opts, maxmem: 64 * 1024 * 1024 }, (err, key) =>
 			err ? reject(err) : resolve(key)
@@ -33,7 +33,7 @@ function derive(
 	);
 }
 
-/** Fehlermeldung für ein unzulässiges Passwort, sonst null. */
+/** The error message for an unacceptable password, otherwise null. */
 export function passwordProblem(password: string): string | null {
 	if (password.length < PASSWORD_MIN)
 		return `Das Passwort braucht mindestens ${PASSWORD_MIN} Zeichen.`;
@@ -42,7 +42,7 @@ export function passwordProblem(password: string): string | null {
 	return null;
 }
 
-/** Format `scrypt$N$r$p$salt$hash` (base64url) — spätere Parameteränderungen brechen alte Hashes nicht. */
+/** Format `scrypt$N$r$p$salt$hash` (base64url), so later parameter changes do not break old hashes. */
 export async function hashPassword(password: string): Promise<string> {
 	const salt = randomBytes(16);
 	const key = await derive(password, salt, 32, { N, r: R, p: P });
@@ -61,11 +61,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
 	return timingSafeEqual(key, expected);
 }
 
-// --- Owner -------------------------------------------------------------------------------------
+// --- Owner ---
 
 export const hasOwner = (db: DatabaseSync) => db.prepare('SELECT 1 FROM users').get() !== undefined;
 
-/** Legt den Owner an, atomar nur solange keiner existiert. null = es gibt schon einen. */
+/** Creates the owner, atomically and only while none exists. null = there already is one. */
 export function createOwner(db: DatabaseSync, name: string, passwordHash: string): User | null {
 	const row = db
 		.prepare(
@@ -75,7 +75,7 @@ export function createOwner(db: DatabaseSync, name: string, passwordHash: string
 	return (row as User | undefined) ?? null;
 }
 
-/** Prüft Name + Passwort gegen den Owner. scrypt läuft immer, damit ein falscher Name nicht schneller antwortet. */
+/** Checks name and password against the owner. scrypt always runs, so a wrong name does not answer faster. */
 export async function checkLogin(
 	db: DatabaseSync,
 	name: string,
@@ -89,11 +89,11 @@ export async function checkLogin(
 	return ok && safeEqual(name, owner.name) ? { id: owner.id, name: owner.name } : null;
 }
 
-/** Recovery (CLI): neues Passwort für den Owner, alle Sessions beendet. false = kein Owner. */
+/** Recovery (CLI): a new owner password, and all sessions end. false = no owner. */
 export function resetPassword(db: DatabaseSync, passwordHash: string): boolean {
-	db.exec('BEGIN IMMEDIATE'); // Schreibsperre sofort holen: läuft neben dem Server-Prozess
+	db.exec('BEGIN IMMEDIATE'); // take the write lock at once: this runs next to the server process
 	try {
-		const { changes } = db.prepare('UPDATE users SET password_hash = ?').run(passwordHash); // genau ein Owner
+		const { changes } = db.prepare('UPDATE users SET password_hash = ?').run(passwordHash); // exactly one owner
 		db.exec('DELETE FROM sessions');
 		db.exec('COMMIT');
 		return Number(changes) > 0;
@@ -103,7 +103,7 @@ export function resetPassword(db: DatabaseSync, passwordHash: string): boolean {
 	}
 }
 
-// --- Setup-Token: einmalig, nur im Speicher, beim Start ohne Owner auf der Konsole ausgegeben -----
+// --- Setup token: one-time, in memory only, printed to the console when starting without an owner ---
 
 let setupToken: string | null = null;
 
@@ -112,7 +112,7 @@ export const checkSetupToken = (input: string) =>
 	setupToken !== null && safeEqual(input, setupToken);
 export const clearSetupToken = () => void (setupToken = null);
 
-// --- Sessions: Token nur im Cookie, in der DB nur SHA-256 --------------------------------------
+// --- Sessions: the token lives only in the cookie, the DB keeps its SHA-256 ---
 
 export const SESSION_COOKIE = 'studio_session';
 const SESSION_DAYS = 30;
@@ -121,7 +121,7 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 const sqlTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 const tokenHash = (token: string) => sha256(token).toString('hex');
 
-/** Neue Session, gibt das Klartext-Token (nur fürs Cookie) zurück. Räumt dabei abgelaufene Sessions ab. */
+/** Creates a session and returns the plain token (for the cookie only). Removes expired sessions on the way. */
 export function createSession(db: DatabaseSync, userId: number, now = Date.now()): string {
 	const token = randomBytes(32).toString('base64url');
 	db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(sqlTime(now));
@@ -134,10 +134,10 @@ export function createSession(db: DatabaseSync, userId: number, now = Date.now()
 }
 
 /**
- * Prüft ein Session-Token. null = unbekannt oder abgelaufen (abgelaufene Zeile wird gelöscht).
- * Gleitender Ablauf: verlängert auf 30 Tage, sobald die Restlaufzeit unter 29 Tagen liegt (max. ein Schreibzugriff pro Tag).
- * `renew: false` prüft nur — für Stellen, die das Cookie nicht neu setzen können (offener SSE-Stream). Sonst verbrauchte
- * z. B. ein Heartbeat die Verlängerung, der Guard setzte das Cookie nie neu, und ein offener Tab hielte die Session ewig.
+ * Checks a session token. null = unknown or expired (an expired row is deleted).
+ * Sliding expiry: extends to 30 days once less than 29 days remain (at most one write per day).
+ * `renew: false` only checks — for places that cannot set the cookie again (an open SSE stream). Otherwise a heartbeat
+ * would use up the renewal, the guard would never set the cookie again, and an open tab would keep the session forever.
  */
 export function validateSession(
 	db: DatabaseSync,
@@ -169,7 +169,7 @@ export function deleteSession(db: DatabaseSync, token: string) {
 	db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token));
 }
 
-/** httpOnly, SameSite=Lax, Secure außer auf Loopback (außerhalb nur über HTTPS nutzbar). */
+/** httpOnly, SameSite=Lax, Secure except on loopback (so elsewhere usable over HTTPS only). */
 const cookieOptions = (url: URL) =>
 	({ path: '/', httpOnly: true, sameSite: 'lax', secure: !LOOPBACK.has(url.hostname) }) as const;
 
@@ -181,15 +181,15 @@ export function clearSessionCookie(cookies: Cookies, url: URL) {
 	cookies.delete(SESSION_COOKIE, cookieOptions(url));
 }
 
-/** Set-Cookie-Wert, der das Session-Cookie löscht — für Antworten, an die SvelteKit event.cookies nicht anhängt. */
+/** A Set-Cookie value that deletes the session cookie, for responses that SvelteKit does not attach event.cookies to. */
 export const expiredSessionCookie = (cookies: Cookies, url: URL) =>
 	cookies.serialize(SESSION_COOKIE, '', { ...cookieOptions(url), maxAge: 0 });
 
-// --- Rate-Limit ---------------------------------------------------------------------------------
+// --- Rate limit ---
 
 /**
- * In-memory-Limit je Schlüssel (Client-IP) im gleitenden Fenster. Ein Versuch wird VOR der Prüfung gezählt und nur
- * bei Erfolg zurückgenommen — parallele Requests können das Limit so nicht umgehen.
+ * In-memory limit per key (client IP) in a sliding window. An attempt counts BEFORE the check and is only taken back
+ * on success, so parallel requests cannot get around the limit.
  */
 export function rateLimiter(max = 5, windowMs = 60_000) {
 	const hits = new Map<string, number[]>();
@@ -197,7 +197,7 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 		for (const [key, times] of hits) if (times.every((t) => t <= now - windowMs)) hits.delete(key);
 	};
 	return {
-		/** false = Limit erreicht, Versuch abweisen. */
+		/** false = limit reached, reject the attempt. */
 		attempt(key: string, now = Date.now()): boolean {
 			const recent = (hits.get(key) ?? []).filter((t) => t > now - windowMs);
 			const allowed = recent.length < max;
@@ -207,14 +207,14 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 			if (hits.size > 10_000) forgetExpired(now);
 			return allowed;
 		},
-		/** Erfolgreicher Versuch zählt nicht als Fehlversuch. */
+		/** A successful attempt does not count as a failed one. */
 		succeed(key: string) {
 			hits.get(key)?.pop();
 		}
 	};
 }
 
-/** Gemeinsames Limit für /login und /setup: 5 Fehlversuche pro Minute und IP. */
+/** Shared limit for /login and /setup: 5 failed attempts per minute and IP. */
 export const authLimiter = rateLimiter();
 export const TOO_MANY =
 	'Zu viele Fehlversuche von dieser Adresse. Bitte eine Minute warten und dann erneut versuchen.';

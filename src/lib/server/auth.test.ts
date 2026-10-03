@@ -25,14 +25,14 @@ vi.mock('node:crypto', async (importOriginal) => {
 const DAY = 86_400_000;
 const PW = 'test-passwort-123';
 
-describe('Passwort (scrypt)', () => {
-	it('speichert Parameter und Salt im Hash, jedes Mal ein anderes Salt', async () => {
+describe('password (scrypt)', () => {
+	it('stores parameters and salt in the hash, with a new salt every time', async () => {
 		const [a, b] = [await hashPassword(PW), await hashPassword(PW)];
 		expect(a).toMatch(/^scrypt\$32768\$8\$3\$[\w-]{22}\$[\w-]{43}$/);
 		expect(a).not.toBe(b);
 	});
 
-	it('verifiziert mit timingSafeEqual', async () => {
+	it('verifies with timingSafeEqual', async () => {
 		const stored = await hashPassword(PW);
 		vi.mocked(timingSafeEqual).mockClear();
 		expect(await verifyPassword(PW, stored)).toBe(true);
@@ -41,7 +41,7 @@ describe('Passwort (scrypt)', () => {
 		expect(timingSafeEqual).toHaveBeenCalledTimes(2);
 	});
 
-	it('liest die Parameter aus dem Hash (ältere Parameter bleiben gültig)', async () => {
+	it('reads the parameters from the hash, so older parameters stay valid', async () => {
 		const salt = Buffer.from('0123456789abcdef');
 		const old = [
 			'scrypt',
@@ -55,20 +55,20 @@ describe('Passwort (scrypt)', () => {
 		expect(await verifyPassword('falsch', old)).toBe(false);
 	});
 
-	it('weist fremde oder kaputte Hashes ab', async () => {
+	it('rejects foreign or broken hashes', async () => {
 		expect(await verifyPassword(PW, '')).toBe(false);
 		expect(await verifyPassword(PW, '$2b$10$abcdefghijklmnopqrstuv')).toBe(false);
 		expect(await verifyPassword(PW, 'scrypt$32768$8$3$c2FsdA$')).toBe(false);
 	});
 
-	it('verlangt 12 bis 1024 Zeichen', () => {
+	it('requires 12 to 1024 characters', () => {
 		expect(passwordProblem('a'.repeat(11))).toMatch(/mindestens 12/);
 		expect(passwordProblem('a'.repeat(12))).toBeNull();
 		expect(passwordProblem('a'.repeat(1025))).toMatch(/höchstens/);
 	});
 });
 
-describe('Owner und Sessions', () => {
+describe('owner and sessions', () => {
 	const db = openDb(':memory:');
 	migrate(db);
 	const now = Date.parse('2026-01-01T00:00:00Z');
@@ -77,20 +77,20 @@ describe('Owner und Sessions', () => {
 			.prepare('SELECT expires_at FROM sessions WHERE token_hash = ?')
 			.get(createHash('sha256').update(token).digest('hex'))?.expires_at;
 
-	it('legt genau einen Owner an', async () => {
+	it('creates exactly one owner', async () => {
 		expect(createOwner(db, 'owner', await hashPassword(PW))).toEqual({ id: 1, name: 'owner' });
 		expect(createOwner(db, 'zweiter', await hashPassword(PW))).toBeNull();
 	});
 
-	it('prüft Name und Passwort', async () => {
+	it('checks name and password', async () => {
 		expect(await checkLogin(db, 'owner', PW)).toEqual({ id: 1, name: 'owner' });
 		expect(await checkLogin(db, 'owner', 'falsches-passwort')).toBeNull();
 		expect(await checkLogin(db, 'jemand', PW)).toBeNull();
 	});
 
-	it('speichert das Session-Token nur als SHA-256-Hash', () => {
+	it('stores the session token only as a SHA-256 hash', () => {
 		const token = createSession(db, 1, now);
-		expect(token).toMatch(/^[\w-]{43}$/); // 32 Zufallsbytes
+		expect(token).toMatch(/^[\w-]{43}$/); // 32 random bytes
 		const rows = db.prepare('SELECT * FROM sessions').all();
 		expect(rows).toHaveLength(1);
 		expect(rows[0].token_hash).toBe(createHash('sha256').update(token).digest('hex'));
@@ -104,7 +104,7 @@ describe('Owner und Sessions', () => {
 		).toThrow(/CHECK/);
 	});
 
-	it('akzeptiert gültige Sessions und verlängert gleitend, höchstens einmal pro Tag', () => {
+	it('accepts valid sessions and extends them sliding, at most once per day', () => {
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 3_600_000)).toEqual({
 			user: { id: 1, name: 'owner' },
@@ -115,7 +115,7 @@ describe('Owner und Sessions', () => {
 		expect(expiresAt(token)).toBe('2026-02-02 00:00:00');
 	});
 
-	it('renew: false prüft nur und verlängert nie — die Verlängerung bleibt dem nächsten Request', () => {
+	it('only checks with renew: false and never extends, leaving the renewal to the next request', () => {
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 2 * DAY, { renew: false })).toEqual({
 			user: { id: 1, name: 'owner' },
@@ -123,27 +123,27 @@ describe('Owner und Sessions', () => {
 		});
 		expect(expiresAt(token)).toBe('2026-01-31 00:00:00');
 		expect(validateSession(db, token, now + 2 * DAY)?.renewed).toBe(true);
-		expect(validateSession(db, token, now + 31 * DAY, { renew: false })).not.toBeNull(); // Ablauf gilt weiter
+		expect(validateSession(db, token, now + 31 * DAY, { renew: false })).not.toBeNull(); // the expiry still applies
 		expect(validateSession(db, token, now + 32 * DAY, { renew: false })).toBeNull();
 	});
 
-	it('weist abgelaufene Sessions ab und löscht sie', () => {
+	it('rejects expired sessions and deletes them', () => {
 		const token = createSession(db, 1, now);
-		expect(validateSession(db, token, now + 30 * DAY - 1000)).not.toBeNull(); // verlängert auf +60 Tage
+		expect(validateSession(db, token, now + 30 * DAY - 1000)).not.toBeNull(); // extended to +60 days
 		expect(validateSession(db, token, now + 59 * DAY)).not.toBeNull();
 		const stale = createSession(db, 1, now);
 		expect(validateSession(db, stale, now + 30 * DAY)).toBeNull();
 		expect(expiresAt(stale)).toBeUndefined();
 	});
 
-	it('weist unbekannte und abgemeldete Tokens ab', () => {
+	it('rejects unknown and logged-out tokens', () => {
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, 'erfunden', now)).toBeNull();
 		deleteSession(db, token);
 		expect(validateSession(db, token, now)).toBeNull();
 	});
 
-	it('reset-password setzt das Passwort und beendet alle Sessions', async () => {
+	it('sets the password and ends all sessions on reset-password', async () => {
 		const token = createSession(db, 1, now);
 		expect(resetPassword(db, await hashPassword('neues-passwort-1'))).toBe(true);
 		expect(validateSession(db, token, now)).toBeNull();
@@ -157,8 +157,8 @@ describe('Owner und Sessions', () => {
 	});
 });
 
-describe('Setup-Token', () => {
-	it('gilt nur für den ausgegebenen Token und nur bis zur Owner-Anlage', () => {
+describe('setup token', () => {
+	it('accepts only the issued token and only until the owner exists', () => {
 		clearSetupToken();
 		expect(checkSetupToken('')).toBe(false);
 		const token = issueSetupToken();
@@ -171,18 +171,18 @@ describe('Setup-Token', () => {
 	});
 });
 
-describe('Rate-Limit', () => {
-	it('sperrt nach 5 Fehlversuchen pro Minute und Schlüssel', () => {
+describe('rate limit', () => {
+	it('blocks after 5 failed attempts per minute and key', () => {
 		const limit = rateLimiter();
 		const t = 1_000_000;
 		for (let i = 0; i < 5; i++) expect(limit.attempt('1.2.3.4', t + i)).toBe(true);
 		expect(limit.attempt('1.2.3.4', t + 10)).toBe(false);
-		expect(limit.attempt('5.6.7.8', t + 10)).toBe(true); // andere IP unberührt
+		expect(limit.attempt('5.6.7.8', t + 10)).toBe(true); // another IP is unaffected
 		expect(limit.attempt('1.2.3.4', t + 59_999)).toBe(false);
-		expect(limit.attempt('1.2.3.4', t + 60_001)).toBe(true); // ältester Versuch aus dem Fenster
+		expect(limit.attempt('1.2.3.4', t + 60_001)).toBe(true); // the oldest attempt left the window
 	});
 
-	it('zählt erfolgreiche Versuche nicht mit', () => {
+	it('does not count successful attempts', () => {
 		const limit = rateLimiter();
 		for (let i = 0; i < 10; i++) {
 			expect(limit.attempt('ip', i)).toBe(true);

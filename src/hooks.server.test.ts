@@ -1,4 +1,4 @@
-// Durchlauf Guard → Setup → Login → Logout gegen echte DB-Datei, Handler direkt aufgerufen.
+// Walks guard → setup → login → logout against a real DB file, calling the handlers directly.
 import { isActionFailure, isRedirect, type Cookies } from '@sveltejs/kit';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,7 +25,7 @@ import { POST as logout } from './routes/logout/+server';
 import { actions as setupActions, load as setupLoad } from './routes/setup/+page.server';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-auth-'));
-process.env.STUDIO_DATA_DIR = tmp; // db() liest das Verzeichnis beim ersten Aufruf
+process.env.STUDIO_DATA_DIR = tmp; // db() reads the directory on its first call
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 type CookieOptions = Parameters<Cookies['set']>[2];
@@ -53,13 +53,13 @@ function jar(cookies: Record<string, string> = {}) {
 }
 type Jar = ReturnType<typeof jar>;
 
-// Minimales RequestEvent: nur die Felder, die Guard und Handler nutzen.
+// Minimal RequestEvent: only the fields the guard and the handlers use.
 type Init = { form?: Record<string, string>; ip?: string; origin?: string; request?: RequestInit };
 const DATA_SUFFIX = '/__data.json';
 const event = (path: string, cookies: Jar, init: Init = {}): any => {
 	const url = new URL(path, init.origin ?? 'http://localhost:3000');
-	// SvelteKit strippt /__data.json aus url.pathname, bevor handle läuft (respond.js) — hier nachgebildet, damit der
-	// Guard dasselbe Event sieht wie in echt (#822-Review: der Guard hat /__data.json nie selbst gesehen).
+	// SvelteKit strips /__data.json from url.pathname before handle runs (respond.js) — mirrored here so that the
+	// guard sees the same event as in production, where it never sees /__data.json itself.
 	const isDataRequest = url.pathname.endsWith(DATA_SUFFIX);
 	if (isDataRequest) url.pathname = url.pathname.slice(0, -DATA_SUFFIX.length) || '/';
 	const body = new FormData();
@@ -74,7 +74,7 @@ const event = (path: string, cookies: Jar, init: Init = {}): any => {
 	};
 };
 
-/** Führt den Handler aus und liefert Redirect-Ziel, ActionFailure oder Response. */
+/** Runs the handler and returns the redirect target, ActionFailure or Response. */
 async function run(fn: () => unknown) {
 	try {
 		return await fn();
@@ -94,10 +94,10 @@ const login = (
 	cookies = jar()
 ) => run(() => loginActions.default(event('/login', cookies, { form, ...init })));
 
-describe('Auth-Durchlauf', () => {
+describe('auth flow', () => {
 	let token = '';
 
-	it('Erststart: Seiten → /setup, API → 401 JSON, /setup und /login öffentlich', async () => {
+	it('on first start sends pages to /setup, answers the API with 401 JSON and keeps /setup and /login public', async () => {
 		expect(await guard('/')).toEqual({ redirect: '/setup', status: 303 });
 		const api = (await guard('/api/tickets')) as Response;
 		expect(api.status).toBe(401);
@@ -105,11 +105,11 @@ describe('Auth-Durchlauf', () => {
 			error: 'unauthorized',
 			hint: expect.stringContaining('/login')
 		});
-		expect(api.headers.get('set-cookie')).toBeNull(); // ohne Cookie nichts zu löschen
+		expect(api.headers.get('set-cookie')).toBeNull(); // without a cookie there is nothing to delete
 		expect(await guard('/setup')).toBeInstanceOf(Response);
 		expect(await guard('/login')).toBeInstanceOf(Response);
-		expect(await guard('/_app/remote/abc')).toEqual({ redirect: '/setup', status: 303 }); // Remote Functions nicht öffentlich
-		token = issueSetupToken(); // wie der init-Hook beim Start ohne Owner
+		expect(await guard('/_app/remote/abc')).toEqual({ redirect: '/setup', status: 303 }); // remote functions are not public
+		token = issueSetupToken(); // like the init hook on a start without owner
 	});
 
 	it('lets /mcp through without a session, but not sub-paths or foreign origins', async () => {
@@ -121,13 +121,13 @@ describe('Auth-Durchlauf', () => {
 		expect(foreign.status).toBe(403);
 	});
 
-	it('/setup weist einen falschen Setup-Token ab', async () => {
+	it('rejects a wrong setup token on /setup', async () => {
 		const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW });
 		expect(isActionFailure(res) && res.status).toBe(403);
 		expect(hasOwner(db())).toBe(false);
 	});
 
-	it('/setup zählt falsche Setup-Tokens ins Rate-Limit: nach 5 greift 429, auch mit richtigem Token', async () => {
+	it('counts wrong setup tokens into the rate limit: after 5, /setup answers 429 even with the right token', async () => {
 		for (let i = 0; i < 5; i++) {
 			const res = await setup(
 				{ token: 'falsch', name: 'owner', password: PW, confirm: PW },
@@ -140,7 +140,7 @@ describe('Auth-Durchlauf', () => {
 		expect(hasOwner(db())).toBe(false);
 	});
 
-	it('/setup prüft Passwortlänge und Wiederholung', async () => {
+	it('checks password length and confirmation on /setup', async () => {
 		for (const [password, confirm] of [
 			['kurz', 'kurz'],
 			[PW, PW + 'x']
@@ -151,7 +151,7 @@ describe('Auth-Durchlauf', () => {
 		expect(hasOwner(db())).toBe(false);
 	});
 
-	it('/setup legt den Owner an, meldet an und ist danach gesperrt', async () => {
+	it('creates the owner on /setup, logs in and locks /setup afterwards', async () => {
 		const cookies = jar();
 		expect(
 			await setup({ token, name: 'owner', password: PW, confirm: PW }, '10.0.0.2', cookies)
@@ -171,24 +171,24 @@ describe('Auth-Durchlauf', () => {
 			status: 303
 		});
 		expect(await guard('/')).toEqual({ redirect: '/login', status: 303 });
-		expect(await guard('/settings')).toEqual({ redirect: '/login', status: 303 }); // #820: Übersicht nur mit Session
-		expect(await guard('/settings/secrets')).toEqual({ redirect: '/login', status: 303 }); // Secrets nur mit Session
+		expect(await guard('/settings')).toEqual({ redirect: '/login', status: 303 }); // the settings overview needs a session
+		expect(await guard('/settings/secrets')).toEqual({ redirect: '/login', status: 303 }); // secrets need a session
 		expect(await guard('/settings/secrets/__data.json')).toEqual({
 			redirect: '/login',
 			status: 303
 		});
 	});
 
-	it('#822: __data.json öffentlicher Seiten ist mit-öffentlich (SvelteKit strippt das Suffix vor handle), geschützte bleiben es', async () => {
-		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // kein Redirect: Client-Navigation zu /login lädt Daten nach
+	it('treats __data.json of public pages as public and keeps it protected for protected pages', async () => {
+		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // no redirect: client-side navigation to /login loads its data
 		expect(await guard('/setup/__data.json')).toBeInstanceOf(Response);
 		expect(await guard('/settings/secrets/__data.json')).toEqual({
 			redirect: '/login',
 			status: 303
-		}); // weiterhin geschützt
+		}); // still protected
 	});
 
-	it('Login setzt ein Cookie mit Secure außerhalb von localhost, der Guard lässt es durch', async () => {
+	it('sets a cookie with Secure outside localhost on login, and the guard lets it through', async () => {
 		const cookies = jar();
 		expect(
 			await login(
@@ -211,7 +211,7 @@ describe('Auth-Durchlauf', () => {
 		expect(ev.locals.user).toEqual({ id: 1, name: 'owner' });
 	});
 
-	it('Rate-Limit: nach 5 Fehlversuchen pro Minute greift 429, auch mit richtigem Passwort', async () => {
+	it('answers 429 after 5 failed logins per minute, even with the right password', async () => {
 		for (let i = 0; i < 5; i++) {
 			const res = await login({ name: 'owner', password: 'falsches-passwort' }, { ip: '10.0.0.5' });
 			expect(isActionFailure(res) && res.status).toBe(400);
@@ -224,7 +224,7 @@ describe('Auth-Durchlauf', () => {
 		});
 	});
 
-	it('Rate-Limit zählt erfolgreiche Logins nicht: 6 Anmeldungen pro Minute von einer IP klappen', async () => {
+	it('does not count successful logins against the rate limit: 6 logins per minute from one IP succeed', async () => {
 		for (let i = 0; i < 6; i++)
 			expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.7' })).toEqual({
 				redirect: '/',
@@ -232,7 +232,7 @@ describe('Auth-Durchlauf', () => {
 			});
 	});
 
-	it('API mit ungültigem Cookie: 401 JSON und das Cookie wird gelöscht', async () => {
+	it('answers the API with 401 JSON and deletes an invalid cookie', async () => {
 		const api = (await guard(
 			'/api/tickets',
 			jar({ [SESSION_COOKIE]: 'abgelaufen-oder-erfunden' })
@@ -241,7 +241,7 @@ describe('Auth-Durchlauf', () => {
 		expect(api.headers.get('set-cookie')).toMatch(/^studio_session=; Max-Age=0; Path=\//);
 	});
 
-	it('CSRF: POST ohne Formular-Content-Type von fremder Origin wird abgewiesen, die Session bleibt', async () => {
+	it('rejects a cross-origin POST without a form content type (CSRF) and keeps the session', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = () => jar({ [SESSION_COOKIE]: sessionToken });
 		const post = (origin?: string): Init => ({
@@ -251,14 +251,14 @@ describe('Auth-Durchlauf', () => {
 		const foreign = (await guard('/logout', cookies(), post('http://localhost:8080'))) as Response;
 		expect(foreign.status).toBe(403);
 		expect(await foreign.text()).toMatch(/fremder Herkunft/);
-		expect(await guard('/', cookies())).toBeInstanceOf(Response); // Session noch gültig
+		expect(await guard('/', cookies())).toBeInstanceOf(Response); // session still valid
 		expect(await guard('/logout', cookies(), post('http://localhost:3000'))).toBeInstanceOf(
 			Response
-		); // eigene Origin → weiter
-		expect(await guard('/logout', cookies(), post())).toBeInstanceOf(Response); // ohne Origin = kein Browser
+		); // own origin → passes
+		expect(await guard('/logout', cookies(), post())).toBeInstanceOf(Response); // no Origin = no browser
 	});
 
-	it('Logout löscht Session und Cookie; das alte Token führt wieder auf /login', async () => {
+	it('deletes session and cookie on logout, and the old token leads back to /login', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		expect(await run(() => logout(event('/logout', cookies, { form: {} })))).toEqual({
@@ -277,7 +277,7 @@ describe('Auth-Durchlauf', () => {
 		expect(stale.options.get(SESSION_COOKIE)?.deleted).toBe(true);
 	});
 
-	it('Logout beendet einen offenen Event-Stream: kein Event mehr, Stream zu, Listener abgemeldet', async () => {
+	it('ends an open event stream on logout: no more events, stream closed, listener removed', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		const before = listenerCount();
@@ -293,7 +293,7 @@ describe('Auth-Durchlauf', () => {
 		expect(listenerCount()).toBe(before);
 	});
 
-	it('Event-Stream verlängert die Session nicht (das bleibt dem Guard samt Cookie); Ablauf beendet den Stream', async () => {
+	it('does not extend the session from the event stream (the guard does that with the cookie), and expiry ends the stream', async () => {
 		const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 		const expiresAt = (token: string) =>
 			(
@@ -301,7 +301,7 @@ describe('Auth-Durchlauf', () => {
 					expires_at: string;
 				}
 			).expires_at;
-		const sessionToken = createSession(db(), 1, Date.now() - 2 * 86_400_000); // vor 2 Tagen angemeldet → fällig zur Verlängerung
+		const sessionToken = createSession(db(), 1, Date.now() - 2 * 86_400_000); // logged in 2 days ago → due for renewal
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		const before = expiresAt(sessionToken);
 
@@ -311,17 +311,17 @@ describe('Auth-Durchlauf', () => {
 				(await events(event('/api/events?project=1', cookies))) as Response
 			).body!.getReader();
 			await reader.read(); // ': connected'
-			vi.advanceTimersByTime(25_000); // Heartbeat → alive() prüft die Session
+			vi.advanceTimersByTime(25_000); // heartbeat → alive() checks the session
 			expect(new TextDecoder().decode((await reader.read()).value)).toBe(': heartbeat\n\n');
 			expect(expiresAt(sessionToken)).toBe(before);
 
-			expect(await guard('/', cookies)).toBeInstanceOf(Response); // der nächste Request verlängert und setzt das Cookie neu
+			expect(await guard('/', cookies)).toBeInstanceOf(Response); // the next request extends it and sets the cookie again
 			expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ maxAge: 30 * 86_400 });
 			expect(expiresAt(sessionToken) > before).toBe(true);
 
 			db()
 				.prepare("UPDATE sessions SET expires_at = '2000-01-01 00:00:00' WHERE token_hash = ?")
-				.run(hash(sessionToken)); // abgelaufen
+				.run(hash(sessionToken)); // expired
 			vi.advanceTimersByTime(25_000);
 			expect(await reader.read()).toEqual({ done: true, value: undefined });
 		} finally {
@@ -329,7 +329,7 @@ describe('Auth-Durchlauf', () => {
 		}
 	});
 
-	it('npm run reset-password setzt das Passwort, während eine andere Verbindung offen ist', async () => {
+	it('sets the password with npm run reset-password while another connection is open', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cli = spawnSync(process.execPath, ['src/lib/server/reset-password.ts'], {
 			input: 'neues-test-passwort\n',
@@ -347,7 +347,7 @@ describe('Auth-Durchlauf', () => {
 		});
 	});
 
-	it('reset-password weist ein zu kurzes Passwort ab', () => {
+	it('rejects a too short password in reset-password', () => {
 		const cli = spawnSync(process.execPath, ['src/lib/server/reset-password.ts'], {
 			input: 'kurz\n',
 			env: { ...process.env, STUDIO_DATA_DIR: tmp },
@@ -358,12 +358,12 @@ describe('Auth-Durchlauf', () => {
 	});
 });
 
-describe('Default-Bind', () => {
-	// Der Hook setzt HOST beim Laden; adapter-node liest es erst danach. Leeres HOST hieße „alle Interfaces".
+describe('default bind address', () => {
+	// The hook sets HOST when it loads; adapter-node reads it only afterwards. An empty HOST would mean "all interfaces".
 	it.each([
-		['ungesetzt', undefined, '127.0.0.1'],
-		['leer', '', '127.0.0.1'],
-		['explizit', '0.0.0.0', '0.0.0.0']
+		['unset', undefined, '127.0.0.1'],
+		['empty', '', '127.0.0.1'],
+		['explicit', '0.0.0.0', '0.0.0.0']
 	])('HOST %s → %s', async (_, value, expected) => {
 		const before = process.env.HOST;
 		try {
@@ -380,7 +380,7 @@ describe('Default-Bind', () => {
 });
 
 describe('init', () => {
-	it('legt die Secret-Maskierung um console — der beim Start erzeugte Schlüssel erscheint in keiner Log-Zeile', async () => {
+	it('wraps console in the secret masking, so the key created at startup appears in no log line', async () => {
 		const out: string[] = [];
 		const log = vi
 			.spyOn(console, 'log')
