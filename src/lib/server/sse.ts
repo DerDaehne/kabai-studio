@@ -1,7 +1,9 @@
 import { subscribe, type StudioEvent } from './events';
+import { mask } from './secrets';
 
 const encoder = new TextEncoder();
-const frame = (event: StudioEvent) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+// Events leave for the browser here, so this masks even what a producer forgot to mask.
+const frame = (event: StudioEvent) => encoder.encode(`data: ${JSON.stringify(mask(event))}\n\n`);
 const HEARTBEAT = encoder.encode(': heartbeat\n\n');
 const CONNECTED = encoder.encode(': connected\n\n');
 const HEARTBEAT_MS = 25_000;

@@ -293,6 +293,43 @@ describe('auth flow', () => {
 		expect(listenerCount()).toBe(before);
 	});
 
+	it('streams the events of every project without a project parameter and only its own with one, and logout ends both', async () => {
+		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
+		const open = async (path: string) => {
+			const reader = ((await events(event(path, cookies))) as Response).body!.getReader();
+			await reader.read(); // ': connected'
+			return reader;
+		};
+		const nextProject = async (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+			JSON.parse(new TextDecoder().decode((await reader.read()).value).slice('data: '.length))
+				.projectId;
+		const all = await open('/api/events');
+		const own = await open('/api/events?project=1');
+
+		publish({ type: 'ticket.updated', projectId: 2, ticketId: 5, actor: { kind: 'user' } });
+		publish({ type: 'ticket.updated', projectId: 1, ticketId: 1, actor: { kind: 'user' } });
+		expect(await nextProject(all)).toBe(2);
+		expect(await nextProject(all)).toBe(1);
+		expect(await nextProject(own)).toBe(1);
+
+		await run(() => logout(event('/logout', cookies, { form: {} })));
+		publish({ type: 'ticket.updated', projectId: 2, ticketId: 5, actor: { kind: 'user' } });
+		expect(await all.read()).toEqual({ done: true, value: undefined });
+		publish({ type: 'ticket.updated', projectId: 1, ticketId: 1, actor: { kind: 'user' } });
+		expect(await own.read()).toEqual({ done: true, value: undefined });
+	});
+
+	it('answers the event stream without a session with 401, with or without a project', async () => {
+		for (const path of ['/api/events', '/api/events?project=1'])
+			expect(((await guard(path)) as Response).status).toBe(401);
+	});
+
+	it('rejects a project parameter that is no positive integer with 400', () => {
+		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
+		for (const path of ['/api/events?project=', '/api/events?project=0', '/api/events?project=x'])
+			expect(() => events(event(path, cookies))).toThrow(expect.objectContaining({ status: 400 }));
+	});
+
 	it('does not extend the session from the event stream (the guard does that with the cookie), and expiry ends the stream', async () => {
 		const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 		const expiresAt = (token: string) =>

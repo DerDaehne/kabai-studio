@@ -1,5 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { migrate, openDb } from './db';
 import { listenerCount, publish, type StudioEvent } from './events';
+import { setSecret } from './secrets';
 import { eventStream } from './sse';
 
 const decoder = new TextDecoder();
@@ -94,6 +97,22 @@ describe('eventStream', () => {
 		vi.advanceTimersByTime(1000);
 		expect(await reader.read()).toEqual({ done: true, value: undefined });
 		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('masks known secret values in every message, whichever field carries them', async () => {
+		const db = openDb(':memory:');
+		migrate(db);
+		const secret = 'sk-event-stream-secret-0042';
+		setSecret(db, 'sse-test', secret, false, randomBytes(32));
+		const reader = await open(() => true);
+		publish(evt({ note: `key ${secret}`, nested: { values: [secret] } }));
+		const chunk = await readChunk(reader);
+		expect(chunk).not.toContain(secret);
+		expect(JSON.parse(chunk.slice('data: '.length, -2))).toMatchObject({
+			note: 'key [secret:sse-test]',
+			nested: { values: ['[secret:sse-test]'] }
+		});
+		await reader.cancel();
 	});
 
 	it('closes the stream when alive throws (e.g. a DB error) without passing the error to the publisher', async () => {
