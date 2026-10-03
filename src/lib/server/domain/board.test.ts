@@ -404,6 +404,27 @@ describe('Review-Freigabe', () => {
 		board.approveReview(db, reviewer, id);
 		board.moveTicket(db, reviewer, id, col.Abnahme);
 		expect(approved(id)).toBe(true);
+		board.moveTicket(db, user, id, col.Done);
+		expect(approved(id)).toBe(true);
+	});
+
+	it('clears the approval returning from a human column by its kind, not by column position', () => {
+		const { db, ticket, place, col } = setup();
+		const approved = (id: number) => db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at !== null;
+		// Move the human columns before Review, so a purely position-based rule would read the return as "forward".
+		db.prepare('UPDATE columns SET position = -10 WHERE id = ?').run(col['Human Intervention']);
+		db.prepare('UPDATE columns SET position = -9 WHERE id = ?').run(col['Human Answered']);
+
+		const id = ticket();
+		place(id, 'Review');
+		board.approveReview(db, reviewer, id);
+		board.moveTicket(db, dev, id, col['Human Intervention']); // moving into a human column keeps it, regardless of position
+		expect(approved(id)).toBe(true);
+		board.moveTicket(db, user, id, col['Human Answered']);
+		expect(approved(id)).toBe(true);
+
+		board.moveTicket(db, user, id, col.Review); // "forward" by the new position, but returning from a human column
+		expect(approved(id)).toBe(false);
 	});
 
 	it('keeps a predecessor approved in Review unblocking its successor after it moves on to acceptance (review_ok)', () => {
