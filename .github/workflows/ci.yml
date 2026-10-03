@@ -29,6 +29,22 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm run format:check
+      - id: playwright
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # The browser download is cached; the system libraries it needs come from apt on every run.
+      - run: npx playwright install --with-deps --no-shell chromium
+      - id: browser
+        run: npm run test:browser
+      - if: failure() && steps.browser.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-test-results
+          path: test-results/
+          retention-days: 7
       # No --omit=dev: package.json has only devDependencies (adapter-node bundles them into
       # build/), so --omit=dev would drop the whole tree from the audit. After build, so that
       # an audit outage (e.g. registry down) does not hide the build result.
