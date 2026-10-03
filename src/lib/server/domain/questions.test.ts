@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from '../db';
 import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
@@ -7,12 +7,19 @@ import * as questions from './questions';
 import * as runs from './runs';
 
 const user: Actor = { kind: 'user' };
+const system: Actor = { kind: 'system' };
 
-function setup() {
+function setup(startColumn = 'Backlog') {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+	const columnId = (name: string) =>
+		db.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?').get(projectId, name)!
+			.id as number;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'T',
+		column_id: columnId(startColumn)
+	}).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Test',
 		executor: 'builtin',
@@ -29,7 +36,9 @@ function setup() {
 			.get(ticketId)?.name;
 	const ask = (options?: questions.QuestionOption[]) =>
 		questions.requestHuman(db, agent, ticketId, { question: 'A oder B?', options }).id;
-	return { db, ticketId, agent, column, ask };
+	const comments = () =>
+		db.prepare('SELECT author_kind, author, body FROM comments ORDER BY id').all();
+	return { db, ticketId, profileId, agent, column, columnId, ask, comments };
 }
 
 function caught(fn: () => unknown): DomainError {
@@ -160,4 +169,213 @@ describe('answers', () => {
 			'question.collected'
 		]);
 	});
+});
+
+describe('an answer continues the paused run', () => {
+	const answeredAt = new Date('2026-10-03T12:00:00.000Z');
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(answeredAt);
+	});
+	afterEach(() => vi.useRealTimers());
+
+	/** A run working in "In Arbeit" that asked the human and paused, as an executor ends after request_human. */
+	function pausedAfterAsking() {
+		const s = setup('In Arbeit');
+		const pausedRun = s.agent.runId!;
+		runs.startRun(s.db, system, pausedRun);
+		const id = s.ask([{ label: 'A' }, { label: 'B' }]);
+		runs.finishRun(s.db, system, pausedRun, { state: 'paused' });
+		const followUps = () =>
+			s.db
+				.prepare(
+					'SELECT id, state, trigger, priority, resumed_from_run_id, resume_reason, not_before, column_id FROM runs WHERE id <> ? ORDER BY id'
+				)
+				.all(pausedRun);
+		const answer = () =>
+			s.db.prepare('SELECT answer FROM questions WHERE id = ?').get(id)!.answer as string | null;
+		return { ...s, id, pausedRun, followUps, answer };
+	}
+
+	it('returns the ticket to the column of the paused run and queues its follow-up with human priority behind a 10 s undo window', () => {
+		const s = pausedAfterAsking();
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+
+		questions.answerQuestion(s.db, user, s.id, { option: 2 });
+		off();
+
+		expect(s.column()).toBe('In Arbeit');
+		expect(s.followUps()).toEqual([
+			{
+				id: expect.any(Number),
+				state: 'queued',
+				trigger: 'resume',
+				priority: 'human',
+				resumed_from_run_id: s.pausedRun,
+				resume_reason: null,
+				not_before: '2026-10-03T12:00:10.000Z',
+				column_id: s.columnId('In Arbeit')
+			}
+		]);
+		expect(runs.freshRunsInChain(s.db, s.followUps()[0].id as number)).toBe(0);
+		expect(events.map((e) => e.type)).toEqual(
+			expect.arrayContaining(['question.answered', 'ticket.moved', 'run.created'])
+		);
+	});
+
+	it('clears a review approval on the way back, like every return from human intervention', () => {
+		const s = pausedAfterAsking();
+		board.approveReview(s.db, user, s.ticketId);
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		expect(
+			s.db.prepare('SELECT review_approved_at FROM tickets WHERE id = ?').get(s.ticketId)
+		).toEqual({ review_approved_at: null });
+	});
+
+	it('replaces the answer given before the follow-up run starts, restarts the undo window and queues no second run', () => {
+		const s = pausedAfterAsking();
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		const [first] = s.followUps();
+		vi.setSystemTime(new Date('2026-10-03T12:00:08.000Z'));
+
+		questions.answerQuestion(s.db, user, s.id, { text: 'Weder noch, C.' });
+
+		expect(s.answer()).toBe('{"text":"Weder noch, C."}');
+		expect(s.followUps()).toEqual([{ ...first, not_before: '2026-10-03T12:00:18.000Z' }]);
+		expect(s.column()).toBe('In Arbeit');
+	});
+
+	it('takes the answer back before the follow-up run starts: the run is cancelled, the ticket waits in human intervention again', () => {
+		const s = pausedAfterAsking();
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+
+		questions.retractAnswer(s.db, user, s.id);
+		off();
+
+		expect(s.answer()).toBeNull();
+		expect(s.followUps()).toMatchObject([{ state: 'cancelled' }]);
+		expect(s.column()).toBe('Human Intervention');
+		expect(events.map((e) => e.type)).toEqual(
+			expect.arrayContaining(['run.state_changed', 'ticket.moved', 'question.retracted'])
+		);
+
+		questions.answerQuestion(s.db, user, s.id, { option: 2 });
+		expect(s.followUps()).toMatchObject([{ state: 'cancelled' }, { state: 'queued' }]);
+		expect(s.column()).toBe('In Arbeit');
+	});
+
+	it('refuses to take back or change an answer once the follow-up run has started, with a way out, and changes nothing', () => {
+		const s = pausedAfterAsking();
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		const followUp = s.followUps()[0].id as number;
+		runs.startRun(s.db, system, followUp);
+
+		const retracted = caught(() => questions.retractAnswer(s.db, user, s.id));
+		expect(retracted.code).toBe('answer_in_use');
+		expect(retracted.message).toContain(`Run ${followUp}`);
+		expect(retracted.hint).toContain('Kommentar');
+		expect(retracted.hint).toContain(`Run ${followUp}`);
+		expect(caught(() => questions.answerQuestion(s.db, user, s.id, { option: 2 })).code).toBe(
+			'answer_in_use'
+		);
+		expect(s.answer()).toBe('{"option":1}');
+		expect(s.followUps()).toMatchObject([{ id: followUp, state: 'running' }]);
+		expect(s.column()).toBe('In Arbeit');
+	});
+
+	it('writes only the final answer to the history, as a comment of the human, when the agent collects it', () => {
+		const s = pausedAfterAsking();
+		const commentsBefore = s.comments();
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		questions.retractAnswer(s.db, user, s.id);
+		questions.answerQuestion(s.db, user, s.id, { option: 2 });
+		expect(s.comments()).toEqual(commentsBefore);
+
+		const resumed: Actor = { kind: 'agent', runId: s.followUps()[1].id as number };
+		questions.collectAnswer(s.db, resumed, s.ticketId);
+		questions.collectAnswer(s.db, resumed, s.ticketId);
+
+		expect(s.comments()).toEqual([
+			...commentsBefore,
+			{ author_kind: 'user', author: 'user', body: 'Antwort: 2. B' }
+		]);
+	});
+
+	it('writes a free answer to the history as given', () => {
+		const s = pausedAfterAsking();
+		questions.answerQuestion(s.db, user, s.id, { text: 'Weder noch, C.' });
+		questions.collectAnswer(s.db, { kind: 'agent', runId: s.pausedRun }, s.ticketId);
+		expect(s.comments().at(-1)).toEqual({
+			author_kind: 'user',
+			author: 'user',
+			body: 'Antwort: Weder noch, C.'
+		});
+	});
+
+	it('leaves the ticket where the human moved it, and still continues the run', () => {
+		const s = pausedAfterAsking();
+		board.moveTicket(s.db, user, s.ticketId, s.columnId('Human Answered'));
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		expect(s.column()).toBe('Human Answered');
+		expect(s.followUps()).toMatchObject([
+			{ state: 'queued', column_id: s.columnId('Human Answered') }
+		]);
+	});
+
+	it('sends the ticket to human answered when the column of the paused run no longer exists, and still continues the run', () => {
+		const s = pausedAfterAsking();
+		s.db.prepare('DELETE FROM columns WHERE id = ?').run(s.columnId('In Arbeit'));
+		questions.answerQuestion(s.db, user, s.id, { option: 1 });
+		expect(s.column()).toBe('Human Answered');
+		expect(s.followUps()).toMatchObject([
+			{ state: 'queued', column_id: s.columnId('Human Answered') }
+		]);
+	});
+
+	it.each([
+		{
+			case: 'a question no run asked',
+			ask: (s: ReturnType<typeof setup>) =>
+				questions.requestHuman(s.db, user, s.ticketId, { question: 'A oder B?' }).id,
+			reason: 'die Frage stammt aus keinem Run'
+		},
+		{
+			case: 'a run that is not paused',
+			ask: (s: ReturnType<typeof setup>) => s.ask(),
+			reason: 'Run 1 ist „queued“, nicht pausiert'
+		},
+		{
+			case: 'a paused run whose profile was deleted',
+			ask: (s: ReturnType<typeof setup>) => {
+				runs.startRun(s.db, system, s.agent.runId!);
+				const id = s.ask();
+				runs.finishRun(s.db, system, s.agent.runId!, { state: 'paused' });
+				runs.deleteProfile(s.db, user, s.profileId);
+				return id;
+			},
+			reason: 'das Agent-Profil von Run 1 ist gelöscht'
+		}
+	])(
+		'keeps the answer to $case, moves the ticket to human answered and says how to go on',
+		({ ask, reason }) => {
+			const s = setup('In Arbeit');
+			const id = ask(s);
+
+			questions.answerQuestion(s.db, user, id, { text: 'Ja' });
+
+			expect(s.db.prepare('SELECT answer FROM questions WHERE id = ?').get(id)).toEqual({
+				answer: '{"text":"Ja"}'
+			});
+			expect(s.column()).toBe('Human Answered');
+			expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 1 });
+			expect(s.comments().at(-1)).toEqual({
+				author_kind: 'system',
+				author: 'system',
+				body: `Die Antwort auf Frage ${id} setzt keinen Run fort: ${reason}.\nAusweg: Starte einen Run für das Ticket, er liest die Antwort.`
+			});
+		}
+	);
 });

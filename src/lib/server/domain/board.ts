@@ -475,6 +475,28 @@ export function moveTicket(db: DatabaseSync, actor: Actor, ticketId: number, col
 export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, columnId: number) {
 	if (t.column_id === columnId) return;
 	const cols = columns(db, t.project_id);
+	const to = targetColumn(t, cols, columnId);
+	assertMoveAllowed(db, actor, t, to);
+	writeMove(db, emit, actor, t, to, cols);
+}
+
+/**
+ * The human's answer takes a ticket out of human intervention to wherever work goes on, without a stored transition —
+ * the counterpart of the implicit move from any column into human intervention. A ticket the human moved elsewhere stays.
+ */
+export function applyAnswerMove(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	t: Ticket,
+	columnId: number
+) {
+	if (t.column_kind !== 'human_intervention' || t.column_id === columnId) return;
+	const cols = columns(db, t.project_id);
+	writeMove(db, emit, actor, t, targetColumn(t, cols, columnId), cols);
+}
+
+function targetColumn(t: Ticket, cols: Column[], columnId: number): Column {
 	const to = cols.find((c) => c.id === columnId);
 	if (!to)
 		throw new DomainError(
@@ -482,10 +504,20 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 			`Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`,
 			'allowedMoves listet die erreichbaren Spalten mit ID.'
 		);
-	assertMoveAllowed(db, actor, t, to);
+	return to;
+}
+
+function writeMove(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	t: Ticket,
+	to: Column,
+	cols: Column[]
+) {
 	db.prepare(
 		'UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-	).run(columnId, JSON.stringify(actor), t.id);
+	).run(to.id, JSON.stringify(actor), t.id);
 	if (invalidatesApproval(t, to, cols))
 		db.prepare(
 			'UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?'
@@ -496,7 +528,7 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 		ticketId: t.id,
 		actor,
 		from: t.column_id,
-		to: columnId
+		to: to.id
 	});
 }
 

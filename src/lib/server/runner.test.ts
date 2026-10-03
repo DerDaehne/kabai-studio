@@ -9,6 +9,7 @@ import * as board from './domain/board';
 import { DomainError, type Actor } from './domain/core';
 import * as runs from './domain/runs';
 import { subscribe, type StudioEvent } from './events';
+import { answerQuestion, requestHuman } from './domain/questions';
 import { LIMITS, startRunner, type Executor, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
@@ -981,5 +982,53 @@ describe('parking and resuming a run', () => {
 		vi.advanceTimersByTime(Date.parse('2026-11-01T12:00:00Z') - Date.now());
 		await flush();
 		expect(s.state(followUp)).toBe('running');
+	});
+});
+
+describe('resuming after the human answers', () => {
+	it('continues a run that asked the human in its original role once the undo window after the answer has passed', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		vi.setSystemTime(new Date('2026-10-03T12:00:00.000Z'));
+		const s = setup();
+		const inProgress = s.db
+			.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'In Arbeit'")
+			.get(s.projectId)!.id as number;
+		const ticketId = board.createTicket(s.db, user, s.projectId, {
+			title: 'Asks first',
+			column_id: inProgress
+		}).id;
+		const columnOf = () =>
+			s.db.prepare('SELECT column_id FROM tickets WHERE id = ?').get(ticketId)!.column_id;
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const asking = s.queue(s.local, ticketId);
+		await flush();
+		const { io, done } = fake.call(asking);
+		const questionId = requestHuman(s.db, { kind: 'agent', runId: asking }, ticketId, {
+			question: 'Export all columns or only id and title?',
+			options: [{ label: 'All' }, { label: 'Only id and title' }]
+		}).id;
+		io.emit({ type: 'message', key: 'handoff', payload: { text: 'Waiting for the columns.' } });
+		done({ state: 'paused' });
+		await flush();
+		expect(s.state(asking)).toBe('paused');
+
+		answerQuestion(s.db, user, questionId, { option: 2 });
+		await flush();
+		const followUp = s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
+		expect(s.row(followUp)).toMatchObject({
+			state: 'queued',
+			resumed_from_run_id: asking,
+			column_id: inProgress
+		});
+		vi.advanceTimersByTime(10_000 - 1);
+		await flush();
+		expect(s.state(followUp)).toBe('queued');
+
+		vi.advanceTimersByTime(1);
+		await flush();
+		expect(s.state(followUp)).toBe('running');
+		expect(fake.call(followUp).run).toMatchObject({ ticketId, profile: { id: s.local } });
+		expect(columnOf()).toBe(inProgress);
 	});
 });
