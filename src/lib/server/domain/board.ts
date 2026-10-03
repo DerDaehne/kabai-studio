@@ -2,7 +2,7 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
 import { actorLabel as label, DomainError, tx, type Actor } from './core';
 
-type Kind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
+export type Kind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
 type Column = { id: number; name: string; kind: Kind };
 export type Ticket = {
 	id: number;

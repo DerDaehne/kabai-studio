@@ -53,7 +53,7 @@
 	const authorLabel = (c: { authorKind: 'user' | 'agent' | 'system'; runId: number | null }) =>
 		AUTHOR_LABELS[c.authorKind] + (c.runId !== null ? ` · Run ${c.runId}` : '');
 
-	/** Escape leaves a focused field so the shortcuts (o, a, i, >/<, h/l) work again — the keymap's "esc führt zurück". */
+	/** Escape leaves a focused field so the shortcuts (o, a, i, >/<, h/l) work again instead of staying dead. */
 	function blurOnEscape(event: KeyboardEvent) {
 		if (event.key === 'Escape') (event.currentTarget as HTMLElement).blur();
 	}
@@ -67,13 +67,17 @@
 	);
 	let moveForms: Record<number, HTMLFormElement> = {};
 
-	/** The targets a move can actually reach right now, in board order. */
-	const openMoves = () => ticket.moves.filter((m) => m.blockers.length === 0);
-
-	/** `>`/`<`: the next (or previous) reachable column by board position; never wraps past either end. */
+	/**
+	 * `>`/`<`: the next (or previous) normal/done column by board position; never wraps past either end and
+	 * never lands on a human column. A blocked target shows its own reason instead of being skipped.
+	 */
 	function stepColumn(forward: boolean) {
-		const target = nextMove(openMoves(), ticket.column.position, forward);
+		const target = nextMove(ticket.moves, ticket.column.position, forward);
 		if (!target) return void toast(`Keine ${forward ? 'nächste' : 'vorige'} Spalte erreichbar.`);
+		if (target.blockers.length) {
+			const [blocker] = target.blockers;
+			return void toast(`${blocker.message} ${blocker.hint}`);
+		}
 		moveForms[target.columnId]?.requestSubmit();
 	}
 
@@ -98,6 +102,10 @@
 		})
 	);
 </script>
+
+{#snippet formError(action: string)}
+	{#if form?.action === action}<p role="alert">{form.message} {form.hint}</p>{/if}
+{/snippet}
 
 <svelte:head><title>{ticket.ref} {ticket.title} – kabai studio</title></svelte:head>
 
@@ -172,7 +180,7 @@
 			</FormField>
 			<Button type="submit" size="sm">Anlegen (o)</Button>
 		</form>
-		{#if form?.action === 'addTask'}<p role="alert">{form.message} {form.hint}</p>{/if}
+		{@render formError('addTask')}
 
 		<h3>Kommentare</h3>
 		<ul class="comments">
@@ -199,7 +207,7 @@
 			</FormField>
 			<Button type="submit" size="sm">Schreiben (a)</Button>
 		</form>
-		{#if form?.action === 'addComment'}<p role="alert">{form.message} {form.hint}</p>{/if}
+		{@render formError('addComment')}
 
 		<h3>Relationen</h3>
 		{#each Object.entries(ticket.relations) as [key, items] (key)}
@@ -240,7 +248,7 @@
 				</li>
 			{/each}
 		</ul>
-		{#if form?.action === 'move'}<p role="alert">{form.message} {form.hint}</p>{/if}
+		{@render formError('move')}
 
 		<Button variant="danger" size="sm" onclick={() => (deleteOpen = true)}>Ticket löschen</Button>
 	</section>
@@ -284,7 +292,7 @@
 					>{ticket.description}</textarea
 				>{/snippet}
 		</FormField>
-		{#if form?.action === 'update'}<p role="alert">{form.message} {form.hint}</p>{/if}
+		{@render formError('update')}
 		<Button type="button" variant="ghost" onclick={() => (editOpen = false)}>Abbrechen (esc)</Button
 		>
 		<Button type="submit" variant="primary">Speichern</Button>
@@ -319,7 +327,7 @@
 			<FormField label="Grund" hint="Erscheint als System-Kommentar am Ticket.">
 				{#snippet children(a)}<input {...a} name="reason" required />{/snippet}
 			</FormField>
-			{#if form?.action === 'taskDialog'}<p role="alert">{form.message} {form.hint}</p>{/if}
+			{@render formError('taskDialog')}
 			<Button type="button" variant="ghost" onclick={() => (taskDialog = null)}>Abbrechen</Button>
 			<Button type="submit" variant={taskDialog.mode === 'delete' ? 'danger' : 'primary'}>
 				{taskDialog.mode === 'delete' ? 'Löschen' : 'Speichern'}

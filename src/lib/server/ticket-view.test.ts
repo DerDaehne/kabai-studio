@@ -80,10 +80,10 @@ describe('ticketDetail', () => {
 		});
 		board.addTask(db, user, id, 'offen');
 		const moves = ticketDetail(db, user, id).moves;
-		expect(moves.map((m) => [m.name, m.position])).toEqual([
-			['Review', 4],
-			['Done', 6],
-			['Human Intervention', 7]
+		expect(moves.map((m) => [m.name, m.position, m.kind])).toEqual([
+			['Review', 4, 'normal'],
+			['Done', 6, 'done'],
+			['Human Intervention', 7, 'human_intervention']
 		]);
 		const toDone = moves.find((m) => m.name === 'Done');
 		expect(toDone?.blockers).toEqual([

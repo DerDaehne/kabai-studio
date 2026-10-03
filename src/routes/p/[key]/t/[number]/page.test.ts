@@ -48,10 +48,11 @@ const base: TicketDetail = {
 		children: [{ ref: 'STU-3', title: 'Kind', column: 'Ready' }]
 	},
 	moves: [
-		{ columnId: 11, name: 'Review', position: 4, blockers: [] },
+		{ columnId: 11, name: 'Review', kind: 'normal', position: 4, blockers: [] },
 		{
 			columnId: 12,
 			name: 'Abnahme',
+			kind: 'done',
 			position: 5,
 			blockers: [
 				{ code: 'open_tasks', message: 'STU-1 hat 1 offene Tasks.', hint: 'Erledige sie zuerst.' }
@@ -128,9 +129,10 @@ it('highlights an open question above the fold with a link to the Takt', () => {
 	expect(page(base)).not.toContain('Offene Frage');
 });
 
-// UX 5: every form shows message AND hint on a refused action, not just one of the two (each shares one `form`
-// prop). `taskDialog`'s error sits inside `{#if taskDialog}`, open only via client state no SSR render can set —
-// the browser check covers it instead.
+// Errors offer a way out: every refused action shows message AND hint, not just one of the two. All five forms
+// render it through the shared `formError` snippet, so these four reachable actions also cover a regression in
+// `taskDialog`'s identical call — only its surrounding dialog content is gated by client state no SSR render can
+// set, not the error rendering itself.
 it.each(['addTask', 'addComment', 'move', 'update'])(
 	'shows both message and hint for a %s failure',
 	(action) => {

@@ -18,6 +18,7 @@ export type TicketComment = {
 export type TicketMove = {
 	columnId: number;
 	name: string;
+	kind: board.Kind;
 	/** Board position of the target column, so the ticket page can tell `>`/`<` apart without a second lookup. */
 	position: number;
 	blockers: board.Blocker[];
@@ -100,6 +101,7 @@ export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): 
 		moves: board.allowedMoves(db, t.id, actor).map((m) => ({
 			columnId: m.columnId,
 			name: m.name,
+			kind: m.kind,
 			position: positions.get(m.columnId)!,
 			blockers: m.blockers
 		})),

@@ -1,6 +1,5 @@
 // Drives real domain mutations through the real event bus (not a fake event shape) so the predicate is checked
-// against exactly what the Run-Akte's live listener receives — the gap the review found: the page's own effect was
-// otherwise the only thing reading `event.ticketId`, and nothing failed when that check was disabled.
+// against exactly what the Run-Akte's live listener receives.
 import { expect, it } from 'vitest';
 import * as board from './server/domain/board';
 import type { Actor } from './server/domain/core';

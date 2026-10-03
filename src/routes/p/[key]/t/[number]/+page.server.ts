@@ -26,8 +26,9 @@ export const load: PageServerLoad = ({ params, depends }) => {
 };
 
 /**
- * Runs a mutation; a rule violation becomes a form error with message and hint instead of a crash (UX 5). `action`
- * tags the failure so the page shows it only at the form that caused it — several forms share one `form` prop.
+ * Runs a mutation; a rule violation becomes a form error with message and hint instead of a crash (errors offer
+ * a way out). `action` tags the failure so the page shows it only at the form that caused it — several forms
+ * share one `form` prop.
  */
 function mutate(action: string, fn: () => void) {
 	try {
