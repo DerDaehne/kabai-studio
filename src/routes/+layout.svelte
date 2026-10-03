@@ -311,7 +311,7 @@
 					{/each}
 				{/if}
 			</ul>
-			<a class="btn btn-ghost btn-icon" href="/settings" aria-label="Einstellungen"
+			<a class="btn btn-ghost btn-icon settings" href="/settings" aria-label="Einstellungen"
 				><Icon name="settings" /></a
 			>
 			{#key shell.signals}
@@ -518,6 +518,9 @@
 		color: var(--status-paused);
 		font-weight: 560;
 	}
+	.settings {
+		flex-shrink: 0;
+	}
 	.focus-chip {
 		flex-shrink: 0;
 		padding-right: var(--space-1);
@@ -654,6 +657,18 @@
 		}
 		.agents {
 			justify-content: flex-start;
+		}
+		/* too narrow for the whole label on one line: it wraps instead of pushing the settings out of the dock */
+		.halted {
+			flex-shrink: 1;
+			min-width: 0;
+			line-height: 1.2;
+			white-space: normal;
+		}
+		.halted > :global(svg),
+		.halted :global(.btn) {
+			flex-shrink: 0;
+			white-space: nowrap;
 		}
 		main {
 			padding: var(--space-4) var(--space-3);
