@@ -285,87 +285,116 @@ export function startRunner(
 	limits = LIMITS,
 	coldStart: ColdStartLimits = COLD_START_LIMITS
 ) {
-	const active = new Map<number, RunControls>();
-	let stopped = false;
-	let wakeScheduled = false;
-	let notBeforeTimer: NodeJS.Timeout | undefined;
+	const runner = new Runner(db, executors, limits, coldStart);
+	failOrphanedRuns(db);
+	runner.start();
+	return {
+		/** Cancels a queued, running or waiting run; throws `invalid_run_transition` once the run has ended. */
+		cancel: (runId: number, actor: Actor = { kind: 'user' }) => runner.cancel(runId, actor),
+		/** Asks a running run to end cleanly after its current step; false when no executor of this runner works on it. */
+		park: (runId: number, reason: ResumeReason, notBefore?: string) =>
+			runner.park(runId, reason, notBefore),
+		/** Stops claiming; executors already running finish on their own. */
+		stop: () => runner.stop()
+	};
+}
 
-	async function execute(run: RunContext) {
+class Runner {
+	private readonly db: DatabaseSync;
+	private readonly executors: Partial<Record<Profile['executor'], Executor>>;
+	private readonly limits: Limits;
+	private readonly coldStart: ColdStartLimits;
+	private readonly active = new Map<number, RunControls>();
+	private stopped = false;
+	private wakeScheduled = false;
+	private notBeforeTimer: NodeJS.Timeout | undefined;
+	private unsubscribe = () => {};
+
+	constructor(
+		db: DatabaseSync,
+		executors: Partial<Record<Profile['executor'], Executor>>,
+		limits: Limits,
+		coldStart: ColdStartLimits
+	) {
+		this.db = db;
+		this.executors = executors;
+		this.limits = limits;
+		this.coldStart = coldStart;
+	}
+
+	start() {
+		this.unsubscribe = subscribe((event) => {
+			if (event.type === 'run.created' || event.type === 'run.state_changed') this.wake();
+		});
+		this.claimQueuedRuns();
+	}
+
+	cancel(runId: number, actor: Actor) {
+		finishRun(this.db, actor, runId, { state: 'cancelled' }); // revokes the token before the executor sees the signal
+		this.active.get(runId)?.cancel.abort();
+	}
+
+	park(runId: number, reason: ResumeReason, notBefore?: string) {
+		const park = this.active.get(runId)?.park;
+		park?.abort({ reason, notBefore } satisfies ParkReason);
+		return park !== undefined;
+	}
+
+	stop() {
+		this.stopped = true;
+		clearTimeout(this.notBeforeTimer);
+		this.unsubscribe();
+	}
+
+	private async execute(run: RunContext) {
 		const controls = { cancel: new AbortController(), park: new AbortController() };
-		active.set(run.id, controls);
-		const endColdStart = watchColdStart(db, run, controls.cancel, coldStart);
+		this.active.set(run.id, controls);
+		const endColdStart = watchColdStart(this.db, run, controls.cancel, this.coldStart);
 		try {
-			const result =
-				(await executorFor(executors, run.profile).execute(
-					run,
-					ioFor(db, run, controls, endColdStart)
-				)) ?? {};
-			if (!controls.cancel.signal.aborted) finishExecutedRun(db, run, result);
+			const io = ioFor(this.db, run, controls, endColdStart);
+			const result = (await executorFor(this.executors, run.profile).execute(run, io)) ?? {};
+			if (!controls.cancel.signal.aborted) finishExecutedRun(this.db, run, result);
 		} catch (err) {
-			if (!controls.cancel.signal.aborted) failRun(db, run.id, run.ticketId, err); // after cancel() the run has already ended
+			// after cancel() the run has already ended
+			if (!controls.cancel.signal.aborted) failRun(this.db, run.id, run.ticketId, err);
 		} finally {
 			endColdStart();
-			active.delete(run.id);
-			wake(); // deleting the ticket removes the run without any event, so the executor's end has to free the slot
+			this.active.delete(run.id);
+			this.wake(); // deleting the ticket removes the run without any event, so the executor's end has to free the slot
 		}
 	}
 
-	function claimQueuedRuns() {
+	private claimQueuedRuns() {
 		try {
-			const next = () => (stopped ? undefined : claimRun(db, SYSTEM, limits));
+			const next = () => (this.stopped ? undefined : claimRun(this.db, SYSTEM, this.limits));
 			for (let run = next(); run; run = next()) {
 				const runId = run.id;
-				execute(run).catch((err) =>
+				this.execute(run).catch((err) =>
 					console.error(`Runner: Run ${runId} nicht sauber beendet:`, err)
 				);
 			}
-			wakeAtNextNotBefore();
+			this.wakeAtNextNotBefore();
 		} catch (err) {
 			console.error('Runner: Claim fehlgeschlagen:', err);
 		} finally {
-			wakeScheduled = false;
+			this.wakeScheduled = false;
 		}
 	}
 
 	// ponytail: no polling — run events, executor ends and the not_before timer wake the runner; a failed claim (e.g. database locked) waits for the next wake-up.
-	function wake() {
-		if (stopped || wakeScheduled) return;
-		wakeScheduled = true;
-		queueMicrotask(claimQueuedRuns); // not inside the stack of whoever just created or ended a run
+	private wake() {
+		if (this.stopped || this.wakeScheduled) return;
+		this.wakeScheduled = true;
+		queueMicrotask(() => this.claimQueuedRuns()); // not inside the stack of whoever just created or ended a run
 	}
 
 	/** Set again after every claim from the database, so a held-back run survives a restart. */
-	function wakeAtNextNotBefore() {
-		clearTimeout(notBeforeTimer);
-		const next = stopped ? null : nextNotBefore(db, new Date());
+	private wakeAtNextNotBefore() {
+		clearTimeout(this.notBeforeTimer);
+		const next = this.stopped ? null : nextNotBefore(this.db, new Date());
 		if (!next) return;
-		notBeforeTimer = setTimeout(wake, Math.min(Date.parse(next) - Date.now(), MAX_TIMER_DELAY_MS));
-		notBeforeTimer.unref(); // a held-back run must not keep a stopping server alive
+		const delay = Math.min(Date.parse(next) - Date.now(), MAX_TIMER_DELAY_MS);
+		this.notBeforeTimer = setTimeout(() => this.wake(), delay);
+		this.notBeforeTimer.unref(); // a held-back run must not keep a stopping server alive
 	}
-
-	failOrphanedRuns(db);
-	const unsubscribe = subscribe((event) => {
-		if (event.type === 'run.created' || event.type === 'run.state_changed') wake();
-	});
-	claimQueuedRuns();
-
-	return {
-		/** Cancels a queued, running or waiting run; throws `invalid_run_transition` once the run has ended. */
-		cancel(runId: number, actor: Actor = { kind: 'user' }) {
-			finishRun(db, actor, runId, { state: 'cancelled' }); // revokes the token before the executor sees the signal
-			active.get(runId)?.cancel.abort();
-		},
-		/** Asks a running run to end cleanly after its current step; false when no executor of this runner works on it. */
-		park(runId: number, reason: ResumeReason, notBefore?: string) {
-			const park = active.get(runId)?.park;
-			park?.abort({ reason, notBefore } satisfies ParkReason);
-			return park !== undefined;
-		},
-		/** Stops claiming; executors already running finish on their own. */
-		stop() {
-			stopped = true;
-			clearTimeout(notBeforeTimer);
-			unsubscribe();
-		}
-	};
 }

@@ -286,40 +286,55 @@ const reply = (value: unknown, isError = false): CallToolResult => ({
 	...(isError && { isError })
 });
 
+type RegisterTool = <Name extends ToolName>(
+	name: Name,
+	work: (args: ArgsOf<Name>) => unknown
+) => void;
+
 function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 	const server = new McpServer({ name: 'kabai-studio', version: '1' });
-
-	/** Inputs are masked before they are stored, so a secret an agent pastes never lands in the database. */
-	function tool<Name extends ToolName>(name: Name, work: (args: ArgsOf<Name>) => unknown) {
-		server.registerTool(
-			name,
-			TOOLS[name] as ToolDefinition<ArgsOf<Name>>,
-			async (args: ArgsOf<Name>) => {
-				try {
-					const input = mask(args);
-					const { idempotency_key: key, ...request } = input as Idempotent;
-					return reply(
-						key === undefined
-							? work(input)
-							: once(db, ctx.actor, key, { tool: name, ...request }, () => work(input))
-					);
-				} catch (err) {
-					if (err instanceof Refusal) return reply(err.body, true);
-					if (err instanceof DomainError)
-						return reply(
-							{
-								error: err.code,
-								message: err.message,
-								hint: toolHint(db, ctx, name, err.code) ?? err.hint
-							},
-							true
-						);
-					throw mask(err);
-				}
-			}
+	const tool: RegisterTool = (name, work) =>
+		server.registerTool(name, TOOLS[name] as ToolDefinition<ArgsOf<typeof name>>, (args) =>
+			callTool(db, ctx, name, work, args)
 		);
-	}
+	registerTicketTools(tool, db, ctx);
+	registerNoteTools(tool, db, ctx);
+	registerWorkTools(tool, db, ctx);
+	return server;
+}
 
+/** Inputs are masked before they are stored, so a secret an agent pastes never lands in the database. */
+async function callTool<Name extends ToolName>(
+	db: DatabaseSync,
+	ctx: ToolContext,
+	name: Name,
+	work: (args: ArgsOf<Name>) => unknown,
+	args: ArgsOf<Name>
+): Promise<CallToolResult> {
+	try {
+		const input = mask(args);
+		const { idempotency_key: key, ...request } = input as Idempotent;
+		return reply(
+			key === undefined
+				? work(input)
+				: once(db, ctx.actor, key, { tool: name, ...request }, () => work(input))
+		);
+	} catch (err) {
+		if (err instanceof Refusal) return reply(err.body, true);
+		if (err instanceof DomainError)
+			return reply(
+				{
+					error: err.code,
+					message: err.message,
+					hint: toolHint(db, ctx, name, err.code) ?? err.hint
+				},
+				true
+			);
+		throw mask(err);
+	}
+}
+
+function registerTicketTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
 	tool('get_ticket', ({ ticket, comment }) =>
 		comment === undefined ? ticketView(db, ctx, ticket) : fullComment(db, ctx, comment)
 	);
@@ -335,21 +350,9 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 
 	tool('create_child_tickets', ({ items }) => createChildTickets(db, ctx, items));
 
-	tool('link_tickets', ({ waits_for = [], blocks = [] }) => {
-		if (!waits_for.length && !blocks.length)
-			throw new Refusal({
-				error: 'nothing_to_link',
-				message: 'link_tickets ohne waits_for und blocks verknüpft nichts.',
-				hint: 'Nenne in waits_for die Tickets, auf die dein Ticket wartet, oder in blocks die, die auf dein Ticket warten.'
-			});
-		return tx(db, () => {
-			for (const ref of waits_for)
-				board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
-			for (const ref of blocks)
-				board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
-			return { ref: board.ticket(db, ctx.ticketId).ref };
-		});
-	});
+	tool('link_tickets', ({ waits_for = [], blocks = [] }) =>
+		linkOwnTicket(db, ctx, waits_for, blocks)
+	);
 
 	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
 
@@ -357,17 +360,10 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		board.approveReview(db, ctx.actor, ctx.ticketId);
 		return { review_approved: true };
 	});
+}
 
-	tool('notes_search', ({ query, kind }) => ({
-		notes: notes.searchNotes(db, query, { kind, visibleIn: ctx.projectId }).map((n) => ({
-			slug: n.slug,
-			title: n.title,
-			kind: n.kind,
-			...(n.status !== null && { status: n.status }),
-			snippet: n.snippet,
-			chars: n.bodyChars
-		}))
-	}));
+function registerNoteTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
+	tool('notes_search', ({ query, kind }) => noteSearchView(db, ctx, query, kind));
 
 	tool('notes_get', ({ slug }) => noteView(db, ctx, slug));
 
@@ -402,7 +398,9 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		notes.linkTicket(db, ctx.actor, noteIdOf(db, ctx, slug), ctx.ticketId, relation);
 		return { linked: true };
 	});
+}
 
+function registerWorkTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
 	tool('add_tasks', ({ titles }) => ({
 		task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids
 	}));
@@ -422,8 +420,40 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		const { id, column } = requestHuman(db, ctx.actor, ctx.ticketId, q);
 		return { question_id: id, column };
 	});
+}
 
-	return server;
+function linkOwnTicket(db: DatabaseSync, ctx: ToolContext, waitsFor: string[], blocks: string[]) {
+	if (!waitsFor.length && !blocks.length)
+		throw new Refusal({
+			error: 'nothing_to_link',
+			message: 'link_tickets ohne waits_for und blocks verknüpft nichts.',
+			hint: 'Nenne in waits_for die Tickets, auf die dein Ticket wartet, oder in blocks die, die auf dein Ticket warten.'
+		});
+	return tx(db, () => {
+		for (const ref of waitsFor)
+			board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
+		for (const ref of blocks)
+			board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
+		return { ref: board.ticket(db, ctx.ticketId).ref };
+	});
+}
+
+function noteSearchView(
+	db: DatabaseSync,
+	ctx: ToolContext,
+	query: string,
+	kind: ArgsOf<'notes_search'>['kind']
+) {
+	return {
+		notes: notes.searchNotes(db, query, { kind, visibleIn: ctx.projectId }).map((n) => ({
+			slug: n.slug,
+			title: n.title,
+			kind: n.kind,
+			...(n.status !== null && { status: n.status }),
+			snippet: n.snippet,
+			chars: n.bodyChars
+		}))
+	};
 }
 
 /** Tool-level way out for domain errors whose domain hint names domain functions or does not fit the calling tool. */
@@ -889,9 +919,13 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 		...(ticketNotes.length > 0 && { notes: ticketNotes })
 	};
 	if (id !== ctx.ticketId) return view;
-	const latest = collectAnswer(db, ctx.actor, id);
+	return { ...view, ...ownTicketView(db, ctx) };
+}
+
+/** What only the agent's own ticket shows: the allowed moves and the latest question to the human. */
+function ownTicketView(db: DatabaseSync, ctx: ToolContext) {
+	const latest = collectAnswer(db, ctx.actor, ctx.ticketId);
 	return {
-		...view,
 		allowed_moves: agentMoves(db, ctx).map((m) => ({
 			column_id: m.columnId,
 			name: m.name,
