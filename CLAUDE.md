@@ -116,10 +116,11 @@ Deviations only with a new ADR:
   `secret.key` in the data directory or `STUDIO_SECRET_KEY`); never sent back to the
   browser, never put into prompts, masked in logs and run events.
 - **Auth:** one owner account, passkey + password (scrypt via `node:crypto`).
-- **Delivery:** one command on the host (`npx kabai-studio`, single binary,
-  `nix run`), no required configuration; setup through the onboarding assistant
-  instead of a manual. Consequently: **no native Node add-ons** (`node:sqlite`
-  instead of `better-sqlite3`) and no required environment variables.
+- **Delivery:** published on GitHub only — a container image on GHCR and single
+  binaries attached to GitHub releases; no npm package. One command on the host, no
+  required configuration; setup through the onboarding assistant instead of a
+  manual. Consequently: **no native Node add-ons** (`node:sqlite` instead of
+  `better-sqlite3`) and no required environment variables.
 - **Agent experience:** agents get ticket, tasks, allowed moves and notes injected
   into the prompt instead of querying for them. Studio MCP tools are batch-first,
   answer leanly and take the identity from the run token.
