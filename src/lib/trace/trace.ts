@@ -193,7 +193,8 @@ export function tickerText(phase: Phase, loadingHint = ''): string {
 	return line ? `${parts.join(' · ')} — ${line}` : parts.join(' · ');
 }
 
-function clock(ms: number) {
+/** `m:ss`, also past an hour (`75:02`). */
+export function clock(ms: number) {
 	const seconds = Math.floor(ms / 1000);
 	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }

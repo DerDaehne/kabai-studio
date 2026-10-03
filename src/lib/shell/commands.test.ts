@@ -7,6 +7,7 @@ import {
 	parseInput,
 	suggest,
 	suggestionsFor,
+	withViewCommands,
 	type Suggestion
 } from './commands';
 import type { ProjectRef } from './shell.svelte';
@@ -121,5 +122,26 @@ describe('kill switch commands', () => {
 		expect(labels(suggest(':', 'anh', sources))).toEqual([':anhalten']);
 		expect(labels(suggest(':', 'fort', sources))).toEqual([':fortsetzen']);
 		expect(labels(suggest(':', 'not-aus', sources))).toEqual([':anhalten', ':fortsetzen']);
+	});
+});
+
+describe(':run', () => {
+	it('is a command that runs, no longer one listed as coming later', () => {
+		const run = commands.find((command) => command.id === 'run');
+		expect(run?.label).toBe(':run');
+		expect(run?.available).not.toBe(false);
+	});
+});
+
+describe('withViewCommands', () => {
+	it('lists the commands of the current view first, each in place of a fixed one with its id', () => {
+		const own = [
+			{ id: 'run', label: ':run', detail: 'Run starten mit „Lokal“', run: () => {} },
+			{ id: 'run-2', label: ':run Cloud', run: () => {} }
+		];
+		const merged = withViewCommands(own, commands);
+		expect(merged.slice(0, 2)).toEqual(own);
+		expect(merged.filter((command) => command.id === 'run')).toEqual([own[0]]);
+		expect(merged).toHaveLength(commands.length + 1);
 	});
 });

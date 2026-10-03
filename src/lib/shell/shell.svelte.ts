@@ -19,6 +19,8 @@ export const shell = $state({
 	/** Count or prefix the key router has buffered so far, e.g. `3` or `g`. */
 	pendingKeys: '',
 	viewItems: [] as Suggestion[],
+	/** The current view's own `:` commands, such as `:run` in the Run-Akte. */
+	viewCommands: [] as Suggestion[],
 	tickets: [] as Suggestion[],
 	/** Increments on every new signal; each increment sweeps one light wave through the head dock. */
 	signals: 0

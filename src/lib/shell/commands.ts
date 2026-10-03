@@ -10,6 +10,8 @@ export type Suggestion = {
 	href?: string;
 	/** False for commands whose feature has not been built yet; they are listed but cannot be run. */
 	available?: boolean;
+	/** What a command of the current view does; see {@link withViewCommands}. */
+	run?: () => void;
 };
 
 export type SuggestionSources = {
@@ -19,7 +21,7 @@ export type SuggestionSources = {
 };
 
 export const commands: Suggestion[] = [
-	{ id: 'run', label: ':run', detail: 'Ticket als Run starten', available: false },
+	{ id: 'run', label: ':run', detail: 'Ticket als Run starten' },
 	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
 	{ id: 'halt', label: ':anhalten', detail: 'Not-Aus: alle Agent-Runs sofort anhalten' },
 	{ id: 'release', label: ':fortsetzen', detail: 'Nach dem Not-Aus: wartende Runs starten wieder' },
@@ -33,6 +35,15 @@ export const commands: Suggestion[] = [
 	{ id: 'single-keys-on', label: ':set einzeltasten an', detail: 'Tasten ohne Alt' },
 	{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
 	{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
+];
+
+/**
+ * The commands of the current view (such as `:run` in the Run-Akte) first; one with the id of a fixed command takes its
+ * place, so the fixed one only answers where no view offers it.
+ */
+export const withViewCommands = (view: Suggestion[], fixed: Suggestion[]): Suggestion[] => [
+	...view,
+	...fixed.filter((command) => !view.some((own) => own.id === command.id))
 ];
 
 const focusCommandId = (projectId: number) => `fokus-${projectId}`;

@@ -1,9 +1,18 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as board from '$lib/server/domain/board';
-import type { Actor } from '$lib/server/domain/core';
+import { tx, type Actor } from '$lib/server/domain/core';
 import { DomainError } from '$lib/server/domain/error';
 import { db } from '$lib/server/db';
-import { findTicketId, runTrace, ticketDetail } from '$lib/server/ticket-view';
+import { createRun, prioritizeRun } from '$lib/server/domain/runs';
+import { runner } from '$lib/server/runner';
+import {
+	findTicketId,
+	isRunOf,
+	runStart,
+	runTabs,
+	runTrace,
+	ticketDetail
+} from '$lib/server/ticket-view';
 import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -24,15 +33,24 @@ export const load: PageServerLoad = ({ params, url, depends }) => {
 	const id = requireTicketId(params);
 	// a reconnect reloads the live state; the trace has no replay of the run events it missed, so it reloads with it
 	depends(ticketDependency(id), LIVE_DEPENDENCY);
-	return { ticket: ticketDetail(db(), HUMAN, id), trace: selectedTrace(id, url) };
+	const ticket = ticketDetail(db(), HUMAN, id);
+	return {
+		ticket,
+		trace: selectedTrace(id, url),
+		runs: runTabs(db(), id),
+		start: runStart(db(), ticket.project.id)
+	};
 };
+
+const notThisTicketsRun = (run: string): never =>
+	error(404, `Run ${run} gehört nicht zu diesem Ticket.`);
 
 /** The run `?run=<id>` names (what a run tab links to), otherwise the ticket's newest; none before its first run. */
 function selectedTrace(ticketId: number, url: URL) {
 	const selected = url.searchParams.get('run');
 	if (selected === null) return runTrace(db(), ticketId);
 	const trace = /^\d+$/.test(selected) ? runTrace(db(), ticketId, Number(selected)) : undefined;
-	if (!trace) error(404, `Run ${selected} gehört nicht zu diesem Ticket.`);
+	if (!trace) notThisTicketsRun(selected);
 	return trace;
 }
 
@@ -52,6 +70,14 @@ function mutate(action: string, fn: () => void) {
 }
 
 const field = (form: FormData, name: string) => String(form.get(name) ?? '');
+
+/** A run the human starts goes ahead of background work in the queue; both steps or neither. */
+function startForHuman(ticketId: number, profileId: number) {
+	tx(db(), () => {
+		const { id } = createRun(db(), HUMAN, { ticketId, profileId });
+		prioritizeRun(db(), HUMAN, id);
+	});
+}
 
 export const actions: Actions = {
 	update: async ({ request, params }) => {
@@ -98,6 +124,19 @@ export const actions: Actions = {
 		const id = requireTicketId(params);
 		const columnId = Number(field(await request.formData(), 'columnId'));
 		return mutate('move', () => board.moveTicket(db(), HUMAN, id, columnId));
+	},
+	start: async ({ request, params, url }) => {
+		const id = requireTicketId(params);
+		const profileId = Number(field(await request.formData(), 'profileId'));
+		const refused = mutate('start', () => startForHuman(id, profileId));
+		if (refused) return refused;
+		redirect(303, url.pathname); // without ?run= the trace shows the newest run, the one just started
+	},
+	stop: async ({ request, params }) => {
+		const id = requireTicketId(params);
+		const runId = field(await request.formData(), 'runId');
+		if (!isRunOf(db(), id, Number(runId))) notThisTicketsRun(runId);
+		return mutate('stop', () => runner().cancel(Number(runId), HUMAN));
 	},
 	delete: async ({ params }) => {
 		const id = requireTicketId(params);

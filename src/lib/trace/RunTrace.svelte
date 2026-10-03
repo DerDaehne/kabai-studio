@@ -1,6 +1,22 @@
+<script lang="ts" module>
+	import type { Tone } from '$lib/ui/Badge.svelte';
+	import type { RunTraceState } from './trace';
+
+	/** How a run state reads wherever a run is shown: the badge tone (its symbol) and the text. */
+	export const RUN_STATES: Record<RunTraceState, { tone: Tone; label: string }> = {
+		queued: { tone: 'neutral', label: 'wartet auf Start' },
+		running: { tone: 'running', label: 'läuft' },
+		waiting_approval: { tone: 'waiting', label: 'wartet auf Freigabe' },
+		paused: { tone: 'paused', label: 'pausiert' },
+		succeeded: { tone: 'succeeded', label: 'fertig' },
+		failed: { tone: 'failed', label: 'fehlgeschlagen' },
+		cancelled: { tone: 'neutral', label: 'gestoppt' }
+	};
+</script>
+
 <script lang="ts">
 	import { onLiveEvent } from '$lib/shell/live.svelte';
-	import Badge, { type Tone } from '$lib/ui/Badge.svelte';
+	import Badge from '$lib/ui/Badge.svelte';
 	import { travel } from '$lib/ui/motion';
 	import TraceStep from './TraceStep.svelte';
 	import {
@@ -11,27 +27,16 @@
 		withLiveEvent,
 		type Phase,
 		type RunTrace,
-		type RunTraceState,
 		type TraceEvent
 	} from './trace';
 
 	/** `trace`: the selected run as loaded; `reload` loads it again once live events were missed. */
 	let { trace, reload }: { trace: RunTrace; reload: () => void } = $props();
 
-	const STATES: Record<RunTraceState, { tone: Tone; label: string }> = {
-		queued: { tone: 'neutral', label: 'wartet auf Start' },
-		running: { tone: 'running', label: 'läuft' },
-		waiting_approval: { tone: 'waiting', label: 'wartet auf Freigabe' },
-		paused: { tone: 'paused', label: 'pausiert' },
-		succeeded: { tone: 'succeeded', label: 'fertig' },
-		failed: { tone: 'failed', label: 'fehlgeschlagen' },
-		cancelled: { tone: 'neutral', label: 'gestoppt' }
-	};
-
 	let events = $derived(trace.events);
 	let phase = $state<Phase>();
 	const view = $derived(buildTrace(events));
-	const runState = $derived(STATES[trace.state]);
+	const runState = $derived(RUN_STATES[trace.state]);
 
 	$effect(() =>
 		onLiveEvent((event) => {

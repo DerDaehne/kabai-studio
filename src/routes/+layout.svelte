@@ -7,7 +7,13 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
-	import { commands, focusCommands, focusTarget, type Suggestion } from '$lib/shell/commands';
+	import {
+		commands,
+		focusCommands,
+		focusTarget,
+		withViewCommands,
+		type Suggestion
+	} from '$lib/shell/commands';
 	import { focusKeys, projectForLetter } from '$lib/shell/focus';
 	import KeyOverview from '$lib/shell/KeyOverview.svelte';
 	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
@@ -65,7 +71,7 @@
 	);
 	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
 	const sources = $derived({
-		commands: [...commands, ...focusCommands(live.projects)],
+		commands: [...withViewCommands(shell.viewCommands, commands), ...focusCommands(live.projects)],
 		view: shell.viewItems,
 		tickets: shell.tickets
 	});
@@ -162,13 +168,16 @@
 		await closeOverlay();
 		commandInput?.blur();
 		const focusCommand = focusTarget(suggestion, live.projects);
-		if (suggestion.href) await goto(suggestion.href);
+		if (suggestion.run) suggestion.run();
+		else if (suggestion.href) await goto(suggestion.href);
 		else if (focusCommand !== undefined) shell.focus = focusCommand;
 		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
 		else if (suggestion.id.startsWith('single-keys'))
 			setSingleKeys(suggestion.id === 'single-keys-on');
 		else if (suggestion.id === 'halt') haltOpen = true;
 		else if (suggestion.id === 'release') await release();
+		else if (suggestion.id === 'run')
+			toast(':run startet einen Run in der Run-Akte eines Tickets — öffne zuerst das Ticket.');
 	}
 
 	let haltOpen = $state(false);

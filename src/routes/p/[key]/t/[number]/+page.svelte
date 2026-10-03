@@ -3,6 +3,7 @@
 	import { enhance } from '$app/forms';
 	import { invalidate } from '$app/navigation';
 	import { renderDescription } from '$lib/markdown';
+	import RunControl from '$lib/runs/RunControl.svelte';
 	import { onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { reloadsTicket } from '$lib/ticket-live';
@@ -122,6 +123,7 @@
 	<Badge>{ticket.column.name}</Badge>
 	<Button size="sm" onclick={() => (editOpen = true)}>Bearbeiten (i)</Button>
 </header>
+<RunControl runs={data.runs} start={data.start} selected={data.trace?.id} {form} />
 
 {#if ticket.openQuestion}
 	<div class="question" role="status">

@@ -2,10 +2,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as board from './domain/board';
 import { DomainError, type Actor } from './domain/core';
 import { answerQuestion, requestHuman } from './domain/questions';
-import { appendEvent, createProfile, createRun, finishRun, startRun } from './domain/runs';
+import {
+	appendEvent,
+	createProfile,
+	createRun,
+	deleteProfile,
+	finishRun,
+	startRun
+} from './domain/runs';
 import { migrate, openDb } from './db';
 import { startRunner } from './runner';
-import { findTicketId, runTrace, ticketDetail } from './ticket-view';
+import { findTicketId, runStart, runTabs, runTrace, ticketDetail } from './ticket-view';
 
 const user: Actor = { kind: 'user' };
 
@@ -238,5 +245,127 @@ describe('runTrace', () => {
 		expect(runTrace(db, ticketId, runId)?.continuedBy).toBeUndefined();
 		const next = resume();
 		expect(runTrace(db, ticketId, runId)?.continuedBy).toBe(next);
+	});
+});
+
+describe('runTabs', () => {
+	function withProfile(pool = 'local') {
+		const { db, projectId } = setup();
+		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const profileId = createProfile(db, user, {
+			name: 'Lokal',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm',
+			pool
+		}).id;
+		return { db, projectId, ticketId, profileId };
+	}
+
+	it('lists the runs of the ticket newest first with state, profile, times and usage', () => {
+		const { db, projectId, ticketId, profileId } = withProfile();
+		const older = createRun(db, user, { ticketId, profileId }).id;
+		startRun(db, user, older);
+		finishRun(db, user, older, {
+			state: 'succeeded',
+			usage: { tokensIn: 1200, tokensOut: 80, cost: 0.5 }
+		});
+		const newer = createRun(db, user, { ticketId, profileId }).id;
+		const other = board.createTicket(db, user, projectId, { title: 'Anderes' }).id;
+		createRun(db, user, { ticketId: other, profileId });
+
+		const tabs = runTabs(db, ticketId);
+		expect(tabs.map((tab) => [tab.id, tab.state])).toEqual([
+			[newer, 'queued'],
+			[older, 'succeeded']
+		]);
+		expect(tabs[1]).toMatchObject({
+			profile: 'Lokal',
+			tokensIn: 1200,
+			tokensOut: 80,
+			cost: 0.5,
+			resumedFrom: null,
+			resumeReason: null
+		});
+		expect(tabs[1].startedAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+		expect(tabs[1].finishedAt).toMatch(/Z$/);
+		expect(tabs[0]).toMatchObject({ startedAt: null, finishedAt: null });
+	});
+
+	it('gives only a queued run the reason it waits, in the words of waitReason', () => {
+		const { db, ticketId, profileId } = withProfile();
+		const busy = createRun(db, user, { ticketId, profileId }).id;
+		startRun(db, user, busy);
+		createRun(db, user, { ticketId, profileId });
+		const [waiting, running] = runTabs(db, ticketId);
+		expect(waiting.waitText).toBe('wartet: Pool „local“ ist voll (1 von 1 aktiv).');
+		expect(running.waitText).toBeUndefined();
+	});
+
+	it('names the run a continuation comes from and why', () => {
+		const { db, ticketId, profileId } = withProfile();
+		const first = createRun(db, user, { ticketId, profileId }).id;
+		startRun(db, user, first);
+		finishRun(db, user, first, { state: 'paused' });
+		createRun(db, user, {
+			ticketId,
+			profileId,
+			resumedFromRunId: first,
+			resumeReason: 'context_budget'
+		});
+		expect(runTabs(db, ticketId)[0]).toMatchObject({
+			resumedFrom: first,
+			resumeReason: 'context_budget'
+		});
+	});
+
+	it('keeps a run whose profile was deleted, without a profile name', () => {
+		const { db, ticketId, profileId } = withProfile();
+		const runId = createRun(db, user, { ticketId, profileId }).id;
+		finishRun(db, user, runId, { state: 'cancelled' });
+		deleteProfile(db, user, profileId);
+		expect(runTabs(db, ticketId)[0].profile).toBeNull();
+	});
+});
+
+describe('runStart', () => {
+	const profile = (db: ReturnType<typeof setup>['db'], name: string) =>
+		createProfile(db, user, {
+			name,
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+
+	it('offers no profile and preselects none before the first profile exists', () => {
+		const { db, projectId } = setup();
+		expect(runStart(db, projectId)).toEqual({ profiles: [], preselected: undefined });
+	});
+
+	it('preselects the first profile by name before the project has run', () => {
+		const { db, projectId } = setup();
+		const zeta = profile(db, 'Zeta');
+		const alpha = profile(db, 'Alpha');
+		expect(runStart(db, projectId)).toEqual({
+			profiles: [
+				{ id: alpha, name: 'Alpha' },
+				{ id: zeta, name: 'Zeta' }
+			],
+			preselected: alpha
+		});
+	});
+
+	it('preselects the profile this project used last, not the one another project used', () => {
+		const { db, projectId } = setup();
+		const alpha = profile(db, 'Alpha');
+		const zeta = profile(db, 'Zeta');
+		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		createRun(db, user, { ticketId, profileId: alpha });
+		createRun(db, user, { ticketId, profileId: zeta });
+		const otherProject = board.createProject(db, user, { key: 'WEB', name: 'Website' }).id;
+		const otherTicket = board.createTicket(db, user, otherProject, { title: 'W' }).id;
+		createRun(db, user, { ticketId: otherTicket, profileId: alpha });
+		expect(runStart(db, projectId).preselected).toBe(zeta);
+		expect(runStart(db, otherProject).preselected).toBe(alpha);
 	});
 });

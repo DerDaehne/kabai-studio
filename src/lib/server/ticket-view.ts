@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
@@ -6,7 +7,8 @@ import type { Actor } from './domain/core';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
 import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
-import type { RunState } from './domain/runs';
+import { listProfiles, waitReason, type RunState } from './domain/runs';
+import { LIMITS } from './runner';
 
 export type TicketComment = {
 	id: number;
@@ -175,3 +177,37 @@ function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['fa
 	const wayOut = comment ? comment.body.slice(comment.body.indexOf(WAY_OUT) + WAY_OUT.length) : '';
 	return { code, message, wayOut };
 }
+
+const iso = (column: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${column})`;
+
+/** The runs of a ticket, newest first, as the run tabs show them; a queued one says why it waits. */
+export function runTabs(db: DatabaseSync, ticketId: number): RunTab[] {
+	const tabs = db
+		.prepare(
+			`SELECT r.id, r.state, p.name AS profile, ${iso('r.started_at')} AS startedAt,
+				${iso('r.finished_at')} AS finishedAt, r.tokens_in AS tokensIn, r.tokens_out AS tokensOut, r.cost,
+				r.resumed_from_run_id AS resumedFrom, r.resume_reason AS resumeReason
+			FROM runs r LEFT JOIN agent_profiles p ON p.id = r.agent_profile_id
+			WHERE r.ticket_id = ? ORDER BY r.id DESC`
+		)
+		.all(ticketId) as RunTab[];
+	return tabs.map((tab) =>
+		tab.state === 'queued' ? { ...tab, waitText: waitReason(db, tab.id, LIMITS)?.text } : tab
+	);
+}
+
+/** The profiles to start a run with; preselected is the one the newest run of the project used, else the first. */
+export function runStart(db: DatabaseSync, projectId: number): RunStart {
+	const profiles = listProfiles(db).map(({ id, name }) => ({ id, name }) as StartProfile);
+	const lastUsed = db
+		.prepare(
+			`SELECT r.agent_profile_id AS id FROM runs r JOIN tickets t ON t.id = r.ticket_id
+			WHERE t.project_id = ? AND r.agent_profile_id IS NOT NULL ORDER BY r.id DESC LIMIT 1`
+		)
+		.get(projectId) as { id: number } | undefined;
+	return { profiles, preselected: lastUsed?.id ?? profiles[0]?.id };
+}
+
+export const isRunOf = (db: DatabaseSync, ticketId: number, runId: number): boolean =>
+	db.prepare('SELECT 1 FROM runs WHERE id = ? AND ticket_id = ?').get(runId, ticketId) !==
+	undefined;

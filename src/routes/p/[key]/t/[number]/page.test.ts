@@ -61,8 +61,10 @@ const base: TicketDetail = {
 	]
 };
 
+// the run control (tabs, start) has its own tests; here it renders with no run and no profile
+const noRuns = { runs: [], start: { profiles: [] } };
 const page = (ticket: TicketDetail, form: unknown = null) =>
-	render(Page, { props: { data: { ticket }, form } as any }).body;
+	render(Page, { props: { data: { ticket, ...noRuns }, form } as any }).body;
 
 it('shows the breadcrumb (project + ref), title and current column', () => {
 	const body = page(base);
@@ -157,7 +159,11 @@ it('shows the loaded run in the Spur area, and an empty state before the first r
 	];
 	const withRun = render(Page, {
 		props: {
-			data: { ticket: base, trace: { id: 3, state: 'running', waitsForAnswer: false, events } },
+			data: {
+				ticket: base,
+				trace: { id: 3, state: 'running', waitsForAnswer: false, events },
+				...noRuns
+			},
 			form: null
 		} as any
 	}).body;
