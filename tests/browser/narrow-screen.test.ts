@@ -17,7 +17,16 @@ function sidewaysScrollers(page: Page): Promise<string[]> {
 
 test('no view scrolls sideways on a 375 px wide phone screen', async ({ page, seedTicket }) => {
 	const ticket = seedTicket('A ticket whose rather long title has to wrap on a phone screen');
-	const paths = ['/', '/takt', '/board', '/settings', '/settings/profiles', ticket.path];
+	const paths = [
+		'/',
+		'/takt',
+		'/board',
+		'/projects',
+		'/p/WEB',
+		'/settings',
+		'/settings/profiles',
+		ticket.path
+	];
 
 	for (const path of paths) {
 		await open(page, path);
