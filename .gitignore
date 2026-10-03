@@ -26,11 +26,11 @@ vite.config.ts.timestamp-*
 .direnv
 result
 
-# Interne, persönliche Agent-Infos (nie committen)
+# Internal, personal agent notes (never commit)
 CLAUDE.local.md
 
-# Privatsphären-Scan: private Muster (Namen, Mails, Hostnamen, Pfade), nie committen
+# Privacy scan: private patterns (names, mails, host names, paths), never commit
 /.privacy-patterns
 
-# Laufzeitdaten (SQLite-DB)
+# Runtime data (SQLite DB)
 /data

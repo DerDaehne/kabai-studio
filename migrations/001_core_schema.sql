@@ -1,8 +1,8 @@
--- Kernschema Board: harte Invarianten als Constraints, Workflow-Regeln in der Domain-Schicht.
+-- Core board schema: hard invariants as constraints, workflow rules in the domain layer.
 
 CREATE TABLE projects (
 	id INTEGER PRIMARY KEY,
-	key TEXT NOT NULL UNIQUE CHECK (key GLOB '[A-Z]*' AND key NOT GLOB '*[^A-Z0-9]*'), -- Anzeige STU-12
+	key TEXT NOT NULL UNIQUE CHECK (key GLOB '[A-Z]*' AND key NOT GLOB '*[^A-Z0-9]*'), -- shown as STU-12
 	name TEXT NOT NULL,
 	description TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
@@ -16,7 +16,7 @@ CREATE TABLE columns (
 	position INTEGER NOT NULL DEFAULT 0,
 	role_prompt TEXT NOT NULL DEFAULT '',
 	kind TEXT NOT NULL DEFAULT 'normal' CHECK (kind IN ('normal', 'done', 'human_intervention', 'human_answered')),
-	UNIQUE (project_id, id) -- Ziel der zusammengesetzten FKs: Spalte gehört zum selben Projekt
+	UNIQUE (project_id, id) -- target of the composite FKs: the column belongs to the same project
 ) STRICT;
 
 CREATE TABLE transitions (
@@ -47,7 +47,7 @@ CREATE TABLE tickets (
 	created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE (project_id, number),
-	-- ohne ON DELETE: eine Spalte mit Tickets lässt sich nicht löschen
+	-- no ON DELETE: a column that holds tickets cannot be deleted
 	FOREIGN KEY (project_id, column_id) REFERENCES columns (project_id, id)
 ) STRICT;
 CREATE INDEX tickets_by_column ON tickets (project_id, column_id, position);
@@ -57,7 +57,7 @@ CREATE TABLE tasks (
 	ticket_id INTEGER NOT NULL REFERENCES tickets (id) ON DELETE CASCADE,
 	title TEXT NOT NULL CHECK (title <> ''),
 	position INTEGER NOT NULL DEFAULT 0,
-	done_at TEXT -- NULL = offen
+	done_at TEXT -- NULL = open
 ) STRICT;
 CREATE INDEX tasks_by_ticket ON tasks (ticket_id, position);
 

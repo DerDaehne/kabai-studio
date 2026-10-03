@@ -1,10 +1,10 @@
-# Vorlage für .privacy-patterns (gitignored, nie committen).
-# Eine POSIX-ERE-Regex pro Zeile (wie `grep -E`), Leerzeilen und Zeilen mit "#" werden ignoriert.
-# npm run scan:secrets prüft damit den Arbeitsstand, jeden einzelnen noch nicht gepushten
-# Commit für sich sowie Commit-Nachricht, Autor und Committer, jeweils gegen origin/main.
-# Unten stehen nur generische Platzhalter — mit den eigenen, privaten Mustern füllen (echter
-# Name, private Mailadresse, lokale Hostnamen, private Pfade, interne Wissensdatenbank-Slugs, ...).
-Vorname Nachname
+# Template for .privacy-patterns (gitignored, never commit it).
+# One POSIX ERE regex per line (like `grep -E`); blank lines and lines starting with "#" are ignored.
+# npm run scan:secrets checks the working tree, every unpushed commit on its own and
+# their commit message, author and committer against these patterns, relative to origin/main.
+# Below are generic placeholders only — fill in your own private patterns (real name,
+# private mail address, local host names, private paths, internal knowledge-base slugs, ...).
+Firstname Lastname
 [a-z.]+@example\.com
-/home/beispiel-nutzer
+/home/example-user
 \[\[[a-z0-9-]+\]\]

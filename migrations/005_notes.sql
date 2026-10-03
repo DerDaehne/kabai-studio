@@ -1,18 +1,18 @@
--- Wissensbasis: Notes, Links, Projekt-/Ticket-Verknüpfung, Volltextsuche (FTS5, external content, Trigger-synchron).
--- Kein FK auf runs (existiert erst ab 006): verified_by_run_id ist reine Herkunftsangabe, keine harte Invariante.
+-- Knowledge base: notes, links, project and ticket links, full-text search (FTS5, external content, kept in sync by triggers).
+-- No FK to runs (it exists only from 006 on): verified_by_run_id records provenance, not a hard invariant.
 
 CREATE TABLE notes (
 	id INTEGER PRIMARY KEY,
 	slug TEXT NOT NULL UNIQUE CHECK (slug GLOB '[a-z0-9]*' AND slug NOT GLOB '*[^a-z0-9-]*'), -- kebab-case, permanent
 	title TEXT NOT NULL CHECK (title <> ''),
 	kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'adr', 'hub')),
-	status TEXT CHECK (status IS NULL OR (kind = 'adr' AND status IN ('proposed', 'accepted', 'superseded'))), -- nur ADRs tragen einen Status
+	status TEXT CHECK (status IS NULL OR (kind = 'adr' AND status IN ('proposed', 'accepted', 'superseded'))), -- only adr notes carry a status
 	body TEXT NOT NULL DEFAULT '',
 	tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags) AND json_type(tags) = 'array'),
 	archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
 	verified_at TEXT,
 	verified_by_run_id INTEGER,
-	version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0), -- optimistische Nebenläufigkeit: updateNote vergleicht expectedVersion, bevor updated_at (1s-Auflösung) es könnte
+	version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0), -- optimistic concurrency: updateNote compares expectedVersion, since updated_at has only 1 s resolution
 	created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
@@ -41,7 +41,7 @@ CREATE TABLE note_tickets (
 ) STRICT;
 CREATE INDEX note_tickets_by_ticket ON note_tickets (ticket_id);
 
--- FTS5, external content: notes bleibt die einzige Quelle, Trigger halten den Index synchron (Insert/Update/Delete).
+-- FTS5, external content: notes stays the only source, triggers keep the index in sync (insert/update/delete).
 CREATE VIRTUAL TABLE notes_fts USING fts5(slug, title, tags, body, content='notes', content_rowid='id');
 
 CREATE TRIGGER notes_fts_ai AFTER INSERT ON notes BEGIN
@@ -55,6 +55,6 @@ CREATE TRIGGER notes_fts_au AFTER UPDATE ON notes BEGIN
 	INSERT INTO notes_fts (rowid, slug, title, tags, body) VALUES (new.id, new.slug, new.title, new.tags, new.body);
 END;
 
--- Bestands-Epics (angelegt vor dieser Migration, also vor der Epic-immer-docs_required-Regel) auf denselben Stand bringen wie
--- neue: die done-Blockade in moveTicket liest ausschließlich tickets.docs_required, kein Sonderfall für type='epic'.
+-- Bring epics created before this migration (before the rule that epics always carry docs_required) in line with
+-- new ones: the done check in moveTicket reads only tickets.docs_required, with no special case for type='epic'.
 UPDATE tickets SET docs_required = 1 WHERE type = 'epic';

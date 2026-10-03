@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # OIDC-Signatur der Ergebnisse (Sigstore) — nur dieser Job braucht das
-      security-events: write # SARIF-Upload nach Code Scanning — nur dieser Job braucht das
+      id-token: write # OIDC signature of the results (Sigstore) — only this job needs it
+      security-events: write # SARIF upload to code scanning — only this job needs it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -29,7 +29,7 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm run format:check
-      # Kein --omit=dev: package.json hat nur devDependencies (adapter-node bündelt sie in
-      # build/), --omit=dev würde damit den gesamten Baum aus dem Audit werfen. Nach build,
-      # damit ein Audit-Ausfall (z. B. Registry down) nicht das Build-Ergebnis verdeckt.
+      # No --omit=dev: package.json has only devDependencies (adapter-node bundles them into
+      # build/), so --omit=dev would drop the whole tree from the audit. After build, so that
+      # an audit outage (e.g. registry down) does not hide the build result.
       - run: npm audit --audit-level=high
