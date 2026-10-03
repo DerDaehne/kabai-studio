@@ -36,11 +36,11 @@ export type TicketFields = {
 };
 
 // Generic role prompts for the default "Software" template: short, English, no product, project, tool or path names
-// (#897) — an agent's role comes from the prompt's role block (assemblePrompt), built from this text, never from
-// the column name.
+// — an agent's role comes from the prompt's role block (assemblePrompt), built from this text, never from the
+// column name.
 const BACKLOG_ROLE = 'Capture new work with enough detail that someone else could size it. Move it along once it is ready for scope and acceptance criteria to be worked out.';
 const REFINE_ROLE =
-	'Make the scope, the effort and the acceptance criteria explicit before moving a ticket on. Leave a title only ticket for someone else to flesh out instead of advancing it as is.';
+	'Make the scope, the effort and the acceptance criteria explicit before moving a ticket on. Leave a title-only ticket for someone else to flesh out instead of advancing it as is.';
 const READY_ROLE = 'Pick up a ticket only once every blocker is finished. If the description no longer matches reality, send it back for refinement with a comment explaining why.';
 const IN_PROGRESS_ROLE =
 	'For a bug, reproduce it with a failing test before you fix it. A probe someone used to demonstrate a finding becomes a permanent regression test. Move the ticket on once every acceptance criterion is met.';
@@ -283,7 +283,8 @@ export function moveTicket(db: DatabaseSync, actor: Actor, ticketId: number, col
 /** Moves a ticket inside an open transaction, with the same rules as `moveTicket`. */
 export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, columnId: number) {
 	if (t.column_id === columnId) return;
-	const to = columns(db, t.project_id).find((c) => c.id === columnId);
+	const cols = columns(db, t.project_id);
+	const to = cols.find((c) => c.id === columnId);
 	if (!to) throw new DomainError('not_found', `Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`, 'allowedMoves listet die erreichbaren Spalten mit ID.');
 	const moves = targets(db, t);
 	const move = moves.find((m) => m.column.id === columnId);
@@ -296,8 +297,10 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 	const bs = blockers(db, t, to, move.requiresHuman, actor);
 	if (bs.length) throw new DomainError(bs[0].code, bs.map((b) => b.message).join(' '), bs.map((b) => b.hint).join(' '));
 	db.prepare('UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(columnId, JSON.stringify(actor), t.id);
-	// Die Freigabe gilt dem geprüften Stand; zurück im normalen Fluss (z. B. „In Arbeit“) kann er sich ändern.
-	if (to.kind === 'normal') db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
+	// The approval is good for the reviewed state; moving back into earlier work (e.g. "In Arbeit") can change it —
+	// moving forward, even through another normal column such as acceptance, keeps it.
+	const movesBack = cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
+	if (to.kind === 'normal' && movesBack) db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
 	emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
 }
 
