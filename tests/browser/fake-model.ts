@@ -1,8 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/** One answer of the model: closing text, or a call of a studio tool. */
-export type ScriptedReply = { text: string } | { call: { name: string; args: object } };
+/**
+ * One answer of the model: closing text, a call of a studio tool, or `hang` — no answer at all, so the run keeps
+ * working until the studio aborts the request.
+ */
+export type ScriptedReply = { text: string } | { call: { name: string; args: object } } | 'hang';
 
 export type FakeModel = {
 	/** The base URL for an agent profile, including `/v1`. */
@@ -37,12 +40,13 @@ function answer(request: IncomingMessage, response: ServerResponse, reply?: Scri
 		return;
 	}
 	response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+	if (reply === 'hang') return void response.flushHeaders();
 	for (const chunk of streamOf(reply)) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
 	response.end('data: [DONE]\n\n');
 }
 
 /** The chunks of a streamed chat completion: the reply, its finish reason, then the usage. */
-function streamOf(reply: ScriptedReply) {
+function streamOf(reply: Exclude<ScriptedReply, 'hang'>) {
 	const delta = 'text' in reply ? { content: reply.text } : { tool_calls: [toolCall(reply.call)] };
 	const finishReason = 'text' in reply ? 'stop' : 'tool_calls';
 	return [
