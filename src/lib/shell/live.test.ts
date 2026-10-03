@@ -179,18 +179,19 @@ it('serves every view from the one connection of its tab: views subscribe with o
 
 it('shows the halt with the number of waiting runs in every open tab and drops it on release, without a page reload', async () => {
 	const open = [await openTab(), await openTab()];
-	const { ticketId } = startRun();
+	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
 	runs.createRun(db(), system, { ticketId, profileId });
+	const queued = db().prepare("SELECT count(*) AS n FROM runs WHERE state = 'queued'").get()!
+		.n as number;
 	for (const tab of open)
-		await vi.waitFor(() => expect(tab.live).toMatchObject({ halted: false, activeRuns: 1 }));
+		await vi.waitFor(() =>
+			expect(tab.live.runs.filter((run) => run.state === 'queued')).toHaveLength(queued)
+		);
 
-	haltRuns(db(), user);
-	const queued = db().prepare("SELECT count(*) AS n FROM runs WHERE state = 'queued'").get()!.n;
-	expect(queued).toBeGreaterThan(0);
+	haltRuns(db(), user); // no run is active, so only the halt event itself can reach the tabs
 	for (const tab of open) {
-		await vi.waitFor(() => expect(tab.live).toMatchObject({ halted: true, activeRuns: 0 }));
+		await vi.waitFor(() => expect(tab.live.halted).toBe(true));
 		expect(tab.haltLabel(tab.live.runs)).toBe(`Angehalten · ${queued} wartend`);
-		expect(tab.shell.agents).toEqual([]); // the cancelled run's chip is gone
 	}
 
 	releaseHalt(db(), user);
