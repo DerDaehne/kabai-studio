@@ -45,7 +45,7 @@ function caught(fn: () => unknown): DomainError {
 }
 
 describe('createProject / createTicket', () => {
-	it('legt die Software-Vorlage mit linearen Transitionen an (Wechsel nach done und human_answered nur durch Menschen)', () => {
+	it('creates the Software template with linear transitions (only a human moves to done or human_answered)', () => {
 		const { db, projectId } = setup();
 		const cols = db.prepare('SELECT name, kind FROM columns WHERE project_id = ? ORDER BY position').all(projectId);
 		expect(cols.map((c) => `${c.name}:${c.kind}`)).toEqual([
@@ -307,14 +307,14 @@ describe('moveTicket', () => {
 		expect(caught(() => board.moveTicket(db, user, id, col.Done)).code).toBe('docs_required');
 	});
 
-	it('gilt auch für einen Agent-Actor, unabhängig von der requires_human-Kante (#771: Transitionen sind konfigurierbar)', () => {
+	it('applies to an agent actor too, independent of the requires_human edge (transitions are configurable)', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const id = ticket({ docs_required: 1 });
 		place(id, 'Abnahme');
 		const done = board.allowedMoves(db, id, dev).find((m) => m.name === 'Done');
 		expect(done?.blockers.map((b) => b.code)).toEqual(['requires_human', 'docs_required']);
 
-		// Isoliert von requires_human: die Kante Abnahme -> Done probeweise für Agents freigegeben (#771 noch nicht als API vorhanden).
+		// Isolated from requires_human: the Abnahme -> Done edge opened up for agents as a probe (not yet exposed as an API).
 		db.prepare('UPDATE transitions SET requires_human = 0 WHERE project_id = ? AND from_column_id = ? AND to_column_id = ?').run(projectId, col.Abnahme, col.Done);
 		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('docs_required');
 	});
@@ -402,10 +402,19 @@ describe('Review-Freigabe', () => {
 
 		board.moveTicket(db, dev, id, col.Review);
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, user, id, col.Abnahme); // past Review a normal column still clears the approval
-		board.approveReview(db, user, id); // past Review, only the human approves
-		board.moveTicket(db, user, id, col.Done);
+		board.moveTicket(db, reviewer, id, col.Abnahme);
 		expect(approved(id)).toBe(true);
+	});
+
+	it('keeps a predecessor approved in Review unblocking its successor after it moves on to acceptance (review_ok)', () => {
+		const { db, projectId, ticket, place, col } = setup();
+		const [a, b] = [ticket(), ticket()];
+		board.linkRelation(db, user, a, b, 'blocks');
+		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
+		place(a, 'Review');
+		board.approveReview(db, reviewer, a);
+		board.moveTicket(db, reviewer, a, col.Abnahme);
+		expect(board.workableTickets(db, projectId, col.Backlog).map((r) => r.ref)).toEqual(['STU-2']);
 	});
 });
 
