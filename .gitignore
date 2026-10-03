@@ -34,3 +34,6 @@ CLAUDE.local.md
 
 # Runtime data (SQLite DB)
 /data
+
+# Browser suite: traces and screenshots of failed tests
+/test-results

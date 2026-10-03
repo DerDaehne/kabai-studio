@@ -2,3 +2,4 @@ package-lock.json
 /build
 /.svelte-kit
 /data
+/test-results

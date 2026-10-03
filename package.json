@@ -18,12 +18,14 @@
 		"restore": "node src/lib/server/restore.ts",
 		"scan:secrets": "bash scripts/scan-secrets.sh",
 		"test:scan-secrets": "bash scripts/scan-secrets.test.sh",
-		"docs:models": "node scripts/generate-model-catalog-readme.ts"
+		"docs:models": "node scripts/generate-model-catalog-readme.ts",
+		"test:browser": "playwright test"
 	},
 	"devDependencies": {
 		"@ai-sdk/mcp": "2.0.66",
 		"@ai-sdk/openai-compatible": "3.0.62",
 		"@modelcontextprotocol/server": "2.2.0",
+		"@playwright/test": "1.63.0",
 		"@sveltejs/adapter-node": "^5.5.4",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
