@@ -26,6 +26,8 @@ export const commands: Suggestion[] = [
 	{ id: 'theme-system', label: ':set farbschema system', detail: 'Farbschema des Systems' },
 	{ id: 'motion-reduced', label: ':set bewegung reduziert', detail: 'Bewegung reduzieren' },
 	{ id: 'motion-system', label: ':set bewegung system', detail: 'Bewegung wie im System' },
+	{ id: 'single-keys-off', label: ':set einzeltasten aus', detail: 'Tasten nur mit Alt' },
+	{ id: 'single-keys-on', label: ':set einzeltasten an', detail: 'Tasten ohne Alt' },
 	{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
 	{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
 ];

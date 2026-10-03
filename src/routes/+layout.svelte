@@ -3,10 +3,12 @@
 	import '$lib/styles/base.css';
 	import { goto, invalidate, onNavigate, pushState } from '$app/navigation';
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
 	import { commands, type Suggestion } from '$lib/shell/commands';
+	import KeyOverview from '$lib/shell/KeyOverview.svelte';
 	import { contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
@@ -15,7 +17,16 @@
 		openQuestionsLabel,
 		showLive
 	} from '$lib/shell/live.svelte';
+	import {
+		bindKeys,
+		boundActions,
+		handleKey,
+		keyboard,
+		restoreSingleKeys,
+		setSingleKeys
+	} from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
+	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
@@ -23,6 +34,7 @@
 	import Nebula from '$lib/ui/Nebula.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
 
 	let { data, children } = $props();
 
@@ -44,7 +56,7 @@
 	const keyContext: KeyContext = $derived(
 		commandFocused ? 'commandline' : (currentView?.context ?? 'page')
 	);
-	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys));
+	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
 	const sources = $derived({ commands, view: shell.viewItems, tickets: shell.tickets });
 
 	const compact = new MediaQuery('max-width: 719px');
@@ -67,13 +79,36 @@
 		await popped;
 	}
 
-	function onWindowKeydown(event: KeyboardEvent) {
-		if ((event.key !== ':' && event.key !== '/') || event.ctrlKey || event.metaKey || event.altKey)
-			return;
-		if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return;
-		event.preventDefault();
-		openCommandLine(event.key);
+	let keysOpen = $state(false);
+
+	function announce(verb: string, actions: Undoable[]) {
+		if (actions.length) toast(`${verb}: ${actions.map((action) => action.label).join(', ')}`);
 	}
+
+	onMount(restoreSingleKeys);
+	$effect(() => {
+		if (bare) return;
+		return bindKeys({
+			search: () => openCommandLine('/'),
+			command: () => openCommandLine(':'),
+			help: () => (keysOpen = true),
+			goStellwerk: () => goto('/'),
+			goTakt: () => goto('/takt'),
+			goBoard: () => goto('/board'),
+			jumpBack: () => history.back()
+		});
+	});
+	// u and Ctrl+r are only valid while there is something to take back or repeat
+	$effect(() =>
+		bindKeys({
+			undo: undoStack.done.length
+				? (count) => announce('Rückgängig', undoStack.undo(count))
+				: undefined,
+			redo: undoStack.undone.length
+				? (count) => announce('Wiederholt', undoStack.redo(count))
+				: undefined
+		})
+	);
 
 	type Preference = { name: 'theme' | 'motion'; value: string };
 	const preferences: Record<string, Preference> = {
@@ -104,6 +139,8 @@
 		if (suggestion.href) await goto(suggestion.href);
 		else if (suggestion.id === 'fokus-aus') shell.focus = null;
 		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
+		else if (suggestion.id.startsWith('single-keys'))
+			setSingleKeys(suggestion.id === 'single-keys-on');
 	}
 
 	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
@@ -136,7 +173,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<svelte:window onkeydown={onWindowKeydown} />
+<svelte:window onkeydown={handleKey} />
 
 {#snippet viewLabel(view: View)}
 	{view.label}
@@ -232,12 +269,16 @@
 			/>
 			<p class="context"><strong>{contextLabels[keyContext]}</strong></p>
 			<ul class="keys" aria-label="Gültige Tasten">
+				{#if !keyboard.singleKeys}
+					<li><span>nur mit</span><Kbd key="Alt" /></li>
+				{/if}
 				{#if keyBar.count || keyBar.prefix}
 					<li class="pending">
 						{#each [...keyBar.count, ...keyBar.prefix] as key, index (index)}<Kbd
 								{key}
 								active
 							/>{/each}
+						<Kbd key="Escape" /><span>abbrechen</span>
 					</li>
 				{/if}
 				{#each keyBar.hints as hint (hint.label)}
@@ -270,6 +311,7 @@
 	<Dialog bind:open={() => overlayOpen, (open) => !open && closeOverlay()} title="Befehlszeile">
 		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
 	</Dialog>
+	<KeyOverview bind:open={keysOpen} />
 {/if}
 
 <Toaster />

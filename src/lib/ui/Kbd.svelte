@@ -7,7 +7,9 @@
 		ArrowUp: { glyph: '↑', name: 'Pfeil hoch' },
 		ArrowDown: { glyph: '↓', name: 'Pfeil runter' },
 		ArrowLeft: { glyph: '←', name: 'Pfeil links' },
-		ArrowRight: { glyph: '→', name: 'Pfeil rechts' }
+		ArrowRight: { glyph: '→', name: 'Pfeil rechts' },
+		'Ctrl+o': { glyph: 'Strg+o', name: 'Steuerung o' },
+		'Ctrl+r': { glyph: 'Strg+r', name: 'Steuerung r' }
 	};
 </script>
 

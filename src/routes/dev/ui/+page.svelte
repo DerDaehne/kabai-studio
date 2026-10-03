@@ -14,7 +14,9 @@
 	import Spinner from '$lib/ui/Spinner.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { agentChips, live } from '$lib/shell/live.svelte';
+	import { bindKeys } from '$lib/shell/router.svelte';
 	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
+	import { undoStack } from '$lib/shell/undo.svelte';
 
 	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
 	let dialogOpen = $state(page.url.searchParams.get('open') === 'dialog');
@@ -238,6 +240,60 @@
 		};
 	});
 
+	// Live key demo: two undoable action kinds (delete, change column) and a decision that takes 1–3
+	const columns = ['Ready', 'In Arbeit', 'Review'];
+	const rows = $state([
+		{ id: 'STU-51', title: 'Tasten-Router', column: 0 },
+		{ id: 'STU-52', title: 'Rückgängig-Stapel', column: 1 },
+		{ id: 'STU-53', title: 'Tastenübersicht', column: 0 },
+		{ id: 'STU-54', title: 'Einzeltasten aus', column: 2 }
+	]);
+	let selected = $state(0);
+	let decisionInFocus = $state(false);
+	let answer = $state('');
+
+	const select = (index: number) => (selected = Math.max(0, Math.min(rows.length - 1, index)));
+
+	function removeSelected() {
+		const index = selected;
+		const row = rows[index];
+		if (!row) return;
+		undoStack.perform({
+			label: `${row.id} gelöscht`,
+			perform: () => {
+				rows.splice(index, 1);
+				select(index);
+			},
+			revert: () => {
+				rows.splice(index, 0, row);
+				selected = index;
+			}
+		});
+	}
+
+	function shiftSelected(steps: number) {
+		const row = rows[selected];
+		if (!row) return;
+		const from = row.column;
+		const to = Math.max(0, Math.min(columns.length - 1, from + steps));
+		if (to === from) return;
+		undoStack.perform({
+			label: `${row.id} nach ${columns[to]}`,
+			perform: () => (row.column = to),
+			revert: () => (row.column = from)
+		});
+	}
+
+	$effect(() =>
+		bindKeys({
+			move: (count, key) => select(selected + (key === 'j' ? count : -count)),
+			edge: (count, key) => select(key === 'G' ? rows.length - 1 : count - 1),
+			remove: removeSelected,
+			shiftColumn: (count, key) => shiftSelected(key === '>' ? count : -count),
+			answer: decisionInFocus ? (_count, key) => (answer = `Antwort ${key}`) : undefined
+		})
+	);
+
 	function save() {
 		saving = true;
 		setTimeout(() => {
@@ -314,6 +370,27 @@
 			<span><Kbd key="Enter" /> öffnen</span>
 			<span><Kbd key="Escape" /> zurück</span>
 		</div>
+		<p class="muted">
+			Live: <Kbd key="j" /><Kbd key="k" /> mit Zähler, <Kbd key="g" /><Kbd key="g" />/<Kbd
+				key="G"
+			/>, <Kbd key="d" /><Kbd key="d" /> löschen, <Kbd key=">" /><Kbd key="<" /> Spalte,
+			<Kbd key="u" /> und <Kbd key="Ctrl+r" />; <Kbd key="?" /> zeigt alle Tasten.
+		</p>
+		<label
+			><input type="checkbox" bind:checked={decisionInFocus} /> Entscheidung im Fokus (<Kbd
+				key="1"
+			/>–<Kbd key="3" /> antworten)</label
+		>
+		<ol class="demo-rows" aria-label="Beispielzeilen">
+			{#each rows as row, index (row.id)}
+				<li aria-current={index === selected || undefined}>
+					<span class="mono">{row.id}</span>
+					{row.title}
+					<Badge>{columns[row.column]}</Badge>
+				</li>
+			{/each}
+		</ol>
+		<p role="status">{answer}</p>
 	</section>
 
 	<section aria-labelledby="h-glass">
@@ -504,6 +581,23 @@
 </Dialog>
 
 <style>
+	.demo-rows {
+		display: grid;
+		gap: var(--space-1);
+		margin: var(--space-3) 0;
+		padding: 0;
+		list-style: none;
+	}
+	.demo-rows li {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-3);
+		border-radius: var(--radius);
+	}
+	.demo-rows li[aria-current] {
+		background: var(--fill-sel);
+	}
 	.page {
 		display: grid;
 		gap: var(--space-6);
