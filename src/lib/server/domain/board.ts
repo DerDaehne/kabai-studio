@@ -297,10 +297,12 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 	const bs = blockers(db, t, to, move.requiresHuman, actor);
 	if (bs.length) throw new DomainError(bs[0].code, bs.map((b) => b.message).join(' '), bs.map((b) => b.hint).join(' '));
 	db.prepare('UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(columnId, JSON.stringify(actor), t.id);
-	// The approval is good for the reviewed state; moving back into earlier work (e.g. "In Arbeit") can change it —
-	// moving forward, even through another normal column such as acceptance, keeps it.
+	// The approval is good for the reviewed state; it clears only when the ticket moves back into earlier work, or
+	// returns from a human column into a normal one — the human column case is judged by kind, not by where the
+	// human columns happen to sit, so reordering the board cannot flip the direction.
+	const returnsFromHuman = t.column_kind === 'human_intervention' || t.column_kind === 'human_answered';
 	const movesBack = cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
-	if (to.kind === 'normal' && movesBack) db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
+	if (to.kind === 'normal' && (returnsFromHuman || movesBack)) db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
 	emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
 }
 
