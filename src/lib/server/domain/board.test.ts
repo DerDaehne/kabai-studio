@@ -139,6 +139,40 @@ describe('createProject / createTicket', () => {
 		).toBe(2);
 	});
 
+	it('refuses a key another project already has, names that project and creates nothing', () => {
+		const { db } = setup();
+		const projects = () => db.prepare('SELECT count(*) AS n FROM projects').get()?.n;
+		const before = projects();
+		const err = caught(() => board.createProject(db, user, { key: 'STU', name: 'Neu' }));
+		expect(err.code).toBe('key_taken');
+		expect(err.message).toBe('Den Key „STU“ hat schon das Projekt „Studio“.');
+		expect(err.hint).toContain('anderen Key');
+		expect(projects()).toBe(before);
+	});
+
+	it('refuses a name another project already has, whatever its case, and names that project', () => {
+		const { db } = setup();
+		const err = caught(() => board.createProject(db, user, { key: 'NEU', name: 'studio' }));
+		expect(err.code).toBe('name_taken');
+		expect(err.message).toBe('Ein Projekt „Studio“ gibt es schon (STU).');
+		expect(err.hint).toContain('anderen Namen');
+	});
+
+	it('refuses a key that is not capital letters and digits starting with a letter', () => {
+		const { db } = setup();
+		for (const key of ['', 'web', '1WEB', 'WE-B', 'WÜB']) {
+			const err = caught(() => board.createProject(db, user, { key, name: `Projekt ${key}` }));
+			expect(err.code, key).toBe('invalid_key');
+			expect(err.hint).toContain('WEB-1');
+		}
+	});
+
+	it('refuses a project without a name', () => {
+		const { db } = setup();
+		const err = caught(() => board.createProject(db, user, { key: 'NEU', name: '  ' }));
+		expect(err.code).toBe('empty_name');
+	});
+
 	it('sets only the allowed fields in updateTicket', () => {
 		const { db, ticket, col } = setup();
 		const id = ticket();

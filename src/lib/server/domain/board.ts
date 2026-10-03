@@ -320,6 +320,7 @@ export function createProject(
 	p: { key: string; name: string; description?: string }
 ): { id: number } {
 	return tx(db, (emit) => {
+		checkNewProject(db, p);
 		const { id } = db
 			.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id')
 			.get(p.key, p.name, p.description ?? '') as { id: number };
@@ -347,6 +348,37 @@ export function createProject(
 		emit({ type: 'project.created', projectId: id, actor });
 		return { id };
 	});
+}
+
+/** Key and name each identify a project for the human, so neither may repeat; names compare without case. */
+function checkNewProject(db: DatabaseSync, p: { key: string; name: string }) {
+	if (!p.name.trim())
+		throw new DomainError(
+			'empty_name',
+			'Ein Projekt braucht einen Namen.',
+			'Gib einen Namen an, der sagt, worum es im Projekt geht, z. B. „Webseite“.'
+		);
+	if (!/^[A-Z][A-Z0-9]*$/.test(p.key))
+		throw new DomainError(
+			'invalid_key',
+			'Der Key besteht aus Großbuchstaben und Ziffern und beginnt mit einem Buchstaben.',
+			'Wähle einen kurzen Key wie WEB; er steht vor jeder Ticketnummer (WEB-1).'
+		);
+	const taken = db
+		.prepare('SELECT key, name FROM projects WHERE key = ? OR name = ? COLLATE NOCASE')
+		.get(p.key, p.name) as { key: string; name: string } | undefined;
+	if (taken?.key === p.key)
+		throw new DomainError(
+			'key_taken',
+			`Den Key „${p.key}“ hat schon das Projekt „${taken.name}“.`,
+			`Wähle einen anderen Key, z. B. ${p.key}2, oder arbeite im Projekt „${taken.name}“ weiter.`
+		);
+	if (taken)
+		throw new DomainError(
+			'name_taken',
+			`Ein Projekt „${taken.name}“ gibt es schon (${taken.key}).`,
+			`Wähle einen anderen Namen oder arbeite im vorhandenen Projekt ${taken.key} weiter.`
+		);
 }
 
 export function setBlocksSatisfiedAt(

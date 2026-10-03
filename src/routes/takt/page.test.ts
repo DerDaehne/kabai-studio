@@ -26,11 +26,15 @@ afterEach(() => (shell.focus = null));
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 let projects = 0;
+const usedNames = new Set<string>();
 
+/** Project names are unique, so a name an earlier test already used gets the project key appended. */
 function project(name: string) {
 	projects += 1;
 	const key = `P${projects}`;
-	const id = board.createProject(db(), user, { key, name }).id;
+	const uniqueName = usedNames.has(name) ? `${name} ${key}` : name;
+	usedNames.add(name);
+	const id = board.createProject(db(), user, { key, name: uniqueName }).id;
 	const column = db()
 		.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'In Arbeit'")
 		.get(id)!.id as number;
