@@ -86,6 +86,32 @@ describe('requestHuman', () => {
 	});
 });
 
+describe('latestOpenQuestion', () => {
+	it('is undefined without a question, and reports the newest one while it has no answer yet', () => {
+		const { db, ticketId, ask } = setup();
+		expect(questions.latestOpenQuestion(db, ticketId)).toBeUndefined();
+		const id = ask([{ label: 'A' }, { label: 'B' }]);
+		expect(questions.latestOpenQuestion(db, ticketId)).toEqual({
+			id,
+			question: 'A oder B?',
+			options: [{ label: 'A' }, { label: 'B' }],
+			answer: null
+		});
+	});
+
+	it('stops reporting a question once the human answers it, without collecting or changing anything', () => {
+		const { db, ticketId, ask } = setup();
+		const id = ask();
+		questions.answerQuestion(db, user, id, { text: 'Ja' });
+		expect(questions.latestOpenQuestion(db, ticketId)).toBeUndefined();
+		// a pure read: neither collected_at nor the answer itself moved
+		expect(db.prepare('SELECT answer, collected_at FROM questions WHERE id = ?').get(id)).toEqual({
+			answer: '{"text":"Ja"}',
+			collected_at: null
+		});
+	});
+});
+
 describe('answers', () => {
 	it('only the human answers, and only with an existing option or non-empty text', () => {
 		const { db, agent, ask } = setup();

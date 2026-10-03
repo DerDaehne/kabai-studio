@@ -103,6 +103,17 @@ export function requestHuman(
 	});
 }
 
+/** The ticket's newest question while it still has no answer, for a read-only view — never collects or mutates it. */
+export function latestOpenQuestion(db: DatabaseSync, ticketId: number): LatestQuestion | undefined {
+	const q = db
+		.prepare(
+			`SELECT ${QUESTION_COLUMNS} FROM questions WHERE ticket_id = ? AND answer IS NULL ORDER BY id DESC LIMIT 1`
+		)
+		.get(ticketId) as QuestionRow | undefined;
+	if (!q) return undefined;
+	return { id: q.id, question: q.question, options: JSON.parse(q.options), answer: null };
+}
+
 function columnOfKind(db: DatabaseSync, t: Ticket, kind: 'human_intervention' | 'human_answered') {
 	return db
 		.prepare(

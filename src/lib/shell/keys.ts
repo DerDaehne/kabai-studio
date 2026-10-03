@@ -72,12 +72,13 @@ const keymapTable = {
 export type KeyAction = keyof typeof keymapTable;
 export const keymap: Record<KeyAction, KeyBinding> = keymapTable;
 
-export type KeyContext = 'stellwerk' | 'takt' | 'board' | 'page' | 'commandline';
+export type KeyContext = 'stellwerk' | 'takt' | 'board' | 'ticket' | 'page' | 'commandline';
 
 export const contextLabels: Record<KeyContext, string> = {
 	stellwerk: 'Stellwerk',
 	takt: 'Takt',
 	board: 'Board',
+	ticket: 'Run-Akte',
 	page: 'Seite',
 	commandline: 'Befehlszeile'
 };

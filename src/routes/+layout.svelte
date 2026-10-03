@@ -50,12 +50,14 @@
 	const currentView = $derived(
 		views.find((view) => (view.href === '/' ? path === '/' : path.startsWith(view.href)))
 	);
+	// The Run-Akte (/p/<key>/t/<n>) is a deep link, not one of the top-nav views above.
+	const onTicketPage = $derived(/^\/p\/[^/]+\/t\/\d+/.test(path));
 
 	let commandValue = $state('');
 	let commandInput = $state<HTMLInputElement>();
 	let commandFocused = $state(false);
 	const keyContext: KeyContext = $derived(
-		commandFocused ? 'commandline' : (currentView?.context ?? 'page')
+		commandFocused ? 'commandline' : (currentView?.context ?? (onTicketPage ? 'ticket' : 'page'))
 	);
 	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
 	const sources = $derived({
