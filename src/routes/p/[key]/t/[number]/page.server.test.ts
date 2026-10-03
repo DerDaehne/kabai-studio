@@ -73,7 +73,13 @@ describe('actions', () => {
 		expect(after.ticket.description).toBe('Text');
 
 		const fail = await post('update', number, { title: '  ', description: 'Text' });
-		expect(fail).toMatchObject({ status: 400, data: { code: 'empty_title' } });
+		expect(fail).toMatchObject({
+			status: 400,
+			data: {
+				code: 'empty_title',
+				hint: 'Gib einen Titel an, der sagt, worum es im Ticket geht.'
+			}
+		});
 	});
 
 	it('addTask creates an open task, a blank title fails', async () => {
@@ -86,7 +92,10 @@ describe('actions', () => {
 
 		expect(await post('addTask', number, { title: '' })).toMatchObject({
 			status: 400,
-			data: { code: 'empty_title' }
+			data: {
+				code: 'empty_title',
+				hint: expect.stringContaining('Titel')
+			}
 		});
 	});
 
@@ -103,11 +112,12 @@ describe('actions', () => {
 		const { number, id } = board.createTicket(db(), user, projectId, { title: 'T' });
 		const taskId = board.addTask(db(), user, id, 'Alt').id;
 
+		const reasonHint = 'Gib `reason` an — sie landet als System-Kommentar am Ticket.';
 		expect(
 			await post('renameTask', number, { taskId: String(taskId), title: 'Neu' })
 		).toMatchObject({
 			status: 400,
-			data: { code: 'reason_required' }
+			data: { code: 'reason_required', hint: reasonHint }
 		});
 		await post('renameTask', number, {
 			taskId: String(taskId),
@@ -120,7 +130,7 @@ describe('actions', () => {
 
 		expect(await post('deleteTask', number, { taskId: String(taskId) })).toMatchObject({
 			status: 400,
-			data: { code: 'reason_required' }
+			data: { code: 'reason_required', hint: reasonHint }
 		});
 		await post('deleteTask', number, { taskId: String(taskId), reason: 'überholt' });
 		after = await loadTicket(number);

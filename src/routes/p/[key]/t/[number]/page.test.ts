@@ -60,8 +60,8 @@ const base: TicketDetail = {
 	]
 };
 
-const page = (ticket: TicketDetail) =>
-	render(Page, { props: { data: { ticket }, form: null } as any }).body;
+const page = (ticket: TicketDetail, form: unknown = null) =>
+	render(Page, { props: { data: { ticket }, form } as any }).body;
 
 it('shows the breadcrumb (project + ref), title and current column', () => {
 	const body = page(base);
@@ -88,12 +88,19 @@ it('lists tasks with their done state and offers rename/delete', () => {
 	expect(body).toContain('>Löschen<');
 });
 
-it('tells user, agent and system comments apart and names the run on an agent comment', () => {
+it('tells user, agent and system comments apart with a distinct icon plus text, and names the run on an agent comment', () => {
 	const body = page(base);
 	expect(body).toContain('Mensch');
 	expect(body).toMatch(/Agent[^<]*Run 5/);
 	expect(body).toContain('System');
 	expect(body).toContain('Bitte prüfen.');
+
+	// one <svg><path> per comment's author icon, each aria-hidden; the three must differ from each other
+	const icons = [...body.matchAll(/<svg[^>]*aria-hidden="true"[^>]*><path d="([^"]+)">/g)].map(
+		(m) => m[1]
+	);
+	expect(icons.length).toBeGreaterThanOrEqual(3);
+	expect(new Set(icons.slice(0, 3)).size).toBe(3); // user, agent, system each get a different glyph
 });
 
 it('groups relations under a German label and marks a still-blocking predecessor', () => {
@@ -120,6 +127,18 @@ it('highlights an open question above the fold with a link to the Takt', () => {
 	expect(withQuestion).toContain('href="/takt"');
 	expect(page(base)).not.toContain('Offene Frage');
 });
+
+// UX 5: every form shows message AND hint on a refused action, not just one of the two (each shares one `form`
+// prop). `taskDialog`'s error sits inside `{#if taskDialog}`, open only via client state no SSR render can set —
+// the browser check covers it instead.
+it.each(['addTask', 'addComment', 'move', 'update'])(
+	'shows both message and hint for a %s failure',
+	(action) => {
+		const body = page(base, { action, code: 'x', message: 'Die Nachricht.', hint: 'Der Ausweg.' });
+		expect(body).toContain('Die Nachricht.');
+		expect(body).toContain('Der Ausweg.');
+	}
+);
 
 it('offers a delete confirmation dialog naming the ticket, not a silent delete', () => {
 	const body = page(base);

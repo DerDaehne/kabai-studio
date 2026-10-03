@@ -5,12 +5,16 @@
 	import { renderDescription } from '$lib/markdown';
 	import { onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
+	import { concernsTicket } from '$lib/ticket-live';
+	import { nextMove } from '$lib/ticket-move';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
+	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -27,13 +31,13 @@
 	};
 
 	let area = $state<'spur' | 'auftrag'>('auftrag');
-	let spurHeading: HTMLElement | undefined = $state();
-	let auftragHeading: HTMLElement | undefined = $state();
+	let spurArea: HTMLElement | undefined = $state();
+	let auftragArea: HTMLElement | undefined = $state();
 
 	async function focusArea(name: 'spur' | 'auftrag') {
 		area = name;
 		await tick();
-		(name === 'spur' ? spurHeading : auftragHeading)?.focus();
+		(name === 'spur' ? spurArea : auftragArea)?.focus();
 	}
 
 	const AUTHOR_LABELS: Record<'user' | 'agent' | 'system', string> = {
@@ -41,8 +45,18 @@
 		agent: 'Agent',
 		system: 'System'
 	};
+	const AUTHOR_ICONS: Record<'user' | 'agent' | 'system', IconName> = {
+		user: 'user',
+		agent: 'agent',
+		system: 'settings'
+	};
 	const authorLabel = (c: { authorKind: 'user' | 'agent' | 'system'; runId: number | null }) =>
 		AUTHOR_LABELS[c.authorKind] + (c.runId !== null ? ` · Run ${c.runId}` : '');
+
+	/** Escape leaves a focused field so the shortcuts (o, a, i, >/<, h/l) work again — the keymap's "esc führt zurück". */
+	function blurOnEscape(event: KeyboardEvent) {
+		if (event.key === 'Escape') (event.currentTarget as HTMLElement).blur();
+	}
 
 	let editOpen = $state(false);
 	let addTaskInput: HTMLInputElement | undefined = $state();
@@ -56,17 +70,11 @@
 	/** The targets a move can actually reach right now, in board order. */
 	const openMoves = () => ticket.moves.filter((m) => m.blockers.length === 0);
 
-	/** `>`/`<`: the next (or previous) reachable column by board position, wrapping past either end. */
+	/** `>`/`<`: the next (or previous) reachable column by board position; never wraps past either end. */
 	function stepColumn(forward: boolean) {
-		const current = ticket.column.position;
-		const ahead = openMoves()
-			.filter((m) => (forward ? m.position > current : m.position < current))
-			.sort((a, b) => (forward ? a.position - b.position : b.position - a.position));
-		const wrapped = openMoves().sort((a, b) =>
-			forward ? b.position - a.position : a.position - b.position
-		);
-		const target = ahead[0] ?? wrapped[0];
-		moveForms[target?.columnId]?.requestSubmit();
+		const target = nextMove(openMoves(), ticket.column.position, forward);
+		if (!target) return void toast(`Keine ${forward ? 'nächste' : 'vorige'} Spalte erreichbar.`);
+		moveForms[target.columnId]?.requestSubmit();
 	}
 
 	function openTaskDialog(task: { id: number; title: string }, mode: 'rename' | 'delete') {
@@ -86,7 +94,7 @@
 	// Agent changes (comment, task, column) reach this tab's one live connection; a matching event reloads the ticket.
 	$effect(() =>
 		onLiveEvent((event) => {
-			if (event.ticketId === ticket.id) void invalidate(`studio:ticket:${ticket.id}`);
+			if (concernsTicket(event, ticket.id)) void invalidate(`studio:ticket:${ticket.id}`);
 		})
 	);
 </script>
@@ -117,7 +125,7 @@
 		class="auftrag"
 		aria-labelledby="h-auftrag"
 		tabindex="-1"
-		bind:this={auftragHeading}
+		bind:this={auftragArea}
 		class:focused={area === 'auftrag'}
 	>
 		<h2 id="h-auftrag">Auftrag</h2>
@@ -158,6 +166,7 @@
 						{...a}
 						name="title"
 						bind:this={addTaskInput}
+						onkeydown={blurOnEscape}
 						required
 					/>{/snippet}
 			</FormField>
@@ -169,8 +178,8 @@
 		<ul class="comments">
 			{#each ticket.comments as comment (comment.id)}
 				<li>
-					<Badge tone={comment.authorKind === 'system' ? 'neutral' : 'accent'}
-						>{authorLabel(comment)}</Badge
+					<span class="author"
+						><Icon name={AUTHOR_ICONS[comment.authorKind]} size={14} />{authorLabel(comment)}</span
 					>
 					<p class="comment-body">{comment.body}</p>
 				</li>
@@ -185,6 +194,7 @@
 						name="body"
 						rows="2"
 						bind:this={commentInput}
+						onkeydown={blurOnEscape}
 						required></textarea>{/snippet}
 			</FormField>
 			<Button type="submit" size="sm">Schreiben (a)</Button>
@@ -239,7 +249,7 @@
 		class="spur"
 		aria-labelledby="h-spur"
 		tabindex="-1"
-		bind:this={spurHeading}
+		bind:this={spurArea}
 		class:focused={area === 'spur'}
 	>
 		<h2 id="h-spur">Spur</h2>
@@ -398,6 +408,14 @@
 		color: inherit;
 		font: inherit;
 		text-align: left;
+	}
+	.author {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+		font-weight: 560;
 	}
 	.comment-body {
 		margin: var(--space-1) 0 0;
