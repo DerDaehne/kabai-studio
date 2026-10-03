@@ -4,13 +4,24 @@ import { describe, expect, it } from 'vitest';
 import { assignAurae, type AuraCandidate, type AuraTone } from './aura';
 import AuraList from './AuraList.svelte';
 
-const tones: (AuraTone | undefined)[] = [undefined, 'running', 'waiting', 'failed', 'paused', 'succeeded', 'primary'];
+const tones: (AuraTone | undefined)[] = [
+	undefined,
+	'running',
+	'waiting',
+	'failed',
+	'paused',
+	'succeeded',
+	'primary'
+];
 const variants: Omit<AuraCandidate, 'key'>[] = tones.flatMap((tone) => [
 	{ tone, project: 2 },
 	{ tone, project: 2, focused: true }
 ]);
 
-function* everyList(length: number, prefix: Omit<AuraCandidate, 'key'>[] = []): Generator<AuraCandidate[]> {
+function* everyList(
+	length: number,
+	prefix: Omit<AuraCandidate, 'key'>[] = []
+): Generator<AuraCandidate[]> {
 	if (prefix.length === length) {
 		yield prefix.map((variant, index) => ({ ...variant, key: `item-${index}` }));
 		return;
@@ -18,14 +29,16 @@ function* everyList(length: number, prefix: Omit<AuraCandidate, 'key'>[] = []): 
 	for (const variant of variants) yield* everyList(length, [...prefix, variant]);
 }
 
-const signals = ({ tone, focused }: AuraCandidate) => Boolean(focused || (tone && tone !== 'running'));
+const signals = ({ tone, focused }: AuraCandidate) =>
+	Boolean(focused || (tone && tone !== 'running'));
 
 describe('aura budget', () => {
 	it('gives exactly one strong and at most two weak auras, and never a project tint to an item that signals', () => {
 		const violations: string[] = [];
 		for (const list of everyList(4)) {
 			const aurae = assignAurae(list);
-			const count = (strength: string) => [...aurae.values()].filter((aura) => aura.strength === strength).length;
+			const count = (strength: string) =>
+				[...aurae.values()].filter((aura) => aura.strength === strength).length;
 			const signalling = list.filter(signals);
 			const broken =
 				count('strong') !== Math.min(1, signalling.length) ||
@@ -37,13 +50,20 @@ describe('aura budget', () => {
 	});
 
 	it('leaves every signal after the third without an aura', () => {
-		const aurae = assignAurae(['a', 'b', 'c', 'd', 'e'].map((key) => ({ key, tone: 'failed' as const })));
-		expect([...aurae.entries()].map(([key, aura]) => `${key} ${aura.strength}`)).toEqual(['a strong', 'b weak', 'c weak']);
+		const aurae = assignAurae(
+			['a', 'b', 'c', 'd', 'e'].map((key) => ({ key, tone: 'failed' as const }))
+		);
+		expect([...aurae.entries()].map(([key, aura]) => `${key} ${aura.strength}`)).toEqual([
+			'a strong',
+			'b weak',
+			'c weak'
+		]);
 	});
 });
 
 describe('aura priority', () => {
-	const strongest = (candidates: AuraCandidate[]) => [...assignAurae(candidates)].find(([, aura]) => aura.strength === 'strong');
+	const strongest = (candidates: AuraCandidate[]) =>
+		[...assignAurae(candidates)].find(([, aura]) => aura.strength === 'strong');
 
 	it('lights the decision in focus strongest, in the colour of what it decides', () => {
 		const candidates: AuraCandidate[] = [
@@ -51,11 +71,19 @@ describe('aura priority', () => {
 			{ key: 'start button', tone: 'primary' },
 			{ key: 'decision card', tone: 'failed', focused: true }
 		];
-		expect(strongest(candidates)).toEqual(['decision card', { strength: 'strong', color: 'var(--aura-failed)' }]);
+		expect(strongest(candidates)).toEqual([
+			'decision card',
+			{ strength: 'strong', color: 'var(--aura-failed)' }
+		]);
 	});
 
 	it('ranks a blocked agent above the primary action that leads to it', () => {
-		expect(strongest([{ key: 'start button', tone: 'primary' }, { key: 'blocked lane', tone: 'waiting' }])?.[0]).toBe('blocked lane');
+		expect(
+			strongest([
+				{ key: 'start button', tone: 'primary' },
+				{ key: 'blocked lane', tone: 'waiting' }
+			])?.[0]
+		).toBe('blocked lane');
 	});
 
 	it('follows decision > blocking > primary > failure > focus light > paused > done', () => {
@@ -69,10 +97,22 @@ describe('aura priority', () => {
 			{ key: 'decision', tone: 'waiting', focused: true }
 		];
 		const winners: string[] = [];
-		for (let remaining = [...ordered]; remaining.length; remaining = remaining.filter((candidate) => candidate.key !== winners.at(-1))) {
+		for (
+			let remaining = [...ordered];
+			remaining.length;
+			remaining = remaining.filter((candidate) => candidate.key !== winners.at(-1))
+		) {
 			winners.push(strongest(remaining)![0]);
 		}
-		expect(winners).toEqual(['decision', 'blocking', 'primary', 'failure', 'focus light', 'paused', 'done']);
+		expect(winners).toEqual([
+			'decision',
+			'blocking',
+			'primary',
+			'failure',
+			'focus light',
+			'paused',
+			'done'
+		]);
 	});
 
 	it('keeps page order between equal signals', () => {
@@ -85,8 +125,13 @@ describe('aura priority', () => {
 	});
 
 	it('uses the accent focus light only when the focused item carries no signal of its own', () => {
-		expect(assignAurae([{ key: 'lane', tone: 'running', project: 3, focused: true }]).get('lane')).toEqual({ strength: 'strong', color: 'var(--aura-accent)' });
-		expect(assignAurae([{ key: 'lane', tone: 'paused', focused: true }]).get('lane')).toEqual({ strength: 'strong', color: 'var(--aura-paused)' });
+		expect(
+			assignAurae([{ key: 'lane', tone: 'running', project: 3, focused: true }]).get('lane')
+		).toEqual({ strength: 'strong', color: 'var(--aura-accent)' });
+		expect(assignAurae([{ key: 'lane', tone: 'paused', focused: true }]).get('lane')).toEqual({
+			strength: 'strong',
+			color: 'var(--aura-paused)'
+		});
 	});
 
 	it('tints working items of a project ambiently, outside the budget', () => {
@@ -109,14 +154,26 @@ describe('AuraList', () => {
 			{ key: 'working', tone: 'running', project: 1 },
 			{ key: 'idle' }
 		];
-		const item = createRawSnippet((entry: () => AuraCandidate) => ({ render: () => `<span>${entry().key}</span>` }));
-		const { body } = render(AuraList<AuraCandidate>, { props: { items, aurae: assignAurae(items), item, label: 'Runs' } });
+		const item = createRawSnippet((entry: () => AuraCandidate) => ({
+			render: () => `<span>${entry().key}</span>`
+		}));
+		const { body } = render(AuraList<AuraCandidate>, {
+			props: { items, aurae: assignAurae(items), item, label: 'Runs' }
+		});
 
-		const glows = [...body.matchAll(/<li class="glow[^"]*" aria-hidden="true"([^>]*)>/g)].map((match) => match[1]);
+		const glows = [...body.matchAll(/<li class="glow[^"]*" aria-hidden="true"([^>]*)>/g)].map(
+			(match) => match[1]
+		);
 		expect(glows).toHaveLength(items.length);
-		expect(glows[0]).toMatch(/data-strength="strong".*grid-row: 1 \/ span 1; opacity: 1; background-color: var\(--aura-waiting\)/);
-		expect(glows[1]).toMatch(/data-strength="weak".*opacity: 0\.5; background-color: var\(--aura-failed\)/);
-		expect(glows[2]).toMatch(/data-strength="ambient".*opacity: 0\.3; background-color: var\(--aura-project-1\)/);
+		expect(glows[0]).toMatch(
+			/data-strength="strong".*grid-row: 1 \/ span 1; opacity: 1; background-color: var\(--aura-waiting\)/
+		);
+		expect(glows[1]).toMatch(
+			/data-strength="weak".*opacity: 0\.5; background-color: var\(--aura-failed\)/
+		);
+		expect(glows[2]).toMatch(
+			/data-strength="ambient".*opacity: 0\.3; background-color: var\(--aura-project-1\)/
+		);
 		expect(glows[3]).toMatch(/opacity: 0/);
 		glows.forEach((glow, row) => expect(glow).toContain(`grid-row: ${row + 1} / span 1;`));
 		expect(body).toContain('<span>decision</span>');

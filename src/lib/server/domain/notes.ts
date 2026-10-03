@@ -8,24 +8,55 @@ export type NoteStatus = 'proposed' | 'accepted' | 'superseded';
 export type NoteLinkType = 'references' | 'contains' | 'supersedes' | 'contradicts';
 export type NoteTicketRelation = 'created_by' | 'documents' | 'verified_by' | 'references';
 type Emit = (event: StudioEvent) => void;
-type Note = { id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; body: string; archived: 0 | 1; version: number };
+type Note = {
+	id: number;
+	slug: string;
+	title: string;
+	kind: NoteKind;
+	status: NoteStatus | null;
+	body: string;
+	archived: 0 | 1;
+	version: number;
+};
 
 /** Direkt setzbare Notefelder — der Slug ist permanent, Archivieren hat eine eigene Funktion. */
 const FIELDS = ['title', 'kind', 'status', 'body', 'tags'] as const;
-export type NoteFields = { title: string; kind: NoteKind; status: NoteStatus | null; body: string; tags: string[] };
+export type NoteFields = {
+	title: string;
+	kind: NoteKind;
+	status: NoteStatus | null;
+	body: string;
+	tags: string[];
+};
 
 function note(db: DatabaseSync, id: number): Note {
-	const n = db.prepare('SELECT id, slug, title, kind, status, body, archived, version FROM notes WHERE id = ?').get(id) as Note | undefined;
-	if (!n) throw new DomainError('not_found', `Note ${id} gibt es nicht.`, 'Prüfe die Note-ID; searchNotes findet vorhandene Notes.');
+	const n = db
+		.prepare(
+			'SELECT id, slug, title, kind, status, body, archived, version FROM notes WHERE id = ?'
+		)
+		.get(id) as Note | undefined;
+	if (!n)
+		throw new DomainError(
+			'not_found',
+			`Note ${id} gibt es nicht.`,
+			'Prüfe die Note-ID; searchNotes findet vorhandene Notes.'
+		);
 	return n;
 }
 
 /** Volle Sicht für UI/MCP (#777/#780): alle Spalten, `tags` als Array statt JSON-Text. */
 export function getNote(db: DatabaseSync, id: number) {
 	const row = db
-		.prepare('SELECT id, slug, title, kind, status, body, tags, archived, verified_at, verified_by_run_id, version, created_at, updated_at FROM notes WHERE id = ?')
+		.prepare(
+			'SELECT id, slug, title, kind, status, body, tags, archived, verified_at, verified_by_run_id, version, created_at, updated_at FROM notes WHERE id = ?'
+		)
 		.get(id) as (Record<string, unknown> & { tags: string }) | undefined;
-	if (!row) throw new DomainError('not_found', `Note ${id} gibt es nicht.`, 'Prüfe die Note-ID; searchNotes findet vorhandene Notes.');
+	if (!row)
+		throw new DomainError(
+			'not_found',
+			`Note ${id} gibt es nicht.`,
+			'Prüfe die Note-ID; searchNotes findet vorhandene Notes.'
+		);
 	return { ...row, tags: JSON.parse(row.tags) as string[] };
 }
 
@@ -35,7 +66,11 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		.filter(([, v]) => v !== undefined)
 		.map(([k, v]) => {
 			if (!(FIELDS as readonly string[]).includes(k))
-				throw new DomainError('unknown_field', `Das Notefeld „${k}“ ist nicht direkt setzbar.`, `Setzbar: ${FIELDS.join(', ')}. Der Slug ist permanent, Archivieren über archiveNote.`);
+				throw new DomainError(
+					'unknown_field',
+					`Das Notefeld „${k}“ ist nicht direkt setzbar.`,
+					`Setzbar: ${FIELDS.join(', ')}. Der Slug ist permanent, Archivieren über archiveNote.`
+				);
 			return [k, k === 'tags' ? JSON.stringify(v) : v] as [string, SQLInputValue];
 		});
 }
@@ -51,7 +86,8 @@ function checkSlug(db: DatabaseSync, slug: string) {
 			`Slug „${slug}“ ist nicht kebab-case.`,
 			'Nur Kleinbuchstaben, Ziffern und „-“, beginnend mit Buchstabe/Ziffer (Beispiel: „arch-studio-notes“).'
 		);
-	const existing = db.prepare('SELECT id FROM notes WHERE slug = ?').get(slug) as { id: number } | undefined;
+	const existing = db.prepare('SELECT id FROM notes WHERE slug = ?').get(slug) as
+		{ id: number } | undefined;
 	if (existing)
 		throw new DomainError(
 			'slug_taken',
@@ -63,7 +99,11 @@ function checkSlug(db: DatabaseSync, slug: string) {
 /** `status` ist nur bei `kind="adr"` erlaubt (DB-CHECK) — vorab geprüft, damit ein kind-Wechsel weg von adr keinen rohen CHECK-Fehler wirft. */
 function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) {
 	if (status != null && kind !== 'adr')
-		throw new DomainError('invalid_status', `status ist nur bei kind="adr" erlaubt (kind ist "${kind}").`, 'Lass status weg, oder setze kind auf "adr".');
+		throw new DomainError(
+			'invalid_status',
+			`status ist nur bei kind="adr" erlaubt (kind ist "${kind}").`,
+			'Lass status weg, oder setze kind auf "adr".'
+		);
 }
 
 /**
@@ -73,11 +113,20 @@ function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) 
 export type NoteScope = { visibleIn?: number };
 
 /** [[slug]] bzw. [[slug|Anzeigetext]]-Verweise im Body: bekannte Slugs (ohne sich selbst) → Ziel-ID, unbekannte separat. */
-function wikilinks(db: DatabaseSync, selfId: number, body: string, scope: NoteScope): { known: Map<string, number>; unknown: string[] } {
-	const slugs = [...new Set([...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)].map((m) => m[1].trim()))].filter(Boolean);
+function wikilinks(
+	db: DatabaseSync,
+	selfId: number,
+	body: string,
+	scope: NoteScope
+): { known: Map<string, number>; unknown: string[] } {
+	const slugs = [
+		...new Set([...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)].map((m) => m[1].trim()))
+	].filter(Boolean);
 	const known = new Map<string, number>();
 	const unknown: string[] = [];
-	const find = db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND (?2 IS NULL OR ${noteVisibleIn('?2')})`);
+	const find = db.prepare(
+		`SELECT id FROM notes n WHERE slug = ?1 AND (?2 IS NULL OR ${noteVisibleIn('?2')})`
+	);
 	for (const slug of slugs) {
 		const row = find.get(slug, scope.visibleIn ?? null) as { id: number } | undefined;
 		if (!row) unknown.push(slug);
@@ -100,16 +149,29 @@ function syncWikilinks(db: DatabaseSync, fromId: number, body: string, scope: No
 		)
 		.all(fromId, scope.visibleIn ?? null) as { to_note_id: number }[];
 	for (const { to_note_id } of existing)
-		if (!targets.has(to_note_id)) db.prepare("DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'").run(fromId, to_note_id);
+		if (!targets.has(to_note_id))
+			db.prepare(
+				"DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'"
+			).run(fromId, to_note_id);
 	for (const to_note_id of targets)
-		db.prepare("INSERT INTO note_links (from_note_id, to_note_id, type, origin) VALUES (?, ?, 'references', 'wikilink') ON CONFLICT DO NOTHING").run(fromId, to_note_id);
+		db.prepare(
+			"INSERT INTO note_links (from_note_id, to_note_id, type, origin) VALUES (?, ?, 'references', 'wikilink') ON CONFLICT DO NOTHING"
+		).run(fromId, to_note_id);
 	return unknown.map((s) => `Unbekannter Slug „${s}“ im Wikilink — kein Link angelegt.`);
 }
 
 export function createNote(
 	db: DatabaseSync,
 	actor: Actor,
-	fields: { slug: string; title: string; body: string; kind?: NoteKind; status?: NoteStatus; tags?: string[]; projectIds?: number[] },
+	fields: {
+		slug: string;
+		title: string;
+		body: string;
+		kind?: NoteKind;
+		status?: NoteStatus;
+		tags?: string[];
+		projectIds?: number[];
+	},
 	scope: NoteScope = {}
 ): { id: number; warnings: string[] } {
 	return tx(db, () => {
@@ -118,9 +180,15 @@ export function createNote(
 		checkKindStatus(rest.kind ?? 'note', rest.status);
 		const f = fieldsOf(rest);
 		const { id } = db
-			.prepare(`INSERT INTO notes (slug, ${f.map(([k]) => k).join(', ')}) VALUES (?, ${f.map(() => '?').join(', ')}) RETURNING id`)
+			.prepare(
+				`INSERT INTO notes (slug, ${f.map(([k]) => k).join(', ')}) VALUES (?, ${f.map(() => '?').join(', ')}) RETURNING id`
+			)
 			.get(slug, ...f.map(([, v]) => v)) as { id: number };
-		for (const projectId of projectIds ?? []) db.prepare('INSERT INTO note_projects (note_id, project_id) VALUES (?, ?)').run(id, projectId);
+		for (const projectId of projectIds ?? [])
+			db.prepare('INSERT INTO note_projects (note_id, project_id) VALUES (?, ?)').run(
+				id,
+				projectId
+			);
 		const warnings = syncWikilinks(db, id, rest.body, scope);
 		return { id, warnings };
 	});
@@ -149,7 +217,10 @@ export function updateNote(
 			);
 		checkKindStatus(patch.kind ?? n.kind, patch.status !== undefined ? patch.status : n.status);
 		const f = fieldsOf(patch);
-		if (f.length) db.prepare(`UPDATE notes SET ${f.map(([k]) => `${k} = ?`).join(', ')}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), n.id);
+		if (f.length)
+			db.prepare(
+				`UPDATE notes SET ${f.map(([k]) => `${k} = ?`).join(', ')}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+			).run(...f.map(([, v]) => v), n.id);
 		if (patch.body === undefined) return { warnings: [] };
 		return { warnings: syncWikilinks(db, n.id, patch.body, scope) };
 	});
@@ -163,7 +234,10 @@ export function updateNote(
 export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): void {
 	tx(db, () => {
 		const n = note(db, noteId);
-		if (!n.archived) db.prepare('UPDATE notes SET archived = 1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(n.id);
+		if (!n.archived)
+			db.prepare(
+				'UPDATE notes SET archived = 1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+			).run(n.id);
 	});
 }
 
@@ -174,51 +248,124 @@ export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): voi
  * `supersedes` auf eine ADR setzt deren Status automatisch auf `superseded` und erhöht ihre `version` (sonst Lost Update,
  * s. `archiveNote`).
  */
-export function linkNote(db: DatabaseSync, actor: Actor, fromId: number, toId: number, type: NoteLinkType): void {
+export function linkNote(
+	db: DatabaseSync,
+	actor: Actor,
+	fromId: number,
+	toId: number,
+	type: NoteLinkType
+): void {
 	tx(db, () => {
 		const from = note(db, fromId);
 		const to = note(db, toId);
-		if (from.id === to.id) throw new DomainError('self_relation', `Note „${from.slug}“ kann nicht mit sich selbst verknüpft werden.`, 'Wähle als Ziel eine andere Note.');
+		if (from.id === to.id)
+			throw new DomainError(
+				'self_relation',
+				`Note „${from.slug}“ kann nicht mit sich selbst verknüpft werden.`,
+				'Wähle als Ziel eine andere Note.'
+			);
 		db.prepare(
 			"INSERT INTO note_links (from_note_id, to_note_id, type, origin) VALUES (?, ?, ?, 'manual') ON CONFLICT (from_note_id, to_note_id, type) DO UPDATE SET origin = 'manual'"
 		).run(from.id, to.id, type);
 		if (type === 'supersedes' && to.kind === 'adr' && to.status !== 'superseded')
-			db.prepare("UPDATE notes SET status = 'superseded', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(to.id);
+			db.prepare(
+				"UPDATE notes SET status = 'superseded', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+			).run(to.id);
 	});
 }
 
-export function unlinkNote(db: DatabaseSync, actor: Actor, fromId: number, toId: number, type: NoteLinkType): void {
+export function unlinkNote(
+	db: DatabaseSync,
+	actor: Actor,
+	fromId: number,
+	toId: number,
+	type: NoteLinkType
+): void {
 	tx(db, () => {
 		const from = note(db, fromId);
-		db.prepare('DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = ?').run(from.id, toId, type);
+		db.prepare('DELETE FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = ?').run(
+			from.id,
+			toId,
+			type
+		);
 	});
 }
 
 /** Verknüpft eine Note mit einem Ticket (idempotent); `linkTicketRow` wird auch von verifyNote genutzt. */
-function linkTicketRow(db: DatabaseSync, emit: Emit, actor: Actor, noteId: number, ticketId: number, relation: NoteTicketRelation) {
+function linkTicketRow(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	noteId: number,
+	ticketId: number,
+	relation: NoteTicketRelation
+) {
 	const t = ticket(db, ticketId);
-	if (db.prepare('INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(noteId, t.id, relation).changes)
-		emit({ type: 'note.ticket_linked', projectId: t.project_id, ticketId: t.id, actor, noteId, relation });
+	if (
+		db
+			.prepare(
+				'INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (?, ?, ?) ON CONFLICT DO NOTHING'
+			)
+			.run(noteId, t.id, relation).changes
+	)
+		emit({
+			type: 'note.ticket_linked',
+			projectId: t.project_id,
+			ticketId: t.id,
+			actor,
+			noteId,
+			relation
+		});
 }
 
-export function linkTicket(db: DatabaseSync, actor: Actor, noteId: number, ticketId: number, relation: NoteTicketRelation): void {
+export function linkTicket(
+	db: DatabaseSync,
+	actor: Actor,
+	noteId: number,
+	ticketId: number,
+	relation: NoteTicketRelation
+): void {
 	tx(db, (emit) => linkTicketRow(db, emit, actor, note(db, noteId).id, ticketId, relation));
 }
 
-export function unlinkTicket(db: DatabaseSync, actor: Actor, noteId: number, ticketId: number, relation: NoteTicketRelation): void {
+export function unlinkTicket(
+	db: DatabaseSync,
+	actor: Actor,
+	noteId: number,
+	ticketId: number,
+	relation: NoteTicketRelation
+): void {
 	tx(db, (emit) => {
 		const n = note(db, noteId);
 		const t = ticket(db, ticketId);
-		if (db.prepare('DELETE FROM note_tickets WHERE note_id = ? AND ticket_id = ? AND relation = ?').run(n.id, t.id, relation).changes)
-			emit({ type: 'note.ticket_unlinked', projectId: t.project_id, ticketId: t.id, actor, noteId: n.id, relation });
+		if (
+			db
+				.prepare('DELETE FROM note_tickets WHERE note_id = ? AND ticket_id = ? AND relation = ?')
+				.run(n.id, t.id, relation).changes
+		)
+			emit({
+				type: 'note.ticket_unlinked',
+				projectId: t.project_id,
+				ticketId: t.id,
+				actor,
+				noteId: n.id,
+				relation
+			});
 	});
 }
 
 /** Markiert eine Note als verifiziert; mit `ticketId` zusätzlich eine `verified_by`-Verknüpfung (das Ticket bestätigt den Stand). */
-export function verifyNote(db: DatabaseSync, actor: Actor, noteId: number, ticketId?: number): void {
+export function verifyNote(
+	db: DatabaseSync,
+	actor: Actor,
+	noteId: number,
+	ticketId?: number
+): void {
 	tx(db, (emit) => {
 		const n = note(db, noteId);
-		db.prepare('UPDATE notes SET verified_at = CURRENT_TIMESTAMP, verified_by_run_id = ? WHERE id = ?').run(actor.runId ?? null, n.id);
+		db.prepare(
+			'UPDATE notes SET verified_at = CURRENT_TIMESTAMP, verified_by_run_id = ? WHERE id = ?'
+		).run(actor.runId ?? null, n.id);
 		if (ticketId !== undefined) linkTicketRow(db, emit, actor, n.id, ticketId, 'verified_by');
 	});
 }
@@ -227,7 +374,17 @@ export function verifyNote(db: DatabaseSync, actor: Actor, noteId: number, ticke
 export const noteVisibleIn = (projectParam: string) =>
 	`(NOT EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id) OR EXISTS (SELECT 1 FROM note_projects vp WHERE vp.note_id = n.id AND vp.project_id = ${projectParam}))`;
 
-export type NoteSearchHit = { id: number; slug: string; title: string; kind: NoteKind; status: NoteStatus | null; archived: 0 | 1; version: number; snippet: string; bodyChars: number };
+export type NoteSearchHit = {
+	id: number;
+	slug: string;
+	title: string;
+	kind: NoteKind;
+	status: NoteStatus | null;
+	archived: 0 | 1;
+	version: number;
+	snippet: string;
+	bodyChars: number;
+};
 
 /**
  * Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts.
@@ -252,7 +409,14 @@ function ftsQuery(query: string): string {
 export function searchNotes(
 	db: DatabaseSync,
 	query: string,
-	opts: { kind?: NoteKind; projectId?: number; visibleIn?: number; tag?: string; limit?: number; includeArchived?: boolean } = {}
+	opts: {
+		kind?: NoteKind;
+		projectId?: number;
+		visibleIn?: number;
+		tag?: string;
+		limit?: number;
+		includeArchived?: boolean;
+	} = {}
 ): NoteSearchHit[] {
 	const match = ftsQuery(query);
 	if (!match) return [];
@@ -270,5 +434,13 @@ export function searchNotes(
 			ORDER BY n.archived, n.status IS 'superseded', notes_fts.rank
 			LIMIT ?3`
 		)
-		.all(match, opts.kind ?? null, opts.limit ?? 20, opts.projectId ?? null, opts.tag ?? null, opts.includeArchived ? 1 : 0, opts.visibleIn ?? null) as NoteSearchHit[];
+		.all(
+			match,
+			opts.kind ?? null,
+			opts.limit ?? 20,
+			opts.projectId ?? null,
+			opts.tag ?? null,
+			opts.includeArchived ? 1 : 0,
+			opts.visibleIn ?? null
+		) as NoteSearchHit[];
 }

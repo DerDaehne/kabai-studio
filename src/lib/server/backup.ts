@@ -1,6 +1,16 @@
 // Sicherungen der SQLite-DB (#808): `VACUUM INTO` nach `<datenverzeichnis>/backups/studio-YYYYMMDD-HHMM[-N].db` (UTC).
 // Nur node:-Importe: die CLI restore lädt diese Datei direkt mit Node, ohne Vite.
-import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+	closeSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -21,7 +31,9 @@ export type Backup = { file: string; at: Date; n: number };
 export function privateDir(dir: string) {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	if (process.platform !== 'win32' && statSync(dir).mode & 0o077)
-		console.warn(`Warnung: ${dir} ist für andere Nutzer zugänglich — „chmod 700 ${dir}“ schränkt das ein.`);
+		console.warn(
+			`Warnung: ${dir} ist für andere Nutzer zugänglich — „chmod 700 ${dir}“ schränkt das ein.`
+		);
 }
 
 /** Fertige Sicherungen in `dir`, neueste zuerst. */
@@ -35,7 +47,15 @@ export function listBackups(dir: string): Backup[] {
 	return names
 		.flatMap((file) => {
 			const m = NAME.exec(file);
-			return m ? [{ file, at: new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5])), n: Number(m[6] ?? 1) }] : [];
+			return m
+				? [
+						{
+							file,
+							at: new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5])),
+							n: Number(m[6] ?? 1)
+						}
+					]
+				: [];
 		})
 		.sort((a, b) => b.at.getTime() - a.at.getTime() || b.n - a.n);
 }
@@ -64,9 +84,12 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 		renameSync(tmp, file);
 	} catch (err) {
 		rmSync(tmp, { force: true });
-		throw new Error(`Sicherung nach ${dir} fehlgeschlagen (${(err as Error).message}). Freien Speicherplatz und Schreibrechte prüfen.`, {
-			cause: err
-		});
+		throw new Error(
+			`Sicherung nach ${dir} fehlgeschlagen (${(err as Error).message}). Freien Speicherplatz und Schreibrechte prüfen.`,
+			{
+				cause: err
+			}
+		);
 	}
 	return file;
 }
@@ -129,21 +152,31 @@ export function startBackups(db: DatabaseSync, dir: string) {
 	setInterval(() => backupIfDue(db, dir), HOUR).unref();
 }
 
-export type BackupStatus = { dir: string; last: { path: string; size: number; at: string } | null; error: string | null };
+export type BackupStatus = {
+	dir: string;
+	last: { path: string; size: number; at: string } | null;
+	error: string | null;
+};
 
 /** Für den System-Check (#812 übernimmt ihn in seine Prüfungs-Registry): letzte Sicherung, Größe, Pfad, Problem mit Ausweg. */
 export function backupStatus(dir: string, now = new Date()): BackupStatus {
 	const all = listBackups(dir);
 	const recent = all.find((b) => b.at.getTime() <= now.getTime());
 	const future = all.find((b) => b.at.getTime() > now.getTime());
-	const last = all[0] ? { path: join(dir, all[0].file), size: statSync(join(dir, all[0].file)).size, at: all[0].at.toISOString() } : null;
+	const last = all[0]
+		? {
+				path: join(dir, all[0].file),
+				size: statSync(join(dir, all[0].file)).size,
+				at: all[0].at.toISOString()
+			}
+		: null;
 	const stale = !recent || now.getTime() - recent.at.getTime() > DAY + HOUR;
 	const error =
 		lastError ??
 		(future
 			? `Neueste Sicherung liegt mit ${future.at.toISOString()} in der Zukunft — die Frische zählt nur Sicherungen bis jetzt. Uhr prüfen (fehlerhafte Uhr oder Restore von einem anderen Host).`
 			: stale
-			? `Keine Sicherung aus den letzten 24 Stunden. Studio sichert stündlich nach — Server-Log und Schreibrechte in ${dir} prüfen.`
-			: null);
+				? `Keine Sicherung aus den letzten 24 Stunden. Studio sichert stündlich nach — Server-Log und Schreibrechte in ${dir} prüfen.`
+				: null);
 	return { dir, last, error };
 }

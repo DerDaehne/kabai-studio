@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { contextBudget, MODEL_ROLES, MODELS, matchModel, type ModelEntry } from './model-catalog.ts';
+import {
+	contextBudget,
+	MODEL_ROLES,
+	MODELS,
+	matchModel,
+	type ModelEntry
+} from './model-catalog.ts';
 
 const catalog: readonly ModelEntry[] = MODELS;
 
@@ -53,7 +59,13 @@ describe('matchModel', () => {
 });
 
 describe('MODELS', () => {
-	const expectedIds = ['ornith-1.5-35b', 'qwen3.6-35b', 'qwen3-coder-next', 'gpt-oss-20b', 'qwen3.8-27b'];
+	const expectedIds = [
+		'ornith-1.5-35b',
+		'qwen3.6-35b',
+		'qwen3-coder-next',
+		'gpt-oss-20b',
+		'qwen3.8-27b'
+	];
 
 	it('contains every evaluated model', () => {
 		expect(MODELS.map((m) => m.id).sort()).toEqual([...expectedIds].sort());
@@ -61,7 +73,12 @@ describe('MODELS', () => {
 
 	it('marks qwen3.8-27b as not-recommended for every role', () => {
 		const entry = MODELS.find((m) => m.id === 'qwen3.8-27b');
-		expect(Object.values(entry?.roles ?? {})).toEqual(['not-recommended', 'not-recommended', 'not-recommended', 'not-recommended']);
+		expect(Object.values(entry?.roles ?? {})).toEqual([
+			'not-recommended',
+			'not-recommended',
+			'not-recommended',
+			'not-recommended'
+		]);
 	});
 
 	it.each(MODELS)('gives $id a non-empty roleReason for every role', (entry) => {
@@ -92,8 +109,20 @@ describe('MODELS', () => {
 
 	it('gives qwen3.6-35b the full model-card presets, including presence_penalty', () => {
 		const qwen = catalog.find((m) => m.id === 'qwen3.6-35b');
-		expect(qwen?.sampling?.thinkingOn).toEqual({ temperature: 0.6, topP: 0.95, topK: 20, minP: 0, presencePenalty: 0 });
-		expect(qwen?.sampling?.thinkingOff).toEqual({ temperature: 0.7, topP: 0.8, topK: 20, minP: 0, presencePenalty: 1.5 });
+		expect(qwen?.sampling?.thinkingOn).toEqual({
+			temperature: 0.6,
+			topP: 0.95,
+			topK: 20,
+			minP: 0,
+			presencePenalty: 0
+		});
+		expect(qwen?.sampling?.thinkingOff).toEqual({
+			temperature: 0.7,
+			topP: 0.8,
+			topK: 20,
+			minP: 0,
+			presencePenalty: 1.5
+		});
 	});
 
 	it('gives qwen3.6-35b per-role thinking/max_tokens settings for the tour role', () => {

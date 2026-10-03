@@ -1,5 +1,6 @@
 <script lang="ts" module>
-	export type Tone = 'neutral' | 'accent' | 'running' | 'waiting' | 'failed' | 'succeeded' | 'paused';
+	export type Tone =
+		'neutral' | 'accent' | 'running' | 'waiting' | 'failed' | 'succeeded' | 'paused';
 </script>
 
 <script lang="ts">

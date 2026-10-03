@@ -4,7 +4,15 @@ import { prefersReducedMotion } from 'svelte/motion';
 import type { TransitionConfig } from 'svelte/transition';
 
 /** Durations in milliseconds, the same values as the --dur-* tokens. */
-export const duration = { micro: 90, fast: 140, base: 220, slow: 320, glide: 380, pulse: 1600, sweep: 1400 } as const;
+export const duration = {
+	micro: 90,
+	fast: 140,
+	base: 220,
+	slow: 320,
+	glide: 380,
+	pulse: 1600,
+	sweep: 1400
+} as const;
 
 /** Distances in pixels, the same values as the --shift-* tokens. */
 export const shift = { sm: 6, md: 14, lg: 32 } as const;
@@ -21,7 +29,11 @@ export function spring(t: number): number {
 	const dampedFrequency = springFrequency * Math.sqrt(1 - springDamping ** 2);
 	const decay = Math.exp(-springDamping * springFrequency * t);
 	const phase = dampedFrequency * t;
-	return 1 - decay * (Math.cos(phase) + (springDamping / Math.sqrt(1 - springDamping ** 2)) * Math.sin(phase));
+	return (
+		1 -
+		decay *
+			(Math.cos(phase) + (springDamping / Math.sqrt(1 - springDamping ** 2)) * Math.sin(phase))
+	);
 }
 
 /** Script counterparts of --ease-out, --ease-in, --ease-inout and --ease-spring. */
@@ -31,7 +43,8 @@ export type MotionMode = 'full' | 'reduced';
 
 /** Reduced when the system asks for it or the user chose it in the app (data-motion on the root element). */
 export function motionMode(): MotionMode {
-	const userPrefersReduced = typeof document !== 'undefined' && document.documentElement.dataset.motion === 'reduced';
+	const userPrefersReduced =
+		typeof document !== 'undefined' && document.documentElement.dataset.motion === 'reduced';
 	return prefersReducedMotion.current || userPrefersReduced ? 'reduced' : 'full';
 }
 
@@ -40,7 +53,10 @@ function crossfade(): TransitionConfig {
 }
 
 /** Enters from, or leaves towards, a short offset. Reduced motion only crossfades. */
-export function travel(_node: Element, { x = 0, y = shift.md, delay = 0 }: { x?: number; y?: number; delay?: number } = {}): TransitionConfig {
+export function travel(
+	_node: Element,
+	{ x = 0, y = shift.md, delay = 0 }: { x?: number; y?: number; delay?: number } = {}
+): TransitionConfig {
 	if (motionMode() === 'reduced') return crossfade();
 	return {
 		delay,

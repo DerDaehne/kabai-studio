@@ -3,7 +3,12 @@ import type { Suggestion } from './commands';
 
 export type ProjectRef = { code: string; palette: ProjectPalette; name: string };
 
-export type AgentChip = { name: string; location: 'lokal' | 'online'; project: ProjectRef; state: 'running' | 'waiting' };
+export type AgentChip = {
+	name: string;
+	location: 'lokal' | 'online';
+	project: ProjectRef;
+	state: 'running' | 'waiting';
+};
 
 /** What views feed into the shell; the docks only render it. */
 export const shell = $state({

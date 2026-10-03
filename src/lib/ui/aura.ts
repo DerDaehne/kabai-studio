@@ -27,7 +27,15 @@ export const auraOpacity: Record<AuraStrength, number> = { strong: 1, weak: 0.5,
 const budget = { strong: 1, weak: 2 };
 
 /** Most important first. A blocked agent outranks the button that leads to it. */
-const signalPriority = ['decision in focus', 'blocking', 'primary action', 'failure', 'focus light', 'paused', 'done'] as const;
+const signalPriority = [
+	'decision in focus',
+	'blocking',
+	'primary action',
+	'failure',
+	'focus light',
+	'paused',
+	'done'
+] as const;
 type Signal = (typeof signalPriority)[number];
 
 const decisionTones: ReadonlySet<AuraTone> = new Set(['waiting', 'failed', 'paused', 'succeeded']);
@@ -44,7 +52,9 @@ function signalOf({ tone, focused }: AuraCandidate): Signal | undefined {
 }
 
 function signalColor(signal: Signal, tone: AuraTone | undefined): string {
-	return signal === 'primary action' || signal === 'focus light' ? 'var(--aura-accent)' : `var(--aura-${tone})`;
+	return signal === 'primary action' || signal === 'focus light'
+		? 'var(--aura-accent)'
+		: `var(--aura-${tone})`;
 }
 
 /**
@@ -55,16 +65,24 @@ function signalColor(signal: Signal, tone: AuraTone | undefined): string {
 export function assignAurae(candidates: readonly AuraCandidate[]): Map<string, Aura> {
 	const signals = new Map(candidates.map((candidate) => [candidate.key, signalOf(candidate)]));
 	const rank = (candidate: AuraCandidate) => signalPriority.indexOf(signals.get(candidate.key)!);
-	const signalling = candidates.filter((candidate) => signals.get(candidate.key)).sort((a, b) => rank(a) - rank(b));
+	const signalling = candidates
+		.filter((candidate) => signals.get(candidate.key))
+		.sort((a, b) => rank(a) - rank(b));
 
 	const aurae = new Map<string, Aura>();
 	signalling.slice(0, budget.strong + budget.weak).forEach((candidate, place) => {
 		const strength = place < budget.strong ? 'strong' : 'weak';
-		aurae.set(candidate.key, { strength, color: signalColor(signals.get(candidate.key)!, candidate.tone) });
+		aurae.set(candidate.key, {
+			strength,
+			color: signalColor(signals.get(candidate.key)!, candidate.tone)
+		});
 	});
 	for (const candidate of candidates) {
 		if (candidate.tone === 'running' && candidate.project && !signals.get(candidate.key)) {
-			aurae.set(candidate.key, { strength: 'ambient', color: `var(--aura-project-${candidate.project})` });
+			aurae.set(candidate.key, {
+				strength: 'ambient',
+				color: `var(--aura-project-${candidate.project})`
+			});
 		}
 	}
 	return aurae;

@@ -1,7 +1,16 @@
 import { readFileSync } from 'node:fs';
 import type { OnNavigate } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { duration, motionMode, reducedCrossfadeMs, shift, spring, tilt, transitionPage, travel } from './motion';
+import {
+	duration,
+	motionMode,
+	reducedCrossfadeMs,
+	shift,
+	spring,
+	tilt,
+	transitionPage,
+	travel
+} from './motion';
 
 const system = vi.hoisted(() => ({ prefersReducedMotion: false }));
 vi.mock('svelte/motion', () => ({
@@ -19,7 +28,11 @@ const transitions = {
 	'tilt out': () => tilt(node, { reverse: true }, { direction: 'out' })
 };
 const navigation = (from: string, to: string) =>
-	({ complete: Promise.resolve(), from: { route: { id: from } }, to: { route: { id: to } } }) as unknown as OnNavigate;
+	({
+		complete: Promise.resolve(),
+		from: { route: { id: from } },
+		to: { route: { id: to } }
+	}) as unknown as OnNavigate;
 const startViewTransition = vi.fn((update: () => Promise<void>) => void update());
 const dataset: DOMStringMap = {};
 
@@ -55,12 +68,18 @@ describe.each([
 
 describe('with full motion', () => {
 	it('travel moves along the offset while fading', () => {
-		expect(travel(node, { x: 10, y: 20 }).css?.(0.5, 0.5)).toBe('opacity: 0.5; transform: translate(5px, 10px)');
+		expect(travel(node, { x: 10, y: 20 }).css?.(0.5, 0.5)).toBe(
+			'opacity: 0.5; transform: translate(5px, 10px)'
+		);
 	});
 
 	it('tilt turns the leaving card away to the left and brings the next one in from the right', () => {
-		expect(tilt(node, {}, { direction: 'out' }).css?.(0, 1)).toContain('translateX(-40px) rotateY(12deg)');
-		expect(tilt(node, {}, { direction: 'in' }).css?.(0, 1)).toContain('translateX(40px) rotateY(-12deg)');
+		expect(tilt(node, {}, { direction: 'out' }).css?.(0, 1)).toContain(
+			'translateX(-40px) rotateY(12deg)'
+		);
+		expect(tilt(node, {}, { direction: 'in' }).css?.(0, 1)).toContain(
+			'translateX(40px) rotateY(-12deg)'
+		);
 	});
 
 	it('runs page swaps inside a view transition and resolves once the transition has started', async () => {
@@ -79,8 +98,10 @@ describe('motion values', () => {
 	const token = (name: string) => tokens.match(new RegExp(`${name}: ([^;]+);`))?.[1];
 
 	it('match the duration and distance tokens', () => {
-		for (const [name, ms] of Object.entries(duration)) expect(token(`--dur-${name}`)).toBe(`${ms}ms`);
-		for (const [name, px] of Object.entries(shift)) expect(token(`--shift-${name}`)).toBe(`${px}px`);
+		for (const [name, ms] of Object.entries(duration))
+			expect(token(`--dur-${name}`)).toBe(`${ms}ms`);
+		for (const [name, px] of Object.entries(shift))
+			expect(token(`--shift-${name}`)).toBe(`${px}px`);
 	});
 
 	it('sample the spring easing exactly like the --ease-spring token', () => {
@@ -89,7 +110,10 @@ describe('motion values', () => {
 	});
 
 	it('let the spring overshoot once and come to rest at 1', () => {
-		expect(Math.max(...Array.from({ length: 101 }, (_, i) => spring(i / 100)))).toBeCloseTo(1.046, 2);
+		expect(Math.max(...Array.from({ length: 101 }, (_, i) => spring(i / 100)))).toBeCloseTo(
+			1.046,
+			2
+		);
 		expect(spring(1)).toBe(1);
 	});
 });

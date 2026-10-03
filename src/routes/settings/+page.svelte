@@ -12,31 +12,43 @@
 	<li>
 		<a href="/settings/secrets">
 			<span class="label">Secrets</span>
-			<span class="desc">API-Keys und Tokens für Agent-Profile und MCP-Server, verschlüsselt gespeichert.</span>
+			<span class="desc"
+				>API-Keys und Tokens für Agent-Profile und MCP-Server, verschlüsselt gespeichert.</span
+			>
 		</a>
 	</li>
 </ul>
 
 <section class="backup" aria-labelledby="backup-title">
 	<h2 id="backup-title">
-		Sicherung <Badge tone={b.error ? 'failed' : 'succeeded'}>{b.error ? 'Problem' : 'aktuell'}</Badge>
+		Sicherung <Badge tone={b.error ? 'failed' : 'succeeded'}
+			>{b.error ? 'Problem' : 'aktuell'}</Badge
+		>
 	</h2>
 	{#if b.error}<p class="error">{b.error}</p>{/if}
 	<dl>
 		<dt>Letzte Sicherung</dt>
 		<dd>
-			{#if b.last}<time datetime={b.last.at}>{b.last.at.slice(0, 16).replace('T', ' ')} UTC</time> · {size(b.last.size)}{:else}keine{/if}
+			{#if b.last}<time datetime={b.last.at}>{b.last.at.slice(0, 16).replace('T', ' ')} UTC</time> · {size(
+					b.last.size
+				)}{:else}keine{/if}
 		</dd>
 		<dt>{b.last ? 'Datei' : 'Verzeichnis'}</dt>
 		<dd><code>{b.last?.path ?? b.dir}</code></dd>
 		<dt>Aufbewahrung</dt>
-		<dd>täglich, dazu vor jedem Update; {data.retention.daily} tägliche + {data.retention.weekly} wöchentliche</dd>
+		<dd>
+			täglich, dazu vor jedem Update; {data.retention.daily} tägliche + {data.retention.weekly} wöchentliche
+		</dd>
 	</dl>
 	<p class="hint">
-		Secrets stehen in der Sicherung nur verschlüsselt. <code>secret.key</code> aus dem Datenverzeichnis (bzw.
-		<code>STUDIO_SECRET_KEY</code>) separat sichern — ohne ihn müssen Secrets nach einer Wiederherstellung neu eingegeben werden.
+		Secrets stehen in der Sicherung nur verschlüsselt. <code>secret.key</code> aus dem
+		Datenverzeichnis (bzw.
+		<code>STUDIO_SECRET_KEY</code>) separat sichern — ohne ihn müssen Secrets nach einer
+		Wiederherstellung neu eingegeben werden.
 	</p>
-	<p class="hint">Wiederherstellen: Server stoppen, dann <code>npm run restore -- &lt;datei&gt;</code>.</p>
+	<p class="hint">
+		Wiederherstellen: Server stoppen, dann <code>npm run restore -- &lt;datei&gt;</code>.
+	</p>
 </section>
 
 <style>

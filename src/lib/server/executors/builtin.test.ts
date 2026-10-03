@@ -15,33 +15,62 @@ import { requestSettings } from './provider';
 const user: Actor = { kind: 'user' };
 
 /** What the fake model sends in one response: deltas and tool calls in order, or a pause the test controls. */
-type Chunk = { reasoning: string } | { text: string } | { call: { id: string; name: string; args: object } } | { pause: () => unknown } | 'hang';
-type Reply = { chunks: Chunk[]; finish?: 'stop' | 'tool_calls' | 'length'; usage?: [input: number, output: number] } | { status: number; error: string };
+type Chunk =
+	| { reasoning: string }
+	| { text: string }
+	| { call: { id: string; name: string; args: object } }
+	| { pause: () => unknown }
+	| 'hang';
+type Reply =
+	| {
+			chunks: Chunk[];
+			finish?: 'stop' | 'tool_calls' | 'length';
+			usage?: [input: number, output: number];
+	  }
+	| { status: number; error: string };
 type ProviderRequest = { body: Record<string, unknown>; headers: Headers; signal: AbortSignal };
 
 const encoder = new TextEncoder();
 const sse = (data: object) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 const delta = (delta: object, finishReason: string | null = null) =>
-	sse({ id: 'chatcmpl-1', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta, finish_reason: finishReason }] });
+	sse({
+		id: 'chatcmpl-1',
+		object: 'chat.completion.chunk',
+		created: 0,
+		model: 'm',
+		choices: [{ index: 0, delta, finish_reason: finishReason }]
+	});
 
 function deltaOf(chunk: Exclude<Chunk, 'hang' | { pause: () => unknown }>) {
 	if ('reasoning' in chunk) return delta({ reasoning_content: chunk.reasoning });
 	if ('text' in chunk) return delta({ content: chunk.text });
 	const { id, name, args } = chunk.call;
-	return delta({ tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+	return delta({
+		tool_calls: [
+			{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }
+		]
+	});
 }
 
 /** An OpenAI-compatible chat completion stream as llama.cpp sends it, ending with the usage chunk. */
 async function* stream(reply: Extract<Reply, { chunks: Chunk[] }>, signal: AbortSignal) {
 	for (const chunk of reply.chunks) {
-		if (chunk === 'hang') await new Promise((_, fail) => signal.addEventListener('abort', () => fail(signal.reason)));
+		if (chunk === 'hang')
+			await new Promise((_, fail) => signal.addEventListener('abort', () => fail(signal.reason)));
 		else if ('pause' in chunk) await chunk.pause();
 		else yield deltaOf(chunk);
 	}
 	const calls = reply.chunks.some((chunk) => typeof chunk === 'object' && 'call' in chunk);
 	yield delta({}, reply.finish ?? (calls ? 'tool_calls' : 'stop'));
 	const [input, output] = reply.usage ?? [100, 10];
-	yield sse({ id: 'chatcmpl-1', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [], usage: { prompt_tokens: input, completion_tokens: output } });
+	yield sse({
+		id: 'chatcmpl-1',
+		object: 'chat.completion.chunk',
+		created: 0,
+		model: 'm',
+		choices: [],
+		usage: { prompt_tokens: input, completion_tokens: output }
+	});
 	yield encoder.encode('data: [DONE]\n\n');
 }
 
@@ -60,11 +89,18 @@ function fakeProvider(...replies: Reply[]) {
 	const requests: ProviderRequest[] = [];
 	const fetch = async (_input: string | URL | Request, init?: RequestInit) => {
 		const signal = init!.signal!;
-		requests.push({ body: JSON.parse(init!.body as string), headers: new Headers(init!.headers), signal });
+		requests.push({
+			body: JSON.parse(init!.body as string),
+			headers: new Headers(init!.headers),
+			signal
+		});
 		const reply = replies.shift();
 		if (!reply) throw new Error(`unexpected provider request ${requests.length}`);
-		if ('status' in reply) return Response.json({ error: { message: reply.error } }, { status: reply.status });
-		return new Response(readable(stream(reply, signal)), { headers: { 'content-type': 'text/event-stream' } });
+		if ('status' in reply)
+			return Response.json({ error: { message: reply.error } }, { status: reply.status });
+		return new Response(readable(stream(reply, signal)), {
+			headers: { 'content-type': 'text/event-stream' }
+		});
 	};
 	return { fetch: fetch as typeof globalThis.fetch, requests };
 }
@@ -83,8 +119,16 @@ function setup(profile: Partial<runs.Profile> = {}) {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, { title: 'Refine the export', description: 'Export tickets as CSV.' }).id;
-	const columns = Object.fromEntries(db.prepare('SELECT name, id FROM columns WHERE project_id = ?').all(projectId).map((c) => [c.name, c.id])) as Record<string, number>;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'Refine the export',
+		description: 'Export tickets as CSV.'
+	}).id;
+	const columns = Object.fromEntries(
+		db
+			.prepare('SELECT name, id FROM columns WHERE project_id = ?')
+			.all(projectId)
+			.map((c) => [c.name, c.id])
+	) as Record<string, number>;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Local',
 		executor: 'builtin',
@@ -99,15 +143,25 @@ function setup(profile: Partial<runs.Profile> = {}) {
 	const run = (id: number) => db.prepare('SELECT * FROM runs WHERE id = ?').get(id)!;
 	const events = (id: number) =>
 		db
-			.prepare('SELECT seq, type, idempotency_key AS key, payload FROM run_events WHERE run_id = ? ORDER BY seq')
+			.prepare(
+				'SELECT seq, type, idempotency_key AS key, payload FROM run_events WHERE run_id = ? ORDER BY seq'
+			)
 			.all(id)
-			.map((e) => ({ ...(e as { seq: number; type: string; key: string | null }), payload: JSON.parse(e.payload as string) }));
-	const comments = () => db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
+			.map((e) => ({
+				...(e as { seq: number; type: string; key: string | null }),
+				payload: JSON.parse(e.payload as string)
+			}));
+	const comments = () =>
+		db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
 	return { db, ticketId, columns, profileId, busEvents, queue, run, events, comments };
 }
 
 /** Starts a runner with the builtin executor; `executed` collects each run's context and result. */
-function startBuiltin(db: ReturnType<typeof setup>['db'], options: BuiltinOptions, coldStart?: Parameters<typeof startRunner>[3]) {
+function startBuiltin(
+	db: ReturnType<typeof setup>['db'],
+	options: BuiltinOptions,
+	coldStart?: Parameters<typeof startRunner>[3]
+) {
 	const builtin = builtinExecutor(db, options);
 	const executed: { run: RunContext; result: ExecutorResult }[] = [];
 	const executor: Executor = {
@@ -122,13 +176,21 @@ function startBuiltin(db: ReturnType<typeof setup>['db'], options: BuiltinOption
 	return { runner, executed };
 }
 
-const ended = (state: () => unknown) => vi.waitFor(() => expect(state()).not.toMatch(/^(queued|running)$/), { timeout: 3000 });
+const ended = (state: () => unknown) =>
+	vi.waitFor(() => expect(state()).not.toMatch(/^(queued|running)$/), { timeout: 3000 });
 
 describe('builtin executor', () => {
 	it('records the prompt, then reasoning, message, tool call, tool result and step log of every step, and sums the usage in the run', async () => {
 		const { db, queue, run, events, comments } = setup();
 		const provider = fakeProvider(
-			{ chunks: [{ reasoning: 'The ticket needs a comment.\n' }, { text: 'I will comment.' }, call('call-1', 'add_comment', { text: 'first' })], usage: [1000, 50] },
+			{
+				chunks: [
+					{ reasoning: 'The ticket needs a comment.\n' },
+					{ text: 'I will comment.' },
+					call('call-1', 'add_comment', { text: 'first' })
+				],
+				usage: [1000, 50]
+			},
 			{ chunks: [call('call-2', 'add_comment', { text: 'second' })], usage: [1200, 20] },
 			{ chunks: [{ text: 'Done.' }], usage: [1300, 5] }
 		);
@@ -136,8 +198,18 @@ describe('builtin executor', () => {
 		const runId = queue();
 		await ended(() => run(runId).state);
 
-		expect(run(runId)).toMatchObject({ state: 'succeeded', tokens_in: 3500, tokens_out: 75, cost: 0 });
-		const recorded = events(runId).map(({ type, key, payload }) => ({ type, key, kind: payload.kind, step: payload.step }));
+		expect(run(runId)).toMatchObject({
+			state: 'succeeded',
+			tokens_in: 3500,
+			tokens_out: 75,
+			cost: 0
+		});
+		const recorded = events(runId).map(({ type, key, payload }) => ({
+			type,
+			key,
+			kind: payload.kind,
+			step: payload.step
+		}));
 		expect(recorded).toEqual([
 			{ type: 'log', key: null, kind: 'prompt', step: undefined },
 			{ type: 'reasoning', key: 'step:1:reasoning', kind: undefined, step: 1 },
@@ -152,24 +224,52 @@ describe('builtin executor', () => {
 			{ type: 'log', key: 'step:3', kind: 'step', step: 3 },
 			{ type: 'message', key: 'handoff', kind: undefined, step: undefined }
 		]);
-		const [prompt, reasoning, , toolCall, toolResult, stepLog] = events(runId).map((e) => e.payload);
-		expect(prompt).toEqual({ kind: 'prompt', estimate: expect.any(Number), toolTokens: expect.any(Number) });
+		const [prompt, reasoning, , toolCall, toolResult, stepLog] = events(runId).map(
+			(e) => e.payload
+		);
+		expect(prompt).toEqual({
+			kind: 'prompt',
+			estimate: expect.any(Number),
+			toolTokens: expect.any(Number)
+		});
 		expect(prompt.toolTokens).toBeGreaterThan(1000);
 		expect(reasoning).toEqual({ step: 1, text: 'The ticket needs a comment.\n', charsTotal: 28 });
 		expect(toolCall).toEqual({ step: 1, tool: 'add_comment', args: { text: 'first' } });
-		expect(toolResult).toEqual({ step: 1, tool: 'add_comment', result: '{"comment_id":1}', isError: false });
-		expect(stepLog).toEqual({ kind: 'step', step: 1, finishReason: 'tool-calls', ms: expect.any(Number) });
+		expect(toolResult).toEqual({
+			step: 1,
+			tool: 'add_comment',
+			result: '{"comment_id":1}',
+			isError: false
+		});
+		expect(stepLog).toEqual({
+			kind: 'step',
+			step: 1,
+			finishReason: 'tool-calls',
+			ms: expect.any(Number)
+		});
 		expect(events(runId).at(-1)!.payload).toEqual({ text: 'Done.' });
 		expect(comments()).toMatchObject([{ body: 'first' }, { body: 'second' }]);
-		expect(provider.requests[0].body).toMatchObject({ max_tokens: 32000, temperature: 0.6, chat_template_kwargs: { enable_thinking: true } });
+		expect(provider.requests[0].body).toMatchObject({
+			max_tokens: 32000,
+			temperature: 0.6,
+			chat_template_kwargs: { enable_thinking: true }
+		});
 		expect(provider.requests[0].body.stream_options).toEqual({ include_usage: true });
-		expect(provider.requests[0].body.messages).toMatchObject([{ role: 'system' }, { role: 'user', content: expect.stringContaining('Refine the export') }]);
+		expect(provider.requests[0].body.messages).toMatchObject([
+			{ role: 'system' },
+			{ role: 'user', content: expect.stringContaining('Refine the export') }
+		]);
 	});
 
 	it('calls studio tools in-process with the run token, which no longer works once the run has ended', async () => {
 		const { db, queue, run, comments } = setup();
-		vi.stubGlobal('fetch', () => Promise.reject(new Error('no network: studio tools must not go over HTTP')));
-		const provider = fakeProvider({ chunks: [call('call-1', 'add_comment', { text: 'from the agent' })] }, { chunks: [{ text: 'Done.' }] });
+		vi.stubGlobal('fetch', () =>
+			Promise.reject(new Error('no network: studio tools must not go over HTTP'))
+		);
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'add_comment', { text: 'from the agent' })] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
 		const { executed } = startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
@@ -179,7 +279,11 @@ describe('builtin executor', () => {
 		const token = executed[0].run.token;
 		const request = new Request('http://127.0.0.1:3000/mcp', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+			headers: {
+				authorization: `Bearer ${token}`,
+				'content-type': 'application/json',
+				accept: 'application/json, text/event-stream'
+			},
 			body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
 		});
 		expect((await mcpEndpoint(db)(request)).status).toBe(401);
@@ -190,10 +294,19 @@ describe('builtin executor', () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 		// the executor first takes in the deltas sent so far, then the clock moves on
-		const oneSecondLater = { pause: () => sleep(20).then(() => vi.setSystemTime(Date.now() + 1100)) };
+		const oneSecondLater = {
+			pause: () => sleep(20).then(() => vi.setSystemTime(Date.now() + 1100))
+		};
 		const slowModel = { pause: () => sleep(150) };
 		const provider = fakeProvider({
-			chunks: [{ reasoning: 'First thought\nsecond' }, { reasoning: ' half\n' }, oneSecondLater, { reasoning: 'third line\nfourth' }, slowModel, { text: 'Done.' }]
+			chunks: [
+				{ reasoning: 'First thought\nsecond' },
+				{ reasoning: ' half\n' },
+				oneSecondLater,
+				{ reasoning: 'third line\nfourth' },
+				slowModel,
+				{ text: 'Done.' }
+			]
 		});
 		startBuiltin(db, { fetch: provider.fetch }, { hintAfterMs: 50, failAfterMs: 100 });
 		const runId = queue();
@@ -210,11 +323,16 @@ describe('builtin executor', () => {
 
 	it('stops the provider request on cancel, records nothing more and frees the pool slot', async () => {
 		const { db, queue, run, events, busEvents } = setup();
-		const provider = fakeProvider({ chunks: [{ reasoning: 'Let me think\n' }, 'hang'] }, { chunks: [{ text: 'Done.' }] });
+		const provider = fakeProvider(
+			{ chunks: [{ reasoning: 'Let me think\n' }, 'hang'] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
 		const cancelled = queue();
 		const waiting = queue();
-		await vi.waitFor(() => expect(busEvents.some((e) => e.type === 'run.phase' && e.runId === cancelled)).toBe(true));
+		await vi.waitFor(() =>
+			expect(busEvents.some((e) => e.type === 'run.phase' && e.runId === cancelled)).toBe(true)
+		);
 		const recordedBeforeCancel = events(cancelled);
 
 		runner.cancel(cancelled);
@@ -228,13 +346,19 @@ describe('builtin executor', () => {
 
 	it('fails with step_limit and a way out when max_steps runs out without moving the ticket', async () => {
 		const { db, queue, run, comments } = setup({ max_steps: 2 });
-		const provider = fakeProvider({ chunks: [call('call-1', 'add_comment', { text: 'one' })] }, { chunks: [call('call-2', 'add_comment', { text: 'two' })] });
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'add_comment', { text: 'one' })] },
+			{ chunks: [call('call-2', 'add_comment', { text: 'two' })] }
+		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
 
 		expect(provider.requests).toHaveLength(2);
-		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[step_limit\] .*2 Schritt/) });
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[step_limit\] .*2 Schritt/)
+		});
 		expect(comments().at(-1)!.body).toMatch(/Ausweg: .*max_steps.*kleiner/);
 	});
 
@@ -253,7 +377,9 @@ describe('builtin executor', () => {
 
 	it('pauses without a follow-up run once the agent has asked the human', async () => {
 		const { db, queue, run, ticketId } = setup();
-		const provider = fakeProvider({ chunks: [call('call-1', 'request_human', { question: 'Which columns go into the export?' })] });
+		const provider = fakeProvider({
+			chunks: [call('call-1', 'request_human', { question: 'Which columns go into the export?' })]
+		});
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
@@ -266,12 +392,18 @@ describe('builtin executor', () => {
 
 	it('fails with provider_error and a way out when the model server rejects the request', async () => {
 		const { db, queue, run, comments } = setup();
-		const provider = fakeProvider({ status: 400, error: 'the request exceeds the available context size' });
+		const provider = fakeProvider({
+			status: 400,
+			error: 'the request exceeds the available context size'
+		});
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
 
-		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[provider_error\] .*exceeds the available context size/) });
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[provider_error\] .*exceeds the available context size/)
+		});
 		expect(comments().at(-1)!.body).toMatch(/Ausweg: .*base_url/);
 	});
 
@@ -282,14 +414,23 @@ describe('builtin executor', () => {
 		const runId = queue();
 		await ended(() => run(runId).state);
 
-		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[provider_inactive\] /) });
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[provider_inactive\] /)
+		});
 		expect(provider.requests[0].signal.aborted).toBe(true);
 	});
 
 	it('ends a parked run after its step, paused with a resume that points at the handoff', async () => {
 		const { db, queue, run, events } = setup();
 		let park = () => {};
-		const provider = fakeProvider({ chunks: [{ text: 'Commenting now.' }, { pause: () => park() }, call('call-1', 'add_comment', { text: 'last words' })] });
+		const provider = fakeProvider({
+			chunks: [
+				{ text: 'Commenting now.' },
+				{ pause: () => park() },
+				call('call-1', 'add_comment', { text: 'last words' })
+			]
+		});
 		const { runner, executed } = startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		park = () => runner.park(runId, 'quota', '2099-01-01T00:00:00Z');
@@ -299,8 +440,13 @@ describe('builtin executor', () => {
 		expect(provider.requests).toHaveLength(1);
 		const handoff = events(runId).find((e) => e.key === 'handoff')!;
 		expect(handoff.payload).toEqual({ text: 'Commenting now.' });
-		expect(executed[0].result).toEqual({ state: 'paused', resume: { reason: 'quota', notBefore: '2099-01-01T00:00:00Z', handoffSeq: handoff.seq } });
-		expect(db.prepare('SELECT state, resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId)).toEqual({ state: 'queued', resume_reason: 'quota' });
+		expect(executed[0].result).toEqual({
+			state: 'paused',
+			resume: { reason: 'quota', notBefore: '2099-01-01T00:00:00Z', handoffSeq: handoff.seq }
+		});
+		expect(
+			db.prepare('SELECT state, resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId)
+		).toEqual({ state: 'queued', resume_reason: 'quota' });
 	});
 
 	it('ends succeeded without a follow-up run when parked during its final step', async () => {
@@ -321,17 +467,26 @@ describe('builtin executor', () => {
 
 	it('fails with step_limit when the only move of the run was rejected', async () => {
 		const { db, queue, run } = setup({ max_steps: 2 });
-		const provider = fakeProvider({ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] }, { chunks: [call('call-2', 'add_comment', { text: 'two' })] });
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
+			{ chunks: [call('call-2', 'add_comment', { text: 'two' })] }
+		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
 
-		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringMatching(/^\[step_limit\]/) });
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[step_limit\]/)
+		});
 	});
 
 	it('generates the handoff from the events, marked as generated, when the model ends without a closing text', async () => {
 		const { db, queue, run, events, ticketId, columns } = setup();
-		const [headerRow, oneLinePerTicket] = board.addTasks(db, user, ticketId, ['Export the header row', 'Export one line per ticket']).ids;
+		const [headerRow, oneLinePerTicket] = board.addTasks(db, user, ticketId, [
+			'Export the header row',
+			'Export one line per ticket'
+		]).ids;
 		board.completeTask(db, user, headerRow);
 		const provider = fakeProvider(
 			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
@@ -359,10 +514,21 @@ describe('builtin executor', () => {
 	it("collects the human's answer only once the prompt showing it has gone to the model", async () => {
 		const { db, queue, run, ticketId, profileId } = setup();
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'request_human', { question: 'Which columns go into the export?', options: [{ label: 'All' }, { label: 'Only id and title' }] })] },
+			{
+				chunks: [
+					call('call-1', 'request_human', {
+						question: 'Which columns go into the export?',
+						options: [{ label: 'All' }, { label: 'Only id and title' }]
+					})
+				]
+			},
 			{ chunks: [{ text: 'Exporting id and title.' }] }
 		);
-		const collectedAt = () => (db.prepare('SELECT collected_at FROM questions').get() as { collected_at: string | null } | undefined)?.collected_at;
+		const collectedAt = () =>
+			(
+				db.prepare('SELECT collected_at FROM questions').get() as
+					{ collected_at: string | null } | undefined
+			)?.collected_at;
 		const collectedWhenSent: unknown[] = [];
 		const fetch: typeof globalThis.fetch = (input, init) => {
 			collectedWhenSent.push(collectedAt());
@@ -376,14 +542,20 @@ describe('builtin executor', () => {
 		const resumed = runs.createRun(db, user, { ticketId, profileId, resumedFromRunId: asked }).id;
 		await ended(() => run(resumed).state);
 
-		expect(provider.requests[1].body.messages).toMatchObject([{ role: 'system' }, { role: 'user', content: expect.stringContaining('Answer: 2. Only id and title') }]);
+		expect(provider.requests[1].body.messages).toMatchObject([
+			{ role: 'system' },
+			{ role: 'user', content: expect.stringContaining('Answer: 2. Only id and title') }
+		]);
 		expect(collectedWhenSent).toEqual([undefined, null]);
 		expect(collectedAt()).not.toBeNull();
 	});
 
 	it('keeps working when asking the human fails', async () => {
 		const { db, queue, run } = setup();
-		const provider = fakeProvider({ chunks: [call('call-1', 'request_human', { question: '  ' })] }, { chunks: [{ text: 'Done.' }] });
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'request_human', { question: '  ' })] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
@@ -394,24 +566,39 @@ describe('builtin executor', () => {
 
 	it('records a call of an unknown tool as a failed tool result and goes on', async () => {
 		const { db, queue, run, events } = setup();
-		const provider = fakeProvider({ chunks: [call('call-1', 'no_such_tool', { x: 1 })] }, { chunks: [{ text: 'Done.' }] });
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'no_such_tool', { x: 1 })] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
 
 		expect(run(runId).state).toBe('succeeded');
-		expect(events(runId).find((e) => e.key === 'call-1:result')!.payload).toMatchObject({ tool: 'no_such_tool', isError: true, result: expect.stringContaining('no_such_tool') });
+		expect(events(runId).find((e) => e.key === 'call-1:result')!.payload).toMatchObject({
+			tool: 'no_such_tool',
+			isError: true,
+			result: expect.stringContaining('no_such_tool')
+		});
 	});
 
 	it('keeps the last 20,000 characters of the reasoning and the first 8,000 of a tool result', async () => {
 		const { db, queue, run, events, ticketId } = setup();
 		board.updateTicket(db, user, ticketId, { description: 'd'.repeat(9000) });
-		const provider = fakeProvider({ chunks: [{ reasoning: 'a'.repeat(5000) + 'b'.repeat(20_000) }, call('call-1', 'get_ticket')] }, { chunks: [{ text: 'Done.' }] });
+		const provider = fakeProvider(
+			{
+				chunks: [{ reasoning: 'a'.repeat(5000) + 'b'.repeat(20_000) }, call('call-1', 'get_ticket')]
+			},
+			{ chunks: [{ text: 'Done.' }] }
+		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
 
-		expect(events(runId).find((e) => e.type === 'reasoning')!.payload).toMatchObject({ text: 'b'.repeat(20_000), charsTotal: 25_000 });
+		expect(events(runId).find((e) => e.type === 'reasoning')!.payload).toMatchObject({
+			text: 'b'.repeat(20_000),
+			charsTotal: 25_000
+		});
 		const result = events(runId).find((e) => e.key === 'call-1:result')!.payload.result as string;
 		expect(result).toHaveLength(8000);
 		expect(result.startsWith('{')).toBe(true);
@@ -420,13 +607,22 @@ describe('builtin executor', () => {
 	it('keeps a secret out of every event, phase, error and comment, even where the reasoning is cut', async () => {
 		const secret = 'sk-test-provider-key-0815';
 		vi.stubEnv('STUDIO_SECRET_KEY', randomBytes(32).toString('base64')); // so that the test writes no key file
-		const { db, queue, run, events, busEvents, comments, ticketId } = setup({ api_key_ref: 'secret:provider-key' });
+		const { db, queue, run, events, busEvents, comments, ticketId } = setup({
+			api_key_ref: 'secret:provider-key'
+		});
 		setSecret(db, 'provider-key', secret);
 		board.updateTicket(db, user, ticketId, { description: `The key is ${secret}.` });
 		// the reasoning is cut to its last 20,000 characters right inside the secret
 		const longReasoning = `I saw ${secret}\n${'x'.repeat(19_990)}`;
 		const provider = fakeProvider(
-			{ chunks: [{ reasoning: `The key is ${secret}\n` }, { reasoning: longReasoning }, { text: `Using ${secret}.` }, call('call-1', 'get_ticket')] },
+			{
+				chunks: [
+					{ reasoning: `The key is ${secret}\n` },
+					{ reasoning: longReasoning },
+					{ text: `Using ${secret}.` },
+					call('call-1', 'get_ticket')
+				]
+			},
 			{ status: 401, error: `Incorrect API key provided: ${secret}` }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -434,7 +630,10 @@ describe('builtin executor', () => {
 		await ended(() => run(runId).state);
 
 		expect(provider.requests[0].headers.get('authorization')).toBe(`Bearer ${secret}`);
-		expect(run(runId)).toMatchObject({ state: 'failed', error: expect.stringContaining('[provider_error]') });
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringContaining('[provider_error]')
+		});
 		const everything = JSON.stringify([events(runId), busEvents, run(runId), comments()]);
 		expect(everything).toContain('[secret:provider-key]');
 		expect(everything).not.toContain(secret);
@@ -447,12 +646,28 @@ describe('request settings', () => {
 		const qwen = { model: 'qwen3.6-35b', max_tokens: null };
 		expect(requestSettings({ ...qwen, params: { role: 'refine', top_p: 0.5 } })).toEqual({
 			maxOutputTokens: 8000,
-			providerOptions: { studio: { temperature: 0.7, top_p: 0.5, top_k: 20, min_p: 0, presence_penalty: 1.5, chat_template_kwargs: { enable_thinking: false } } }
+			providerOptions: {
+				studio: {
+					temperature: 0.7,
+					top_p: 0.5,
+					top_k: 20,
+					min_p: 0,
+					presence_penalty: 1.5,
+					chat_template_kwargs: { enable_thinking: false }
+				}
+			}
 		});
-		expect(requestSettings({ ...qwen, max_tokens: 4000, params: { role: 'refine', thinking: true } })).toMatchObject({
+		expect(
+			requestSettings({ ...qwen, max_tokens: 4000, params: { role: 'refine', thinking: true } })
+		).toMatchObject({
 			maxOutputTokens: 4000,
-			providerOptions: { studio: { temperature: 0.6, chat_template_kwargs: { enable_thinking: true } } }
+			providerOptions: {
+				studio: { temperature: 0.6, chat_template_kwargs: { enable_thinking: true } }
+			}
 		});
-		expect(requestSettings({ model: 'unknown-model', max_tokens: null, params: {} })).toEqual({ maxOutputTokens: undefined, providerOptions: { studio: {} } });
+		expect(requestSettings({ model: 'unknown-model', max_tokens: null, params: {} })).toEqual({
+			maxOutputTokens: undefined,
+			providerOptions: { studio: {} }
+		});
 	});
 });

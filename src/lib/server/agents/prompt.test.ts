@@ -17,7 +17,12 @@ const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 
 type ProfileFields = PromptRun['profile'];
-const cloud: ProfileFields = { model: 'any-cloud-model', pool: 'cloud', params: {}, extra_prompt: '' };
+const cloud: ProfileFields = {
+	model: 'any-cloud-model',
+	pool: 'cloud',
+	params: {},
+	extra_prompt: ''
+};
 const local: ProfileFields = { ...cloud, pool: 'local' };
 
 /** A small board: STU-1 in work, waiting for STU-2 and blocking STU-3, with tasks, comments and a linked note. */
@@ -25,28 +30,54 @@ function world() {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const col = Object.fromEntries(db.prepare('SELECT name, id FROM columns WHERE project_id = ?').all(projectId).map((r) => [r.name, r.id])) as Record<string, number>;
-	const ticket = (title: string, column: string, description = '') => board.createTicket(db, user, projectId, { title, description, column_id: col[column] }).id;
-	const setRole = (column: string, rolePrompt: string) => db.prepare('UPDATE columns SET role_prompt = ? WHERE id = ?').run(rolePrompt, col[column]);
-	const setDescription = (ticketId: number, description: string) => board.updateTicket(db, user, ticketId, { description });
+	const col = Object.fromEntries(
+		db
+			.prepare('SELECT name, id FROM columns WHERE project_id = ?')
+			.all(projectId)
+			.map((r) => [r.name, r.id])
+	) as Record<string, number>;
+	const ticket = (title: string, column: string, description = '') =>
+		board.createTicket(db, user, projectId, { title, description, column_id: col[column] }).id;
+	const setRole = (column: string, rolePrompt: string) =>
+		db.prepare('UPDATE columns SET role_prompt = ? WHERE id = ?').run(rolePrompt, col[column]);
+	const setDescription = (ticketId: number, description: string) =>
+		board.updateTicket(db, user, ticketId, { description });
 	/** Comments get a fixed time, so two worlds built one after the other read the same. */
 	const comment = (ticketId: number, body: string, day: number) => {
 		const { id } = board.addComment(db, user, ticketId, body);
-		db.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run(`2026-01-${String(day).padStart(2, '0')} 10:00:00`, id);
+		db.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run(
+			`2026-01-${String(day).padStart(2, '0')} 10:00:00`,
+			id
+		);
 	};
 	const note = (ticketId: number, slug: string, body: string) => {
-		const { id } = notes.createNote(db, user, { slug, title: `About ${slug}`, body, projectIds: [projectId] });
+		const { id } = notes.createNote(db, user, {
+			slug,
+			title: `About ${slug}`,
+			body,
+			projectIds: [projectId]
+		});
 		notes.linkTicket(db, user, id, ticketId, 'references');
 	};
 
-	const parser = ticket('Write the config parser', 'In Arbeit', 'Parse the config file into a map.');
+	const parser = ticket(
+		'Write the config parser',
+		'In Arbeit',
+		'Parse the config file into a map.'
+	);
 	const format = ticket('Define the config format', 'Review');
 	const docs = ticket('Document the config file', 'Backlog');
 	board.linkRelation(db, user, format, parser, 'blocks');
 	board.linkRelation(db, user, parser, docs, 'blocks');
-	const [readsLines] = board.addTasks(db, user, parser, ['Parser reads key=value lines', 'Parser rejects duplicate keys']).ids;
+	const [readsLines] = board.addTasks(db, user, parser, [
+		'Parser reads key=value lines',
+		'Parser rejects duplicate keys'
+	]).ids;
 	board.completeTask(db, user, readsLines);
-	setRole('In Arbeit', 'Implement the ticket test-first. Move it to Review when every task is done.');
+	setRole(
+		'In Arbeit',
+		'Implement the ticket test-first. Move it to Review when every task is done.'
+	);
 	comment(parser, 'Keep the parser free of dependencies.', 1);
 	comment(parser, 'Duplicate keys are an error, not a warning.', 2);
 	note(parser, 'config-format', 'Lines are key=value; # starts a comment.');
@@ -55,7 +86,8 @@ function world() {
 
 type World = ReturnType<typeof world>;
 
-const assemble = (w: World, profile = cloud, opts = {}) => assemblePrompt(w.db, { ticketId: w.parser, profile }, opts);
+const assemble = (w: World, profile = cloud, opts = {}) =>
+	assemblePrompt(w.db, { ticketId: w.parser, profile }, opts);
 
 /** Brings the comments of STU-1 to ten, eight of them long enough to matter for the budget. */
 function tenComments(w: World) {
@@ -73,18 +105,32 @@ function fullyCutPrompt() {
 
 /** Calls the studio MCP endpoint as a run of the ticket and returns the JSON-RPC result, as an agent receives it. */
 async function asRunOf(db: DatabaseSync, ticketId: number, method: string, params?: object) {
-	const profileId = runs.createProfile(db, user, { name: `run-of-${ticketId}-${method}`, executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	const profileId = runs.createProfile(db, user, {
+		name: `run-of-${ticketId}-${method}`,
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'm'
+	}).id;
 	const runId = runs.createRun(db, user, { ticketId, profileId }).id;
 	const { token } = runs.startRun(db, system, runId);
 	const response = await mcpEndpoint(db)(
 		new Request('http://127.0.0.1:3000/mcp', {
 			method: 'POST',
-			headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
+			headers: {
+				'content-type': 'application/json',
+				accept: 'application/json, text/event-stream',
+				authorization: `Bearer ${token}`
+			},
 			body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
 		})
 	);
 	const text = await response.text();
-	const json = text.startsWith('{') ? text : text.split('\n').find((line) => line.startsWith('data: '))!.slice('data: '.length);
+	const json = text.startsWith('{')
+		? text
+		: text
+				.split('\n')
+				.find((line) => line.startsWith('data: '))!
+				.slice('data: '.length);
 	return JSON.parse(json).result;
 }
 
@@ -105,11 +151,18 @@ describe('assemblePrompt is deterministic', () => {
 		expect(second).toEqual(first);
 		expect(`${first.system}\n\n===== user =====\n\n${first.user}`).toMatchSnapshot();
 
-		const order = (text: string, markers: string[]) => markers.map((marker) => text.indexOf(marker));
-		const systemOrder = order(first.system, [BASE_PROMPT.full, '## Role', '## Override — takes precedence']);
+		const order = (text: string, markers: string[]) =>
+			markers.map((marker) => text.indexOf(marker));
+		const systemOrder = order(first.system, [
+			BASE_PROMPT.full,
+			'## Role',
+			'## Override — takes precedence'
+		]);
 		expect(systemOrder.every((at) => at >= 0)).toBe(true);
 		expect(systemOrder).toEqual([...systemOrder].sort((a, b) => a - b));
-		expect(first.user.indexOf('## Internal context — never copy into repository artifacts')).toBe(0);
+		expect(first.user.indexOf('## Internal context — never copy into repository artifacts')).toBe(
+			0
+		);
 		expect(first.user.indexOf('## Assignment')).toBeGreaterThan(0);
 	});
 });
@@ -118,9 +171,19 @@ describe('override', () => {
 	it('comes last under its own heading, so it wins over a contradicting role', () => {
 		const w = world();
 		w.setRole('In Arbeit', 'Move the ticket to Review when you are done.');
-		const { system } = assemble(w, { ...cloud, extra_prompt: 'Do not move the ticket.' }, { override: 'Stop after the first task.' });
-		expect(system.endsWith('## Override — takes precedence\nDo not move the ticket.\n\nStop after the first task.')).toBe(true);
-		expect(system.indexOf('Do not move the ticket.')).toBeGreaterThan(system.indexOf('Move the ticket to Review when you are done.'));
+		const { system } = assemble(
+			w,
+			{ ...cloud, extra_prompt: 'Do not move the ticket.' },
+			{ override: 'Stop after the first task.' }
+		);
+		expect(
+			system.endsWith(
+				'## Override — takes precedence\nDo not move the ticket.\n\nStop after the first task.'
+			)
+		).toBe(true);
+		expect(system.indexOf('Do not move the ticket.')).toBeGreaterThan(
+			system.indexOf('Move the ticket to Review when you are done.')
+		);
 	});
 
 	it('leaves the override out when neither profile nor run sets one', () => {
@@ -129,15 +192,20 @@ describe('override', () => {
 });
 
 describe('base prompt', () => {
-	it.each(['full', 'compact'] as const)('the %s variant states the relation reading, the defaults, the thinking rule and the handoff', (variant) => {
-		const base = BASE_PROMPT[variant];
-		expect(base).toContain('A blocks B = A must be finished before B starts');
-		expect(base).toContain('one process, no ORM, add dependencies sparingly, no required environment variables');
-		expect(base).toContain('think briefly; decide, change, verify — one small step at a time');
-		expect(base).toContain('`request_human`');
-		expect(base).toContain(HANDOFF_TEMPLATE);
-		expect(base).toContain('then `move_ticket` as your last action');
-	});
+	it.each(['full', 'compact'] as const)(
+		'the %s variant states the relation reading, the defaults, the thinking rule and the handoff',
+		(variant) => {
+			const base = BASE_PROMPT[variant];
+			expect(base).toContain('A blocks B = A must be finished before B starts');
+			expect(base).toContain(
+				'one process, no ORM, add dependencies sparingly, no required environment variables'
+			);
+			expect(base).toContain('think briefly; decide, change, verify — one small step at a time');
+			expect(base).toContain('`request_human`');
+			expect(base).toContain(HANDOFF_TEMPLATE);
+			expect(base).toContain('then `move_ticket` as your last action');
+		}
+	);
 
 	it('the handoff template names its sections in order and stays within 25 lines', () => {
 		const sections = ['Summary', 'Changes/Commits', 'Verification', 'Decisions', 'Open', 'Next'];
@@ -156,7 +224,9 @@ describe('base prompt', () => {
 
 	it('adds the commit-subject rule for a public repository only', () => {
 		const w = world();
-		expect(assemble(w, cloud, { publicRepository: true }).user).toContain('in repository artifacts only (STU-1) in the commit subject');
+		expect(assemble(w, cloud, { publicRepository: true }).user).toContain(
+			'in repository artifacts only (STU-1) in the commit subject'
+		);
 		expect(assemble(w).user).not.toContain('commit subject');
 	});
 });
@@ -165,7 +235,10 @@ describe('internal context', () => {
 	it('lists tasks with ids, relations with their reading, comments, allowed moves and linked notes', () => {
 		const w = world();
 		const { user: text } = assemble(w);
-		const [done, open] = w.db.prepare('SELECT id FROM tasks WHERE ticket_id = ? ORDER BY id').all(w.parser).map((r) => r.id as number);
+		const [done, open] = w.db
+			.prepare('SELECT id FROM tasks WHERE ticket_id = ? ORDER BY id')
+			.all(w.parser)
+			.map((r) => r.id as number);
 		expect(text).toContain(`- [x] ${done}: Parser reads key=value lines`);
 		expect(text).toContain(`- [ ] ${open}: Parser rejects duplicate keys`);
 		expect(text).toContain('- waits for STU-2 "Define the config format" (Review), still blocking');
@@ -177,7 +250,9 @@ describe('internal context', () => {
 
 	it('shows a note linked to the ticket twice once, with both relations', () => {
 		const w = world();
-		const { id } = w.db.prepare("SELECT id FROM notes WHERE slug = 'config-format'").get() as { id: number };
+		const { id } = w.db.prepare("SELECT id FROM notes WHERE slug = 'config-format'").get() as {
+			id: number;
+		};
 		notes.linkTicket(w.db, user, id, w.parser, 'documents');
 		const { user: context } = assemble(w);
 		expect(context).toContain('#### config-format: About config-format (documents, references)');
@@ -223,7 +298,9 @@ describe('budget', () => {
 		tenComments(w);
 		const prompt = assemble(w, local);
 		expect(prompt.user).not.toContain('Comment 7 ');
-		expect(['Comment 8 ', 'Comment 9 ', 'Comment 10 '].every((c) => prompt.user.includes(c))).toBe(true);
+		expect(['Comment 8 ', 'Comment 9 ', 'Comment 10 '].every((c) => prompt.user.includes(c))).toBe(
+			true
+		);
 		expect(prompt.blocks.find((b) => b.name === 'comments')?.truncated).toBe(true);
 		expect(prompt.blocks.find((b) => b.name === 'ticket')?.truncated).toBe(false);
 	});
@@ -244,12 +321,21 @@ describe('budget', () => {
 
 	it('never cuts tasks or allowed moves', () => {
 		const w = world();
-		board.addTasks(w.db, user, w.parser, Array.from({ length: 40 }, (_, i) => `Criterion ${i} `.padEnd(190, 'c')));
+		board.addTasks(
+			w.db,
+			user,
+			w.parser,
+			Array.from({ length: 40 }, (_, i) => `Criterion ${i} `.padEnd(190, 'c'))
+		);
 		w.setDescription(w.parser, 'd'.repeat(60_000));
 		const prompt = assemble(w, local);
 		expect(prompt.user).toContain('Criterion 39 ');
 		expect(prompt.user).toMatch(/- \d+: Review\b/);
-		expect(prompt.blocks.filter((b) => b.name === 'tasks' || b.name === 'allowed_moves').every((b) => !b.truncated)).toBe(true);
+		expect(
+			prompt.blocks
+				.filter((b) => b.name === 'tasks' || b.name === 'allowed_moves')
+				.every((b) => !b.truncated)
+		).toBe(true);
 	});
 
 	it('refuses with prompt_too_large and a way out when even the cut prompt exceeds the budget', () => {
@@ -283,18 +369,39 @@ describe('variant and size', () => {
 
 	it('lets the profile parameter prompt_variant override the pool default', () => {
 		const w = world();
-		expect(assemble(w, { ...local, params: { prompt_variant: 'full' } }).system.startsWith(BASE_PROMPT.full)).toBe(true);
-		expect(assemble(w, { ...cloud, params: { prompt_variant: 'compact' } }).system.startsWith(BASE_PROMPT.compact)).toBe(true);
+		expect(
+			assemble(w, { ...local, params: { prompt_variant: 'full' } }).system.startsWith(
+				BASE_PROMPT.full
+			)
+		).toBe(true);
+		expect(
+			assemble(w, { ...cloud, params: { prompt_variant: 'compact' } }).system.startsWith(
+				BASE_PROMPT.compact
+			)
+		).toBe(true);
 	});
 });
 
 describe('blocks and estimate', () => {
 	it('name every block in prompt order with its characters and whether it was cut', () => {
 		const prompt = assemble(world(), { ...cloud, extra_prompt: 'Answer in short sentences.' });
-		expect(prompt.blocks.map((b) => b.name)).toEqual(['base', 'role', 'override', 'ticket', 'tasks', 'relations', 'comments', 'allowed_moves', 'notes', 'assignment']);
+		expect(prompt.blocks.map((b) => b.name)).toEqual([
+			'base',
+			'role',
+			'override',
+			'ticket',
+			'tasks',
+			'relations',
+			'comments',
+			'allowed_moves',
+			'notes',
+			'assignment'
+		]);
 		expect(prompt.blocks.every((b) => b.chars > 0 && b.truncated === false)).toBe(true);
 		const separators = 2 * (prompt.blocks.length - 2);
-		expect(prompt.blocks.reduce((sum, b) => sum + b.chars, 0) + separators).toBe(prompt.system.length + prompt.user.length);
+		expect(prompt.blocks.reduce((sum, b) => sum + b.chars, 0) + separators).toBe(
+			prompt.system.length + prompt.user.length
+		);
 		expect(prompt.estimate).toBe(Math.ceil((prompt.system.length + prompt.user.length) / 4));
 	});
 });
@@ -306,16 +413,26 @@ describe('tool names', () => {
 
 	async function registeredToolVocabulary() {
 		const w = world();
-		const { tools } = (await asRunOf(w.db, w.parser, 'tools/list')) as { tools: { name: string; inputSchema: { properties?: object } }[] };
+		const { tools } = (await asRunOf(w.db, w.parser, 'tools/list')) as {
+			tools: { name: string; inputSchema: { properties?: object } }[];
+		};
 		return new Set(tools.flatMap((t) => [t.name, ...Object.keys(t.inputSchema.properties ?? {})]));
 	}
 
 	it('names only registered studio MCP tools and their arguments, in the base prompt and the internal context, cut or not', async () => {
 		const vocabulary = await registeredToolVocabulary();
 		const cut = fullyCutPrompt();
-		expect(cut.blocks.filter((b) => b.truncated).map((b) => b.name)).toEqual(['ticket', 'comments', 'notes']);
-		const inBase = [BASE_PROMPT.full, BASE_PROMPT.compact].flatMap((text) => text.match(SNAKE_CASE) ?? []);
-		const inContext = [assemble(world(), local).user, cut.user].flatMap((text) => text.match(BACKTICKED_SNAKE_CASE) ?? []);
+		expect(cut.blocks.filter((b) => b.truncated).map((b) => b.name)).toEqual([
+			'ticket',
+			'comments',
+			'notes'
+		]);
+		const inBase = [BASE_PROMPT.full, BASE_PROMPT.compact].flatMap(
+			(text) => text.match(SNAKE_CASE) ?? []
+		);
+		const inContext = [assemble(world(), local).user, cut.user].flatMap(
+			(text) => text.match(BACKTICKED_SNAKE_CASE) ?? []
+		);
 		expect(inContext).toContain('notes_get');
 		const named = new Set([...inBase, ...inContext]);
 		expect([...named].filter((name) => !vocabulary.has(name))).toEqual([]);
@@ -336,7 +453,12 @@ describe('boundaries shared with get_ticket', () => {
 	it('leaves out a note of another project, even one a human linked to the ticket', () => {
 		const w = world();
 		const otherProject = board.createProject(w.db, user, { key: 'OTH', name: 'Other' }).id;
-		const foreign = notes.createNote(w.db, user, { slug: 'foreign-plan', title: 'Foreign plan', body: 'confidential body', projectIds: [otherProject] }).id;
+		const foreign = notes.createNote(w.db, user, {
+			slug: 'foreign-plan',
+			title: 'Foreign plan',
+			body: 'confidential body',
+			projectIds: [otherProject]
+		}).id;
 		notes.linkTicket(w.db, user, foreign, w.parser, 'references');
 		const { user: context } = assemble(w);
 		expect(context).not.toContain('foreign-plan');
@@ -345,7 +467,12 @@ describe('boundaries shared with get_ticket', () => {
 
 	it('leaves out an archived note', () => {
 		const w = world();
-		const old = notes.createNote(w.db, user, { slug: 'old-plan', title: 'Old plan', body: 'outdated body', projectIds: [w.projectId] }).id;
+		const old = notes.createNote(w.db, user, {
+			slug: 'old-plan',
+			title: 'Old plan',
+			body: 'outdated body',
+			projectIds: [w.projectId]
+		}).id;
 		notes.linkTicket(w.db, user, old, w.parser, 'references');
 		notes.archiveNote(w.db, user, old);
 		expect(assemble(w).user).not.toContain('old-plan');
@@ -354,11 +481,21 @@ describe('boundaries shared with get_ticket', () => {
 	it('lists the allowed moves as get_ticket shows them to the run, with human-only moves blocked', async () => {
 		const w = world();
 		const inAcceptance = w.ticket('Review the config format', 'Abnahme'); // next to Done, the one human-only move from here
-		const { content } = await asRunOf(w.db, inAcceptance, 'tools/call', { name: 'get_ticket', arguments: {} });
-		const moves = JSON.parse(content[0].text).allowed_moves as { column_id: number; name: string; blocked?: string }[];
+		const { content } = await asRunOf(w.db, inAcceptance, 'tools/call', {
+			name: 'get_ticket',
+			arguments: {}
+		});
+		const moves = JSON.parse(content[0].text).allowed_moves as {
+			column_id: number;
+			name: string;
+			blocked?: string;
+		}[];
 		const { user: context } = assemblePrompt(w.db, { ticketId: inAcceptance, profile: local });
 		expect(moves.some((m) => m.blocked)).toBe(true);
-		for (const m of moves) expect(context).toContain(`- ${m.column_id}: ${m.name}${m.blocked ? ` — blocked: ${m.blocked}` : ''}`);
+		for (const m of moves)
+			expect(context).toContain(
+				`- ${m.column_id}: ${m.name}${m.blocked ? ` — blocked: ${m.blocked}` : ''}`
+			);
 	});
 
 	it('writes nothing and announces nothing', () => {
@@ -376,15 +513,26 @@ describe('boundaries shared with get_ticket', () => {
 
 /** Runs of STU-1 for the previous state; each one continues the run before it, as the runner queues a resumed run. */
 function runsOf(w: World) {
-	const profileId = runs.createProfile(w.db, user, { name: 'resuming', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	const profileId = runs.createProfile(w.db, user, {
+		name: 'resuming',
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'm'
+	}).id;
 	const queued = (resumedFrom?: number) =>
-		runs.createRun(w.db, user, { ticketId: w.parser, profileId, resumedFromRunId: resumedFrom, resumeReason: resumedFrom === undefined ? undefined : 'recovery' }).id;
+		runs.createRun(w.db, user, {
+			ticketId: w.parser,
+			profileId,
+			resumedFromRunId: resumedFrom,
+			resumeReason: resumedFrom === undefined ? undefined : 'recovery'
+		}).id;
 	const started = (resumedFrom?: number) => {
 		const id = queued(resumedFrom);
 		runs.startRun(w.db, system, id);
 		return id;
 	};
-	const event = (runId: number, e: Parameters<typeof runs.appendEvent>[3]) => runs.appendEvent(w.db, { kind: 'agent', runId }, runId, e);
+	const event = (runId: number, e: Parameters<typeof runs.appendEvent>[3]) =>
+		runs.appendEvent(w.db, { kind: 'agent', runId }, runId, e);
 	const pause = (runId: number, handoff: { text: string; generated?: true }) => {
 		event(runId, { type: 'message', key: 'handoff', payload: handoff });
 		runs.finishRun(w.db, system, runId, { state: 'paused' });
@@ -392,21 +540,38 @@ function runsOf(w: World) {
 	return { queued, started, event, pause };
 }
 
-const assembleRun = (w: World, runId: number) => assemblePrompt(w.db, { id: runId, ticketId: w.parser, profile: cloud });
-const previousState = (prompt: AssembledPrompt) => prompt.user.slice(prompt.user.indexOf('## Previous state'), prompt.user.indexOf('\n\n## Assignment'));
+const assembleRun = (w: World, runId: number) =>
+	assemblePrompt(w.db, { id: runId, ticketId: w.parser, profile: cloud });
+const previousState = (prompt: AssembledPrompt) =>
+	prompt.user.slice(
+		prompt.user.indexOf('## Previous state'),
+		prompt.user.indexOf('\n\n## Assignment')
+	);
 
 /** A run that asked the human, got stuck twice and was paused; the human answered its question. */
 function answeredRun(w: World, r: ReturnType<typeof runsOf>) {
 	const first = r.started();
 	const intervention = (attempt: number, reason: string, hint: string) =>
-		r.event(first, { type: 'intervention', payload: { kind: 'stagnation', attempt, max: 2, reason, hint } });
+		r.event(first, {
+			type: 'intervention',
+			payload: { kind: 'stagnation', attempt, max: 2, reason, hint }
+		});
 	intervention(1, 'The same search ran 6 times without progress.', 'Search once, then decide.');
-	intervention(2, 'The exact edit of src/parser.ts failed 3 times.', 'Do not inspect bytes; replace by line number or rewrite the block.');
+	intervention(
+		2,
+		'The exact edit of src/parser.ts failed 3 times.',
+		'Do not inspect bytes; replace by line number or rewrite the block.'
+	);
 	const question = requestHuman(w.db, { kind: 'agent', runId: first }, w.parser, {
 		question: 'Reject or merge duplicate keys?',
-		options: [{ label: 'Reject them', effect: 'a parse error names the line' }, { label: 'Merge them' }]
+		options: [
+			{ label: 'Reject them', effect: 'a parse error names the line' },
+			{ label: 'Merge them' }
+		]
 	}).id;
-	r.pause(first, { text: 'Summary: the parser reads key=value lines.\nOpen: duplicate keys.\nNext: reject duplicate keys.' });
+	r.pause(first, {
+		text: 'Summary: the parser reads key=value lines.\nOpen: duplicate keys.\nNext: reject duplicate keys.'
+	});
 	answerQuestion(w.db, user, question, { option: 1 });
 	return { first, question };
 }
@@ -448,7 +613,11 @@ describe('previous state', () => {
 		const w = world();
 		const r = runsOf(w);
 		const { first } = answeredRun(w, r);
-		w.db.prepare("UPDATE run_events SET payload = json_object('text', ?) WHERE run_id = ? AND idempotency_key = 'handoff'").run('h'.repeat(20_000), first);
+		w.db
+			.prepare(
+				"UPDATE run_events SET payload = json_object('text', ?) WHERE run_id = ? AND idempotency_key = 'handoff'"
+			)
+			.run('h'.repeat(20_000), first);
 		const prompt = assembleRun(w, r.queued(first));
 		const block = prompt.blocks.find((b) => b.name === 'previous_state')!;
 		expect(block.chars / 4).toBeLessThanOrEqual(1500);

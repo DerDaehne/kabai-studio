@@ -19,10 +19,26 @@ type Emit = (event: StudioEvent) => void;
 export type RelationType = 'parent_of' | 'blocks' | 'relates_to' | 'duplicate_of';
 export type Blocker = { code: string; message: string; hint: string };
 /** Ein erreichbares Ziel; `blockers` leer = der Wechsel ist für diesen Actor jetzt erlaubt. */
-export type Move = { columnId: number; name: string; kind: Kind; requiresHuman: boolean; blockers: Blocker[] };
+export type Move = {
+	columnId: number;
+	name: string;
+	kind: Kind;
+	requiresHuman: boolean;
+	blockers: Blocker[];
+};
 
 /** Direkt setzbare Ticketfelder — die Spalte wechselt nur über moveTicket, die Freigabe nur über approveReview. */
-const FIELDS = ['title', 'description', 'type', 'docs_required', 'assignee', 'position', 'effort_estimate', 'effort_actual', 'effort_unit'] as const;
+const FIELDS = [
+	'title',
+	'description',
+	'type',
+	'docs_required',
+	'assignee',
+	'position',
+	'effort_estimate',
+	'effort_actual',
+	'effort_unit'
+] as const;
 export type TicketFields = {
 	title: string;
 	description: string;
@@ -38,16 +54,22 @@ export type TicketFields = {
 // Generic role prompts for the default "Software" template: short, English, no product, project, tool or path names
 // — an agent's role comes from the prompt's role block (assemblePrompt), built from this text, never from the
 // column name.
-const BACKLOG_ROLE = 'Capture new work with enough detail that someone else could size it. Move it along once it is ready for scope and acceptance criteria to be worked out.';
+const BACKLOG_ROLE =
+	'Capture new work with enough detail that someone else could size it. Move it along once it is ready for scope and acceptance criteria to be worked out.';
 const REFINE_ROLE =
 	'Make the scope, the effort and the acceptance criteria explicit before moving a ticket on. Leave a title-only ticket for someone else to flesh out instead of advancing it as is.';
-const READY_ROLE = 'Pick up a ticket only once every blocker is finished. If the description no longer matches reality, send it back for refinement with a comment explaining why.';
+const READY_ROLE =
+	'Pick up a ticket only once every blocker is finished. If the description no longer matches reality, send it back for refinement with a comment explaining why.';
 const IN_PROGRESS_ROLE =
 	'For a bug, reproduce it with a failing test before you fix it. A probe someone used to demonstrate a finding becomes a permanent regression test. Move the ticket on once every acceptance criterion is met.';
-const REVIEW_ROLE = 'Check the work against its acceptance criteria, not your own taste. Leave findings as a comment and send it back, or approve it and move it on.';
-const ACCEPTANCE_ROLE = 'Finished work waits here for a human to accept it in a batch. Do not act on a ticket sitting in this column.';
-const HUMAN_INTERVENTION_ROLE = 'A question is open and blocks this ticket. Read it in the comments and wait for an answer instead of resuming work.';
-const HUMAN_ANSWERED_ROLE = 'An open question now has an answer. Read it in the comments, then move the ticket back into work.';
+const REVIEW_ROLE =
+	'Check the work against its acceptance criteria, not your own taste. Leave findings as a comment and send it back, or approve it and move it on.';
+const ACCEPTANCE_ROLE =
+	'Finished work waits here for a human to accept it in a batch. Do not act on a ticket sitting in this column.';
+const HUMAN_INTERVENTION_ROLE =
+	'A question is open and blocks this ticket. Read it in the comments and wait for an answer instead of resuming work.';
+const HUMAN_ANSWERED_ROLE =
+	'An open question now has an answer. Read it in the comments, then move the ticket back into work.';
 
 const DEFAULT_COLUMNS: [string, Kind, string][] = [
 	['Backlog', 'normal', BACKLOG_ROLE],
@@ -72,33 +94,65 @@ export function ticket(db: DatabaseSync, id: number): Ticket {
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
 		.get(id) as Ticket | undefined;
-	if (!t) throw new DomainError('not_found', `Ticket ${id} gibt es nicht.`, 'Prüfe die Ticket-ID; workableTickets listet die Tickets eines Projekts.');
+	if (!t)
+		throw new DomainError(
+			'not_found',
+			`Ticket ${id} gibt es nicht.`,
+			'Prüfe die Ticket-ID; workableTickets listet die Tickets eines Projekts.'
+		);
 	return t;
 }
 
 function task(db: DatabaseSync, id: number) {
-	const k = db.prepare('SELECT id, ticket_id, title FROM tasks WHERE id = ?').get(id) as { id: number; ticket_id: number; title: string } | undefined;
-	if (!k) throw new DomainError('not_found', `Task ${id} gibt es nicht.`, 'Die Task-IDs stehen im Ticket-Detail.');
+	const k = db.prepare('SELECT id, ticket_id, title FROM tasks WHERE id = ?').get(id) as
+		{ id: number; ticket_id: number; title: string } | undefined;
+	if (!k)
+		throw new DomainError(
+			'not_found',
+			`Task ${id} gibt es nicht.`,
+			'Die Task-IDs stehen im Ticket-Detail.'
+		);
 	return { ...k, t: ticket(db, k.ticket_id) };
 }
 
 const columns = (db: DatabaseSync, projectId: number) =>
-	db.prepare('SELECT id, name, kind FROM columns WHERE project_id = ? ORDER BY position, id').all(projectId) as Column[];
+	db
+		.prepare('SELECT id, name, kind FROM columns WHERE project_id = ? ORDER BY position, id')
+		.all(projectId) as Column[];
 
 /**
  * Erreichbare Spalten: gespeicherte Transitionen plus implizit jede Spalte → human_intervention und human_answered → jede Spalte.
  * Aus einer done-Spalte heraus (Reopen) darf nur der Mensch — unabhängig von der Kante.
  */
 function targets(db: DatabaseSync, t: Ticket) {
-	const rows = db.prepare('SELECT to_column_id AS id, requires_human AS rh FROM transitions WHERE project_id = ? AND from_column_id = ?').all(t.project_id, t.column_id);
+	const rows = db
+		.prepare(
+			'SELECT to_column_id AS id, requires_human AS rh FROM transitions WHERE project_id = ? AND from_column_id = ?'
+		)
+		.all(t.project_id, t.column_id);
 	const explicit = new Map(rows.map((r) => [r.id as number, r.rh === 1]));
 	return columns(db, t.project_id)
-		.filter((c) => c.id !== t.column_id && (explicit.has(c.id) || c.kind === 'human_intervention' || t.column_kind === 'human_answered'))
-		.map((column) => ({ column, requiresHuman: t.column_kind === 'done' || (explicit.get(column.id) ?? humanOnly(column.kind)) }));
+		.filter(
+			(c) =>
+				c.id !== t.column_id &&
+				(explicit.has(c.id) ||
+					c.kind === 'human_intervention' ||
+					t.column_kind === 'human_answered')
+		)
+		.map((column) => ({
+			column,
+			requiresHuman: t.column_kind === 'done' || (explicit.get(column.id) ?? humanOnly(column.kind))
+		}));
 }
 
 /** Die eine Regelprüfung für allowedMoves und moveTicket. */
-function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolean, actor: Actor): Blocker[] {
+function blockers(
+	db: DatabaseSync,
+	t: Ticket,
+	to: Column,
+	requiresHuman: boolean,
+	actor: Actor
+): Blocker[] {
 	const out: Blocker[] = [];
 	if (requiresHuman && actor.kind !== 'user' && t.column_kind === 'done')
 		out.push({
@@ -113,7 +167,11 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolea
 			hint: 'Lass das Ticket in der aktuellen Spalte, den Wechsel übernimmt der Mensch. Brauchst du vorher eine Entscheidung: Frage als Kommentar, dann in die human_intervention-Spalte.'
 		});
 	if (to.kind !== 'done') return out;
-	const open = db.prepare('SELECT title FROM tasks WHERE ticket_id = ? AND done_at IS NULL ORDER BY position, id').all(t.id);
+	const open = db
+		.prepare(
+			'SELECT title FROM tasks WHERE ticket_id = ? AND done_at IS NULL ORDER BY position, id'
+		)
+		.all(t.id);
 	if (open.length)
 		out.push({
 			code: 'open_tasks',
@@ -133,7 +191,14 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolea
 			message: `${t.ref} hat nicht abgeschlossene Kind-Tickets: ${kids.map((r) => r.ref).join(', ')}.`,
 			hint: 'Schließe die Kind-Tickets zuerst ab oder löse sie per unlinkRelation vom Epic und begründe das im Kommentar.'
 		});
-	if (t.docs_required && !db.prepare('SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0').get(t.id))
+	if (
+		t.docs_required &&
+		!db
+			.prepare(
+				'SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0'
+			)
+			.get(t.id)
+	)
 		out.push({
 			code: 'docs_required',
 			message: `${t.ref} verlangt vor dem Abschluss eine verknüpfte Note, hat aber keine.`,
@@ -148,7 +213,12 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column, requiresHuman: boolea
  * sonst würde jedes Update eines Epics (auch nur der Titel) still ein docs_required-Feld einschmuggeln, das sich gar nicht
  * geändert hat: kein No-op mehr, ein irreführendes `ticket.updated`-Event mit `fields:['docs_required']`.
  */
-function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(type: string, fields: T, current: 0 | 1, ref?: string): T {
+function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(
+	type: string,
+	fields: T,
+	current: 0 | 1,
+	ref?: string
+): T {
 	if (type !== 'epic') return fields;
 	if (fields.docs_required === 0)
 		throw new DomainError(
@@ -165,25 +235,58 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		.filter(([, v]) => v !== undefined)
 		.map(([k, v]) => {
 			if (!(FIELDS as readonly string[]).includes(k))
-				throw new DomainError('unknown_field', `Das Ticketfeld „${k}“ ist nicht direkt setzbar.`, `Setzbar: ${FIELDS.join(', ')}. Spaltenwechsel über moveTicket.`);
+				throw new DomainError(
+					'unknown_field',
+					`Das Ticketfeld „${k}“ ist nicht direkt setzbar.`,
+					`Setzbar: ${FIELDS.join(', ')}. Spaltenwechsel über moveTicket.`
+				);
 			if (k === 'title' && !String(v).trim())
-				throw new DomainError('empty_title', 'Ein Ticket braucht einen Titel.', 'Gib einen Titel an, der sagt, worum es im Ticket geht.');
+				throw new DomainError(
+					'empty_title',
+					'Ein Ticket braucht einen Titel.',
+					'Gib einen Titel an, der sagt, worum es im Ticket geht.'
+				);
 			return [k, v];
 		});
 }
 
 /** Writes a comment inside an open transaction; `addComment` is the standalone mutation. */
-export function appendComment(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket, body: string, system = false) {
+export function appendComment(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	t: Ticket,
+	body: string,
+	system = false
+) {
 	const row = db
-		.prepare('INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (?, ?, ?, ?, ?) RETURNING id')
-		.get(t.id, system ? 'system' : actor.kind, system ? 'system' : label(actor), body, actor.runId ?? null) as { id: number };
-	emit({ type: 'comment.added', projectId: t.project_id, ticketId: t.id, actor, commentId: row.id });
+		.prepare(
+			'INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (?, ?, ?, ?, ?) RETURNING id'
+		)
+		.get(
+			t.id,
+			system ? 'system' : actor.kind,
+			system ? 'system' : label(actor),
+			body,
+			actor.runId ?? null
+		) as { id: number };
+	emit({
+		type: 'comment.added',
+		projectId: t.project_id,
+		ticketId: t.id,
+		actor,
+		commentId: row.id
+	});
 	return { id: row.id };
 }
 
 function requireReason(reason: string) {
 	if (!reason.trim())
-		throw new DomainError('reason_required', 'Tasks ändern oder löschen geht nur mit Begründung.', 'Gib `reason` an — sie landet als System-Kommentar am Ticket.');
+		throw new DomainError(
+			'reason_required',
+			'Tasks ändern oder löschen geht nur mit Begründung.',
+			'Gib `reason` an — sie landet als System-Kommentar am Ticket.'
+		);
 }
 
 const reaches = (db: DatabaseSync, start: number, goal: number, type: RelationType) =>
@@ -195,13 +298,27 @@ const reaches = (db: DatabaseSync, start: number, goal: number, type: RelationTy
 		.get(start, goal, type);
 
 /** Creates a project with the default "Software" board: Backlog ↔ Refine ↔ Ready ↔ In Arbeit ↔ Review ↔ Abnahme ↔ Done, plus human_intervention → human_answered. */
-export function createProject(db: DatabaseSync, actor: Actor, p: { key: string; name: string; description?: string }): { id: number } {
+export function createProject(
+	db: DatabaseSync,
+	actor: Actor,
+	p: { key: string; name: string; description?: string }
+): { id: number } {
 	return tx(db, (emit) => {
-		const { id } = db.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id').get(p.key, p.name, p.description ?? '') as { id: number };
-		const col = db.prepare('INSERT INTO columns (project_id, name, position, kind, role_prompt, review) VALUES (?, ?, ?, ?, ?, ?) RETURNING id');
-		const ids = DEFAULT_COLUMNS.map(([name, kind, rolePrompt], i) => (col.get(id, name, i, kind, rolePrompt, name === 'Review' ? 1 : 0) as { id: number }).id);
-		const tr = db.prepare('INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)');
-		const edge = (a: number, b: number) => tr.run(id, ids[a], ids[b], humanOnly(DEFAULT_COLUMNS[b][1]) ? 1 : 0);
+		const { id } = db
+			.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id')
+			.get(p.key, p.name, p.description ?? '') as { id: number };
+		const col = db.prepare(
+			'INSERT INTO columns (project_id, name, position, kind, role_prompt, review) VALUES (?, ?, ?, ?, ?, ?) RETURNING id'
+		);
+		const ids = DEFAULT_COLUMNS.map(
+			([name, kind, rolePrompt], i) =>
+				(col.get(id, name, i, kind, rolePrompt, name === 'Review' ? 1 : 0) as { id: number }).id
+		);
+		const tr = db.prepare(
+			'INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)'
+		);
+		const edge = (a: number, b: number) =>
+			tr.run(id, ids[a], ids[b], humanOnly(DEFAULT_COLUMNS[b][1]) ? 1 : 0);
 		const doneIndex = DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'done');
 		for (let i = 0; i < doneIndex; i++) {
 			edge(i, i + 1);
@@ -216,10 +333,22 @@ export function createProject(db: DatabaseSync, actor: Actor, p: { key: string; 
 	});
 }
 
-export function setBlocksSatisfiedAt(db: DatabaseSync, actor: Actor, projectId: number, value: 'done' | 'review_ok') {
+export function setBlocksSatisfiedAt(
+	db: DatabaseSync,
+	actor: Actor,
+	projectId: number,
+	value: 'done' | 'review_ok'
+) {
 	tx(db, (emit) => {
-		if (!db.prepare('UPDATE projects SET blocks_satisfied_at = ? WHERE id = ?').run(value, projectId).changes)
-			throw new DomainError('not_found', `Projekt ${projectId} gibt es nicht.`, 'Prüfe die Projekt-ID.');
+		if (
+			!db.prepare('UPDATE projects SET blocks_satisfied_at = ? WHERE id = ?').run(value, projectId)
+				.changes
+		)
+			throw new DomainError(
+				'not_found',
+				`Projekt ${projectId} gibt es nicht.`,
+				'Prüfe die Projekt-ID.'
+			);
 		emit({ type: 'project.updated', projectId, actor, blocksSatisfiedAt: value });
 	});
 }
@@ -233,10 +362,21 @@ export function createTicket(
 ): { id: number; number: number } {
 	return tx(db, (emit) => {
 		const { column_id, ...rest } = fields;
-		const col = columns(db, projectId).find((c) => (column_id === undefined ? c.kind === 'normal' : c.id === column_id));
-		if (!col) throw new DomainError('not_found', `Projekt ${projectId} hat keine Spalte ${column_id ?? 'der Art normal'}.`, 'Prüfe Projekt- und Spalten-ID.');
+		const col = columns(db, projectId).find((c) =>
+			column_id === undefined ? c.kind === 'normal' : c.id === column_id
+		);
+		if (!col)
+			throw new DomainError(
+				'not_found',
+				`Projekt ${projectId} hat keine Spalte ${column_id ?? 'der Art normal'}.`,
+				'Prüfe Projekt- und Spalten-ID.'
+			);
 		if (col.kind === 'done')
-			throw new DomainError('invalid_column', `Tickets starten nicht in der done-Spalte „${col.name}“.`, 'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.');
+			throw new DomainError(
+				'invalid_column',
+				`Tickets starten nicht in der done-Spalte „${col.name}“.`,
+				'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.'
+			);
 		if (col.kind === 'human_answered' && actor.kind !== 'user')
 			throw new DomainError(
 				'requires_human',
@@ -244,22 +384,41 @@ export function createTicket(
 				'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
 			);
 		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest, 0));
-		const { n } = db.prepare('UPDATE projects SET ticket_seq = ticket_seq + 1 WHERE id = ? RETURNING ticket_seq AS n').get(projectId) as { n: number };
+		const { n } = db
+			.prepare(
+				'UPDATE projects SET ticket_seq = ticket_seq + 1 WHERE id = ? RETURNING ticket_seq AS n'
+			)
+			.get(projectId) as { n: number };
 		const { id } = db
-			.prepare(`INSERT INTO tickets (project_id, number, column_id, moved_by, ${f.map(([k]) => k).join(', ')}) VALUES (?, ?, ?, ?, ${f.map(() => '?').join(', ')}) RETURNING id`)
+			.prepare(
+				`INSERT INTO tickets (project_id, number, column_id, moved_by, ${f.map(([k]) => k).join(', ')}) VALUES (?, ?, ?, ?, ${f.map(() => '?').join(', ')}) RETURNING id`
+			)
 			.get(projectId, n, col.id, JSON.stringify(actor), ...f.map(([, v]) => v)) as { id: number };
 		emit({ type: 'ticket.created', projectId, ticketId: id, actor });
 		return { id, number: n };
 	});
 }
 
-export function updateTicket(db: DatabaseSync, actor: Actor, ticketId: number, patch: Partial<TicketFields>) {
+export function updateTicket(
+	db: DatabaseSync,
+	actor: Actor,
+	ticketId: number,
+	patch: Partial<TicketFields>
+) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
 		const f = fieldsOf(withEpicDocsRequired(patch.type ?? t.type, patch, t.docs_required, t.ref));
 		if (!f.length) return;
-		db.prepare(`UPDATE tickets SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), t.id);
-		emit({ type: 'ticket.updated', projectId: t.project_id, ticketId: t.id, actor, fields: f.map(([k]) => k) });
+		db.prepare(
+			`UPDATE tickets SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+		).run(...f.map(([, v]) => v), t.id);
+		emit({
+			type: 'ticket.updated',
+			projectId: t.project_id,
+			ticketId: t.id,
+			actor,
+			fields: f.map(([k]) => k)
+		});
 	});
 }
 
@@ -273,7 +432,13 @@ export function deleteTicket(db: DatabaseSync, actor: Actor, ticketId: number) {
 
 export function allowedMoves(db: DatabaseSync, ticketId: number, actor: Actor): Move[] {
 	const t = ticket(db, ticketId);
-	return targets(db, t).map(({ column: c, requiresHuman }) => ({ columnId: c.id, name: c.name, kind: c.kind, requiresHuman, blockers: blockers(db, t, c, requiresHuman, actor) }));
+	return targets(db, t).map(({ column: c, requiresHuman }) => ({
+		columnId: c.id,
+		name: c.name,
+		kind: c.kind,
+		requiresHuman,
+		blockers: blockers(db, t, c, requiresHuman, actor)
+	}));
 }
 
 export function moveTicket(db: DatabaseSync, actor: Actor, ticketId: number, columnId: number) {
@@ -285,7 +450,12 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 	if (t.column_id === columnId) return;
 	const cols = columns(db, t.project_id);
 	const to = cols.find((c) => c.id === columnId);
-	if (!to) throw new DomainError('not_found', `Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`, 'allowedMoves listet die erreichbaren Spalten mit ID.');
+	if (!to)
+		throw new DomainError(
+			'not_found',
+			`Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`,
+			'allowedMoves listet die erreichbaren Spalten mit ID.'
+		);
 	const moves = targets(db, t);
 	const move = moves.find((m) => m.column.id === columnId);
 	if (!move)
@@ -295,22 +465,41 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 			'Verschiebe über eine der erlaubten Spalten; allowedMoves zeigt alle Ziele samt Sperrgründen.'
 		);
 	const bs = blockers(db, t, to, move.requiresHuman, actor);
-	if (bs.length) throw new DomainError(bs[0].code, bs.map((b) => b.message).join(' '), bs.map((b) => b.hint).join(' '));
-	db.prepare('UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(columnId, JSON.stringify(actor), t.id);
+	if (bs.length)
+		throw new DomainError(
+			bs[0].code,
+			bs.map((b) => b.message).join(' '),
+			bs.map((b) => b.hint).join(' ')
+		);
+	db.prepare(
+		'UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+	).run(columnId, JSON.stringify(actor), t.id);
 	// The approval is good for the reviewed state; it clears only when the ticket moves back into earlier work, or
 	// returns from a human column into a normal one — the human column case is judged by kind, not by where the
 	// human columns happen to sit, so reordering the board cannot flip the direction.
-	const returnsFromHuman = t.column_kind === 'human_intervention' || t.column_kind === 'human_answered';
+	const returnsFromHuman =
+		t.column_kind === 'human_intervention' || t.column_kind === 'human_answered';
 	const movesBack = cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
-	if (to.kind === 'normal' && (returnsFromHuman || movesBack)) db.prepare('UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?').run(t.id);
-	emit({ type: 'ticket.moved', projectId: t.project_id, ticketId: t.id, actor, from: t.column_id, to: columnId });
+	if (to.kind === 'normal' && (returnsFromHuman || movesBack))
+		db.prepare(
+			'UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?'
+		).run(t.id);
+	emit({
+		type: 'ticket.moved',
+		projectId: t.project_id,
+		ticketId: t.id,
+		actor,
+		from: t.column_id,
+		to: columnId
+	});
 }
 
 /** Review approval. The human may always; an agent only in a review column and not after it moved the ticket last. */
 export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const inReviewColumn = db.prepare('SELECT review FROM columns WHERE id = ?').get(t.column_id)?.review === 1;
+		const inReviewColumn =
+			db.prepare('SELECT review FROM columns WHERE id = ?').get(t.column_id)?.review === 1;
 		if (actor.kind !== 'user' && !inReviewColumn)
 			throw new DomainError(
 				'not_in_review',
@@ -325,7 +514,9 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 				`${t.ref} wurde zuletzt von dir (${label(actor)}) verschoben — eigene Arbeit darfst du nicht freigeben.`,
 				'Die Freigabe erteilt ein anderer Agent (Review-Run) oder der Mensch. Halte dein Ergebnis als Kommentar fest.'
 			);
-		db.prepare('UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP, review_approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(actor), t.id);
+		db.prepare(
+			'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP, review_approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+		).run(JSON.stringify(actor), t.id);
 		emit({ type: 'ticket.review_approved', projectId: t.project_id, ticketId: t.id, actor });
 	});
 }
@@ -348,7 +539,14 @@ export function workableTickets(db: DatabaseSync, projectId: number, columnId?: 
 					WHERE r.to_ticket_id = t.id AND r.type = 'blocks' AND ${PREDECESSOR_OPEN})
 			ORDER BY c.position, t.position, t.number`
 		)
-		.all(projectId, columnId ?? null) as { id: number; ref: string; title: string; type: 'ticket' | 'epic'; column_id: number; assignee: string | null }[];
+		.all(projectId, columnId ?? null) as {
+		id: number;
+		ref: string;
+		title: string;
+		type: 'ticket' | 'epic';
+		column_id: number;
+		assignee: string | null;
+	}[];
 }
 
 export type Predecessor = { id: number; ref: string; title: string; column: string };
@@ -367,16 +565,30 @@ export function blockingPredecessors(db: DatabaseSync, ticketId: number): Predec
 		.all(t.id, t.project_id) as Predecessor[];
 }
 
-export function addTask(db: DatabaseSync, actor: Actor, ticketId: number, title: string): { id: number } {
+export function addTask(
+	db: DatabaseSync,
+	actor: Actor,
+	ticketId: number,
+	title: string
+): { id: number } {
 	return { id: addTasks(db, actor, ticketId, [title]).ids[0] };
 }
 
 /** Adds all tasks or none. */
-export function addTasks(db: DatabaseSync, actor: Actor, ticketId: number, titles: string[]): { ids: number[] } {
+export function addTasks(
+	db: DatabaseSync,
+	actor: Actor,
+	ticketId: number,
+	titles: string[]
+): { ids: number[] } {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
 		if (titles.some((title) => !title.trim()))
-			throw new DomainError('empty_title', `Ein Task für ${t.ref} hat keinen Titel.`, 'Gib jedem Task einen Titel, der das Akzeptanzkriterium nennt.');
+			throw new DomainError(
+				'empty_title',
+				`Ein Task für ${t.ref} hat keinen Titel.`,
+				'Gib jedem Task einen Titel, der das Akzeptanzkriterium nennt.'
+			);
 		const insert = db.prepare('INSERT INTO tasks (ticket_id, title) VALUES (?, ?) RETURNING id');
 		const ids = titles.map((title) => {
 			const { id } = insert.get(t.id, title) as { id: number };
@@ -391,15 +603,22 @@ export function addTasks(db: DatabaseSync, actor: Actor, ticketId: number, title
 export function completeTasks(db: DatabaseSync, actor: Actor, ticketId: number, taskIds: number[]) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const own = db.prepare('SELECT id FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(t.id).map((r) => r.id as number);
+		const own = db
+			.prepare('SELECT id FROM tasks WHERE ticket_id = ? ORDER BY position, id')
+			.all(t.id)
+			.map((r) => r.id as number);
 		const foreign = taskIds.filter((id) => !own.includes(id));
 		if (foreign.length)
 			throw new DomainError(
 				'not_found',
 				`${t.ref} hat keine Tasks mit den IDs ${foreign.join(', ')}.`,
-				own.length ? `Die Tasks von ${t.ref} haben die IDs ${own.join(', ')}.` : `${t.ref} hat noch keine Tasks.`
+				own.length
+					? `Die Tasks von ${t.ref} haben die IDs ${own.join(', ')}.`
+					: `${t.ref} hat noch keine Tasks.`
 			);
-		const complete = db.prepare('UPDATE tasks SET done_at = coalesce(done_at, CURRENT_TIMESTAMP) WHERE id = ?');
+		const complete = db.prepare(
+			'UPDATE tasks SET done_at = coalesce(done_at, CURRENT_TIMESTAMP) WHERE id = ?'
+		);
 		for (const taskId of new Set(taskIds)) {
 			complete.run(taskId);
 			emit({ type: 'task.completed', projectId: t.project_id, ticketId: t.id, actor, taskId });
@@ -410,21 +629,44 @@ export function completeTasks(db: DatabaseSync, actor: Actor, ticketId: number, 
 function setTaskDone(db: DatabaseSync, actor: Actor, taskId: number, done: boolean) {
 	tx(db, (emit) => {
 		const { t } = task(db, taskId);
-		db.prepare(`UPDATE tasks SET done_at = ${done ? 'coalesce(done_at, CURRENT_TIMESTAMP)' : 'NULL'} WHERE id = ?`).run(taskId);
-		emit({ type: done ? 'task.completed' : 'task.reopened', projectId: t.project_id, ticketId: t.id, actor, taskId });
+		db.prepare(
+			`UPDATE tasks SET done_at = ${done ? 'coalesce(done_at, CURRENT_TIMESTAMP)' : 'NULL'} WHERE id = ?`
+		).run(taskId);
+		emit({
+			type: done ? 'task.completed' : 'task.reopened',
+			projectId: t.project_id,
+			ticketId: t.id,
+			actor,
+			taskId
+		});
 	});
 }
-export const completeTask = (db: DatabaseSync, actor: Actor, taskId: number) => setTaskDone(db, actor, taskId, true);
-export const reopenTask = (db: DatabaseSync, actor: Actor, taskId: number) => setTaskDone(db, actor, taskId, false);
+export const completeTask = (db: DatabaseSync, actor: Actor, taskId: number) =>
+	setTaskDone(db, actor, taskId, true);
+export const reopenTask = (db: DatabaseSync, actor: Actor, taskId: number) =>
+	setTaskDone(db, actor, taskId, false);
 
 /** Benennt einen Task um; die Begründung landet als System-Kommentar am Ticket. */
-export function updateTask(db: DatabaseSync, actor: Actor, taskId: number, title: string, reason: string) {
+export function updateTask(
+	db: DatabaseSync,
+	actor: Actor,
+	taskId: number,
+	title: string,
+	reason: string
+) {
 	tx(db, (emit) => {
 		requireReason(reason);
 		const { t, title: old } = task(db, taskId);
 		db.prepare('UPDATE tasks SET title = ? WHERE id = ?').run(title, taskId);
 		emit({ type: 'task.updated', projectId: t.project_id, ticketId: t.id, actor, taskId });
-		appendComment(db, emit, actor, t, `Task „${old}“ umbenannt in „${title}“ von ${label(actor)}. Grund: ${reason}`, true);
+		appendComment(
+			db,
+			emit,
+			actor,
+			t,
+			`Task „${old}“ umbenannt in „${title}“ von ${label(actor)}. Grund: ${reason}`,
+			true
+		);
 	});
 }
 
@@ -435,35 +677,90 @@ export function deleteTask(db: DatabaseSync, actor: Actor, taskId: number, reaso
 		const { t, title } = task(db, taskId);
 		db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 		emit({ type: 'task.deleted', projectId: t.project_id, ticketId: t.id, actor, taskId });
-		appendComment(db, emit, actor, t, `Task „${title}“ gelöscht von ${label(actor)}. Grund: ${reason}`, true);
+		appendComment(
+			db,
+			emit,
+			actor,
+			t,
+			`Task „${title}“ gelöscht von ${label(actor)}. Grund: ${reason}`,
+			true
+		);
 	});
 }
 
-export function addComment(db: DatabaseSync, actor: Actor, ticketId: number, body: string): { id: number } {
+export function addComment(
+	db: DatabaseSync,
+	actor: Actor,
+	ticketId: number,
+	body: string
+): { id: number } {
 	return tx(db, (emit) => appendComment(db, emit, actor, ticket(db, ticketId), body));
 }
 
 /** Verknüpft zwei Tickets (idempotent). parent_of und blocks bleiben zyklenfrei. */
-export function linkRelation(db: DatabaseSync, actor: Actor, fromId: number, toId: number, type: RelationType) {
+export function linkRelation(
+	db: DatabaseSync,
+	actor: Actor,
+	fromId: number,
+	toId: number,
+	type: RelationType
+) {
 	tx(db, (emit) => {
 		const from = ticket(db, fromId);
 		const to = ticket(db, toId);
-		if (from.id === to.id) throw new DomainError('self_relation', `${from.ref} kann nicht mit sich selbst verknüpft werden.`, 'Wähle als Ziel ein anderes Ticket.');
+		if (from.id === to.id)
+			throw new DomainError(
+				'self_relation',
+				`${from.ref} kann nicht mit sich selbst verknüpft werden.`,
+				'Wähle als Ziel ein anderes Ticket.'
+			);
 		if ((type === 'parent_of' || type === 'blocks') && reaches(db, to.id, from.id, type))
 			throw new DomainError(
 				'cycle',
 				`${from.ref} ${type} ${to.ref} ergäbe einen Zyklus: ${to.ref} führt über ${type} schon zu ${from.ref}.`,
 				'Prüfe die Richtung (from ist Eltern-Ticket bzw. Vorgänger) oder entferne zuerst die bestehende Kante mit unlinkRelation.'
 			);
-		if (db.prepare('INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, type) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(from.id, to.id, type).changes)
-			emit({ type: 'relation.linked', projectId: from.project_id, ticketId: from.id, actor, toTicketId: to.id, relation: type });
+		if (
+			db
+				.prepare(
+					'INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, type) VALUES (?, ?, ?) ON CONFLICT DO NOTHING'
+				)
+				.run(from.id, to.id, type).changes
+		)
+			emit({
+				type: 'relation.linked',
+				projectId: from.project_id,
+				ticketId: from.id,
+				actor,
+				toTicketId: to.id,
+				relation: type
+			});
 	});
 }
 
-export function unlinkRelation(db: DatabaseSync, actor: Actor, fromId: number, toId: number, type: RelationType) {
+export function unlinkRelation(
+	db: DatabaseSync,
+	actor: Actor,
+	fromId: number,
+	toId: number,
+	type: RelationType
+) {
 	tx(db, (emit) => {
 		const from = ticket(db, fromId);
-		if (db.prepare('DELETE FROM ticket_relations WHERE from_ticket_id = ? AND to_ticket_id = ? AND type = ?').run(from.id, toId, type).changes)
-			emit({ type: 'relation.unlinked', projectId: from.project_id, ticketId: from.id, actor, toTicketId: toId, relation: type });
+		if (
+			db
+				.prepare(
+					'DELETE FROM ticket_relations WHERE from_ticket_id = ? AND to_ticket_id = ? AND type = ?'
+				)
+				.run(from.id, toId, type).changes
+		)
+			emit({
+				type: 'relation.unlinked',
+				projectId: from.project_id,
+				ticketId: from.id,
+				actor,
+				toTicketId: toId,
+				relation: type
+			});
 	});
 }

@@ -24,4 +24,5 @@
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"
-	focusable="false"><path d={paths[name]} /></svg>
+	focusable="false"><path d={paths[name]} /></svg
+>

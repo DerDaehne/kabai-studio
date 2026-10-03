@@ -13,9 +13,15 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const field = String(form.get('field') ?? '');
 		try {
-			setSecret(db(), String(form.get('name') ?? ''), String(form.get('value') ?? ''), form.get('replace') === '1');
+			setSecret(
+				db(),
+				String(form.get('name') ?? ''),
+				String(form.get('value') ?? ''),
+				form.get('replace') === '1'
+			);
 		} catch (err) {
-			if (err instanceof DomainError) return fail(400, { field, code: err.code, message: err.message, hint: err.hint });
+			if (err instanceof DomainError)
+				return fail(400, { field, code: err.code, message: err.message, hint: err.hint });
 			throw err;
 		}
 		return { field };

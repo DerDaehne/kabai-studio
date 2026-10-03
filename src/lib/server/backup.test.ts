@@ -39,15 +39,23 @@ const mode = (path: string) => statSync(path).mode & 0o777;
 const DB_TS = JSON.stringify(resolve('src/lib/server/db.ts'));
 /** Node-Kindprozess, der db.ts direkt lädt (ohne Vite, wie Server-Start bzw. CLI) und `code` ausführt. */
 const nodeWithDb = (dir: string, code: string) =>
-	[process.execPath, ['--input-type=module', '-e', `import * as studio from ${DB_TS}; ${code}`], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' }] as const;
+	[
+		process.execPath,
+		['--input-type=module', '-e', `import * as studio from ${DB_TS}; ${code}`],
+		{ env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' }
+	] as const;
 
 /** Terminates hard like a crash (kill -9) — the kernel releases the lock. */
 const stop = (child: ChildProcess) => new Promise((res) => child.once('exit', res).kill('SIGKILL'));
 
 /** Holds the data-dir lock like a running server, until `stop`. */
 async function holdLock(dir: string): Promise<ChildProcess> {
-	const child = spawn(...nodeWithDb(dir, 'console.log(studio.lockDataDir()); setInterval(() => {}, 1e6);'));
-	const out = await new Promise<string>((res) => child.stdout!.once('data', (chunk) => res(String(chunk))));
+	const child = spawn(
+		...nodeWithDb(dir, 'console.log(studio.lockDataDir()); setInterval(() => {}, 1e6);')
+	);
+	const out = await new Promise<string>((res) =>
+		child.stdout!.once('data', (chunk) => res(String(chunk)))
+	);
 	if (out.trim() !== 'true') {
 		await stop(child);
 		throw new Error(`Could not hold the lock (${out.trim()}).`);
@@ -57,10 +65,17 @@ async function holdLock(dir: string): Promise<ChildProcess> {
 
 /** Schema + alle Zeilen aller Tabellen; Zeilen sortiert, weil VACUUM Rowids ohne INTEGER PRIMARY KEY neu vergeben darf. */
 function dump(db: DatabaseSync) {
-	const tables = db.prepare("SELECT type, name, sql FROM sqlite_schema ORDER BY name").all();
+	const tables = db.prepare('SELECT type, name, sql FROM sqlite_schema ORDER BY name').all();
 	const rows = tables
 		.filter((t) => t.type === 'table')
-		.map((t) => [t.name, db.prepare(`SELECT * FROM "${t.name}"`).all().map((r) => JSON.stringify(r)).sort()]);
+		.map((t) => [
+			t.name,
+			db
+				.prepare(`SELECT * FROM "${t.name}"`)
+				.all()
+				.map((r) => JSON.stringify(r))
+				.sort()
+		]);
 	return { tables, rows: Object.fromEntries(rows) };
 }
 
@@ -83,7 +98,13 @@ function corruptTable(file: string, table: string) {
 	const { page_size } = db.prepare('PRAGMA page_size').get()!;
 	db.close();
 	const fd = openSync(file, 'r+');
-	writeSync(fd, Buffer.alloc(Number(page_size), 0xff), 0, Number(page_size), (Number(rootpage) - 1) * Number(page_size));
+	writeSync(
+		fd,
+		Buffer.alloc(Number(page_size), 0xff),
+		0,
+		Number(page_size),
+		(Number(rootpage) - 1) * Number(page_size)
+	);
 	closeSync(fd);
 }
 
@@ -104,7 +125,9 @@ describe('Sicherung vor Migration', () => {
 		expect(migrate(db, m2, hook)).toEqual(['002_b.sql']);
 		expect(names(dir)).toHaveLength(1);
 		const copy = new DatabaseSync(join(dir, names(dir)[0]));
-		expect(copy.prepare('SELECT name FROM schema_migrations').all()).toEqual([{ name: '001_a.sql' }]);
+		expect(copy.prepare('SELECT name FROM schema_migrations').all()).toEqual([
+			{ name: '001_a.sql' }
+		]);
 		expect(copy.prepare('SELECT x FROM a').all()).toEqual([{ x: 42 }]);
 		copy.close();
 	});
@@ -130,7 +153,11 @@ describe('Sicherung', () => {
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259.db'));
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259-2.db'));
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259-3.db'));
-		expect(names(dir)).toEqual(['studio-20260301-2259-3.db', 'studio-20260301-2259-2.db', 'studio-20260301-2259.db']);
+		expect(names(dir)).toEqual([
+			'studio-20260301-2259-3.db',
+			'studio-20260301-2259-2.db',
+			'studio-20260301-2259.db'
+		]);
 	});
 
 	it('ein abgebrochener Lauf hinterlässt keine gültige Sicherung', () => {
@@ -138,7 +165,9 @@ describe('Sicherung', () => {
 		const file = join(tmp, 'abort.db');
 		seed(file).close();
 		corruptTable(file, 'projects'); // VACUUM INTO bricht beim Lesen ab, nachdem es die Zieldatei schon angelegt hat
-		expect(() => backup(openDb(file), dir)).toThrow(/Sicherung nach .* fehlgeschlagen .* Speicherplatz und Schreibrechte prüfen/);
+		expect(() => backup(openDb(file), dir)).toThrow(
+			/Sicherung nach .* fehlgeschlagen .* Speicherplatz und Schreibrechte prüfen/
+		);
 		expect(readdirSync(dir)).toEqual([]); // weder gültige Sicherung noch Temp-Rest
 	});
 
@@ -159,7 +188,8 @@ describe('Aufbewahrung', () => {
 		const db = seed(join(tmp, 'days.db'));
 		// 60 Tage ab Do 2026-01-01 03:00 UTC, Prüfung alle 6 Stunden wie der Timer (stündlich) oder häufige Neustarts
 		const start = Date.UTC(2026, 0, 1, 3);
-		for (let t = start; t < start + 60 * 24 * HOUR; t += 6 * HOUR) backupIfDue(db, dir, new Date(t));
+		for (let t = start; t < start + 60 * 24 * HOUR; t += 6 * HOUR)
+			backupIfDue(db, dir, new Date(t));
 		expect(names(dir)).toEqual([
 			// täglich: die letzten 7 Tage (Mo 23.2. – So 1.3.)
 			'studio-20260301-0300.db',
@@ -201,7 +231,10 @@ describe('Aufbewahrung', () => {
 		mkdirSync(dir, { mode: 0o700 });
 		writeFileSync(join(dir, 'studio-20260101-0000.db.tmp'), 'halb geschrieben'); // aborted run at 00:00
 		backup(seed(join(tmp, 'prune-tmp.db')), dir, new Date('2026-01-01T00:05:00Z')); // backup at 00:05
-		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0000.db.tmp', 'studio-20260101-0005.db']);
+		expect(readdirSync(dir).sort()).toEqual([
+			'studio-20260101-0000.db.tmp',
+			'studio-20260101-0005.db'
+		]);
 		expect(prune(dir)).toEqual([]);
 		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0005.db']);
 	});
@@ -209,7 +242,8 @@ describe('Aufbewahrung', () => {
 	it('behält je Tag die neueste und löscht nie die jüngste Sicherung', () => {
 		const dir = join(tmp, 'keep');
 		const db = seed(join(tmp, 'keep.db'));
-		for (const at of ['2026-01-05T08:00:00Z', '2026-01-05T20:00:00Z', '2026-01-06T08:00:00Z']) backup(db, dir, new Date(at));
+		for (const at of ['2026-01-05T08:00:00Z', '2026-01-05T20:00:00Z', '2026-01-06T08:00:00Z'])
+			backup(db, dir, new Date(at));
 		expect(prune(dir, { daily: 7, weekly: 0 })).toEqual(['studio-20260105-0800.db']);
 		expect(prune(dir, { daily: 0, weekly: 0 })).toEqual(['studio-20260105-2000.db']);
 		expect(names(dir)).toEqual(['studio-20260106-0800.db']);
@@ -286,7 +320,9 @@ describe('Rechte', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		try {
 			const file = backup(seed(join(tmp, 'offen.db')), dir);
-			expect(warn.mock.calls).toEqual([[`Warnung: ${dir} ist für andere Nutzer zugänglich — „chmod 700 ${dir}“ schränkt das ein.`]]);
+			expect(warn.mock.calls).toEqual([
+				[`Warnung: ${dir} ist für andere Nutzer zugänglich — „chmod 700 ${dir}“ schränkt das ein.`]
+			]);
 			expect(mode(file)).toBe(0o600);
 		} finally {
 			warn.mockRestore();
@@ -306,20 +342,30 @@ describe('Einzelinstanz', () => {
 			// zweiter Server-Start auf demselben Verzeichnis (versehentlich doppelt gestartet)
 			const second = spawnSync(...nodeWithDb(dir, 'studio.db();'));
 			expect(second.status).not.toBe(0);
-			expect(second.stderr).toMatch(/Studio läuft bereits mit dem Datenverzeichnis .*instanz \(zweiter Server oder laufendes restore\)\. Die laufende Instanz verwenden oder beenden/);
+			expect(second.stderr).toMatch(
+				/Studio läuft bereits mit dem Datenverzeichnis .*instanz \(zweiter Server oder laufendes restore\)\. Die laufende Instanz verwenden oder beenden/
+			);
 			expect(readdirSync(dir)).not.toContain('studio.db'); // nichts geöffnet, migriert oder gesichert
 
 			// die erste Instanz ist weiter geschützt: restore erkennt sie (Szenario aus dem Review)
 			saved = backup(seed(join(tmp, 'instanz-quelle.db')), join(tmp, 'instanz-backups'));
-			const blocked = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
+			const blocked = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], {
+				env: { ...process.env, STUDIO_DATA_DIR: dir },
+				encoding: 'utf8'
+			});
 			expect(blocked.status).toBe(1);
-			expect(blocked.stderr).toMatch(/^restore: Studio läuft noch mit dem Datenverzeichnis .* Server stoppen und erneut ausführen\.\n$/);
+			expect(blocked.stderr).toMatch(
+				/^restore: Studio läuft noch mit dem Datenverzeichnis .* Server stoppen und erneut ausführen\.\n$/
+			);
 			expect(readdirSync(dir)).not.toContain('studio.db');
 		} finally {
 			await stop(first); // stop it on the failing path too, so no child process stays open
 		}
 
-		const ok = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
+		const ok = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], {
+			env: { ...process.env, STUDIO_DATA_DIR: dir },
+			encoding: 'utf8'
+		});
 		expect(ok.stderr).toBe('');
 		expect(ok.status).toBe(0);
 	});
@@ -330,17 +376,29 @@ describe('backupStatus', () => {
 		const dir = join(tmp, 'status');
 		const db = seed(join(tmp, 'status.db'));
 		const now = new Date('2026-02-01T12:00:00Z');
-		expect(backupStatus(dir, now)).toEqual({ dir, last: null, error: expect.stringMatching(/Keine Sicherung .* Schreibrechte in .* prüfen/) });
+		expect(backupStatus(dir, now)).toEqual({
+			dir,
+			last: null,
+			error: expect.stringMatching(/Keine Sicherung .* Schreibrechte in .* prüfen/)
+		});
 
 		backupIfDue(db, dir, now);
 		const path = join(dir, 'studio-20260201-1200.db');
-		expect(backupStatus(dir, now)).toEqual({ dir, last: { path, size: statSync(path).size, at: '2026-02-01T12:00:00.000Z' }, error: null });
-		expect(backupStatus(dir, new Date(now.getTime() + 26 * HOUR)).error).toMatch(/Keine Sicherung aus den letzten 24 Stunden/);
+		expect(backupStatus(dir, now)).toEqual({
+			dir,
+			last: { path, size: statSync(path).size, at: '2026-02-01T12:00:00.000Z' },
+			error: null
+		});
+		expect(backupStatus(dir, new Date(now.getTime() + 26 * HOUR)).error).toMatch(
+			/Keine Sicherung aus den letzten 24 Stunden/
+		);
 
 		db.close(); // nächste Sicherung scheitert
 		const later = new Date(now.getTime() + 25 * HOUR);
 		backupIfDue(db, dir, later);
-		expect(backupStatus(dir, later).error).toMatch(/fehlgeschlagen .* Speicherplatz und Schreibrechte prüfen/);
+		expect(backupStatus(dir, later).error).toMatch(
+			/fehlgeschlagen .* Speicherplatz und Schreibrechte prüfen/
+		);
 		backupIfDue(seed(join(tmp, 'status2.db')), dir, later);
 		expect(backupStatus(dir, later).error).toBeNull();
 	});
@@ -351,7 +409,10 @@ describe('restore (CLI)', () => {
 	const file = join(data, 'studio.db');
 	const backups = join(data, 'backups');
 	const restore = (...args: string[]) =>
-		spawnSync(process.execPath, ['src/lib/server/restore.ts', ...args], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		spawnSync(process.execPath, ['src/lib/server/restore.ts', ...args], {
+			env: { ...process.env, STUDIO_DATA_DIR: data },
+			encoding: 'utf8'
+		});
 	/** Aktueller Stand der Server-DB (Verbindung wieder zu, wie bei gestopptem Server). */
 	const current = () => {
 		const db = openDb(file);
@@ -374,7 +435,9 @@ describe('restore (CLI)', () => {
 		try {
 			const r = restore(saved);
 			expect(r.status).toBe(1);
-			expect(r.stderr).toMatch(/^restore: Studio läuft noch mit dem Datenverzeichnis .*data \(oder ein anderes restore\)\. Server stoppen und erneut ausführen\.\n$/);
+			expect(r.stderr).toMatch(
+				/^restore: Studio läuft noch mit dem Datenverzeichnis .*data \(oder ein anderes restore\)\. Server stoppen und erneut ausführen\.\n$/
+			);
 			expect(current()).toEqual(changed);
 			expect(names(backups)).toEqual(['studio-20260101-0000.db']);
 			expect(readFileSync(`${file}.restore`, 'utf8')).toBe('Temp-Kopie eines laufenden restore');
@@ -389,7 +452,10 @@ describe('restore (CLI)', () => {
 		mkdirSync(dir, { mode: 0o700 });
 		const garbage = 'kein SQLite '.repeat(500);
 		writeFileSync(join(dir, 'studio.db'), garbage);
-		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], { env: { ...process.env, STUDIO_DATA_DIR: dir }, encoding: 'utf8' });
+		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], {
+			env: { ...process.env, STUDIO_DATA_DIR: dir },
+			encoding: 'utf8'
+		});
 		expect(r.status).toBe(1);
 		expect(r.stderr).toMatch(
 			/^restore: Die aktuelle Datenbank .*studio\.db lässt sich vorher nicht sichern \(file is not a database\)\. Ist sie defekt: sie samt -wal\/-shm von Hand beiseitelegen \(umbenennen\) und erneut ausführen; sonst Speicherplatz und Schreibrechte in .* prüfen\.\n$/
@@ -400,10 +466,23 @@ describe('restore (CLI)', () => {
 
 	it.each([
 		['fehlt', () => join(tmp, 'gibt-es-nicht.db'), /nicht gefunden\. Sicherungen liegen unter /],
-		['ist kein SQLite', () => (writeFileSync(join(tmp, 'kaputt.db'), 'kein SQLite '.repeat(500)), join(tmp, 'kaputt.db')), /keine intakte Studio-Sicherung .* andere Datei aus /],
+		[
+			'ist kein SQLite',
+			() => (
+				writeFileSync(join(tmp, 'kaputt.db'), 'kein SQLite '.repeat(500)),
+				join(tmp, 'kaputt.db')
+			),
+			/keine intakte Studio-Sicherung .* andere Datei aus /
+		],
 		[
 			'ist abgeschnitten',
-			() => (writeFileSync(join(tmp, 'halb.db'), readFileSync(saved).subarray(0, statSync(saved).size / 2)), join(tmp, 'halb.db')),
+			() => (
+				writeFileSync(
+					join(tmp, 'halb.db'),
+					readFileSync(saved).subarray(0, statSync(saved).size / 2)
+				),
+				join(tmp, 'halb.db')
+			),
 			/keine intakte Studio-Sicherung/
 		],
 		[
@@ -416,7 +495,14 @@ describe('restore (CLI)', () => {
 			},
 			/keine intakte Studio-Sicherung \(Integritätsprüfung meldet Fehler\)/
 		],
-		['ist keine Studio-DB', () => (new DatabaseSync(join(tmp, 'fremd.db')).exec('CREATE TABLE t (x)'), join(tmp, 'fremd.db')), /keine intakte Studio-Sicherung \(no such table/],
+		[
+			'ist keine Studio-DB',
+			() => (
+				new DatabaseSync(join(tmp, 'fremd.db')).exec('CREATE TABLE t (x)'),
+				join(tmp, 'fremd.db')
+			),
+			/keine intakte Studio-Sicherung \(no such table/
+		],
 		[
 			'contains an unknown migration (DB newer than code)',
 			() => {
@@ -447,7 +533,9 @@ describe('restore (CLI)', () => {
 		const r = restore(saved);
 		expect(r.stderr).toBe('');
 		expect(r.status).toBe(0);
-		expect(r.stdout).toMatch(/Aktuelle Datenbank gesichert: .*studio-\d{8}-\d{4}\.db\nWiederhergestellt aus /);
+		expect(r.stdout).toMatch(
+			/Aktuelle Datenbank gesichert: .*studio-\d{8}-\d{4}\.db\nWiederhergestellt aus /
+		);
 		expect(current()).toEqual(atBackup);
 
 		const pre = new DatabaseSync(join(backups, names(backups)[0]));
@@ -478,13 +566,20 @@ describe('restore run from a directory other than the package root', () => {
 	const data = join(cwdTmp, 'data');
 	mkdirSync(data);
 	const source = openDb(join(cwdTmp, 'source.db'));
-	migrate(source, import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true }));
+	migrate(
+		source,
+		import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true })
+	);
 	const older = backup(source, join(cwdTmp, 'older'));
 	source.exec("INSERT INTO schema_migrations (name) VALUES ('999_future.sql')");
 	const newer = backup(source, join(cwdTmp, 'newer'));
 	source.close();
 	const restoreFrom = (cwd: string, file: string) =>
-		spawnSync(process.execPath, [resolve('src/lib/server/restore.ts'), file], { cwd, env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		spawnSync(process.execPath, [resolve('src/lib/server/restore.ts'), file], {
+			cwd,
+			env: { ...process.env, STUDIO_DATA_DIR: data },
+			encoding: 'utf8'
+		});
 
 	it('still rejects a backup from a newer version with db_newer_than_code', () => {
 		const r = restoreFrom(cwdTmp, newer);
@@ -505,9 +600,14 @@ describe('restore (fs error)', () => {
 		mkdirSync(data, { mode: 0o700 });
 		const source = join(tmp, 'source-is-a-directory');
 		mkdirSync(source);
-		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], {
+			env: { ...process.env, STUDIO_DATA_DIR: data },
+			encoding: 'utf8'
+		});
 		expect(r.status).toBe(1);
-		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] Dateisystemfehler \(EISDIR, copyfile, .*source-is-a-directory, .*studio\.db\.restore\) beim Kopieren der Quelle\./);
+		expect(r.stderr).toMatch(
+			/^restore: \[restore_fs_error\] Dateisystemfehler \(EISDIR, copyfile, .*source-is-a-directory, .*studio\.db\.restore\) beim Kopieren der Quelle\./
+		);
 		expect(r.stderr).toMatch(/die Quelle darf kein Verzeichnis sein und muss lesbar sein\./);
 		expect(r.stderr.trim().split('\n')).toHaveLength(1);
 		expect(readdirSync(data).filter((f) => f.includes('.restore'))).toEqual([]);
@@ -522,9 +622,14 @@ describe('restore (fs error)', () => {
 		db.close();
 		try {
 			chmodSync(source, 0o000);
-			const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+			const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], {
+				env: { ...process.env, STUDIO_DATA_DIR: data },
+				encoding: 'utf8'
+			});
 			expect(r.status).toBe(1);
-			expect(r.stderr).toMatch(/\[restore_fs_error\] Dateisystemfehler \(EACCES, copyfile, .*unreadable-source\.db/);
+			expect(r.stderr).toMatch(
+				/\[restore_fs_error\] Dateisystemfehler \(EACCES, copyfile, .*unreadable-source\.db/
+			);
 			expect(r.stderr).toMatch(/muss lesbar sein\./);
 		} finally {
 			chmodSync(source, 0o600);
@@ -538,7 +643,10 @@ describe('restore (fs error)', () => {
 		const source = join(tmp, 'data-0500-source.db');
 		const db = openDb(source);
 		db.close();
-		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], { env: { ...process.env, STUDIO_DATA_DIR: data }, encoding: 'utf8' });
+		const r = spawnSync(process.execPath, ['src/lib/server/restore.ts', source], {
+			env: { ...process.env, STUDIO_DATA_DIR: data },
+			encoding: 'utf8'
+		});
 		expect(r.status).toBe(1);
 		expect(r.stderr.trim().split('\n')).toHaveLength(1);
 		expect(r.stderr).toMatch(/^restore: \[restore_fs_error\] /);

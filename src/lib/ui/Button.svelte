@@ -8,7 +8,16 @@
 		/** Läuft eine Aktion: Button bleibt fokussierbar (aria-disabled statt disabled), Klicks werden ignoriert. */
 		loading?: boolean;
 	};
-	let { variant = 'secondary', size = 'md', loading = false, type = 'button', class: cls, onclick, children, ...rest }: Props = $props();
+	let {
+		variant = 'secondary',
+		size = 'md',
+		loading = false,
+		type = 'button',
+		class: cls,
+		onclick,
+		children,
+		...rest
+	}: Props = $props();
 </script>
 
 <button

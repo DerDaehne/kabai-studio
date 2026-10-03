@@ -9,7 +9,8 @@
 			try {
 				const theme = localStorage.getItem('studio-theme');
 				if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
-				if (localStorage.getItem('studio-motion') === 'reduced') document.documentElement.dataset.motion = 'reduced';
+				if (localStorage.getItem('studio-motion') === 'reduced')
+					document.documentElement.dataset.motion = 'reduced';
 			} catch {}
 		</script>
 		%sveltekit.head%

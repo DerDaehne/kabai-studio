@@ -26,7 +26,12 @@ it('kein Endpunkt liefert Secret-Werte aus — weder load noch Actions, auch nic
 		await post('setSecret', { field: '', name: 'demo', value: VALUE }),
 		await post('setSecret', { field: '', name: 'demo', value: VALUE }), // gibt es schon
 		await post('setSecret', { field: '', name: VALUE, value: VALUE }), // Key in beiden Feldern
-		await post('setSecret', { field: 'demo', name: 'demo', value: VALUE.slice(0, 5), replace: '1' }), // zu kurz
+		await post('setSecret', {
+			field: 'demo',
+			name: 'demo',
+			value: VALUE.slice(0, 5),
+			replace: '1'
+		}), // zu kurz
 		await post('setSecret', { field: 'demo', name: 'demo', value: `${VALUE}-neu`, replace: '1' }),
 		await load({} as never)
 	];
@@ -35,7 +40,11 @@ it('kein Endpunkt liefert Secret-Werte aus — weder load noch Actions, auch nic
 
 	const wire = JSON.stringify(responses);
 	expect(wire).not.toContain(VALUE.slice(0, 5)); // Präfix: erfasst den vollen Wert, den ersetzten und das zu kurze Bruchstück
-	expect(responses.map((r) => (r && 'status' in r ? `${r.status}:${(r.data as { code: string }).code}` : 'ok'))).toEqual([
+	expect(
+		responses.map((r) =>
+			r && 'status' in r ? `${r.status}:${(r.data as { code: string }).code}` : 'ok'
+		)
+	).toEqual([
 		'ok',
 		'400:secret_exists',
 		'400:secret_name_is_value',
@@ -45,6 +54,8 @@ it('kein Endpunkt liefert Secret-Werte aus — weder load noch Actions, auch nic
 		'ok',
 		'ok'
 	]);
-	expect(responses[5]).toEqual({ secrets: [{ name: 'demo', created_at: expect.any(String), updated_at: expect.any(String) }] });
+	expect(responses[5]).toEqual({
+		secrets: [{ name: 'demo', created_at: expect.any(String), updated_at: expect.any(String) }]
+	});
 	expect(responses[7]).toEqual({ secrets: [] });
 });

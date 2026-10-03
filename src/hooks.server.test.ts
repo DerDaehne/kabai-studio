@@ -7,7 +7,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { format } from 'node:util';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { SESSION_COOKIE, checkLogin, createSession, hasOwner, issueSetupToken } from '$lib/server/auth';
+import {
+	SESSION_COOKIE,
+	checkLogin,
+	createSession,
+	hasOwner,
+	issueSetupToken
+} from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import * as dbModule from '$lib/server/db';
 import { DomainError } from '$lib/server/domain/error';
@@ -41,7 +47,8 @@ function jar(cookies: Record<string, string> = {}) {
 			values.delete(name);
 			options.set(name, { ...opts, deleted: true });
 		},
-		serialize: (name: string, value: string, opts: CookieOptions) => `${name}=${value}; Max-Age=${opts.maxAge}; Path=${opts.path}`
+		serialize: (name: string, value: string, opts: CookieOptions) =>
+			`${name}=${value}; Max-Age=${opts.maxAge}; Path=${opts.path}`
 	};
 }
 type Jar = ReturnType<typeof jar>;
@@ -79,9 +86,13 @@ async function run(fn: () => unknown) {
 
 const guard = (path: string, cookies = jar(), init: Init = {}) =>
 	run(() => handle({ event: event(path, cookies, init), resolve: () => new Response('ok') }));
-const setup = (form: Record<string, string>, ip = '10.0.0.1', cookies = jar()) => run(() => setupActions.default(event('/setup', cookies, { form, ip })));
-const login = (form: Record<string, string>, init: { ip?: string; origin?: string } = {}, cookies = jar()) =>
-	run(() => loginActions.default(event('/login', cookies, { form, ...init })));
+const setup = (form: Record<string, string>, ip = '10.0.0.1', cookies = jar()) =>
+	run(() => setupActions.default(event('/setup', cookies, { form, ip })));
+const login = (
+	form: Record<string, string>,
+	init: { ip?: string; origin?: string } = {},
+	cookies = jar()
+) => run(() => loginActions.default(event('/login', cookies, { form, ...init })));
 
 describe('Auth-Durchlauf', () => {
 	let token = '';
@@ -90,7 +101,10 @@ describe('Auth-Durchlauf', () => {
 		expect(await guard('/')).toEqual({ redirect: '/setup', status: 303 });
 		const api = (await guard('/api/tickets')) as Response;
 		expect(api.status).toBe(401);
-		expect(await api.json()).toMatchObject({ error: 'unauthorized', hint: expect.stringContaining('/login') });
+		expect(await api.json()).toMatchObject({
+			error: 'unauthorized',
+			hint: expect.stringContaining('/login')
+		});
 		expect(api.headers.get('set-cookie')).toBeNull(); // ohne Cookie nichts zu löschen
 		expect(await guard('/setup')).toBeInstanceOf(Response);
 		expect(await guard('/login')).toBeInstanceOf(Response);
@@ -101,7 +115,9 @@ describe('Auth-Durchlauf', () => {
 	it('lets /mcp through without a session, but not sub-paths or foreign origins', async () => {
 		expect(await guard('/mcp', jar(), { request: { method: 'POST' } })).toBeInstanceOf(Response);
 		expect(await guard('/mcp/other')).toEqual({ redirect: '/setup', status: 303 });
-		const foreign = (await guard('/mcp', jar(), { request: { method: 'POST', headers: { origin: 'http://evil.example' } } })) as Response;
+		const foreign = (await guard('/mcp', jar(), {
+			request: { method: 'POST', headers: { origin: 'http://evil.example' } }
+		})) as Response;
 		expect(foreign.status).toBe(403);
 	});
 
@@ -113,7 +129,10 @@ describe('Auth-Durchlauf', () => {
 
 	it('/setup zählt falsche Setup-Tokens ins Rate-Limit: nach 5 greift 429, auch mit richtigem Token', async () => {
 		for (let i = 0; i < 5; i++) {
-			const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW }, '10.0.1.1');
+			const res = await setup(
+				{ token: 'falsch', name: 'owner', password: PW, confirm: PW },
+				'10.0.1.1'
+			);
 			expect(isActionFailure(res) && res.status).toBe(403);
 		}
 		const blocked = await setup({ token, name: 'owner', password: PW, confirm: PW }, '10.0.1.1');
@@ -122,7 +141,10 @@ describe('Auth-Durchlauf', () => {
 	});
 
 	it('/setup prüft Passwortlänge und Wiederholung', async () => {
-		for (const [password, confirm] of [['kurz', 'kurz'], [PW, PW + 'x']]) {
+		for (const [password, confirm] of [
+			['kurz', 'kurz'],
+			[PW, PW + 'x']
+		]) {
 			const res = await setup({ token, name: 'owner', password, confirm });
 			expect(isActionFailure(res) && res.status).toBe(400);
 		}
@@ -131,32 +153,59 @@ describe('Auth-Durchlauf', () => {
 
 	it('/setup legt den Owner an, meldet an und ist danach gesperrt', async () => {
 		const cookies = jar();
-		expect(await setup({ token, name: 'owner', password: PW, confirm: PW }, '10.0.0.2', cookies)).toEqual({ redirect: '/', status: 303 });
+		expect(
+			await setup({ token, name: 'owner', password: PW, confirm: PW }, '10.0.0.2', cookies)
+		).toEqual({ redirect: '/', status: 303 });
 		expect(hasOwner(db())).toBe(true);
-		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ httpOnly: true, sameSite: 'lax', secure: false, path: '/' });
+		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({
+			httpOnly: true,
+			sameSite: 'lax',
+			secure: false,
+			path: '/'
+		});
 
 		const again = await setup({ token, name: 'zweiter', password: PW, confirm: PW }, '10.0.0.3');
 		expect(isActionFailure(again) && again.status).toBe(403);
-		expect(await run(() => setupLoad(event('/setup', jar())))).toEqual({ redirect: '/login', status: 303 });
+		expect(await run(() => setupLoad(event('/setup', jar())))).toEqual({
+			redirect: '/login',
+			status: 303
+		});
 		expect(await guard('/')).toEqual({ redirect: '/login', status: 303 });
 		expect(await guard('/settings')).toEqual({ redirect: '/login', status: 303 }); // #820: Übersicht nur mit Session
 		expect(await guard('/settings/secrets')).toEqual({ redirect: '/login', status: 303 }); // Secrets nur mit Session
-		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 });
+		expect(await guard('/settings/secrets/__data.json')).toEqual({
+			redirect: '/login',
+			status: 303
+		});
 	});
 
 	it('#822: __data.json öffentlicher Seiten ist mit-öffentlich (SvelteKit strippt das Suffix vor handle), geschützte bleiben es', async () => {
 		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // kein Redirect: Client-Navigation zu /login lädt Daten nach
 		expect(await guard('/setup/__data.json')).toBeInstanceOf(Response);
-		expect(await guard('/settings/secrets/__data.json')).toEqual({ redirect: '/login', status: 303 }); // weiterhin geschützt
+		expect(await guard('/settings/secrets/__data.json')).toEqual({
+			redirect: '/login',
+			status: 303
+		}); // weiterhin geschützt
 	});
 
 	it('Login setzt ein Cookie mit Secure außerhalb von localhost, der Guard lässt es durch', async () => {
 		const cookies = jar();
-		expect(await login({ name: 'owner', password: PW }, { origin: 'https://studio.example', ip: '10.0.0.4' }, cookies)).toEqual({
+		expect(
+			await login(
+				{ name: 'owner', password: PW },
+				{ origin: 'https://studio.example', ip: '10.0.0.4' },
+				cookies
+			)
+		).toEqual({
 			redirect: '/',
 			status: 303
 		});
-		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ httpOnly: true, sameSite: 'lax', secure: true, maxAge: 30 * 86_400 });
+		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({
+			httpOnly: true,
+			sameSite: 'lax',
+			secure: true,
+			maxAge: 30 * 86_400
+		});
 		const ev = event('/', cookies);
 		expect(await handle({ event: ev, resolve: () => new Response('ok') })).toBeInstanceOf(Response);
 		expect(ev.locals.user).toEqual({ id: 1, name: 'owner' });
@@ -169,15 +218,25 @@ describe('Auth-Durchlauf', () => {
 		}
 		const blocked = await login({ name: 'owner', password: PW }, { ip: '10.0.0.5' });
 		expect(isActionFailure(blocked) && blocked.status).toBe(429);
-		expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.6' })).toEqual({ redirect: '/', status: 303 });
+		expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.6' })).toEqual({
+			redirect: '/',
+			status: 303
+		});
 	});
 
 	it('Rate-Limit zählt erfolgreiche Logins nicht: 6 Anmeldungen pro Minute von einer IP klappen', async () => {
-		for (let i = 0; i < 6; i++) expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.7' })).toEqual({ redirect: '/', status: 303 });
+		for (let i = 0; i < 6; i++)
+			expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.7' })).toEqual({
+				redirect: '/',
+				status: 303
+			});
 	});
 
 	it('API mit ungültigem Cookie: 401 JSON und das Cookie wird gelöscht', async () => {
-		const api = (await guard('/api/tickets', jar({ [SESSION_COOKIE]: 'abgelaufen-oder-erfunden' }))) as Response;
+		const api = (await guard(
+			'/api/tickets',
+			jar({ [SESSION_COOKIE]: 'abgelaufen-oder-erfunden' })
+		)) as Response;
 		expect(api.status).toBe(401);
 		expect(api.headers.get('set-cookie')).toMatch(/^studio_session=; Max-Age=0; Path=\//);
 	});
@@ -185,21 +244,33 @@ describe('Auth-Durchlauf', () => {
 	it('CSRF: POST ohne Formular-Content-Type von fremder Origin wird abgewiesen, die Session bleibt', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = () => jar({ [SESSION_COOKIE]: sessionToken });
-		const post = (origin?: string): Init => ({ request: { method: 'POST', headers: origin ? { origin } : undefined } });
+		const post = (origin?: string): Init => ({
+			request: { method: 'POST', headers: origin ? { origin } : undefined }
+		});
 
 		const foreign = (await guard('/logout', cookies(), post('http://localhost:8080'))) as Response;
 		expect(foreign.status).toBe(403);
 		expect(await foreign.text()).toMatch(/fremder Herkunft/);
 		expect(await guard('/', cookies())).toBeInstanceOf(Response); // Session noch gültig
-		expect(await guard('/logout', cookies(), post('http://localhost:3000'))).toBeInstanceOf(Response); // eigene Origin → weiter
+		expect(await guard('/logout', cookies(), post('http://localhost:3000'))).toBeInstanceOf(
+			Response
+		); // eigene Origin → weiter
 		expect(await guard('/logout', cookies(), post())).toBeInstanceOf(Response); // ohne Origin = kein Browser
 	});
 
 	it('Logout löscht Session und Cookie; das alte Token führt wieder auf /login', async () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
-		expect(await run(() => logout(event('/logout', cookies, { form: {} })))).toEqual({ redirect: '/login', status: 303 });
-		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ deleted: true, path: '/', httpOnly: true, secure: false });
+		expect(await run(() => logout(event('/logout', cookies, { form: {} })))).toEqual({
+			redirect: '/login',
+			status: 303
+		});
+		expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({
+			deleted: true,
+			path: '/',
+			httpOnly: true,
+			secure: false
+		});
 
 		const stale = jar({ [SESSION_COOKIE]: sessionToken });
 		expect(await guard('/', stale)).toEqual({ redirect: '/login', status: 303 });
@@ -210,7 +281,9 @@ describe('Auth-Durchlauf', () => {
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		const before = listenerCount();
-		const reader = ((await events(event('/api/events?project=1', cookies))) as Response).body!.getReader();
+		const reader = (
+			(await events(event('/api/events?project=1', cookies))) as Response
+		).body!.getReader();
 		await reader.read(); // ': connected'
 		expect(listenerCount()).toBe(before + 1);
 
@@ -223,14 +296,20 @@ describe('Auth-Durchlauf', () => {
 	it('Event-Stream verlängert die Session nicht (das bleibt dem Guard samt Cookie); Ablauf beendet den Stream', async () => {
 		const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 		const expiresAt = (token: string) =>
-			(db().prepare('SELECT expires_at FROM sessions WHERE token_hash = ?').get(hash(token)) as { expires_at: string }).expires_at;
+			(
+				db().prepare('SELECT expires_at FROM sessions WHERE token_hash = ?').get(hash(token)) as {
+					expires_at: string;
+				}
+			).expires_at;
 		const sessionToken = createSession(db(), 1, Date.now() - 2 * 86_400_000); // vor 2 Tagen angemeldet → fällig zur Verlängerung
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		const before = expiresAt(sessionToken);
 
 		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 		try {
-			const reader = ((await events(event('/api/events?project=1', cookies))) as Response).body!.getReader();
+			const reader = (
+				(await events(event('/api/events?project=1', cookies))) as Response
+			).body!.getReader();
 			await reader.read(); // ': connected'
 			vi.advanceTimersByTime(25_000); // Heartbeat → alive() prüft die Session
 			expect(new TextDecoder().decode((await reader.read()).value)).toBe(': heartbeat\n\n');
@@ -240,7 +319,9 @@ describe('Auth-Durchlauf', () => {
 			expect(cookies.options.get(SESSION_COOKIE)).toMatchObject({ maxAge: 30 * 86_400 });
 			expect(expiresAt(sessionToken) > before).toBe(true);
 
-			db().prepare("UPDATE sessions SET expires_at = '2000-01-01 00:00:00' WHERE token_hash = ?").run(hash(sessionToken)); // abgelaufen
+			db()
+				.prepare("UPDATE sessions SET expires_at = '2000-01-01 00:00:00' WHERE token_hash = ?")
+				.run(hash(sessionToken)); // abgelaufen
 			vi.advanceTimersByTime(25_000);
 			expect(await reader.read()).toEqual({ done: true, value: undefined });
 		} finally {
@@ -260,7 +341,10 @@ describe('Auth-Durchlauf', () => {
 		expect(cli.status).toBe(0);
 		expect(await checkLogin(db(), 'owner', 'neues-test-passwort')).not.toBeNull();
 		expect(await checkLogin(db(), 'owner', PW)).toBeNull();
-		expect(await guard('/', jar({ [SESSION_COOKIE]: sessionToken }))).toEqual({ redirect: '/login', status: 303 });
+		expect(await guard('/', jar({ [SESSION_COOKIE]: sessionToken }))).toEqual({
+			redirect: '/login',
+			status: 303
+		});
 	});
 
 	it('reset-password weist ein zu kurzes Passwort ab', () => {
@@ -298,7 +382,9 @@ describe('Default-Bind', () => {
 describe('init', () => {
 	it('legt die Secret-Maskierung um console — der beim Start erzeugte Schlüssel erscheint in keiner Log-Zeile', async () => {
 		const out: string[] = [];
-		const log = vi.spyOn(console, 'log').mockImplementation((...args) => void out.push(args.join(' ')));
+		const log = vi
+			.spyOn(console, 'log')
+			.mockImplementation((...args) => void out.push(args.join(' ')));
 		try {
 			await init();
 			const key = readFileSync(join(tmp, 'secret.key'), 'utf8').trim();
@@ -313,7 +399,11 @@ describe('init', () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
-			throw new DomainError('db_newer_than_code', 'Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 007_future.sql.', 'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.');
+			throw new DomainError(
+				'db_newer_than_code',
+				'Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 007_future.sql.',
+				'Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen.'
+			);
 		});
 		try {
 			await init();
@@ -333,7 +423,9 @@ describe('init', () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
-			throw new Error('Migration 006_runs.sql fehlgeschlagen', { cause: new Error('table runs already exists') });
+			throw new Error('Migration 006_runs.sql fehlgeschlagen', {
+				cause: new Error('table runs already exists')
+			});
 		});
 		try {
 			await init();
@@ -352,12 +444,19 @@ describe('init', () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		let flushed: (() => void) | undefined;
-		const write = vi.spyOn(process.stderr, 'write').mockImplementation(((_chunk: unknown, callback?: () => void) => {
+		const write = vi.spyOn(process.stderr, 'write').mockImplementation(((
+			_chunk: unknown,
+			callback?: () => void
+		) => {
 			flushed = callback;
 			return false;
 		}) as typeof process.stderr.write);
 		const dbSpy = vi.spyOn(dbModule, 'db').mockImplementation(() => {
-			throw new DomainError('db_newer_than_code', 'Datenbank neuer als Code.', 'Neuere Version installieren.');
+			throw new DomainError(
+				'db_newer_than_code',
+				'Datenbank neuer als Code.',
+				'Neuere Version installieren.'
+			);
 		});
 		try {
 			const started = init();

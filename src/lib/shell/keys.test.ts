@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { continuing, validKeys, type KeyHint } from './keys';
 
-const sequences = (hints: KeyHint[]) => hints.map((hint) => hint.keys.map((sequence) => sequence.join('')).join('|'));
+const sequences = (hints: KeyHint[]) =>
+	hints.map((hint) => hint.keys.map((sequence) => sequence.join('')).join('|'));
 
 describe('validKeys', () => {
 	it('shows different keys when the context switches from Stellwerk to Takt', () => {
@@ -14,7 +15,11 @@ describe('validKeys', () => {
 	});
 
 	it('shows only the command line keys while the command line has focus', () => {
-		expect(sequences(validKeys('commandline', '').hints)).toEqual(['ArrowUp|ArrowDown', 'Enter', 'Escape']);
+		expect(sequences(validKeys('commandline', '').hints)).toEqual([
+			'ArrowUp|ArrowDown',
+			'Enter',
+			'Escape'
+		]);
 	});
 
 	it('narrows to the continuations of a started prefix', () => {

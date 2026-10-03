@@ -78,7 +78,13 @@
 			{onkeydown}
 		/>
 	</label>
-	<ul id="{id}-listbox" class="suggestions" role="listbox" aria-label="Vorschläge" hidden={!expanded}>
+	<ul
+		id="{id}-listbox"
+		class="suggestions"
+		role="listbox"
+		aria-label="Vorschläge"
+		hidden={!expanded}
+	>
 		{#each suggestions as suggestion, index (suggestion.id)}
 			<!-- Pointer selection keeps the focus in the input; the keyboard path is ↑↓ ↵ on the combobox -->
 			<!-- svelte-ignore a11y_click_events_have_key_events -->

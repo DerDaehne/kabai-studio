@@ -1,5 +1,12 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { TOO_MANY, authLimiter, checkLogin, createSession, hasOwner, setSessionCookie } from '$lib/server/auth';
+import {
+	TOO_MANY,
+	authLimiter,
+	checkLogin,
+	createSession,
+	hasOwner,
+	setSessionCookie
+} from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -17,7 +24,11 @@ export const actions: Actions = {
 
 		const user = await checkLogin(db(), name, String(form.get('password') ?? ''));
 		if (!user)
-			return fail(400, { name, error: 'Name oder Passwort falsch. Passwort vergessen? Auf dem Server „npm run reset-password“ ausführen.' });
+			return fail(400, {
+				name,
+				error:
+					'Name oder Passwort falsch. Passwort vergessen? Auf dem Server „npm run reset-password“ ausführen.'
+			});
 		authLimiter.succeed(ip);
 		setSessionCookie(cookies, url, createSession(db(), user.id));
 		redirect(303, '/');

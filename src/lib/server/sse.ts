@@ -24,7 +24,10 @@ export const SSE_HEADERS = {
  */
 export function eventStream(
 	filter: (event: StudioEvent) => boolean,
-	{ alive = () => true, heartbeatMs = HEARTBEAT_MS }: { alive?: () => boolean; heartbeatMs?: number } = {}
+	{
+		alive = () => true,
+		heartbeatMs = HEARTBEAT_MS
+	}: { alive?: () => boolean; heartbeatMs?: number } = {}
 ): ReadableStream<Uint8Array> {
 	let stop = () => {};
 	return new ReadableStream({

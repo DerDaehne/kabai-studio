@@ -26,12 +26,16 @@
 	];
 	const path: string = $derived(page.url.pathname);
 	const bare = $derived(path === '/login' || path === '/setup');
-	const currentView = $derived(views.find((view) => (view.href === '/' ? path === '/' : path.startsWith(view.href))));
+	const currentView = $derived(
+		views.find((view) => (view.href === '/' ? path === '/' : path.startsWith(view.href)))
+	);
 
 	let commandValue = $state('');
 	let commandInput = $state<HTMLInputElement>();
 	let commandFocused = $state(false);
-	const keyContext: KeyContext = $derived(commandFocused ? 'commandline' : (currentView?.context ?? 'page'));
+	const keyContext: KeyContext = $derived(
+		commandFocused ? 'commandline' : (currentView?.context ?? 'page')
+	);
 	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys));
 	const sources = $derived({ commands, view: shell.viewItems, tickets: shell.tickets });
 
@@ -56,7 +60,8 @@
 	}
 
 	function onWindowKeydown(event: KeyboardEvent) {
-		if ((event.key !== ':' && event.key !== '/') || event.ctrlKey || event.metaKey || event.altKey) return;
+		if ((event.key !== ':' && event.key !== '/') || event.ctrlKey || event.metaKey || event.altKey)
+			return;
 		if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return;
 		event.preventDefault();
 		openCommandLine(event.key);
@@ -110,7 +115,8 @@
 <!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
 {#snippet attribution()}
 	<p class="attribution">
-		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne · Freie Software, AGPL-3.0
+		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne · Freie Software,
+		AGPL-3.0
 	</p>
 {/snippet}
 
@@ -126,17 +132,25 @@
 		<a class="skip btn" href="#main">Zum Inhalt springen</a>
 
 		<header class="head dock">
-			<a class="brand" href="/" aria-label="kabai studio, Stellwerk"><img src={favicon} alt="" width="18" height="18" /></a>
+			<a class="brand" href="/" aria-label="kabai studio, Stellwerk"
+				><img src={favicon} alt="" width="18" height="18" /></a
+			>
 			<nav class="views" aria-label="Ansichten">
 				{#each views as view (view.href)}
-					<a href={view.href} aria-current={view === currentView ? 'page' : undefined}>{view.label}</a>
+					<a href={view.href} aria-current={view === currentView ? 'page' : undefined}
+						>{view.label}</a
+					>
 				{/each}
 			</nav>
 			{#if shell.focus}
 				<span class="chip focus-chip">
 					Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
 					<span class="focus-name">{shell.focus.name}</span>
-					<button class="clear" aria-label="Projekt-Fokus aufheben" onclick={() => (shell.focus = null)}>
+					<button
+						class="clear"
+						aria-label="Projekt-Fokus aufheben"
+						onclick={() => (shell.focus = null)}
+					>
 						<Icon name="x" size={14} />
 					</button>
 				</span>
@@ -145,7 +159,9 @@
 				{#if groupAgents}
 					<li class="chip" class:halt={waitingAgents > 0}>
 						<span class="dot" aria-hidden="true"></span>{shell.agents.length} Agents
-						{#if waitingAgents}<span class="state">· {waitingAgents} {waitingAgents === 1 ? 'hält' : 'halten'}</span>{/if}
+						{#if waitingAgents}<span class="state"
+								>· {waitingAgents} {waitingAgents === 1 ? 'hält' : 'halten'}</span
+							>{/if}
 					</li>
 				{:else}
 					{#each shell.agents as agent (agent.name)}
@@ -158,7 +174,9 @@
 					{/each}
 				{/if}
 			</ul>
-			<a class="btn btn-ghost btn-icon" href="/settings" aria-label="Einstellungen"><Icon name="settings" /></a>
+			<a class="btn btn-ghost btn-icon" href="/settings" aria-label="Einstellungen"
+				><Icon name="settings" /></a
+			>
 			{#key shell.signals}
 				{#if shell.signals}<span class="wave" aria-hidden="true"></span>{/if}
 			{/key}
@@ -183,7 +201,10 @@
 			<ul class="keys" aria-label="Gültige Tasten">
 				{#if keyBar.count || keyBar.prefix}
 					<li class="pending">
-						{#each [...keyBar.count, ...keyBar.prefix] as key, index (index)}<Kbd {key} active />{/each}
+						{#each [...keyBar.count, ...keyBar.prefix] as key, index (index)}<Kbd
+								{key}
+								active
+							/>{/each}
 					</li>
 				{/if}
 				{#each keyBar.hints as hint (hint.label)}
@@ -200,9 +221,13 @@
 
 		<nav class="tabs dock" aria-label="Ansichten">
 			{#each views as view (view.href)}
-				<a href={view.href} aria-current={view === currentView ? 'page' : undefined}><Icon name={view.icon} />{view.label}</a>
+				<a href={view.href} aria-current={view === currentView ? 'page' : undefined}
+					><Icon name={view.icon} />{view.label}</a
+				>
 			{/each}
-			<button type="button" onclick={() => openCommandLine('')}><span class="glyph" aria-hidden="true">:/</span>Befehl</button>
+			<button type="button" onclick={() => openCommandLine('')}
+				><span class="glyph" aria-hidden="true">:/</span>Befehl</button
+			>
 		</nav>
 	</div>
 

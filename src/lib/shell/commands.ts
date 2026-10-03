@@ -36,16 +36,26 @@ export function parseInput(value: string): { mode: CommandMode | null; query: st
 	return { mode: null, query: value };
 }
 
-const wordsOf = (text: string) => text.toLocaleLowerCase('de').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+const wordsOf = (text: string) =>
+	text
+		.toLocaleLowerCase('de')
+		.split(/[^\p{L}\p{N}]+/u)
+		.filter(Boolean);
 
 export function matchesWordStart(text: string, query: string): boolean {
 	const words = wordsOf(text);
 	return wordsOf(query).every((needle) => words.some((word) => word.startsWith(needle)));
 }
 
-export function suggest(mode: CommandMode, query: string, sources: SuggestionSources): Suggestion[] {
+export function suggest(
+	mode: CommandMode,
+	query: string,
+	sources: SuggestionSources
+): Suggestion[] {
 	const candidates = mode === ':' ? sources.commands : [...sources.view, ...sources.tickets];
-	return candidates.filter((candidate) => matchesWordStart(`${candidate.label} ${candidate.detail ?? ''}`, query));
+	return candidates.filter((candidate) =>
+		matchesWordStart(`${candidate.label} ${candidate.detail ?? ''}`, query)
+	);
 }
 
 /** An empty line lists every command, so they can be discovered without knowing `:` (mobile has no key bar). */

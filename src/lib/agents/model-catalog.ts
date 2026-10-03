@@ -85,9 +85,15 @@ export const MODELS = [
 		names: ['ornith-1.5-35b', 'Ornith-1.5-35B-A3B-GGUF:Q8_0'],
 		family: 'ornith-1.5',
 		moe: true,
-		roles: { refine: 'recommended', review: 'not-recommended', code: 'recommended', tour: 'not-recommended' },
+		roles: {
+			refine: 'recommended',
+			review: 'not-recommended',
+			code: 'recommended',
+			tour: 'not-recommended'
+		},
 		roleReason: {
-			refine: 'the strongest refinement quality in evaluation runs: recognizes open decisions and architecture conflicts',
+			refine:
+				'the strongest refinement quality in evaluation runs: recognizes open decisions and architecture conflicts',
 			review: 'not evaluated for the review role',
 			code: 'passed all hidden tests on small, well-scoped code tickets with thinking enabled',
 			tour: 'not evaluated for tour/triage; only run with thinking enabled, which is slower than the dedicated tour profile'
@@ -95,14 +101,19 @@ export const MODELS = [
 		thinking: { enabled: true, method: 'chat_template_kwargs' },
 		maxTokensMinimum: 32000,
 		contextMinimum: STUDIO_CONTEXT_MINIMUM,
-		serverHints: { llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'], ollama: ['num_ctx 32768'] },
+		serverHints: {
+			llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'],
+			ollama: ['num_ctx 32768']
+		},
 		pitfalls: [
 			{
-				problem: 'without thinking enabled it often asks a clarifying question before doing any work',
+				problem:
+					'without thinking enabled it often asks a clarifying question before doing any work',
 				fix: 'enable thinking'
 			},
 			{
-				problem: 'with a small token budget (around 12k) thinking consumes it all and no answer is produced',
+				problem:
+					'with a small token budget (around 12k) thinking consumes it all and no answer is produced',
 				fix: 'raise max_tokens to at least 32000, or disable thinking'
 			},
 			{
@@ -124,9 +135,15 @@ export const MODELS = [
 		names: ['qwen3.6-35b', 'Qwen3.6-35B-A3B'],
 		family: 'qwen3.6',
 		moe: true,
-		roles: { refine: 'acceptable', review: 'not-recommended', code: 'recommended', tour: 'recommended' },
+		roles: {
+			refine: 'acceptable',
+			review: 'not-recommended',
+			code: 'recommended',
+			tour: 'recommended'
+		},
 		roleReason: {
-			refine: 'fast and reliable in the tool loop, but with thinking off it can silently skip open product decisions instead of asking',
+			refine:
+				'fast and reliable in the tool loop, but with thinking off it can silently skip open product decisions instead of asking',
 			review: 'not evaluated for the review role',
 			code: 'passed all hidden tests on small, well-scoped code tickets with thinking enabled',
 			tour: 'very reliable in the tool loop and fast with thinking off'
@@ -136,7 +153,10 @@ export const MODELS = [
 		// huggingface.co/Qwen/Qwen3.6-35B-A3B: "we advise maintaining a context length of at least
 		// 128K tokens to preserve thinking capabilities" — above Studio's own floor.
 		contextMinimum: 131072,
-		serverHints: { llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'], ollama: ['num_ctx 131072'] },
+		serverHints: {
+			llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'],
+			ollama: ['num_ctx 131072']
+		},
 		pitfalls: [
 			{
 				problem: 'never asks clarifying questions; open product decisions are silently skipped',
@@ -169,16 +189,25 @@ export const MODELS = [
 		names: ['qwen3-coder-next'],
 		family: 'qwen3-coder-next',
 		moe: true,
-		roles: { refine: 'not-recommended', review: 'not-recommended', code: 'not-recommended', tour: 'acceptable' },
+		roles: {
+			refine: 'not-recommended',
+			review: 'not-recommended',
+			code: 'not-recommended',
+			tour: 'acceptable'
+		},
 		roleReason: {
-			refine: 'not evaluated for refine; splits tasks too finely and has no thinking mode to weigh tradeoffs',
+			refine:
+				'not evaluated for refine; splits tasks too finely and has no thinking mode to weigh tradeoffs',
 			review: 'not evaluated for the review role',
 			code: 'weaker code quality in evaluation runs, and splits tasks too finely for the tool-loop step limit',
 			tour: 'tool loop works reliably, though it tends to over-decompose tasks'
 		},
 		thinking: { enabled: false, method: 'fixed' },
 		contextMinimum: STUDIO_CONTEXT_MINIMUM,
-		serverHints: { llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'], ollama: ['num_ctx 32768'] },
+		serverHints: {
+			llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'],
+			ollama: ['num_ctx 32768']
+		},
 		pitfalls: [
 			{
 				problem: 'weaker code quality in evaluation runs, and splits tasks too finely',
@@ -192,7 +221,12 @@ export const MODELS = [
 		names: ['gpt-oss-20b', 'gpt-oss:20b'],
 		family: 'gpt-oss',
 		moe: true,
-		roles: { refine: 'not-recommended', review: 'not-recommended', code: 'acceptable', tour: 'not-recommended' },
+		roles: {
+			refine: 'not-recommended',
+			review: 'not-recommended',
+			code: 'acceptable',
+			tour: 'not-recommended'
+		},
 		roleReason: {
 			refine: 'weak refinement quality and mixes languages in its output',
 			review: 'not evaluated for the review role; the same weak refinement quality is a poor fit',
@@ -217,10 +251,16 @@ export const MODELS = [
 		names: ['qwen3.8-27b'],
 		family: 'qwen3.8',
 		moe: false,
-		roles: { refine: 'not-recommended', review: 'not-recommended', code: 'not-recommended', tour: 'not-recommended' },
+		roles: {
+			refine: 'not-recommended',
+			review: 'not-recommended',
+			code: 'not-recommended',
+			tour: 'not-recommended'
+		},
 		roleReason: {
 			refine: 'too slow once it no longer fits fully in VRAM; prefer an MoE model of similar size',
-			review: 'not evaluated for the review role; the same VRAM/speed problem applies to every role',
+			review:
+				'not evaluated for the review role; the same VRAM/speed problem applies to every role',
 			code: 'too slow once it no longer fits fully in VRAM; prefer an MoE model of similar size',
 			tour: 'too slow for a time-boxed tour/triage role'
 		},
@@ -228,7 +268,8 @@ export const MODELS = [
 		serverHints: { llamaCpp: ['--jinja'], ollama: [] },
 		pitfalls: [
 			{
-				problem: 'too slow once it no longer fits fully in VRAM (dense model, no MoE expert offloading)',
+				problem:
+					'too slow once it no longer fits fully in VRAM (dense model, no MoE expert offloading)',
 				fix: 'prefer an MoE model of similar size, e.g. ornith-1.5-35b or qwen3.6-35b'
 			}
 		],
@@ -245,7 +286,9 @@ function tokenize(name: string): string[] {
 }
 
 function canonicalTokens(entry: Pick<ModelEntry, 'names'>): string[] {
-	return entry.names.map(tokenize).reduce((shortest, tokens) => (tokens.length < shortest.length ? tokens : shortest));
+	return entry.names
+		.map(tokenize)
+		.reduce((shortest, tokens) => (tokens.length < shortest.length ? tokens : shortest));
 }
 
 /**
@@ -254,14 +297,22 @@ function canonicalTokens(entry: Pick<ModelEntry, 'names'>): string[] {
  * a subset of the query's tokens; returns `null` when no entry matches uniquely, including a
  * family-only query or a query that subset-matches more than one entry.
  */
-export function matchModel(query: string, catalog: readonly ModelEntry[] = MODELS): ModelEntry | null {
+export function matchModel(
+	query: string,
+	catalog: readonly ModelEntry[] = MODELS
+): ModelEntry | null {
 	const queryTokens = new Set(tokenize(query));
-	const matches = catalog.filter((entry) => canonicalTokens(entry).every((token) => queryTokens.has(token)));
+	const matches = catalog.filter((entry) =>
+		canonicalTokens(entry).every((token) => queryTokens.has(token))
+	);
 	return matches.length === 1 ? matches[0] : null;
 }
 
 /** The context size in tokens that prompts for this profile's model are planned with. */
-export function contextBudget(profile: { model: string | null }, catalog: readonly ModelEntry[] = MODELS): number {
+export function contextBudget(
+	profile: { model: string | null },
+	catalog: readonly ModelEntry[] = MODELS
+): number {
 	const entry = profile.model === null ? null : matchModel(profile.model, catalog);
 	return entry?.contextBudget ?? entry?.contextMinimum ?? STUDIO_CONTEXT_MINIMUM;
 }

@@ -19,7 +19,11 @@ type Row = { name: string; ciphertext: Uint8Array; iv: Uint8Array; auth_tag: Uin
 export type SecretMeta = { name: string; created_at: string; updated_at: string };
 
 const invalidKey = (what: string, hint: string) =>
-	new DomainError('secret_key_invalid', `${what} ist kein gültiger Schlüssel (erwartet: 32 Bytes als Base64, 44 Zeichen).`, hint);
+	new DomainError(
+		'secret_key_invalid',
+		`${what} ist kein gültiger Schlüssel (erwartet: 32 Bytes als Base64, 44 Zeichen).`,
+		hint
+	);
 
 /**
  * Lädt den Schlüssel: `STUDIO_SECRET_KEY` hat Vorrang, sonst `<dir>/secret.key` — fehlt die Datei, wird sie mit Rechten 0600
@@ -29,7 +33,10 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 	if (env !== undefined) {
 		// auch leer ist ein Fehler: sonst entstünde still eine neue secret.key, und die gespeicherten Secrets wären unlesbar
 		if (!KEY_FORMAT.test(env.trim()))
-			throw invalidKey(KEY_ENV, `Erzeuge einen mit „openssl rand -base64 32“ — oder entferne ${KEY_ENV}, dann nutzt Studio secret.key im Datenverzeichnis.`);
+			throw invalidKey(
+				KEY_ENV,
+				`Erzeuge einen mit „openssl rand -base64 32“ — oder entferne ${KEY_ENV}, dann nutzt Studio secret.key im Datenverzeichnis.`
+			);
 		return keyFrom(env.trim());
 	}
 	const file = join(dir, 'secret.key');
@@ -46,7 +53,9 @@ export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 			'Stelle die Datei aus dem Backup wieder her. Ist der Schlüssel verloren: Datei löschen und neu starten — Studio erzeugt einen neuen, gespeicherte Secrets müssen dann neu eingegeben werden.'
 		);
 	if (process.platform !== 'win32' && statSync(file).mode & 0o077)
-		console.warn(`Warnung: ${file} ist für andere Nutzer lesbar — „chmod 600 ${file}“ schränkt das ein.`);
+		console.warn(
+			`Warnung: ${file} ist für andere Nutzer lesbar — „chmod 600 ${file}“ schränkt das ein.`
+		);
 	return keyFrom(text);
 }
 
@@ -68,7 +77,9 @@ function encrypt(key: Buffer, name: string, value: string) {
 
 function decrypt(key: Buffer, row: Row): string {
 	try {
-		const decipher = createDecipheriv('aes-256-gcm', key, row.iv, { authTagLength: 16 }).setAAD(Buffer.from(row.name));
+		const decipher = createDecipheriv('aes-256-gcm', key, row.iv, { authTagLength: 16 }).setAAD(
+			Buffer.from(row.name)
+		);
 		decipher.setAuthTag(row.auth_tag);
 		return Buffer.concat([decipher.update(row.ciphertext), decipher.final()]).toString('utf8');
 	} catch {
@@ -88,13 +99,15 @@ const known = new Map<string, string>();
 
 function remember(value: string, label: string): string {
 	// auch die JSON-/inspect-escapte Form: mehrzeilige Werte (PEM) erscheinen in Logs als „…\n…“
-	if (value.length >= MIN_LENGTH) for (const v of [value, JSON.stringify(value).slice(1, -1)]) known.set(v, label);
+	if (value.length >= MIN_LENGTH)
+		for (const v of [value, JSON.stringify(value).slice(1, -1)]) known.set(v, label);
 	return value;
 }
 
 function maskText(text: string): string {
 	// längste zuerst: enthält ein Secret ein anderes, bleibt kein Rest des längeren stehen
-	for (const [value, label] of [...known].sort(([a], [b]) => b.length - a.length)) text = text.replaceAll(value, () => label);
+	for (const [value, label] of [...known].sort(([a], [b]) => b.length - a.length))
+		text = text.replaceAll(value, () => label);
 	return text;
 }
 
@@ -116,16 +129,22 @@ function walk(value: unknown, parents: Set<object>): unknown {
 	try {
 		if (Array.isArray(value)) return value.map((v) => walk(v, parents));
 		if (value instanceof Error) {
-			const copy = Object.assign(Object.create(Object.getPrototypeOf(value)), walk({ ...value }, parents), {
-				message: maskText(value.message),
-				stack: value.stack && maskText(value.stack)
-			});
+			const copy = Object.assign(
+				Object.create(Object.getPrototypeOf(value)),
+				walk({ ...value }, parents),
+				{
+					message: maskText(value.message),
+					stack: value.stack && maskText(value.stack)
+				}
+			);
 			if ('cause' in value) copy.cause = walk(value.cause, parents);
 			return copy;
 		}
 		const proto = Object.getPrototypeOf(value);
 		if (proto === Object.prototype || proto === null)
-			return Object.fromEntries(Object.entries(value).map(([k, v]) => [maskText(k), walk(v, parents)]));
+			return Object.fromEntries(
+				Object.entries(value).map(([k, v]) => [maskText(k), walk(v, parents)])
+			);
 		let json: string | undefined;
 		try {
 			json = JSON.stringify(value);
@@ -156,24 +175,41 @@ export function maskConsole(target: Pick<Console, (typeof LEVELS)[number]> = con
 
 /** Namen und Zeitstempel, nie Werte oder Chiffrate — das Einzige, was das UI von Secrets zu sehen bekommt. */
 export const listSecrets = (db: DatabaseSync) =>
-	db.prepare('SELECT name, created_at, updated_at FROM secrets ORDER BY name').all() as SecretMeta[];
+	db
+		.prepare('SELECT name, created_at, updated_at FROM secrets ORDER BY name')
+		.all() as SecretMeta[];
 
 /**
  * Speichert ein Secret verschlüsselt. Einen vorhandenen Namen überschreibt es nur mit `replace` — Ersetzen ist unwiderruflich
  * und muss ausdrücklich gewollt sein. Leerraum am Rand (Einfügen aus der Zwischenablage) fällt weg.
  * Fehlermeldungen nennen den eingegebenen Wert nie — auch keinen ungültigen Namen, falls dort versehentlich der Key landete.
  */
-export function setSecret(db: DatabaseSync, name: string, value: string, replace = false, key = secretKey()): void {
+export function setSecret(
+	db: DatabaseSync,
+	name: string,
+	value: string,
+	replace = false,
+	key = secretKey()
+): void {
 	value = value.trim();
 	if (name === value)
-		throw new DomainError('secret_name_is_value', 'Name und Wert sind gleich.', 'Der Name ist überall im Klartext sichtbar — wähle eine Bezeichnung wie „anthropic-api-key“.');
+		throw new DomainError(
+			'secret_name_is_value',
+			'Name und Wert sind gleich.',
+			'Der Name ist überall im Klartext sichtbar — wähle eine Bezeichnung wie „anthropic-api-key“.'
+		);
 	if (!NAME.test(name))
 		throw new DomainError(
 			'secret_name_invalid',
 			'Der Name ist ungültig.',
 			'Erlaubt sind 1–64 Zeichen aus a–z, 0–9, „-“ und „_“, beginnend mit Buchstabe oder Ziffer — z. B. „anthropic-api-key“.'
 		);
-	if (!value) throw new DomainError('secret_empty', 'Der Wert ist leer.', 'Füge den vollständigen Key bzw. Token ein.');
+	if (!value)
+		throw new DomainError(
+			'secret_empty',
+			'Der Wert ist leer.',
+			'Füge den vollständigen Key bzw. Token ein.'
+		);
 	if (value.length < MIN_LENGTH)
 		throw new DomainError(
 			'secret_too_short',
@@ -181,7 +217,11 @@ export function setSecret(db: DatabaseSync, name: string, value: string, replace
 			'Prüfe, ob der Key vollständig eingefügt wurde. So kurze Werte lassen sich in Logs nicht sicher maskieren und gehören nicht in den Secret-Store.'
 		);
 	if (!replace && db.prepare('SELECT 1 FROM secrets WHERE name = ?').get(name))
-		throw new DomainError('secret_exists', `Secret „${name}“ gibt es schon.`, 'Nutze „Ersetzen“ beim vorhandenen Eintrag — der bisherige Wert geht dabei verloren.');
+		throw new DomainError(
+			'secret_exists',
+			`Secret „${name}“ gibt es schon.`,
+			'Nutze „Ersetzen“ beim vorhandenen Eintrag — der bisherige Wert geht dabei verloren.'
+		);
 
 	const { ciphertext, iv, tag } = encrypt(key, name, value);
 	db.prepare(
@@ -192,15 +232,26 @@ export function setSecret(db: DatabaseSync, name: string, value: string, replace
 }
 
 /** Löscht ein Secret. Idempotent: `false`, wenn es keins (mehr) gab. */
-export const deleteSecret = (db: DatabaseSync, name: string) => db.prepare('DELETE FROM secrets WHERE name = ?').run(name).changes > 0;
+export const deleteSecret = (db: DatabaseSync, name: string) =>
+	db.prepare('DELETE FROM secrets WHERE name = ?').run(name).changes > 0;
 
 function getSecret(db: DatabaseSync, name: string, key: Buffer): string {
-	const row = db.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets WHERE name = ?').get(name) as Row | undefined;
+	const row = db
+		.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets WHERE name = ?')
+		.get(name) as Row | undefined;
 	if (!row)
 		throw NAME.test(name)
-			? new DomainError('secret_not_found', `Secret „${name}“ gibt es nicht.`, 'Lege es unter Einstellungen → Secrets an oder korrigiere den Verweis secret:<name>.')
+			? new DomainError(
+					'secret_not_found',
+					`Secret „${name}“ gibt es nicht.`,
+					'Lege es unter Einstellungen → Secrets an oder korrigiere den Verweis secret:<name>.'
+				)
 			: // kein gültiger Name, vielleicht ein versehentlich eingefügter Key: nicht wiederholen
-				new DomainError('secret_ref_invalid', 'Der Verweis secret:<name> enthält keinen gültigen Secret-Namen.', `Namen bestehen aus 1–64 Zeichen a–z, 0–9, „-“ und „_“ — z. B. secret:anthropic-api-key. Steht dort der Key selbst, speichere ihn unter Einstellungen → Secrets und verweise auf seinen Namen.`);
+				new DomainError(
+					'secret_ref_invalid',
+					'Der Verweis secret:<name> enthält keinen gültigen Secret-Namen.',
+					`Namen bestehen aus 1–64 Zeichen a–z, 0–9, „-“ und „_“ — z. B. secret:anthropic-api-key. Steht dort der Key selbst, speichere ihn unter Einstellungen → Secrets und verweise auf seinen Namen.`
+				);
 	return remember(decrypt(key, row), `[secret:${name}]`);
 }
 
@@ -235,7 +286,9 @@ export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): st
  * werden gemeldet, brechen den Start aber nicht ab — sie lassen sich im UI ersetzen.
  */
 export function initSecrets(db: DatabaseSync, key = secretKey()): void {
-	for (const row of db.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets').all() as Row[]) {
+	for (const row of db
+		.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets')
+		.all() as Row[]) {
 		try {
 			remember(decrypt(key, row), `[secret:${row.name}]`);
 		} catch (err) {

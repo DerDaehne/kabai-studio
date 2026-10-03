@@ -13,21 +13,32 @@ const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b)
 // --- Passwort: scrypt, Parameter im Hash-String -------------------------------------------------
 
 // OWASP-Äquivalent zu N=2^17/p=1, aber 32 MiB statt 128 MiB pro Hash (weniger Speicher-DoS bei parallelen Logins).
-const N = 2 ** 15, R = 8, P = 3;
+const N = 2 ** 15,
+	R = 8,
+	P = 3;
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 1024;
 
-function derive(password: string, salt: Buffer, keylen: number, opts: ScryptOptions): Promise<Buffer> {
+function derive(
+	password: string,
+	salt: Buffer,
+	keylen: number,
+	opts: ScryptOptions
+): Promise<Buffer> {
 	// maxmem: Nodes Default (32 MiB) liegt genau auf 128·N·r und reicht mit OpenSSLs Zusatzbedarf nicht.
 	return new Promise((resolve, reject) =>
-		scrypt(password, salt, keylen, { ...opts, maxmem: 64 * 1024 * 1024 }, (err, key) => (err ? reject(err) : resolve(key)))
+		scrypt(password, salt, keylen, { ...opts, maxmem: 64 * 1024 * 1024 }, (err, key) =>
+			err ? reject(err) : resolve(key)
+		)
 	);
 }
 
 /** Fehlermeldung für ein unzulässiges Passwort, sonst null. */
 export function passwordProblem(password: string): string | null {
-	if (password.length < PASSWORD_MIN) return `Das Passwort braucht mindestens ${PASSWORD_MIN} Zeichen.`;
-	if (password.length > PASSWORD_MAX) return `Das Passwort darf höchstens ${PASSWORD_MAX} Zeichen haben.`;
+	if (password.length < PASSWORD_MIN)
+		return `Das Passwort braucht mindestens ${PASSWORD_MIN} Zeichen.`;
+	if (password.length > PASSWORD_MAX)
+		return `Das Passwort darf höchstens ${PASSWORD_MAX} Zeichen haben.`;
 	return null;
 }
 
@@ -42,7 +53,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
 	const [alg, n, r, p, salt, hash] = stored.split('$');
 	const expected = Buffer.from(hash ?? '', 'base64url');
 	if (alg !== 'scrypt' || expected.length === 0) return false;
-	const key = await derive(password, Buffer.from(salt, 'base64url'), expected.length, { N: +n, r: +r, p: +p });
+	const key = await derive(password, Buffer.from(salt, 'base64url'), expected.length, {
+		N: +n,
+		r: +r,
+		p: +p
+	});
 	return timingSafeEqual(key, expected);
 }
 
@@ -53,16 +68,22 @@ export const hasOwner = (db: DatabaseSync) => db.prepare('SELECT 1 FROM users').
 /** Legt den Owner an, atomar nur solange keiner existiert. null = es gibt schon einen. */
 export function createOwner(db: DatabaseSync, name: string, passwordHash: string): User | null {
 	const row = db
-		.prepare('INSERT INTO users (name, password_hash) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM users) RETURNING id, name')
+		.prepare(
+			'INSERT INTO users (name, password_hash) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM users) RETURNING id, name'
+		)
 		.get(name, passwordHash);
 	return (row as User | undefined) ?? null;
 }
 
 /** Prüft Name + Passwort gegen den Owner. scrypt läuft immer, damit ein falscher Name nicht schneller antwortet. */
-export async function checkLogin(db: DatabaseSync, name: string, password: string): Promise<User | null> {
-	const owner = db.prepare('SELECT id, name, password_hash FROM users ORDER BY id LIMIT 1').get() as
-		| (User & { password_hash: string })
-		| undefined;
+export async function checkLogin(
+	db: DatabaseSync,
+	name: string,
+	password: string
+): Promise<User | null> {
+	const owner = db
+		.prepare('SELECT id, name, password_hash FROM users ORDER BY id LIMIT 1')
+		.get() as (User & { password_hash: string }) | undefined;
 	if (!owner) return null;
 	const ok = await verifyPassword(password, owner.password_hash);
 	return ok && safeEqual(name, owner.name) ? { id: owner.id, name: owner.name } : null;
@@ -87,7 +108,8 @@ export function resetPassword(db: DatabaseSync, passwordHash: string): boolean {
 let setupToken: string | null = null;
 
 export const issueSetupToken = () => (setupToken = randomBytes(24).toString('base64url'));
-export const checkSetupToken = (input: string) => setupToken !== null && safeEqual(input, setupToken);
+export const checkSetupToken = (input: string) =>
+	setupToken !== null && safeEqual(input, setupToken);
 export const clearSetupToken = () => void (setupToken = null);
 
 // --- Sessions: Token nur im Cookie, in der DB nur SHA-256 --------------------------------------
@@ -125,7 +147,9 @@ export function validateSession(
 ): { user: User; renewed: boolean } | null {
 	const hash = tokenHash(token);
 	const row = db
-		.prepare('SELECT s.expires_at, u.id, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?')
+		.prepare(
+			'SELECT s.expires_at, u.id, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'
+		)
 		.get(hash) as (User & { expires_at: string }) | undefined;
 	if (!row) return null;
 	if (row.expires_at <= sqlTime(now)) {
@@ -133,7 +157,11 @@ export function validateSession(
 		return null;
 	}
 	const renewed = renew && row.expires_at < sqlTime(now + (SESSION_DAYS - 1) * DAY);
-	if (renewed) db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').run(sqlTime(now + SESSION_DAYS * DAY), hash);
+	if (renewed)
+		db.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').run(
+			sqlTime(now + SESSION_DAYS * DAY),
+			hash
+		);
 	return { user: { id: row.id, name: row.name }, renewed };
 }
 
@@ -173,7 +201,8 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 			if (allowed) recent.push(now);
 			hits.set(key, recent);
 			// ponytail: voller Sweep ab 10k Schlüsseln; bei echten Massenangriffen gehört Studio hinter einen Proxy
-			if (hits.size > 10_000) for (const [k, ts] of hits) if (ts.every((t) => t <= now - windowMs)) hits.delete(k);
+			if (hits.size > 10_000)
+				for (const [k, ts] of hits) if (ts.every((t) => t <= now - windowMs)) hits.delete(k);
 			return allowed;
 		},
 		/** Erfolgreicher Versuch zählt nicht als Fehlversuch. */
@@ -185,4 +214,5 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 
 /** Gemeinsames Limit für /login und /setup: 5 Fehlversuche pro Minute und IP. */
 export const authLimiter = rateLimiter();
-export const TOO_MANY = 'Zu viele Fehlversuche von dieser Adresse. Bitte eine Minute warten und dann erneut versuchen.';
+export const TOO_MANY =
+	'Zu viele Fehlversuche von dieser Adresse. Bitte eine Minute warten und dann erneut versuchen.';

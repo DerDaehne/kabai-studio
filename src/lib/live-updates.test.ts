@@ -28,7 +28,10 @@ beforeEach(() => {
 	toasts.length = 0;
 	probe = () => Promise.reject(new TypeError('Failed to fetch'));
 	vi.stubGlobal('EventSource', FakeEventSource);
-	vi.stubGlobal('fetch', vi.fn(() => probe()));
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(() => probe())
+	);
 });
 
 afterEach(() => {
@@ -100,7 +103,10 @@ describe('connectLiveUpdates', () => {
 
 		await fail(1);
 		expect(toasts).toHaveLength(1);
-		expect(toasts[0]).toMatchObject({ tone: 'error', message: expect.stringMatching(/Verbindung unterbrochen.*versucht es weiter.*neu laden/) });
+		expect(toasts[0]).toMatchObject({
+			tone: 'error',
+			message: expect.stringMatching(/Verbindung unterbrochen.*versucht es weiter.*neu laden/)
+		});
 
 		await fail(2); // weitere Fehlversuche stapeln keine zweite Meldung
 		expect(toasts).toHaveLength(1);
@@ -115,7 +121,11 @@ describe('connectLiveUpdates', () => {
 		await fail(3);
 		expect(fetch).toHaveBeenCalledWith('/api/events?project=1', expect.anything());
 		expect(toasts).toEqual([
-			expect.objectContaining({ tone: 'error', message: expect.stringContaining('Sitzung abgelaufen'), action: { label: 'Neu anmelden', href: '/login' } })
+			expect.objectContaining({
+				tone: 'error',
+				message: expect.stringContaining('Sitzung abgelaufen'),
+				action: { label: 'Neu anmelden', href: '/login' }
+			})
 		]);
 
 		const count = FakeEventSource.instances.length;
@@ -128,7 +138,9 @@ describe('connectLiveUpdates', () => {
 		probe = async () => new Response(null, { status: 200 });
 		connectLiveUpdates(1, { onReload: vi.fn() });
 		await fail(3);
-		expect(toasts).toEqual([expect.objectContaining({ message: expect.stringContaining('Verbindung unterbrochen') })]);
+		expect(toasts).toEqual([
+			expect.objectContaining({ message: expect.stringContaining('Verbindung unterbrochen') })
+		]);
 		expect(FakeEventSource.instances).toHaveLength(4); // jeder Fehlversuch hat neu verbunden
 		expect(latest().closed).toBe(false);
 		expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true); // Nachfrage hält keinen zweiten Stream offen
@@ -137,16 +149,19 @@ describe('connectLiveUpdates', () => {
 	it.each([
 		['wieder verbunden', 200, () => latest().onopen?.()],
 		['geschlossen', 401, (h: { close(): void }) => h.close()]
-	])('Nachfrage antwortet erst, wenn schon %s: kein veralteter Hinweis', async (_, status, meanwhile) => {
-		let answer!: (res: Response) => void;
-		probe = () => new Promise((resolve) => (answer = resolve));
-		const handle = connectLiveUpdates(1, { onReload: vi.fn() });
-		await fail(3); // dritte Nachfrage hängt noch
-		meanwhile(handle);
-		answer(new Response(null, { status }));
-		await vi.advanceTimersByTimeAsync(0);
-		expect(toasts).toHaveLength(0);
-	});
+	])(
+		'Nachfrage antwortet erst, wenn schon %s: kein veralteter Hinweis',
+		async (_, status, meanwhile) => {
+			let answer!: (res: Response) => void;
+			probe = () => new Promise((resolve) => (answer = resolve));
+			const handle = connectLiveUpdates(1, { onReload: vi.fn() });
+			await fail(3); // dritte Nachfrage hängt noch
+			meanwhile(handle);
+			answer(new Response(null, { status }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(toasts).toHaveLength(0);
+		}
+	);
 
 	it('close() beendet die Verbindung endgültig — kein weiterer Reconnect', () => {
 		const handle = connectLiveUpdates(1, { onReload: vi.fn() });
@@ -176,7 +191,9 @@ describe('connectLiveUpdates', () => {
 	it('reicht eingehende Events an onEvent weiter', () => {
 		const onEvent = vi.fn();
 		connectLiveUpdates(1, { onReload: vi.fn(), onEvent });
-		latest().onmessage?.({ data: JSON.stringify({ type: 'ticket.updated', projectId: 1 }) } as MessageEvent);
+		latest().onmessage?.({
+			data: JSON.stringify({ type: 'ticket.updated', projectId: 1 })
+		} as MessageEvent);
 		expect(onEvent).toHaveBeenCalledWith({ type: 'ticket.updated', projectId: 1 });
 	});
 });

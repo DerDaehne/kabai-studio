@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { renderModelsSection, buildReadme } from '../../../scripts/generate-model-catalog-readme.ts';
+import {
+	renderModelsSection,
+	buildReadme
+} from '../../../scripts/generate-model-catalog-readme.ts';
 import { MODELS } from './model-catalog.ts';
 
 describe('README "Local models" section', () => {

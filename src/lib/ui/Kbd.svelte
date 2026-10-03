@@ -18,7 +18,9 @@
 </script>
 
 <kbd class:active>
-	{#if symbol}<span aria-hidden="true">{symbol.glyph}</span><span class="visually-hidden">{symbol.name}</span>{:else}{key}{/if}
+	{#if symbol}<span aria-hidden="true">{symbol.glyph}</span><span class="visually-hidden"
+			>{symbol.name}</span
+		>{:else}{key}{/if}
 </kbd>
 
 <style>

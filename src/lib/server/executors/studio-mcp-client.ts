@@ -12,7 +12,11 @@ const CHARS_PER_TOKEN = 4;
  * The studio MCP tools of one run, called in-process with the run token, so the agent acts with the run's identity.
  * `toolTokens` estimates what the tool definitions add to every request (characters / 4).
  */
-export async function studioTools(endpoint: Endpoint, token: string, signal: AbortSignal): Promise<StudioTools> {
+export async function studioTools(
+	endpoint: Endpoint,
+	token: string,
+	signal: AbortSignal
+): Promise<StudioTools> {
 	const client: MCPClient = await createMCPClient({
 		transport: {
 			type: 'http',
@@ -25,7 +29,11 @@ export async function studioTools(endpoint: Endpoint, token: string, signal: Abo
 	try {
 		const definitions = await client.listTools({ options: { signal } });
 		const toolTokens = Math.ceil(JSON.stringify(definitions.tools).length / CHARS_PER_TOKEN);
-		return { tools: client.toolsFromDefinitions(definitions), toolTokens, close: () => client.close() };
+		return {
+			tools: client.toolsFromDefinitions(definitions),
+			toolTokens,
+			close: () => client.close()
+		};
 	} catch (err) {
 		await client.close();
 		throw err;

@@ -6,7 +6,12 @@
 	 * A vertical list with one aura layer under all of its items, so a glow never covers a neighbouring item.
 	 * `aurae` comes from assignAurae() over everything visible in the view, which keeps the budget view-wide.
 	 */
-	let { items, aurae, item, label }: { items: T[]; aurae: ReadonlyMap<string, Aura>; item: Snippet<[T]>; label: string } = $props();
+	let {
+		items,
+		aurae,
+		item,
+		label
+	}: { items: T[]; aurae: ReadonlyMap<string, Aura>; item: Snippet<[T]>; label: string } = $props();
 </script>
 
 <ul class="aura-list" aria-label={label}>

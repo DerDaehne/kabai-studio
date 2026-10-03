@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { commands, matchesWordStart, parseInput, suggest, suggestionsFor, type Suggestion } from './commands';
+import {
+	commands,
+	matchesWordStart,
+	parseInput,
+	suggest,
+	suggestionsFor,
+	type Suggestion
+} from './commands';
 
 const view: Suggestion[] = [{ id: 'view-1', label: 'Spur von qwen3-coder', href: '/#spur' }];
 const tickets: Suggestion[] = [

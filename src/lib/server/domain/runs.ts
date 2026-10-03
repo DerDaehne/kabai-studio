@@ -5,7 +5,8 @@ import { mask } from '../secrets';
 import { ticket } from './board';
 import { actorLabel, DomainError, tx, type Actor } from './core';
 
-export type RunState = 'queued' | 'running' | 'waiting_approval' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+export type RunState =
+	'queued' | 'running' | 'waiting_approval' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
 export type EndState = 'paused' | 'succeeded' | 'failed' | 'cancelled';
 export type RunEventType =
 	| 'message'
@@ -56,7 +57,8 @@ export type Limits = { global: number; pools: Record<string, number> };
 /** Claim order of queued runs, most urgent first; equal priorities are claimed oldest first. Running runs are never preempted. */
 export const PRIORITIES = ['human', 'blocker', 'review', 'normal'] as const;
 export type Priority = (typeof PRIORITIES)[number];
-const rank = (column: string) => `CASE ${column} ${PRIORITIES.map((p, i) => `WHEN '${p}' THEN ${i}`).join(' ')} END`;
+const rank = (column: string) =>
+	`CASE ${column} ${PRIORITIES.map((p, i) => `WHEN '${p}' THEN ${i}`).join(' ')} END`;
 
 type Emit = (event: StudioEvent) => void;
 type Run = { id: number; ticket_id: number; project_id: number; state: RunState };
@@ -72,9 +74,25 @@ const NEXT: Record<RunState, RunState[]> = {
 	cancelled: []
 };
 /** Welche Funktion einen Übergang ausführt: startRun erzeugt dabei das Token, finishRun entwertet es. */
-const via = (from: RunState, to: RunState) => (NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState');
+const via = (from: RunState, to: RunState) =>
+	NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState';
 
-const PROFILE_FIELDS = ['name', 'executor', 'provider', 'base_url', 'model', 'command', 'args', 'api_key_ref', 'params', 'extra_prompt', 'permission_policy', 'max_steps', 'max_tokens', 'pool'] as const;
+const PROFILE_FIELDS = [
+	'name',
+	'executor',
+	'provider',
+	'base_url',
+	'model',
+	'command',
+	'args',
+	'api_key_ref',
+	'params',
+	'extra_prompt',
+	'permission_policy',
+	'max_steps',
+	'max_tokens',
+	'pool'
+] as const;
 const JSON_FIELDS = ['args', 'params', 'permission_policy'];
 
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -82,13 +100,26 @@ const usage = (u: Usage = {}) => [u.tokensIn ?? 0, u.tokensOut ?? 0, u.cost ?? 0
 const ADD_USAGE = 'tokens_in = tokens_in + ?, tokens_out = tokens_out + ?, cost = cost + ?';
 
 function run(db: DatabaseSync, id: number): Run {
-	const r = db.prepare('SELECT r.id, r.ticket_id, t.project_id, r.state FROM runs r JOIN tickets t ON t.id = r.ticket_id WHERE r.id = ?').get(id) as Run | undefined;
+	const r = db
+		.prepare(
+			'SELECT r.id, r.ticket_id, t.project_id, r.state FROM runs r JOIN tickets t ON t.id = r.ticket_id WHERE r.id = ?'
+		)
+		.get(id) as Run | undefined;
 	if (!r) throw new DomainError('not_found', `Run ${id} gibt es nicht.`, 'Prüfe die Run-ID.');
 	return r;
 }
 
 /** Prüft den Übergang gegen NEXT und die zuständige Funktion und schreibt ihn; `set` ergänzt weitere Spalten. */
-function transition(db: DatabaseSync, emit: Emit, actor: Actor, runId: number, to: RunState, fn: string, set = '', ...params: SQLInputValue[]) {
+function transition(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	runId: number,
+	to: RunState,
+	fn: string,
+	set = '',
+	...params: SQLInputValue[]
+) {
 	const r = run(db, runId);
 	const next = NEXT[r.state];
 	if (!next.includes(to) || via(r.state, to) !== fn)
@@ -102,9 +133,20 @@ function transition(db: DatabaseSync, emit: Emit, actor: Actor, runId: number, t
 				: 'Weitere Arbeit braucht einen neuen Run: createRun, nach „paused“ mit resumedFromRunId.'
 		);
 	const totals = db
-		.prepare(`UPDATE runs SET state = ?${set} WHERE id = ? RETURNING tokens_in AS tokensIn, tokens_out AS tokensOut, cost`)
+		.prepare(
+			`UPDATE runs SET state = ?${set} WHERE id = ? RETURNING tokens_in AS tokensIn, tokens_out AS tokensOut, cost`
+		)
 		.get(to, ...params, r.id) as { tokensIn: number; tokensOut: number; cost: number };
-	emit({ type: 'run.state_changed', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id, from: r.state, to, ...totals });
+	emit({
+		type: 'run.state_changed',
+		projectId: r.project_id,
+		ticketId: r.ticket_id,
+		actor,
+		runId: r.id,
+		from: r.state,
+		to,
+		...totals
+	});
 	return totals;
 }
 
@@ -112,7 +154,14 @@ function transition(db: DatabaseSync, emit: Emit, actor: Actor, runId: number, t
 export function createRun(
 	db: DatabaseSync,
 	actor: Actor,
-	r: { ticketId: number; profileId: number; trigger?: 'manual' | 'on_enter'; resumedFromRunId?: number; resumeReason?: ResumeReason; notBefore?: string }
+	r: {
+		ticketId: number;
+		profileId: number;
+		trigger?: 'manual' | 'on_enter';
+		resumedFromRunId?: number;
+		resumeReason?: ResumeReason;
+		notBefore?: string;
+	}
 ): { id: number } {
 	return tx(db, (emit) => {
 		const t = ticket(db, r.ticketId);
@@ -134,7 +183,16 @@ export function createRun(
 				`INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, priority, resumed_from_run_id, resume_reason, not_before)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
 			)
-			.get(t.id, t.column_id, r.profileId, trigger, priority, r.resumedFromRunId ?? null, r.resumeReason ?? null, notBefore) as { id: number };
+			.get(
+				t.id,
+				t.column_id,
+				r.profileId,
+				trigger,
+				priority,
+				r.resumedFromRunId ?? null,
+				r.resumeReason ?? null,
+				notBefore
+			) as { id: number };
 		emit({ type: 'run.created', projectId: t.project_id, ticketId: t.id, actor, runId: id });
 		return { id };
 	});
@@ -144,7 +202,11 @@ export function createRun(
 function canonicalTime(time: string) {
 	const date = new Date(time);
 	if (Number.isNaN(date.getTime()))
-		throw new DomainError('invalid_not_before', `„${time}“ ist kein Zeitpunkt.`, 'Gib notBefore als ISO-8601-Zeitpunkt an, z. B. 2026-10-02T15:00:00Z.');
+		throw new DomainError(
+			'invalid_not_before',
+			`„${time}“ ist kein Zeitpunkt.`,
+			'Gib notBefore als ISO-8601-Zeitpunkt an, z. B. 2026-10-02T15:00:00Z.'
+		);
 	return date.toISOString();
 }
 
@@ -166,7 +228,12 @@ export function freshRunsInChain(db: DatabaseSync, runId: number): number {
 }
 
 // ponytail: derived once at creation; recompute at claim time if successors finishing first turns out to matter in practice.
-function derivePriority(db: DatabaseSync, ticketId: number, columnId: number, trigger: 'manual' | 'on_enter' | 'resume'): Priority {
+function derivePriority(
+	db: DatabaseSync,
+	ticketId: number,
+	columnId: number,
+	trigger: 'manual' | 'on_enter' | 'resume'
+): Priority {
 	const hasWaitingSuccessor = db
 		.prepare(
 			`SELECT 1 FROM ticket_relations r JOIN tickets s ON s.id = r.to_ticket_id JOIN columns c ON c.id = s.column_id
@@ -174,7 +241,8 @@ function derivePriority(db: DatabaseSync, ticketId: number, columnId: number, tr
 		)
 		.get(ticketId);
 	if (hasWaitingSuccessor) return 'blocker';
-	const inReviewColumn = db.prepare('SELECT review FROM columns WHERE id = ?').get(columnId)?.review === 1;
+	const inReviewColumn =
+		db.prepare('SELECT review FROM columns WHERE id = ?').get(columnId)?.review === 1;
 	if (inReviewColumn && trigger !== 'manual') return 'review';
 	return 'normal';
 }
@@ -183,12 +251,26 @@ function derivePriority(db: DatabaseSync, ticketId: number, columnId: number, tr
 export function prioritizeRun(db: DatabaseSync, actor: Actor, runId: number) {
 	tx(db, (emit) => {
 		if (actor.kind !== 'user')
-			throw new DomainError('requires_human', 'Runs priorisiert nur der Mensch.', 'Ist etwas dringend: Frage als Kommentar, dann in die human_intervention-Spalte.');
+			throw new DomainError(
+				'requires_human',
+				'Runs priorisiert nur der Mensch.',
+				'Ist etwas dringend: Frage als Kommentar, dann in die human_intervention-Spalte.'
+			);
 		const r = run(db, runId);
 		if (r.state !== 'queued')
-			throw new DomainError('run_not_queued', `Run ${r.id} ist „${r.state}“ — priorisieren lässt sich nur ein wartender Run.`, 'Ein gestarteter Run wird nicht verdrängt; priorisiere einen Run in der Queue.');
+			throw new DomainError(
+				'run_not_queued',
+				`Run ${r.id} ist „${r.state}“ — priorisieren lässt sich nur ein wartender Run.`,
+				'Ein gestarteter Run wird nicht verdrängt; priorisiere einen Run in der Queue.'
+			);
 		db.prepare("UPDATE runs SET priority = 'human' WHERE id = ?").run(r.id);
-		emit({ type: 'run.prioritized', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id });
+		emit({
+			type: 'run.prioritized',
+			projectId: r.project_id,
+			ticketId: r.ticket_id,
+			actor,
+			runId: r.id
+		});
 	});
 }
 
@@ -205,7 +287,11 @@ export type WaitReason = {
 };
 
 /** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
-export function waitReason(db: DatabaseSync, runId: number, limits: Limits): WaitReason | undefined {
+export function waitReason(
+	db: DatabaseSync,
+	runId: number,
+	limits: Limits
+): WaitReason | undefined {
 	const row = db
 		.prepare(
 			`SELECT r.priority, p.pool,
@@ -224,11 +310,15 @@ export function waitReason(db: DatabaseSync, runId: number, limits: Limits): Wai
 
 function waitText(r: Omit<WaitReason, 'text'>) {
 	const causes = [
-		r.activeInPool >= r.poolLimit && `Pool „${r.pool}“ ist voll (${r.activeInPool} von ${r.poolLimit} aktiv)`,
-		r.active >= r.globalLimit && `das globale Limit ist erreicht (${r.active} von ${r.globalLimit} aktiv)`,
+		r.activeInPool >= r.poolLimit &&
+			`Pool „${r.pool}“ ist voll (${r.activeInPool} von ${r.poolLimit} aktiv)`,
+		r.active >= r.globalLimit &&
+			`das globale Limit ist erreicht (${r.active} von ${r.globalLimit} aktiv)`,
 		r.ahead > 0 && `vor ihm in der Queue: ${r.ahead} ${r.ahead === 1 ? 'Run' : 'Runs'}`
 	].filter(Boolean);
-	return causes.length ? `wartet: ${causes.join(', ')}.` : 'wartet auf den nächsten Claim des Runners.';
+	return causes.length
+		? `wartet: ${causes.join(', ')}.`
+		: 'wartet auf den nächsten Claim des Runners.';
 }
 
 /**
@@ -241,15 +331,34 @@ export function startRun(db: DatabaseSync, actor: Actor, runId: number): { token
 
 function start(db: DatabaseSync, emit: Emit, actor: Actor, runId: number) {
 	const token = randomBytes(32).toString('base64url');
-	transition(db, emit, actor, runId, 'running', 'startRun', ', started_at = CURRENT_TIMESTAMP, token_hash = ?', hash(token));
+	transition(
+		db,
+		emit,
+		actor,
+		runId,
+		'running',
+		'startRun',
+		', started_at = CURRENT_TIMESTAMP, token_hash = ?',
+		hash(token)
+	);
 	assignTicketToRun(db, emit, actor, run(db, runId));
 	return { token };
 }
 
 /** The board shows who works a ticket from the moment its run starts, also for runs that only read or fail early. */
 function assignTicketToRun(db: DatabaseSync, emit: Emit, actor: Actor, r: Run) {
-	db.prepare('UPDATE tickets SET assignee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(actorLabel({ kind: 'agent', runId: r.id }), r.ticket_id);
-	emit({ type: 'ticket.updated', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id, fields: ['assignee'] });
+	db.prepare('UPDATE tickets SET assignee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+		actorLabel({ kind: 'agent', runId: r.id }),
+		r.ticket_id
+	);
+	emit({
+		type: 'ticket.updated',
+		projectId: r.project_id,
+		ticketId: r.ticket_id,
+		actor,
+		runId: r.id,
+		fields: ['assignee']
+	});
 }
 
 // An active run without a profile counts towards the global limit only.
@@ -269,30 +378,56 @@ ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
  */
 export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = new Date()) {
 	return tx(db, (emit) => {
-		const next = db.prepare(CLAIM).get(limits.global, JSON.stringify(limits.pools), now.toISOString()) as
-			| { id: number; ticketId: number; projectId: number; profileId: number }
-			| undefined;
+		const next = db
+			.prepare(CLAIM)
+			.get(limits.global, JSON.stringify(limits.pools), now.toISOString()) as
+			{ id: number; ticketId: number; projectId: number; profileId: number } | undefined;
 		if (!next) return undefined;
 		const { profileId, ...claimed } = next;
-		return { ...claimed, profile: getProfile(db, profileId), ...start(db, emit, actor, claimed.id) };
+		return {
+			...claimed,
+			profile: getProfile(db, profileId),
+			...start(db, emit, actor, claimed.id)
+		};
 	});
 }
 
 /** running ↔ waiting_approval (Freigabe angefragt bzw. entschieden). */
-export function setRunState(db: DatabaseSync, actor: Actor, runId: number, to: 'running' | 'waiting_approval') {
+export function setRunState(
+	db: DatabaseSync,
+	actor: Actor,
+	runId: number,
+	to: 'running' | 'waiting_approval'
+) {
 	tx(db, (emit) => transition(db, emit, actor, runId, to, 'setRunState'));
 }
 
 /** Ende eines Runs; `failed` verlangt einen Fehlertext — im Typ und zur Laufzeit. */
-export type RunEnd = ({ state: 'failed'; error: string } | { state: Exclude<EndState, 'failed'>; error?: string }) & { usage?: Usage };
+export type RunEnd = (
+	{ state: 'failed'; error: string } | { state: Exclude<EndState, 'failed'>; error?: string }
+) & { usage?: Usage };
 
 /** Beendet den Run: entwertet das Token, addiert den letzten Verbrauch und liefert die Summen. */
 export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: RunEnd) {
 	return tx(db, (emit) => {
 		if (end.state === 'failed' && !end.error?.trim())
-			throw new DomainError('error_required', `Run ${runId} als „failed“ beenden geht nur mit Fehlertext.`, 'Gib `error` an: in einem Satz, was schiefging — der Mensch sieht ihn am Run.');
+			throw new DomainError(
+				'error_required',
+				`Run ${runId} als „failed“ beenden geht nur mit Fehlertext.`,
+				'Gib `error` an: in einem Satz, was schiefging — der Mensch sieht ihn am Run.'
+			);
 		// Fehlertext kommt von Agent/Provider und kann ein Secret enthalten (ADR studio-011) — vor dem Schreiben maskieren (#824), wie appendEvent es für Event-Payloads schon tut (#819).
-		return transition(db, emit, actor, runId, end.state, 'finishRun', `, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`, end.error ? mask(end.error) : null, ...usage(end.usage));
+		return transition(
+			db,
+			emit,
+			actor,
+			runId,
+			end.state,
+			'finishRun',
+			`, finished_at = CURRENT_TIMESTAMP, token_hash = NULL, error = ?, ${ADD_USAGE}`,
+			end.error ? mask(end.error) : null,
+			...usage(end.usage)
+		);
 	});
 }
 
@@ -311,8 +446,13 @@ export function appendEvent(
 		// Secret-Werte maskiert der Secrets-Store (ADR studio-011) hier, bevor der Payload gespeichert und publiziert wird (#819).
 		const payload = JSON.stringify(mask(e.payload ?? {}));
 		if (e.key !== undefined) {
-			const old = db.prepare('SELECT seq, type, payload FROM run_events WHERE run_id = ? AND idempotency_key = ?').get(r.id, e.key);
-			if (old && old.type === e.type && old.payload === payload) return { seq: old.seq as number, duplicate: true };
+			const old = db
+				.prepare(
+					'SELECT seq, type, payload FROM run_events WHERE run_id = ? AND idempotency_key = ?'
+				)
+				.get(r.id, e.key);
+			if (old && old.type === e.type && old.payload === payload)
+				return { seq: old.seq as number, duplicate: true };
 			if (old)
 				throw new DomainError(
 					'idempotency_conflict',
@@ -324,7 +464,9 @@ export function appendEvent(
 			throw new DomainError(
 				'run_not_active',
 				`Run ${r.id} ist „${r.state}“ — Events nimmt nur ein laufender Run an.`,
-				r.state === 'queued' ? 'Starte den Run zuerst (startRun).' : 'Events vor finishRun schreiben; weitere Arbeit braucht einen neuen Run.'
+				r.state === 'queued'
+					? 'Starte den Run zuerst (startRun).'
+					: 'Events vor finishRun schreiben; weitere Arbeit braucht einen neuen Run.'
 			);
 		const { seq } = db
 			.prepare(
@@ -332,8 +474,18 @@ export function appendEvent(
 				SELECT ?1, coalesce(max(seq), 0) + 1, ?2, ?3, ?4 FROM run_events WHERE run_id = ?1 RETURNING seq`
 			)
 			.get(r.id, e.type, payload, e.key ?? null) as { seq: number };
-		if (e.usage) db.prepare(`UPDATE runs SET ${ADD_USAGE} WHERE id = ?`).run(...usage(e.usage), r.id);
-		emit({ type: 'run.event', projectId: r.project_id, ticketId: r.ticket_id, actor, runId: r.id, seq, eventType: e.type, payload: JSON.parse(payload) });
+		if (e.usage)
+			db.prepare(`UPDATE runs SET ${ADD_USAGE} WHERE id = ?`).run(...usage(e.usage), r.id);
+		emit({
+			type: 'run.event',
+			projectId: r.project_id,
+			ticketId: r.ticket_id,
+			actor,
+			runId: r.id,
+			seq,
+			eventType: e.type,
+			payload: JSON.parse(payload)
+		});
 		return { seq, duplicate: false };
 	});
 }
@@ -341,7 +493,9 @@ export function appendEvent(
 /** Der laufende Run zu einem Run-Token (Studio-MCP); undefined, wenn unbekannt oder der Run beendet ist. */
 export function runForToken(db: DatabaseSync, token: string) {
 	return db
-		.prepare('SELECT r.id AS runId, r.ticket_id AS ticketId, t.project_id AS projectId FROM runs r JOIN tickets t ON t.id = r.ticket_id WHERE r.token_hash = ?')
+		.prepare(
+			'SELECT r.id AS runId, r.ticket_id AS ticketId, t.project_id AS projectId FROM runs r JOIN tickets t ON t.id = r.ticket_id WHERE r.token_hash = ?'
+		)
 		.get(hash(token)) as { runId: number; ticketId: number; projectId: number } | undefined;
 }
 
@@ -350,7 +504,11 @@ export function runForToken(db: DatabaseSync, token: string) {
 /** Profile bestimmen Modell, Rechte und Freigaben der Runs — ein Agent darf sie nicht ändern (sonst könnte er sich selbst Rechte geben). */
 function requireNotAgent(actor: Actor) {
 	if (actor.kind === 'agent')
-		throw new DomainError('requires_human', 'Agent-Profile ändert nur der Mensch.', 'Brauchst du ein anderes Profil oder mehr Rechte: Frage als Kommentar, dann in die human_intervention-Spalte.');
+		throw new DomainError(
+			'requires_human',
+			'Agent-Profile ändert nur der Mensch.',
+			'Brauchst du ein anderes Profil oder mehr Rechte: Frage als Kommentar, dann in die human_intervention-Spalte.'
+		);
 }
 
 function profileFields(input: object): [string, SQLInputValue][] {
@@ -358,7 +516,11 @@ function profileFields(input: object): [string, SQLInputValue][] {
 		.filter(([, v]) => v !== undefined)
 		.map(([k, v]) => {
 			if (!(PROFILE_FIELDS as readonly string[]).includes(k))
-				throw new DomainError('unknown_field', `Das Profilfeld „${k}“ gibt es nicht.`, `Felder: ${PROFILE_FIELDS.join(', ')}.`);
+				throw new DomainError(
+					'unknown_field',
+					`Das Profilfeld „${k}“ gibt es nicht.`,
+					`Felder: ${PROFILE_FIELDS.join(', ')}.`
+				);
 			return [k, JSON_FIELDS.includes(k) ? JSON.stringify(v) : v];
 		});
 }
@@ -371,11 +533,25 @@ function checkProfile(db: DatabaseSync, p: Partial<Profile>, id: number | null) 
 			'api_key_ref ist kein Verweis. Erlaubt sind secret:<name> (verschlüsselt gespeichertes Secret) und ${NAME} (Umgebungsvariable); der Key selbst wird hier nie gespeichert.',
 			'Speichere den Key als Secret und trage secret:<name> ein.'
 		);
-	const missing = (p.executor === 'acp' ? (['command'] as const) : (['provider', 'model'] as const)).filter((k) => !p[k]);
+	const missing = (
+		p.executor === 'acp' ? (['command'] as const) : (['provider', 'model'] as const)
+	).filter((k) => !p[k]);
 	if (missing.length)
-		throw new DomainError('missing_field', `Ein ${p.executor}-Profil braucht ${missing.join(' und ')}.`, `Setze ${missing.join(', ')}.`);
-	if (db.prepare('SELECT 1 FROM agent_profiles WHERE name = ? AND id IS NOT ?').get(p.name ?? null, id))
-		throw new DomainError('name_taken', `Ein Profil „${p.name}“ gibt es schon.`, 'Wähle einen anderen Namen oder bearbeite das vorhandene Profil (updateProfile).');
+		throw new DomainError(
+			'missing_field',
+			`Ein ${p.executor}-Profil braucht ${missing.join(' und ')}.`,
+			`Setze ${missing.join(', ')}.`
+		);
+	if (
+		db
+			.prepare('SELECT 1 FROM agent_profiles WHERE name = ? AND id IS NOT ?')
+			.get(p.name ?? null, id)
+	)
+		throw new DomainError(
+			'name_taken',
+			`Ein Profil „${p.name}“ gibt es schon.`,
+			'Wähle einen anderen Namen oder bearbeite das vorhandene Profil (updateProfile).'
+		);
 }
 
 function parseProfile(row: Record<string, unknown>) {
@@ -384,22 +560,38 @@ function parseProfile(row: Record<string, unknown>) {
 }
 
 export function getProfile(db: DatabaseSync, id: number) {
-	const row = db.prepare(`SELECT id, ${PROFILE_FIELDS.join(', ')} FROM agent_profiles WHERE id = ?`).get(id);
-	if (!row) throw new DomainError('not_found', `Agent-Profil ${id} gibt es nicht.`, 'listProfiles zeigt die vorhandenen Profile.');
+	const row = db
+		.prepare(`SELECT id, ${PROFILE_FIELDS.join(', ')} FROM agent_profiles WHERE id = ?`)
+		.get(id);
+	if (!row)
+		throw new DomainError(
+			'not_found',
+			`Agent-Profil ${id} gibt es nicht.`,
+			'listProfiles zeigt die vorhandenen Profile.'
+		);
 	return parseProfile(row);
 }
 
 export function listProfiles(db: DatabaseSync) {
-	return db.prepare(`SELECT id, ${PROFILE_FIELDS.join(', ')} FROM agent_profiles ORDER BY name`).all().map(parseProfile);
+	return db
+		.prepare(`SELECT id, ${PROFILE_FIELDS.join(', ')} FROM agent_profiles ORDER BY name`)
+		.all()
+		.map(parseProfile);
 }
 
-export function createProfile(db: DatabaseSync, actor: Actor, p: Partial<Profile> & Pick<Profile, 'name' | 'executor'>): { id: number } {
+export function createProfile(
+	db: DatabaseSync,
+	actor: Actor,
+	p: Partial<Profile> & Pick<Profile, 'name' | 'executor'>
+): { id: number } {
 	return tx(db, () => {
 		requireNotAgent(actor);
 		const f = profileFields(p);
 		checkProfile(db, p, null);
 		return db
-			.prepare(`INSERT INTO agent_profiles (${f.map(([k]) => k).join(', ')}) VALUES (${f.map(() => '?').join(', ')}) RETURNING id`)
+			.prepare(
+				`INSERT INTO agent_profiles (${f.map(([k]) => k).join(', ')}) VALUES (${f.map(() => '?').join(', ')}) RETURNING id`
+			)
 			.get(...f.map(([, v]) => v)) as { id: number };
 	});
 }
@@ -409,7 +601,10 @@ export function updateProfile(db: DatabaseSync, actor: Actor, id: number, patch:
 		requireNotAgent(actor);
 		const f = profileFields(patch);
 		checkProfile(db, { ...getProfile(db, id), ...patch }, id);
-		if (f.length) db.prepare(`UPDATE agent_profiles SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...f.map(([, v]) => v), id);
+		if (f.length)
+			db.prepare(
+				`UPDATE agent_profiles SET ${f.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+			).run(...f.map(([, v]) => v), id);
 	});
 }
 
@@ -418,7 +613,11 @@ export function deleteProfile(db: DatabaseSync, actor: Actor, id: number) {
 	tx(db, () => {
 		requireNotAgent(actor);
 		const { name } = getProfile(db, id);
-		const active = db.prepare(`SELECT id FROM runs WHERE agent_profile_id = ? AND state IN ('queued', 'running', 'waiting_approval') ORDER BY id`).all(id);
+		const active = db
+			.prepare(
+				`SELECT id FROM runs WHERE agent_profile_id = ? AND state IN ('queued', 'running', 'waiting_approval') ORDER BY id`
+			)
+			.all(id);
 		if (active.length)
 			throw new DomainError(
 				'profile_in_use',

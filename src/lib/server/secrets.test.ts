@@ -1,11 +1,28 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import { DomainError } from './domain/core';
-import { deleteSecret, listSecrets, loadKey, mask, maskConsole, resolveRef, setSecret } from './secrets';
+import {
+	deleteSecret,
+	listSecrets,
+	loadKey,
+	mask,
+	maskConsole,
+	resolveRef,
+	setSecret
+} from './secrets';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-secrets-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -33,7 +50,10 @@ function caught(fn: () => unknown): DomainError {
 }
 
 const row = (db: ReturnType<typeof setup>, name: string) =>
-	db.prepare('SELECT ciphertext, iv, auth_tag FROM secrets WHERE name = ?').get(name) as Record<string, Uint8Array>;
+	db.prepare('SELECT ciphertext, iv, auth_tag FROM secrets WHERE name = ?').get(name) as Record<
+		string,
+		Uint8Array
+	>;
 
 describe('Store', () => {
 	it('set/get-Roundtrip; in der DB steht nur Chiffrat, jeder Wert mit frischem IV', () => {
@@ -58,7 +78,9 @@ describe('Store', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
 		setSecret(db, 'b', 'other-value-abcdef', false, KEY);
-		db.exec(`UPDATE secrets SET (ciphertext, iv, auth_tag) = (SELECT ciphertext, iv, auth_tag FROM secrets WHERE name = 'a') WHERE name = 'b'`);
+		db.exec(
+			`UPDATE secrets SET (ciphertext, iv, auth_tag) = (SELECT ciphertext, iv, auth_tag FROM secrets WHERE name = 'a') WHERE name = 'b'`
+		);
 		expect(caught(() => resolveRef(db, 'secret:b', KEY)).code).toBe('secret_undecryptable');
 		const c = Buffer.from(row(db, 'a').ciphertext);
 		c[0] ^= 1;
@@ -86,7 +108,9 @@ describe('Store', () => {
 	it('überschreibt nur ausdrücklich (replace), Ersetzen hält den neuen Wert', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
-		expect(caught(() => setSecret(db, 'a', 'second-value-xyz', false, KEY)).code).toBe('secret_exists');
+		expect(caught(() => setSecret(db, 'a', 'second-value-xyz', false, KEY)).code).toBe(
+			'secret_exists'
+		);
 		expect(resolveRef(db, 'secret:a', KEY)).toBe(VALUE);
 		setSecret(db, 'a', 'second-value-xyz', true, KEY);
 		expect(resolveRef(db, 'secret:a', KEY)).toBe('second-value-xyz');
@@ -95,7 +119,9 @@ describe('Store', () => {
 	it('listSecrets liefert nur Namen und Zeitstempel; deleteSecret ist idempotent', () => {
 		const db = setup();
 		setSecret(db, 'a', VALUE, false, KEY);
-		expect(listSecrets(db).map((s) => Object.keys(s).sort())).toEqual([['created_at', 'name', 'updated_at']]);
+		expect(listSecrets(db).map((s) => Object.keys(s).sort())).toEqual([
+			['created_at', 'name', 'updated_at']
+		]);
 		expect(deleteSecret(db, 'a')).toBe(true);
 		expect(deleteSecret(db, 'a')).toBe(false);
 		expect(caught(() => resolveRef(db, 'secret:a', KEY)).code).toBe('secret_not_found');
@@ -104,7 +130,9 @@ describe('Store', () => {
 	it('die DB erzwingt Namensregel und Längen von IV/Auth-Tag', () => {
 		const db = setup();
 		const insert = (name: string, iv: number, tag: number) =>
-			db.prepare('INSERT INTO secrets (name, ciphertext, iv, auth_tag) VALUES (?, ?, ?, ?)').run(name, Buffer.from('x'), Buffer.alloc(iv), Buffer.alloc(tag));
+			db
+				.prepare('INSERT INTO secrets (name, ciphertext, iv, auth_tag) VALUES (?, ?, ?, ?)')
+				.run(name, Buffer.from('x'), Buffer.alloc(iv), Buffer.alloc(tag));
 		expect(() => insert('Gross', 12, 16)).toThrow(/CHECK/);
 		expect(() => insert('mit leer', 12, 16)).toThrow(/CHECK/);
 		expect(() => insert('ok', 11, 16)).toThrow(/CHECK/);
@@ -188,7 +216,11 @@ describe('Verweise', () => {
 		const before = process.env.STUDIO_SECRET_KEY;
 		process.env.STUDIO_SECRET_KEY = KEY.toString('base64');
 		try {
-			for (const ref of ['${STUDIO_SECRET_KEY}', 'Bearer ${studio_secret_key}', '${STUDIO_DATA_DIR}']) {
+			for (const ref of [
+				'${STUDIO_SECRET_KEY}',
+				'Bearer ${studio_secret_key}',
+				'${STUDIO_DATA_DIR}'
+			]) {
 				const err = caught(() => resolveRef(db, ref, KEY));
 				expect(err.code).toBe('env_forbidden');
 				expect(err.hint).toContain('secret:<name>');
@@ -216,12 +248,21 @@ describe('Maskierung', () => {
 	setSecret(db, 'anthropic', MASKED, false, KEY);
 
 	it('ersetzt Secret-Werte in einem Event-Payload (verschachtelt, Arrays, Schlüssel), Original bleibt', () => {
-		const payload = { type: 'tool_result', data: { output: `key=${MASKED};`, args: [MASKED, 1], [MASKED]: true }, seq: 3, none: null };
+		const payload = {
+			type: 'tool_result',
+			data: { output: `key=${MASKED};`, args: [MASKED, 1], [MASKED]: true },
+			seq: 3,
+			none: null
+		};
 		const masked = mask(payload);
 		expect(JSON.stringify(masked)).not.toContain(MASKED);
 		expect(masked).toEqual({
 			type: 'tool_result',
-			data: { output: 'key=[secret:anthropic];', args: ['[secret:anthropic]', 1], '[secret:anthropic]': true },
+			data: {
+				output: 'key=[secret:anthropic];',
+				args: ['[secret:anthropic]', 1],
+				'[secret:anthropic]': true
+			},
 			seq: 3,
 			none: null
 		});
@@ -231,7 +272,9 @@ describe('Maskierung', () => {
 	it('maskiert per ${ENV} aufgelöste Werte und mehrzeilige Werte auch in escapter Form', () => {
 		process.env.TEST_API_TOKEN = 'env-token-abcdef';
 		resolveRef(db, '${TEST_API_TOKEN}', KEY);
-		expect(mask('Authorization: Bearer env-token-abcdef')).toBe('Authorization: Bearer [env:TEST_API_TOKEN]');
+		expect(mask('Authorization: Bearer env-token-abcdef')).toBe(
+			'Authorization: Bearer [env:TEST_API_TOKEN]'
+		);
 		const pem = '-----BEGIN TEST-----\nnot-a-real-key\n-----END TEST-----';
 		setSecret(db, 'pem', pem, false, KEY);
 		expect(mask(JSON.stringify({ pem }))).toBe('{"pem":"[secret:pem]"}');
@@ -250,7 +293,11 @@ describe('Maskierung', () => {
 				this.apiKey = apiKey;
 			}
 		}
-		const holder = { url: new URL(`https://api.example.test/v1?key=${MASKED}`), client: new Client(MASKED), at: new Date(0) };
+		const holder = {
+			url: new URL(`https://api.example.test/v1?key=${MASKED}`),
+			client: new Client(MASKED),
+			at: new Date(0)
+		};
 		const masked = mask(holder);
 		expect(JSON.stringify(masked)).not.toContain(MASKED);
 		expect(masked.url).toBe('https://api.example.test/v1?key=[secret:anthropic]');
@@ -259,7 +306,9 @@ describe('Maskierung', () => {
 		expect(holder.url).toBeInstanceOf(URL); // Original unverändert
 
 		const big = { n: 1n, s: MASKED }; // ohne JSON-Form → inspect-Text
-		expect(mask([new Map([['k', MASKED]]), { inner: Object.assign(Object.create({}), big) }])).toEqual([{}, { inner: expect.stringContaining('[secret:anthropic]') }]);
+		expect(
+			mask([new Map([['k', MASKED]]), { inner: Object.assign(Object.create({}), big) }])
+		).toEqual([{}, { inner: expect.stringContaining('[secret:anthropic]') }]);
 
 		const cyclic: Record<string, unknown> = { s: MASKED };
 		cyclic.self = cyclic;
@@ -276,13 +325,21 @@ describe('Maskierung', () => {
 	});
 
 	it('greift in Fehlermeldungen: Meldung, Stack, cause und code/hint — der Fehlertyp bleibt', () => {
-		const plain = mask(new Error(`401 für Key ${MASKED}`, { cause: new Error(`Upstream: ${MASKED}`) }));
+		const plain = mask(
+			new Error(`401 für Key ${MASKED}`, { cause: new Error(`Upstream: ${MASKED}`) })
+		);
 		expect(plain.message).toBe('401 für Key [secret:anthropic]');
 		expect(plain.stack).not.toContain(MASKED);
 		expect((plain.cause as Error).message).toBe('Upstream: [secret:anthropic]');
-		const domain = mask(new DomainError('provider_failed', `Abgelehnt: ${MASKED}`, `Prüfe ${MASKED}`));
+		const domain = mask(
+			new DomainError('provider_failed', `Abgelehnt: ${MASKED}`, `Prüfe ${MASKED}`)
+		);
 		expect(domain).toBeInstanceOf(DomainError);
-		expect([domain.code, domain.message, domain.hint]).toEqual(['provider_failed', 'Abgelehnt: [secret:anthropic]', 'Prüfe [secret:anthropic]']);
+		expect([domain.code, domain.message, domain.hint]).toEqual([
+			'provider_failed',
+			'Abgelehnt: [secret:anthropic]',
+			'Prüfe [secret:anthropic]'
+		]);
 	});
 
 	it('greift in Log-Zeilen: console.* formatiert erst und maskiert dann (auch Objekte, Errors, mehrzeilige Werte)', () => {

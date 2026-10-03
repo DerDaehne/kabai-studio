@@ -9,7 +9,8 @@ export const MARKER_START = '<!-- BEGIN GENERATED: model-catalog -->';
 export const MARKER_END = '<!-- END GENERATED: model-catalog -->';
 
 function formatThinking(entry: ModelEntry): string {
-	const state = entry.thinking.enabled === null ? 'configurable' : entry.thinking.enabled ? 'on' : 'off';
+	const state =
+		entry.thinking.enabled === null ? 'configurable' : entry.thinking.enabled ? 'on' : 'off';
 	return `${state} (${entry.thinking.method})`;
 }
 
@@ -31,9 +32,11 @@ function formatPitfalls(entry: ModelEntry): string {
 }
 
 export function renderModelsSection(models: readonly ModelEntry[]): string {
-	const header = '| Model | Recommended for | Thinking | Min. context | Known pitfalls |\n|---|---|---|---|---|';
+	const header =
+		'| Model | Recommended for | Thinking | Min. context | Known pitfalls |\n|---|---|---|---|---|';
 	const rows = models.map(
-		(m) => `| \`${m.id}\` | ${formatRoles(m)} | ${formatThinking(m)} | ${formatContext(m.contextMinimum)} | ${formatPitfalls(m)} |`
+		(m) =>
+			`| \`${m.id}\` | ${formatRoles(m)} | ${formatThinking(m)} | ${formatContext(m.contextMinimum)} | ${formatPitfalls(m)} |`
 	);
 	return [header, ...rows].join('\n');
 }

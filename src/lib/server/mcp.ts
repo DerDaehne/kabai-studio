@@ -25,7 +25,13 @@ export type ToolContext = {
 	ticketId: number;
 };
 type ToolError = { error: string; message: string; hint: string };
-type ChildTicket = { ref?: string; title: string; description?: string; tasks?: string[]; waits_for?: string[] };
+type ChildTicket = {
+	ref?: string;
+	title: string;
+	description?: string;
+	tasks?: string[];
+	waits_for?: string[];
+};
 export type AgentMove = { columnId: number; name: string; refusals: ToolError[] };
 
 const RECENT_COMMENTS = 10;
@@ -50,26 +56,50 @@ class Refusal extends Error {
 	}
 }
 
-const object = (properties: Record<string, JsonSchemaType>, required?: string[]): JsonSchemaType => ({
+const object = (
+	properties: Record<string, JsonSchemaType>,
+	required?: string[]
+): JsonSchemaType => ({
 	type: 'object',
 	properties,
 	...(required && { required }),
 	additionalProperties: false
 });
 const text = (maxLength: number): JsonSchemaType => ({ type: 'string', minLength: 1, maxLength });
-const list = (items: JsonSchemaType): JsonSchemaType => ({ type: 'array', items, minItems: 1, maxItems: MAX_ITEMS });
+const list = (items: JsonSchemaType): JsonSchemaType => ({
+	type: 'array',
+	items,
+	minItems: 1,
+	maxItems: MAX_ITEMS
+});
 const tags: JsonSchemaType = { type: 'array', items: text(50), maxItems: 20 };
-const idempotencyKey: JsonSchemaType = { ...text(100), description: 'retry-safe: a repeat with this key returns the first result' };
+const idempotencyKey: JsonSchemaType = {
+	...text(100),
+	description: 'retry-safe: a repeat with this key returns the first result'
+};
 type Idempotent = { idempotency_key?: string };
 
-type ToolDefinition<Args> = { description: string; inputSchema: StandardSchemaWithJSON<Args, Args> };
-const define = <Args>(description: string, schema: JsonSchemaType): ToolDefinition<Args> => ({ description, inputSchema: fromJsonSchema<Args>(schema) });
+type ToolDefinition<Args> = {
+	description: string;
+	inputSchema: StandardSchemaWithJSON<Args, Args>;
+};
+const define = <Args>(description: string, schema: JsonSchemaType): ToolDefinition<Args> => ({
+	description,
+	inputSchema: fromJsonSchema<Args>(schema)
+});
 
 // Built once per process: the SDK caches one compiled validator per schema object and never evicts it.
 const TOOLS = {
 	get_ticket: define<{ ticket?: string; comment?: number }>(
 		"Your ticket: tasks, recent comments, relations, allowed moves, the human's latest answer. Another ticket of your project by ref; one full comment by id.",
-		object({ ticket: { type: 'string', maxLength: MAX_REF, description: 'e.g. STU-12; default: your ticket' }, comment: { type: 'integer' } })
+		object({
+			ticket: {
+				type: 'string',
+				maxLength: MAX_REF,
+				description: 'e.g. STU-12; default: your ticket'
+			},
+			comment: { type: 'integer' }
+		})
 	),
 	create_child_tickets: define<{ items: ChildTicket[] } & Idempotent>(
 		'Create child tickets of your ticket, all or none. waits_for: tickets like STU-3, or $ref of an item in this call.',
@@ -94,9 +124,15 @@ const TOOLS = {
 	),
 	link_tickets: define<{ waits_for?: string[]; blocks?: string[] }>(
 		'Link your ticket: waits_for = it waits for these tickets; blocks = these wait for it.',
-		object({ waits_for: list({ type: 'string', maxLength: MAX_REF }), blocks: list({ type: 'string', maxLength: MAX_REF }) })
+		object({
+			waits_for: list({ type: 'string', maxLength: MAX_REF }),
+			blocks: list({ type: 'string', maxLength: MAX_REF })
+		})
 	),
-	approve_review: define<Record<string, never>>('Approve the review of your ticket: only in a review column, never your own work.', object({})),
+	approve_review: define<Record<string, never>>(
+		'Approve the review of your ticket: only in a review column, never your own work.',
+		object({})
+	),
 	list_workable: define<{ column_id?: number }>(
 		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
 		object({ column_id: { type: 'integer' } })
@@ -105,8 +141,17 @@ const TOOLS = {
 		'Search the notes (knowledge base); words are taken literally. Returns slugs and snippets.',
 		object({ query: text(200), kind: { enum: ['note', 'adr', 'hub'] } }, ['query'])
 	),
-	notes_get: define<{ slug: string }>('One note: body, tags, version (for notes_update), links, tickets.', object({ slug: text(MAX_SLUG) }, ['slug'])),
-	notes_create: define<{ slug: string; title: string; body: string; kind?: notes.NoteKind; tags?: string[] }>(
+	notes_get: define<{ slug: string }>(
+		'One note: body, tags, version (for notes_update), links, tickets.',
+		object({ slug: text(MAX_SLUG) }, ['slug'])
+	),
+	notes_create: define<{
+		slug: string;
+		title: string;
+		body: string;
+		kind?: notes.NoteKind;
+		tags?: string[];
+	}>(
 		'Create a note in your project. [[slug]] in the body links that note.',
 		object(
 			{
@@ -119,24 +164,53 @@ const TOOLS = {
 			['slug', 'title', 'body']
 		)
 	),
-	notes_update: define<{ slug: string; expected_version: number; title?: string; body?: string; tags?: string[] }>(
+	notes_update: define<{
+		slug: string;
+		expected_version: number;
+		title?: string;
+		body?: string;
+		tags?: string[];
+	}>(
 		'Change a note of your project (global notes are read-only). expected_version: its version from notes_get; if it moved on, someone else changed the note meanwhile.',
 		object(
-			{ slug: text(MAX_SLUG), expected_version: { type: 'integer' }, title: text(MAX_TITLE), body: { type: 'string', maxLength: MAX_TEXT }, tags },
+			{
+				slug: text(MAX_SLUG),
+				expected_version: { type: 'integer' },
+				title: text(MAX_TITLE),
+				body: { type: 'string', maxLength: MAX_TEXT },
+				tags
+			},
 			['slug', 'expected_version']
 		)
 	),
 	notes_link: define<{ slug: string; type: notes.NoteLinkType; target: string }>(
 		'Link two notes: slug <type> target, e.g. new-adr supersedes old-adr. slug (and a superseded target) must be a note of your project.',
-		object({ slug: text(MAX_SLUG), type: { enum: ['references', 'contains', 'supersedes', 'contradicts'] }, target: text(MAX_SLUG) }, ['slug', 'type', 'target'])
+		object(
+			{
+				slug: text(MAX_SLUG),
+				type: { enum: ['references', 'contains', 'supersedes', 'contradicts'] },
+				target: text(MAX_SLUG)
+			},
+			['slug', 'type', 'target']
+		)
 	),
-	link_note_to_ticket: define<{ slug: string; relation: Exclude<notes.NoteTicketRelation, 'verified_by'> }>(
+	link_note_to_ticket: define<{
+		slug: string;
+		relation: Exclude<notes.NoteTicketRelation, 'verified_by'>;
+	}>(
 		'Link a note to your ticket; documents = it describes what the ticket built.',
-		object({ slug: text(MAX_SLUG), relation: { enum: ['documents', 'created_by', 'references'] } }, ['slug', 'relation'])
+		object(
+			{ slug: text(MAX_SLUG), relation: { enum: ['documents', 'created_by', 'references'] } },
+			['slug', 'relation']
+		)
 	),
 	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
 		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
-		object({ title: text(MAX_TITLE), description: { type: 'string', maxLength: MAX_TEXT }, docs_required: { type: 'boolean' } })
+		object({
+			title: text(MAX_TITLE),
+			description: { type: 'string', maxLength: MAX_TEXT },
+			docs_required: { type: 'boolean' }
+		})
 	),
 	add_tasks: define<{ titles: string[] } & Idempotent>(
 		'Add acceptance criteria as tasks to your ticket.',
@@ -150,7 +224,10 @@ const TOOLS = {
 		'Add a work-log comment to your ticket.',
 		object({ text: text(MAX_TEXT), idempotency_key: idempotencyKey }, ['text'])
 	),
-	move_ticket: define<{ column_id: number }>('Move your ticket to a column from allowed_moves.', object({ column_id: { type: 'integer' } }, ['column_id'])),
+	move_ticket: define<{ column_id: number }>(
+		'Move your ticket to a column from allowed_moves.',
+		object({ column_id: { type: 'integer' } }, ['column_id'])
+	),
 	request_human: define<{ question: string; options?: QuestionOption[] }>(
 		'Ask the human and wait: moves your ticket to human intervention. Offer 1-3 decidable options when possible. End your turn afterwards.',
 		object(
@@ -159,7 +236,13 @@ const TOOLS = {
 				options: {
 					type: 'array',
 					maxItems: 3,
-					items: object({ label: text(100), effect: { type: 'string', maxLength: 200, description: 'what choosing it leads to' } }, ['label'])
+					items: object(
+						{
+							label: text(100),
+							effect: { type: 'string', maxLength: 200, description: 'what choosing it leads to' }
+						},
+						['label']
+					)
 				}
 			},
 			['question']
@@ -167,7 +250,8 @@ const TOOLS = {
 	)
 };
 type ToolName = keyof typeof TOOLS;
-type ArgsOf<Name extends ToolName> = (typeof TOOLS)[Name] extends ToolDefinition<infer Args> ? Args : never;
+type ArgsOf<Name extends ToolName> =
+	(typeof TOOLS)[Name] extends ToolDefinition<infer Args> ? Args : never;
 
 /** Serves the studio MCP endpoint. Every request authenticates with the bearer token of a running run. */
 export function mcpEndpoint(db: DatabaseSync): (request: Request) => Promise<Response> {
@@ -175,9 +259,19 @@ export function mcpEndpoint(db: DatabaseSync): (request: Request) => Promise<Res
 	return async (request) => {
 		const token = /^Bearer +(\S+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
 		const run = token ? runForToken(db, token) : undefined;
-		if (!token || !run) return Response.json(UNAUTHORIZED, { status: 401, headers: { 'WWW-Authenticate': 'Bearer error="invalid_token"' } });
-		const context: ToolContext = { actor: { kind: 'agent', runId: run.runId }, projectId: run.projectId, ticketId: run.ticketId };
-		return handler.fetch(request, { authInfo: { token, clientId: `run-${run.runId}`, scopes: [], extra: context } });
+		if (!token || !run)
+			return Response.json(UNAUTHORIZED, {
+				status: 401,
+				headers: { 'WWW-Authenticate': 'Bearer error="invalid_token"' }
+			});
+		const context: ToolContext = {
+			actor: { kind: 'agent', runId: run.runId },
+			projectId: run.projectId,
+			ticketId: run.ticketId
+		};
+		return handler.fetch(request, {
+			authInfo: { token, clientId: `run-${run.runId}`, scopes: [], extra: context }
+		});
 	};
 }
 
@@ -197,23 +291,45 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 
 	/** Inputs are masked before they are stored, so a secret an agent pastes never lands in the database. */
 	function tool<Name extends ToolName>(name: Name, work: (args: ArgsOf<Name>) => unknown) {
-		server.registerTool(name, TOOLS[name] as ToolDefinition<ArgsOf<Name>>, async (args: ArgsOf<Name>) => {
-			try {
-				const input = mask(args);
-				const { idempotency_key: key, ...request } = input as Idempotent;
-				return reply(key === undefined ? work(input) : once(db, ctx.actor, key, { tool: name, ...request }, () => work(input)));
-			} catch (err) {
-				if (err instanceof Refusal) return reply(err.body, true);
-				if (err instanceof DomainError) return reply({ error: err.code, message: err.message, hint: toolHint(db, ctx, name, err.code) ?? err.hint }, true);
-				throw mask(err);
+		server.registerTool(
+			name,
+			TOOLS[name] as ToolDefinition<ArgsOf<Name>>,
+			async (args: ArgsOf<Name>) => {
+				try {
+					const input = mask(args);
+					const { idempotency_key: key, ...request } = input as Idempotent;
+					return reply(
+						key === undefined
+							? work(input)
+							: once(db, ctx.actor, key, { tool: name, ...request }, () => work(input))
+					);
+				} catch (err) {
+					if (err instanceof Refusal) return reply(err.body, true);
+					if (err instanceof DomainError)
+						return reply(
+							{
+								error: err.code,
+								message: err.message,
+								hint: toolHint(db, ctx, name, err.code) ?? err.hint
+							},
+							true
+						);
+					throw mask(err);
+				}
 			}
-		});
+		);
 	}
 
-	tool('get_ticket', ({ ticket, comment }) => (comment === undefined ? ticketView(db, ctx, ticket) : fullComment(db, ctx, comment)));
+	tool('get_ticket', ({ ticket, comment }) =>
+		comment === undefined ? ticketView(db, ctx, ticket) : fullComment(db, ctx, comment)
+	);
 
 	tool('update_ticket', ({ title, description, docs_required }) => {
-		board.updateTicket(db, ctx.actor, ctx.ticketId, { title, description, docs_required: docs_required === undefined ? undefined : docs_required ? 1 : 0 });
+		board.updateTicket(db, ctx.actor, ctx.ticketId, {
+			title,
+			description,
+			docs_required: docs_required === undefined ? undefined : docs_required ? 1 : 0
+		});
 		return { ref: board.ticket(db, ctx.ticketId).ref };
 	});
 
@@ -227,8 +343,10 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 				hint: 'Nenne in waits_for die Tickets, auf die dein Ticket wartet, oder in blocks die, die auf dein Ticket warten.'
 			});
 		return tx(db, () => {
-			for (const ref of waits_for) board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
-			for (const ref of blocks) board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
+			for (const ref of waits_for)
+				board.linkRelation(db, ctx.actor, ticketIdOf(db, ctx, ref), ctx.ticketId, 'blocks');
+			for (const ref of blocks)
+				board.linkRelation(db, ctx.actor, ctx.ticketId, ticketIdOf(db, ctx, ref), 'blocks');
 			return { ref: board.ticket(db, ctx.ticketId).ref };
 		});
 	});
@@ -241,22 +359,34 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 	});
 
 	tool('notes_search', ({ query, kind }) => ({
-		notes: notes
-			.searchNotes(db, query, { kind, visibleIn: ctx.projectId })
-			.map((n) => ({ slug: n.slug, title: n.title, kind: n.kind, ...(n.status !== null && { status: n.status }), snippet: n.snippet, chars: n.bodyChars }))
+		notes: notes.searchNotes(db, query, { kind, visibleIn: ctx.projectId }).map((n) => ({
+			slug: n.slug,
+			title: n.title,
+			kind: n.kind,
+			...(n.status !== null && { status: n.status }),
+			snippet: n.snippet,
+			chars: n.bodyChars
+		}))
 	}));
 
 	tool('notes_get', ({ slug }) => noteView(db, ctx, slug));
 
 	tool('notes_create', ({ slug, title, body, kind, tags }) => {
 		refuseTakenSlug(db, ctx, slug);
-		const { id, warnings } = notes.createNote(db, ctx.actor, { slug, title, body, kind, tags, projectIds: [ctx.projectId] }, { visibleIn: ctx.projectId });
+		const { id, warnings } = notes.createNote(
+			db,
+			ctx.actor,
+			{ slug, title, body, kind, tags, projectIds: [ctx.projectId] },
+			{ visibleIn: ctx.projectId }
+		);
 		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
 	});
 
 	tool('notes_update', ({ slug, expected_version, ...patch }) => {
 		const id = ownNoteIdOf(db, ctx, slug);
-		const { warnings } = notes.updateNote(db, ctx.actor, id, patch, expected_version, { visibleIn: ctx.projectId });
+		const { warnings } = notes.updateNote(db, ctx.actor, id, patch, expected_version, {
+			visibleIn: ctx.projectId
+		});
 		return { version: noteVersion(db, id), ...(warnings.length > 0 && { warnings }) };
 	});
 
@@ -273,14 +403,18 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 		return { linked: true };
 	});
 
-	tool('add_tasks', ({ titles }) => ({ task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids }));
+	tool('add_tasks', ({ titles }) => ({
+		task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids
+	}));
 
 	tool('complete_tasks', ({ task_ids }) => {
 		board.completeTasks(db, ctx.actor, ctx.ticketId, task_ids);
 		return { open_task_ids: openTaskIds(db, ctx.ticketId) };
 	});
 
-	tool('add_comment', ({ text }) => ({ comment_id: board.addComment(db, ctx.actor, ctx.ticketId, text).id }));
+	tool('add_comment', ({ text }) => ({
+		comment_id: board.addComment(db, ctx.actor, ctx.ticketId, text).id
+	}));
 
 	tool('move_ticket', ({ column_id }) => moveOwnTicket(db, ctx, column_id));
 
@@ -293,7 +427,12 @@ function studioServer(db: DatabaseSync, ctx: ToolContext): McpServer {
 }
 
 /** Tool-level way out for domain errors whose domain hint names domain functions or does not fit the calling tool. */
-function toolHint(db: DatabaseSync, ctx: ToolContext, tool: ToolName, code: string): string | undefined {
+function toolHint(
+	db: DatabaseSync,
+	ctx: ToolContext,
+	tool: ToolName,
+	code: string
+): string | undefined {
 	switch (code) {
 		case 'requires_human':
 			return tool === 'request_human'
@@ -332,13 +471,23 @@ export function agentMoves(db: DatabaseSync, ctx: ToolContext): AgentMove[] {
 		name: m.name,
 		refusals: [
 			...(m.kind === 'normal' && waitingFor.length ? [blockedRefusal(db, ctx, waitingFor)] : []),
-			...m.blockers.map((b) => ({ error: b.code, message: b.message, hint: toolHint(db, ctx, 'move_ticket', b.code) ?? b.hint }))
+			...m.blockers.map((b) => ({
+				error: b.code,
+				message: b.message,
+				hint: toolHint(db, ctx, 'move_ticket', b.code) ?? b.hint
+			}))
 		]
 	}));
 }
 
-function blockedRefusal(db: DatabaseSync, ctx: ToolContext, waitingFor: board.Predecessor[]): ToolError {
-	const { setting } = db.prepare('SELECT blocks_satisfied_at AS setting FROM projects WHERE id = ?').get(ctx.projectId) as { setting: 'done' | 'review_ok' };
+function blockedRefusal(
+	db: DatabaseSync,
+	ctx: ToolContext,
+	waitingFor: board.Predecessor[]
+): ToolError {
+	const { setting } = db
+		.prepare('SELECT blocks_satisfied_at AS setting FROM projects WHERE id = ?')
+		.get(ctx.projectId) as { setting: 'done' | 'review_ok' };
 	const refs = waitingFor.map((p) => p.ref).join(', ');
 	return {
 		error: 'blocked',
@@ -377,8 +526,15 @@ function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTick
 		const ids = items.map((item, index) =>
 			forItem(index, () => {
 				if (item.ref !== undefined && idByRef.has(item.ref))
-					throw new Refusal({ error: 'duplicate_ref', message: `ref „${item.ref}“ kommt mehrfach vor.`, hint: 'Gib jedem Item einen eigenen ref.' });
-				const { id } = board.createTicket(db, ctx.actor, ctx.projectId, { title: item.title, description: item.description });
+					throw new Refusal({
+						error: 'duplicate_ref',
+						message: `ref „${item.ref}“ kommt mehrfach vor.`,
+						hint: 'Gib jedem Item einen eigenen ref.'
+					});
+				const { id } = board.createTicket(db, ctx.actor, ctx.projectId, {
+					title: item.title,
+					description: item.description
+				});
 				if (item.tasks) board.addTasks(db, ctx.actor, id, item.tasks);
 				board.linkRelation(db, ctx.actor, ctx.ticketId, id, 'parent_of');
 				if (item.ref !== undefined) idByRef.set(item.ref, id);
@@ -387,7 +543,14 @@ function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTick
 		);
 		items.forEach((item, index) =>
 			forItem(index, () => {
-				for (const predecessor of item.waits_for ?? []) board.linkRelation(db, ctx.actor, localOrTicketId(db, ctx, idByRef, predecessor), ids[index], 'blocks');
+				for (const predecessor of item.waits_for ?? [])
+					board.linkRelation(
+						db,
+						ctx.actor,
+						localOrTicketId(db, ctx, idByRef, predecessor),
+						ids[index],
+						'blocks'
+					);
 			})
 		);
 		return { refs: ids.map((id) => board.ticket(db, id).ref) };
@@ -396,10 +559,20 @@ function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTick
 
 /** At most MAX_ITEMS tickets, so a large backlog does not flood a small model's context; `more` says what was left out. */
 function workableView(db: DatabaseSync, ctx: ToolContext, columnId?: number) {
-	const columnName = new Map(db.prepare('SELECT id, name FROM columns WHERE project_id = ?').all(ctx.projectId).map((c) => [c.id as number, c.name as string]));
+	const columnName = new Map(
+		db
+			.prepare('SELECT id, name FROM columns WHERE project_id = ?')
+			.all(ctx.projectId)
+			.map((c) => [c.id as number, c.name as string])
+	);
 	const rows = board.workableTickets(db, ctx.projectId, columnId);
 	return {
-		tickets: rows.slice(0, MAX_ITEMS).map((t) => ({ ref: t.ref, title: t.title, column: columnName.get(t.column_id), ...(t.assignee && { assignee: t.assignee }) })),
+		tickets: rows.slice(0, MAX_ITEMS).map((t) => ({
+			ref: t.ref,
+			title: t.title,
+			column: columnName.get(t.column_id),
+			...(t.assignee && { assignee: t.assignee })
+		})),
 		...(rows.length > MAX_ITEMS && { more: rows.length - MAX_ITEMS })
 	};
 }
@@ -410,13 +583,19 @@ function forItem<T>(index: number, work: () => T): T {
 		return work();
 	} catch (err) {
 		const where = `items[${index}]: `;
-		if (err instanceof Refusal) throw new Refusal({ ...err.body, message: where + err.body.message });
+		if (err instanceof Refusal)
+			throw new Refusal({ ...err.body, message: where + err.body.message });
 		if (err instanceof DomainError) throw new DomainError(err.code, where + err.message, err.hint);
 		throw err;
 	}
 }
 
-function localOrTicketId(db: DatabaseSync, ctx: ToolContext, idByRef: Map<string, number>, ref: string): number {
+function localOrTicketId(
+	db: DatabaseSync,
+	ctx: ToolContext,
+	idByRef: Map<string, number>,
+	ref: string
+): number {
 	if (!ref.startsWith('$')) return ticketIdOf(db, ctx, ref);
 	const id = idByRef.get(ref.slice(1));
 	if (id === undefined)
@@ -430,11 +609,15 @@ function localOrTicketId(db: DatabaseSync, ctx: ToolContext, idByRef: Map<string
 
 /** A ticket ref is only resolved within the caller's project, so "OTH-1" never silently reads STU-1. */
 function ticketIdOf(db: DatabaseSync, ctx: ToolContext, ref: string): number {
-	const { key } = db.prepare('SELECT key FROM projects WHERE id = ?').get(ctx.projectId) as { key: string };
+	const { key } = db.prepare('SELECT key FROM projects WHERE id = ?').get(ctx.projectId) as {
+		key: string;
+	};
 	const [, refKey, number] = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec(ref.trim()) ?? [];
 	const found =
 		refKey?.toUpperCase() === key
-			? (db.prepare('SELECT id FROM tickets WHERE project_id = ? AND number = ?').get(ctx.projectId, Number(number)) as { id: number } | undefined)
+			? (db
+					.prepare('SELECT id FROM tickets WHERE project_id = ? AND number = ?')
+					.get(ctx.projectId, Number(number)) as { id: number } | undefined)
 			: undefined;
 	if (!found)
 		throw new Refusal({
@@ -445,7 +628,13 @@ function ticketIdOf(db: DatabaseSync, ctx: ToolContext, ref: string): number {
 	return found.id;
 }
 
-export type RelatedTicket = { ref: string; title?: string; column?: string; other_project?: boolean; blocking?: boolean };
+export type RelatedTicket = {
+	ref: string;
+	title?: string;
+	column?: string;
+	other_project?: boolean;
+	blocking?: boolean;
+};
 
 const RELATION_KEYS: Record<string, string> = {
 	'blocks:in': 'waits_for',
@@ -468,12 +657,25 @@ export function relationsOf(db: DatabaseSync, ctx: ToolContext, ticketId: number
 			JOIN projects op ON op.id = o.project_id JOIN columns oc ON oc.id = o.column_id
 			WHERE ?1 IN (r.from_ticket_id, r.to_ticket_id) ORDER BY o.project_id, o.number`
 		)
-		.all(ticketId) as { type: string; outgoing: 0 | 1; id: number; project_id: number; ref: string; title: string; column: string }[];
+		.all(ticketId) as {
+		type: string;
+		outgoing: 0 | 1;
+		id: number;
+		project_id: number;
+		ref: string;
+		title: string;
+		column: string;
+	}[];
 	const relations: Record<string, RelatedTicket[]> = {};
 	for (const r of rows) {
 		const key = RELATION_KEYS[`${r.type}:${r.outgoing ? 'out' : 'in'}`];
-		const other = r.project_id === ctx.projectId ? { ref: r.ref, title: r.title, column: r.column } : { ref: r.ref, other_project: true };
-		(relations[key] ??= []).push(key === 'waits_for' ? { ...other, blocking: blocking.has(r.id) } : other);
+		const other =
+			r.project_id === ctx.projectId
+				? { ref: r.ref, title: r.title, column: r.column }
+				: { ref: r.ref, other_project: true };
+		(relations[key] ??= []).push(
+			key === 'waits_for' ? { ...other, blocking: blocking.has(r.id) } : other
+		);
 	}
 	return relations;
 }
@@ -491,10 +693,16 @@ function noteIdOf(db: DatabaseSync, ctx: ToolContext, slug: string): number {
 }
 
 const visibleNoteId = (db: DatabaseSync, ctx: ToolContext, slug: string) =>
-	(db.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND ${notes.noteVisibleIn('?2')}`).get(slug, ctx.projectId) as { id: number } | undefined)?.id;
+	(
+		db
+			.prepare(`SELECT id FROM notes n WHERE slug = ?1 AND ${notes.noteVisibleIn('?2')}`)
+			.get(slug, ctx.projectId) as { id: number } | undefined
+	)?.id;
 
 const isOwnNote = (db: DatabaseSync, ctx: ToolContext, noteId: number) =>
-	db.prepare('SELECT 1 FROM note_projects WHERE note_id = ? AND project_id = ?').get(noteId, ctx.projectId) !== undefined;
+	db
+		.prepare('SELECT 1 FROM note_projects WHERE note_id = ? AND project_id = ?')
+		.get(noteId, ctx.projectId) !== undefined;
 
 /** A run changes only notes of its own project; the global ones belong to the human and stay read-only for runs. */
 function ownNoteIdOf(db: DatabaseSync, ctx: ToolContext, slug: string): number {
@@ -513,9 +721,17 @@ function refuseTakenSlug(db: DatabaseSync, ctx: ToolContext, slug: string) {
 	if (!db.prepare('SELECT 1 FROM notes WHERE slug = ?').get(slug)) return;
 	const id = visibleNoteId(db, ctx, slug);
 	if (id === undefined)
-		throw new Refusal({ error: 'slug_taken', message: `Der Slug „${slug}“ ist schon vergeben.`, hint: 'Wähle einen anderen Slug, der dein Thema genauer benennt.' });
+		throw new Refusal({
+			error: 'slug_taken',
+			message: `Der Slug „${slug}“ ist schon vergeben.`,
+			hint: 'Wähle einen anderen Slug, der dein Thema genauer benennt.'
+		});
 	if (isOwnNote(db, ctx, id))
-		throw new Refusal({ error: 'slug_taken', message: `Die Note „${slug}“ gibt es schon.`, hint: 'Lies sie mit notes_get und ändere sie mit notes_update.' });
+		throw new Refusal({
+			error: 'slug_taken',
+			message: `Die Note „${slug}“ gibt es schon.`,
+			hint: 'Lies sie mit notes_get und ändere sie mit notes_update.'
+		});
 	throw new Refusal({
 		error: 'slug_taken',
 		message: `Die Note „${slug}“ gibt es schon als globale Note.`,
@@ -523,7 +739,8 @@ function refuseTakenSlug(db: DatabaseSync, ctx: ToolContext, slug: string) {
 	});
 }
 
-const noteVersion = (db: DatabaseSync, noteId: number) => (db.prepare('SELECT version FROM notes WHERE id = ?').get(noteId) as { version: number }).version;
+const noteVersion = (db: DatabaseSync, noteId: number) =>
+	(db.prepare('SELECT version FROM notes WHERE id = ?').get(noteId) as { version: number }).version;
 
 const NOTE_LINK_KEYS: Record<string, string> = {
 	'references:out': 'references',
@@ -536,7 +753,16 @@ const NOTE_LINK_KEYS: Record<string, string> = {
 	'contradicts:in': 'contradicted_by'
 };
 
-type NoteRow = { slug: string; title: string; kind: string; status: string | null; archived: 0 | 1; tags: string[]; version: number; body: string };
+type NoteRow = {
+	slug: string;
+	title: string;
+	kind: string;
+	status: string | null;
+	archived: 0 | 1;
+	tags: string[];
+	version: number;
+	body: string;
+};
 
 /** A note with its links named from its own point of view, like the relations of a ticket. */
 function noteView(db: DatabaseSync, ctx: ToolContext, slug: string) {
@@ -549,7 +775,8 @@ function noteView(db: DatabaseSync, ctx: ToolContext, slug: string) {
 		)
 		.all(id, ctx.projectId) as { type: string; outgoing: 0 | 1; slug: string }[];
 	const linked: Record<string, string[]> = {};
-	for (const l of links) (linked[NOTE_LINK_KEYS[`${l.type}:${l.outgoing ? 'out' : 'in'}`]] ??= []).push(l.slug);
+	for (const l of links)
+		(linked[NOTE_LINK_KEYS[`${l.type}:${l.outgoing ? 'out' : 'in'}`]] ??= []).push(l.slug);
 	const tickets = db
 		.prepare(
 			`SELECT p.key || '-' || t.number AS ref, nt.relation FROM note_tickets nt JOIN tickets t ON t.id = nt.ticket_id JOIN projects p ON p.id = t.project_id
@@ -582,25 +809,39 @@ export const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number
 		.all(ticketId, ctx.projectId) as NoteLink[];
 
 export const tasksOf = (db: DatabaseSync, ticketId: number) =>
-	(db.prepare('SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id').all(ticketId) as { id: number; title: string; done: 0 | 1 }[]).map(
-		(k) => ({ id: k.id, title: k.title, done: k.done === 1 })
-	);
+	(
+		db
+			.prepare(
+				'SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id'
+			)
+			.all(ticketId) as { id: number; title: string; done: 0 | 1 }[]
+	).map((k) => ({ id: k.id, title: k.title, done: k.done === 1 }));
 
 type CommentRow = { id: number; by: string; at: string; text: string };
 
 /** Long comments are cut so that one oversized write does not inflate every later read of the ticket. */
 export function recentComments(db: DatabaseSync, ticketId: number) {
 	const rows = db
-		.prepare('SELECT id, author AS "by", created_at AS "at", body AS text FROM comments WHERE ticket_id = ? ORDER BY id DESC LIMIT ?')
+		.prepare(
+			'SELECT id, author AS "by", created_at AS "at", body AS text FROM comments WHERE ticket_id = ? ORDER BY id DESC LIMIT ?'
+		)
 		.all(ticketId, RECENT_COMMENTS) as CommentRow[];
-	return rows
-		.reverse()
-		.map((c) => (c.text.length > COMMENT_PREVIEW ? { ...c, text: `${c.text.slice(0, COMMENT_PREVIEW)}…`, more: `get_ticket {"comment": ${c.id}}` } : c));
+	return rows.reverse().map((c) =>
+		c.text.length > COMMENT_PREVIEW
+			? {
+					...c,
+					text: `${c.text.slice(0, COMMENT_PREVIEW)}…`,
+					more: `get_ticket {"comment": ${c.id}}`
+				}
+			: c
+	);
 }
 
 function fullComment(db: DatabaseSync, ctx: ToolContext, commentId: number): CommentRow {
 	const comment = db
-		.prepare('SELECT c.id, c.author AS "by", c.created_at AS "at", c.body AS text FROM comments c JOIN tickets t ON t.id = c.ticket_id WHERE c.id = ? AND t.project_id = ?')
+		.prepare(
+			'SELECT c.id, c.author AS "by", c.created_at AS "at", c.body AS text FROM comments c JOIN tickets t ON t.id = c.ticket_id WHERE c.id = ? AND t.project_id = ?'
+		)
 		.get(commentId, ctx.projectId) as CommentRow | undefined;
 	if (!comment)
 		throw new Refusal({
@@ -619,9 +860,21 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 			`SELECT p.key || '-' || t.number AS ref, t.title, t.type, c.name AS "column", t.description, t.docs_required, t.review_approved_at
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
-		.get(id) as { ref: string; title: string; type: string; column: string; description: string; docs_required: 0 | 1; review_approved_at: string | null };
+		.get(id) as {
+		ref: string;
+		title: string;
+		type: string;
+		column: string;
+		description: string;
+		docs_required: 0 | 1;
+		review_approved_at: string | null;
+	};
 	// The note bodies stay out: notes_get reads one when it is needed.
-	const ticketNotes = linkedNotes(db, ctx, id).map(({ slug, title, relation }) => ({ slug, title, relation }));
+	const ticketNotes = linkedNotes(db, ctx, id).map(({ slug, title, relation }) => ({
+		slug,
+		title,
+		relation
+	}));
 	const view = {
 		ref: t.ref,
 		title: t.title,
@@ -646,7 +899,14 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 		})),
 		...(latest &&
 			(latest.answer
-				? { human_answer: { question_id: latest.id, question: latest.question, options: latest.options, answer: latest.answer } }
+				? {
+						human_answer: {
+							question_id: latest.id,
+							question: latest.question,
+							options: latest.options,
+							answer: latest.answer
+						}
+					}
 				: { pending_question: { question_id: latest.id, question: latest.question } }))
 	};
 }

@@ -30,13 +30,62 @@
 		['paused', 'pausiert'],
 		['neutral', 'in Warteschlange']
 	];
-	const runs: { key: string; title: string; tone: Tone; state: string; role: string; age: string }[] = [
-		{ key: 'STU-41', title: 'Anmeldeseite an Design-System anpassen', tone: 'running', state: 'läuft', role: 'Developer', age: '2 min' },
-		{ key: 'STU-38', title: 'Shell-Freigabe für npm install', tone: 'waiting', state: 'wartet auf Freigabe', role: 'Developer', age: '6 min' },
-		{ key: 'STU-37', title: 'Migration 004: Anhänge', tone: 'failed', state: 'fehlgeschlagen', role: 'Developer', age: '14 min' },
-		{ key: 'STU-35', title: 'Review: Workflow-Regeln der Domain-Schicht', tone: 'succeeded', state: 'erledigt', role: 'Reviewer', age: '31 min' },
-		{ key: 'STU-33', title: 'Notes-Suche mit Snippets', tone: 'paused', state: 'pausiert', role: 'Developer', age: '1 h' },
-		{ key: 'STU-30', title: 'Onboarding-Assistent: Modellwahl', tone: 'neutral', state: 'in Warteschlange', role: 'Refiner', age: '2 h' }
+	const runs: {
+		key: string;
+		title: string;
+		tone: Tone;
+		state: string;
+		role: string;
+		age: string;
+	}[] = [
+		{
+			key: 'STU-41',
+			title: 'Anmeldeseite an Design-System anpassen',
+			tone: 'running',
+			state: 'läuft',
+			role: 'Developer',
+			age: '2 min'
+		},
+		{
+			key: 'STU-38',
+			title: 'Shell-Freigabe für npm install',
+			tone: 'waiting',
+			state: 'wartet auf Freigabe',
+			role: 'Developer',
+			age: '6 min'
+		},
+		{
+			key: 'STU-37',
+			title: 'Migration 004: Anhänge',
+			tone: 'failed',
+			state: 'fehlgeschlagen',
+			role: 'Developer',
+			age: '14 min'
+		},
+		{
+			key: 'STU-35',
+			title: 'Review: Workflow-Regeln der Domain-Schicht',
+			tone: 'succeeded',
+			state: 'erledigt',
+			role: 'Reviewer',
+			age: '31 min'
+		},
+		{
+			key: 'STU-33',
+			title: 'Notes-Suche mit Snippets',
+			tone: 'paused',
+			state: 'pausiert',
+			role: 'Developer',
+			age: '1 h'
+		},
+		{
+			key: 'STU-30',
+			title: 'Onboarding-Assistent: Modellwahl',
+			tone: 'neutral',
+			state: 'in Warteschlange',
+			role: 'Refiner',
+			age: '2 h'
+		}
 	];
 
 	const projects: { code: string; palette: ProjectPalette }[] = [
@@ -47,17 +96,80 @@
 		{ code: 'OPS', palette: 5 }
 	];
 
-	type Lane = AuraCandidate & { project: ProjectPalette; code: string; ticket: string; title: string; state: string; badge: Tone };
+	type Lane = AuraCandidate & {
+		project: ProjectPalette;
+		code: string;
+		ticket: string;
+		title: string;
+		state: string;
+		badge: Tone;
+	};
 	const lanes: Lane[] = [
-		{ key: 'STU-41', code: 'STU', project: 1, ticket: '41', title: 'Anmeldeseite an Design-System anpassen', tone: 'running', badge: 'running', state: 'läuft' },
-		{ key: 'WEB-12', code: 'WEB', project: 2, ticket: '12', title: 'Shell-Freigabe für npm install', tone: 'waiting', badge: 'waiting', state: 'wartet auf Freigabe' },
-		{ key: 'API-7', code: 'API', project: 3, ticket: '7', title: 'Migration 004: Anhänge', tone: 'failed', badge: 'failed', state: 'fehlgeschlagen' },
-		{ key: 'DOC-3', code: 'DOC', project: 4, ticket: '3', title: 'Handbuch: Einrichtung', tone: 'running', badge: 'running', state: 'läuft' },
-		{ key: 'OPS-9', code: 'OPS', project: 5, ticket: '9', title: 'Backup-Rotation prüfen', tone: 'paused', badge: 'paused', state: 'pausiert' },
-		{ key: 'STU-35', code: 'STU', project: 1, ticket: '35', title: 'Review: Workflow-Regeln', tone: 'succeeded', badge: 'succeeded', state: 'erledigt' }
+		{
+			key: 'STU-41',
+			code: 'STU',
+			project: 1,
+			ticket: '41',
+			title: 'Anmeldeseite an Design-System anpassen',
+			tone: 'running',
+			badge: 'running',
+			state: 'läuft'
+		},
+		{
+			key: 'WEB-12',
+			code: 'WEB',
+			project: 2,
+			ticket: '12',
+			title: 'Shell-Freigabe für npm install',
+			tone: 'waiting',
+			badge: 'waiting',
+			state: 'wartet auf Freigabe'
+		},
+		{
+			key: 'API-7',
+			code: 'API',
+			project: 3,
+			ticket: '7',
+			title: 'Migration 004: Anhänge',
+			tone: 'failed',
+			badge: 'failed',
+			state: 'fehlgeschlagen'
+		},
+		{
+			key: 'DOC-3',
+			code: 'DOC',
+			project: 4,
+			ticket: '3',
+			title: 'Handbuch: Einrichtung',
+			tone: 'running',
+			badge: 'running',
+			state: 'läuft'
+		},
+		{
+			key: 'OPS-9',
+			code: 'OPS',
+			project: 5,
+			ticket: '9',
+			title: 'Backup-Rotation prüfen',
+			tone: 'paused',
+			badge: 'paused',
+			state: 'pausiert'
+		},
+		{
+			key: 'STU-35',
+			code: 'STU',
+			project: 1,
+			ticket: '35',
+			title: 'Review: Workflow-Regeln',
+			tone: 'succeeded',
+			badge: 'succeeded',
+			state: 'erledigt'
+		}
 	];
 	let focusedLane = $state<string | undefined>(undefined);
-	const aurae = $derived(assignAurae(lanes.map((lane) => ({ ...lane, focused: lane.key === focusedLane }))));
+	const aurae = $derived(
+		assignAurae(lanes.map((lane) => ({ ...lane, focused: lane.key === focusedLane })))
+	);
 	function focusNextLane() {
 		const next = lanes.findIndex((lane) => lane.key === focusedLane) + 1;
 		focusedLane = lanes[next]?.key;
@@ -72,7 +184,11 @@
 		return () => delete root.dataset.glass;
 	});
 
-	const questions = ['Shell-Freigabe für npm install?', 'Migration 004 erneut starten?', 'Review-Ergebnis von STU-35 abnehmen?'];
+	const questions = [
+		'Shell-Freigabe für npm install?',
+		'Migration 004 erneut starten?',
+		'Review-Ergebnis von STU-35 abnehmen?'
+	];
 	let question = $state(0);
 	let undoing = $state(false);
 	let noteShown = $state(true);
@@ -82,14 +198,34 @@
 	}
 
 	const demoAgents: AgentChip[] = [
-		{ name: 'Claude', location: 'online', project: { code: 'WEB', palette: 2, name: 'Webseite' }, state: 'running' },
-		{ name: 'qwen3-coder', location: 'lokal', project: { code: 'STU', palette: 1, name: 'kabai studio' }, state: 'waiting' },
-		{ name: 'gpt-oss', location: 'lokal', project: { code: 'API', palette: 3, name: 'Schnittstelle' }, state: 'running' }
+		{
+			name: 'Claude',
+			location: 'online',
+			project: { code: 'WEB', palette: 2, name: 'Webseite' },
+			state: 'running'
+		},
+		{
+			name: 'qwen3-coder',
+			location: 'lokal',
+			project: { code: 'STU', palette: 1, name: 'kabai studio' },
+			state: 'waiting'
+		},
+		{
+			name: 'gpt-oss',
+			location: 'lokal',
+			project: { code: 'API', palette: 3, name: 'Schnittstelle' },
+			state: 'running'
+		}
 	];
 	let agentCount = $state(2);
 	$effect(() => {
 		shell.agents = demoAgents.slice(0, agentCount);
-		shell.viewItems = lanes.map((lane) => ({ id: lane.key, label: `${lane.key} ${lane.title}`, detail: lane.state, href: '#h-glass' }));
+		shell.viewItems = lanes.map((lane) => ({
+			id: lane.key,
+			label: `${lane.key} ${lane.title}`,
+			detail: lane.state,
+			href: '#h-glass'
+		}));
 		return () => {
 			shell.agents = [];
 			shell.viewItems = [];
@@ -131,7 +267,9 @@
 			<Badge tone="accent">Epic</Badge>
 		</div>
 		<div class="row" role="list" aria-label="Projektpalette">
-			{#each projects as project (project.code)}<span role="listitem"><ProjectTag {...project} /></span>{/each}
+			{#each projects as project (project.code)}<span role="listitem"
+					><ProjectTag {...project} /></span
+				>{/each}
 		</div>
 	</section>
 
@@ -139,11 +277,26 @@
 		<h2 id="h-shell">Shell</h2>
 		<p class="muted">Füttert Kopf-Dock, Tastenleiste und Suche (/) mit Beispieldaten.</p>
 		<div class="row">
-			<Button variant="secondary" size="sm" onclick={() => (agentCount = agentCount === 2 ? 3 : 2)}>{agentCount === 2 ? '3 Agents' : '2 Agents'}</Button>
-			<Button variant="secondary" size="sm" onclick={() => (shell.focus = { code: 'STU', palette: 1, name: 'kabai studio' })}>Projekt-Fokus</Button>
+			<Button variant="secondary" size="sm" onclick={() => (agentCount = agentCount === 2 ? 3 : 2)}
+				>{agentCount === 2 ? '3 Agents' : '2 Agents'}</Button
+			>
+			<Button
+				variant="secondary"
+				size="sm"
+				onclick={() => (shell.focus = { code: 'STU', palette: 1, name: 'kabai studio' })}
+				>Projekt-Fokus</Button
+			>
 			<Button variant="secondary" size="sm" onclick={announceSignal}>Neues Signal</Button>
-			<Button variant="secondary" size="sm" onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : 'g')}>Präfix g</Button>
-			<Button variant="secondary" size="sm" onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : '3')}>Zähler 3</Button>
+			<Button
+				variant="secondary"
+				size="sm"
+				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : 'g')}>Präfix g</Button
+			>
+			<Button
+				variant="secondary"
+				size="sm"
+				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : '3')}>Zähler 3</Button
+			>
 		</div>
 	</section>
 
@@ -164,7 +317,8 @@
 		<fieldset class="row">
 			<legend>Glas-Stärke</legend>
 			<label><input type="radio" name="glass" bind:group={glass} value="bold" /> Mutig</label>
-			<label><input type="radio" name="glass" bind:group={glass} value="frosted" /> Milchglas</label>
+			<label><input type="radio" name="glass" bind:group={glass} value="frosted" /> Milchglas</label
+			>
 			<label><input type="radio" name="glass" bind:group={glass} value="solid" /> Solide</label>
 		</fieldset>
 		<p class="muted">
@@ -175,8 +329,14 @@
 			<Nebula />
 			<AuraList items={lanes} {aurae} label="Spuren">
 				{#snippet item(lane)}
-					<article class="lane glass" class:selected={lane.key === focusedLane} aria-current={lane.key === focusedLane || undefined}>
-						<span class="mono"><ProjectTag code={lane.code} palette={lane.project} /> {lane.ticket}</span>
+					<article
+						class="lane glass"
+						class:selected={lane.key === focusedLane}
+						aria-current={lane.key === focusedLane || undefined}
+					>
+						<span class="mono"
+							><ProjectTag code={lane.code} palette={lane.project} /> {lane.ticket}</span
+						>
 						<span class="title">{lane.title}</span>
 						<Badge tone={lane.badge}>{lane.state}</Badge>
 					</article>
@@ -192,11 +352,15 @@
 
 	<section aria-labelledby="h-motion">
 		<h2 id="h-motion">Bewegung</h2>
-		<p class="muted">Bei reduzierter Bewegung (System oder Einstellung in der Seitenleiste) nur Überblendung.</p>
+		<p class="muted">
+			Bei reduzierter Bewegung (System oder Einstellung in der Seitenleiste) nur Überblendung.
+		</p>
 		<div class="row">
 			<Button onclick={() => advance(1)}>Weiterrücken</Button>
 			<Button variant="ghost" onclick={() => advance(-1)}>Rückgängig</Button>
-			<Button variant="ghost" onclick={() => (noteShown = !noteShown)}>Hinweis {noteShown ? 'ausblenden' : 'einblenden'}</Button>
+			<Button variant="ghost" onclick={() => (noteShown = !noteShown)}
+				>Hinweis {noteShown ? 'ausblenden' : 'einblenden'}</Button
+			>
 		</div>
 		<div class="queue">
 			{#key question}
@@ -211,7 +375,9 @@
 				</article>
 			{/key}
 		</div>
-		{#if noteShown}<p class="note" transition:travel>Bewegung zeigt Herkunft und Ziel, der Zustand ändert sich sofort.</p>{/if}
+		{#if noteShown}<p class="note" transition:travel>
+				Bewegung zeigt Herkunft und Ziel, der Zustand ändert sich sofort.
+			</p>{/if}
 	</section>
 
 	<section aria-labelledby="h-actions">
@@ -232,7 +398,11 @@
 		<div class="table-wrap">
 			<table>
 				<thead>
-					<tr><th scope="col">Ticket</th><th scope="col">Titel</th><th scope="col">Status</th><th scope="col">Rolle</th><th scope="col">Aktiv</th></tr>
+					<tr
+						><th scope="col">Ticket</th><th scope="col">Titel</th><th scope="col">Status</th><th
+							scope="col">Rolle</th
+						><th scope="col">Aktiv</th></tr
+					>
 				</thead>
 				<tbody>
 					{#each runs as run (run.key)}
@@ -253,18 +423,24 @@
 		<h2 id="h-form">Formular</h2>
 		<div class="form">
 			<FormField label="Titel" hint="Kurz und als Ergebnis formuliert.">
-				{#snippet children(a)}<input {...a} value="Anmeldeseite an Design-System anpassen" />{/snippet}
+				{#snippet children(a)}<input
+						{...a}
+						value="Anmeldeseite an Design-System anpassen"
+					/>{/snippet}
 			</FormField>
 			<FormField label="Agent-Profil">
 				{#snippet children(a)}
-					<select {...a}><option>Developer</option><option>Reviewer</option><option>Refiner</option></select>
+					<select {...a}
+						><option>Developer</option><option>Reviewer</option><option>Refiner</option></select
+					>
 				{/snippet}
 			</FormField>
 			<FormField label="Endpoint" error="Keine Verbindung. Adresse prüfen oder den Server starten.">
 				{#snippet children(a)}<input {...a} value="http://localhost:8080/v1" />{/snippet}
 			</FormField>
 			<FormField label="Rollen-Prompt" hint="Wird jedem Run in dieser Spalte vorangestellt.">
-				{#snippet children(a)}<textarea {...a} rows="3" placeholder="Du bist Developer …"></textarea>{/snippet}
+				{#snippet children(a)}<textarea {...a} rows="3" placeholder="Du bist Developer …"
+					></textarea>{/snippet}
 			</FormField>
 		</div>
 	</section>
@@ -275,8 +451,14 @@
 			<Button onclick={() => (dialogOpen = true)}>Dialog öffnen</Button>
 			<Button onclick={() => (panelOpen = true)}>Seitenpanel öffnen</Button>
 			<Button variant="ghost" onclick={() => toast('Run STU-41 gestartet')}>Info-Meldung</Button>
-			<Button variant="ghost" onclick={() => toast('Ticket nach Review verschoben', 'success')}>Erfolg</Button>
-			<Button variant="ghost" onclick={() => toast('Run STU-37 fehlgeschlagen: Migration bricht ab', 'error')}>Fehler</Button>
+			<Button variant="ghost" onclick={() => toast('Ticket nach Review verschoben', 'success')}
+				>Erfolg</Button
+			>
+			<Button
+				variant="ghost"
+				onclick={() => toast('Run STU-37 fehlgeschlagen: Migration bricht ab', 'error')}
+				>Fehler</Button
+			>
 		</div>
 	</section>
 
@@ -304,7 +486,9 @@
 
 <Dialog bind:open={panelOpen} variant="panel" title="STU-41 Anmeldeseite an Design-System anpassen">
 	<div class="detail">
-		<div class="row"><Badge tone="running">läuft</Badge><span class="muted">Developer seit 2 min</span></div>
+		<div class="row">
+			<Badge tone="running">läuft</Badge><span class="muted">Developer seit 2 min</span>
+		</div>
 		<p>Formular auf FormField umstellen, Fehlermeldungen mit Ausweg, Tastaturbedienung prüfen.</p>
 		<h3>Tasks</h3>
 		<ul>

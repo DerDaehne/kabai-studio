@@ -6,14 +6,25 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	let { label, hint, error, children }: { label: string; hint?: string; error?: string; children: Snippet<[FieldAttrs]> } = $props();
+	let {
+		label,
+		hint,
+		error,
+		children
+	}: { label: string; hint?: string; error?: string; children: Snippet<[FieldAttrs]> } = $props();
 	const id = $props.id();
-	const describedby = $derived([hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(' ') || undefined);
+	const describedby = $derived(
+		[hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(' ') || undefined
+	);
 </script>
 
 <div class="field">
 	<label for={id}>{label}</label>
-	{@render children({ id, 'aria-describedby': describedby, 'aria-invalid': error ? 'true' : undefined })}
+	{@render children({
+		id,
+		'aria-describedby': describedby,
+		'aria-invalid': error ? 'true' : undefined
+	})}
 	{#if hint}<p id="{id}-hint" class="hint">{hint}</p>{/if}
 	{#if error}<p id="{id}-error" class="error">{error}</p>{/if}
 </div>

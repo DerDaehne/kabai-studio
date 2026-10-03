@@ -54,7 +54,7 @@ People should understand intent and behaviour by reading the code.
   functions.
 - **Short functions:** a function or method fits on one normal screen (about 40
   lines). Longer → split into well-named steps.
-- **Comment only what the code cannot say:** a non-obvious *why*, a workaround
+- **Comment only what the code cannot say:** a non-obvious _why_, a workaround
   (name the underlying cause), a security or concurrency invariant, or a deliberate
   simplification (`ponytail:` marker with its limit and upgrade path). Keep it to
   one short line where possible.
@@ -147,8 +147,8 @@ nix develop --command npm run scan:secrets   # gitleaks + privacy scan before co
 ## Git
 
 - One branch per ticket: `ticket/<id>-<short-slug>`, branched from the current
-  `main`. Small commits in English, format `feat|fix|chore|docs|ci: <what>
-  (#<ticket-id>)`, one ticket per commit.
+  `main`. Small commits in English, format
+  `feat|fix|chore|docs|ci: <what> (#<ticket-id>)`, one ticket per commit.
 - After "Review ok" the review agent merges the ticket branch into `main` with
   `git merge --ff-only` (rebasing onto `main` first if needed) and deletes the
   branch.

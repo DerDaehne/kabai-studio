@@ -15,7 +15,8 @@ body {
 	background: var(--bg);
 	color: var(--text);
 	font: var(--text-base) / var(--leading) var(--font-sans);
-	font-feature-settings: 'cv11', 'ss01'; /* Inter: ruhigere Ziffern/Formen, andere Schriften ignorieren es */
+	font-feature-settings:
+		'cv11', 'ss01'; /* Inter: ruhigere Ziffern/Formen, andere Schriften ignorieren es */
 	-webkit-font-smoothing: antialiased;
 }
 

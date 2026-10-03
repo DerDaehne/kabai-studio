@@ -13,7 +13,13 @@
 		variant = 'dialog',
 		children,
 		footer
-	}: { open?: boolean; title: string; variant?: 'dialog' | 'panel'; children: Snippet; footer?: Snippet } = $props();
+	}: {
+		open?: boolean;
+		title: string;
+		variant?: 'dialog' | 'panel';
+		children: Snippet;
+		footer?: Snippet;
+	} = $props();
 
 	let el: HTMLDialogElement;
 	let downOnBackdrop = false;
@@ -41,7 +47,9 @@
 	<div class="frame">
 		<header>
 			<h2 id="{id}-title">{title}</h2>
-			<button class="btn btn-ghost btn-icon" aria-label="Schließen" onclick={() => (open = false)}><Icon name="x" /></button>
+			<button class="btn btn-ghost btn-icon" aria-label="Schließen" onclick={() => (open = false)}
+				><Icon name="x" /></button
+			>
 		</header>
 		<div class="body">{@render children()}</div>
 		{#if footer}<footer>{@render footer()}</footer>{/if}

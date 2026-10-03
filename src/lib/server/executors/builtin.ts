@@ -1,4 +1,12 @@
-import { isStepCount, streamText, type FinishReason, type LanguageModel, type StopCondition, type TextStreamPart, type ToolSet } from 'ai';
+import {
+	isStepCount,
+	streamText,
+	type FinishReason,
+	type LanguageModel,
+	type StopCondition,
+	type TextStreamPart,
+	type ToolSet
+} from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
 import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
 import { assemblePrompt, type AssembledPrompt } from '../agents/prompt';
@@ -6,7 +14,14 @@ import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
 import { mcpEndpoint, tasksOf } from '../mcp';
-import type { Executor, ExecutorIo, ExecutorResult, ParkReason, Phase, RunContext } from '../runner';
+import type {
+	Executor,
+	ExecutorIo,
+	ExecutorResult,
+	ParkReason,
+	Phase,
+	RunContext
+} from '../runner';
 import { mask } from '../secrets';
 import { modelFor, requestSettings } from './provider';
 import { studioTools } from './studio-mcp-client';
@@ -17,10 +32,23 @@ export type BuiltinOptions = {
 	inactivityMs?: number;
 };
 /** What one step did, for deciding how the run ends and for spotting a stuck run. */
-export type StepRecord = { step: number; finishReason: FinishReason; inputTokens?: number; reasoningTokens?: number; calls: ToolCallRecord[] };
+export type StepRecord = {
+	step: number;
+	finishReason: FinishReason;
+	inputTokens?: number;
+	reasoningTokens?: number;
+	calls: ToolCallRecord[];
+};
 type ToolCallRecord = { tool: string; isError: boolean };
 type Part = TextStreamPart<ToolSet>;
-type OpenStep = { number: number; startedAt: number; reasoning: string; text: string; textsRecorded: boolean; calls: ToolCallRecord[] };
+type OpenStep = {
+	number: number;
+	startedAt: number;
+	reasoning: string;
+	text: string;
+	textsRecorded: boolean;
+	calls: ToolCallRecord[];
+};
 
 // ponytail: fixed limits; make them configurable once practice asks for it.
 const DEFAULT_MAX_STEPS = 24;
@@ -29,16 +57,26 @@ const RESULT_LIMIT = 8_000;
 const PHASE_INTERVAL_MS = 1000;
 
 /** Works a run in a tool loop on an OpenAI-compatible model server, with the studio MCP tools of the run. */
-export function builtinExecutor(db: DatabaseSync, { fetch = globalThis.fetch, inactivityMs = INACTIVITY_LIMIT_MS }: BuiltinOptions = {}): Executor {
+export function builtinExecutor(
+	db: DatabaseSync,
+	{ fetch = globalThis.fetch, inactivityMs = INACTIVITY_LIMIT_MS }: BuiltinOptions = {}
+): Executor {
 	const endpoint = mcpEndpoint(db);
 	return {
 		async execute(run, io) {
 			const prompt = assemblePrompt(db, run);
 			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
-			const model = modelFor(db, run.profile, prompt.showsHumanAnswer ? afterFirstRequest(fetch, collect) : fetch);
+			const model = modelFor(
+				db,
+				run.profile,
+				prompt.showsHumanAnswer ? afterFirstRequest(fetch, collect) : fetch
+			);
 			const studio = await studioTools(endpoint, run.token, io.signal);
 			try {
-				io.emit({ type: 'log', payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens: studio.toolTokens } });
+				io.emit({
+					type: 'log',
+					payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens: studio.toolTokens }
+				});
 				const log = await runSteps({ model, prompt, tools: studio.tools, run, io, inactivityMs });
 				return endOfRun(db, run, io, log);
 			} finally {
@@ -48,7 +86,14 @@ export function builtinExecutor(db: DatabaseSync, { fetch = globalThis.fetch, in
 	};
 }
 
-type Loop = { model: LanguageModel; prompt: AssembledPrompt; tools: ToolSet; run: RunContext; io: ExecutorIo; inactivityMs: number };
+type Loop = {
+	model: LanguageModel;
+	prompt: AssembledPrompt;
+	tools: ToolSet;
+	run: RunContext;
+	io: ExecutorIo;
+	inactivityMs: number;
+};
 
 async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): Promise<StepLog> {
 	const log = new StepLog(io, inactivityMs);
@@ -71,11 +116,18 @@ async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): 
 }
 
 const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS;
-const isErrorResult = (output: unknown) => (output as { isError?: unknown } | undefined)?.isError === true;
-const askedHuman: StopCondition<ToolSet> = ({ steps }) => steps.at(-1)?.toolResults.some((r) => r.toolName === 'request_human' && !isErrorResult(r.output)) ?? false;
+const isErrorResult = (output: unknown) =>
+	(output as { isError?: unknown } | undefined)?.isError === true;
+const askedHuman: StopCondition<ToolSet> = ({ steps }) =>
+	steps
+		.at(-1)
+		?.toolResults.some((r) => r.toolName === 'request_human' && !isErrorResult(r.output)) ?? false;
 
 /** Calls `sent` once the first request to the model server has gone out. */
-function afterFirstRequest(fetch: typeof globalThis.fetch, sent: () => void): typeof globalThis.fetch {
+function afterFirstRequest(
+	fetch: typeof globalThis.fetch,
+	sent: () => void
+): typeof globalThis.fetch {
 	let first = true;
 	return (input, init) => {
 		const response = fetch(input, init);
@@ -87,11 +139,14 @@ function afterFirstRequest(fetch: typeof globalThis.fetch, sent: () => void): ty
 
 function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
 	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
-	const handoff = log.lastMessage ? { text: log.lastMessage } : { text: generatedHandoff(db, run, log), generated: true };
+	const handoff = log.lastMessage
+		? { text: log.lastMessage }
+		: { text: generatedHandoff(db, run, log), generated: true };
 	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: handoff }).seq;
 	if (log.succeeded('request_human')) return { state: 'paused' };
 	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
-	if (io.park.aborted && log.endedWithToolCalls()) return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
+	if (io.park.aborted && log.endedWithToolCalls())
+		return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
 	if (log.endedWithToolCalls() && !log.succeeded('move_ticket'))
 		throw new DomainError(
 			'step_limit',
@@ -121,7 +176,9 @@ function toolUse(records: StepRecord[]): string {
 		const use = uses.get(call.tool) ?? { calls: 0, failed: 0 };
 		uses.set(call.tool, { calls: use.calls + 1, failed: use.failed + Number(call.isError) });
 	}
-	return [...uses].map(([tool, { calls, failed }]) => `${tool} ${calls}×${failed ? ` (${failed} failed)` : ''}`).join(', ');
+	return [...uses]
+		.map(([tool, { calls, failed }]) => `${tool} ${calls}×${failed ? ` (${failed} failed)` : ''}`)
+		.join(', ');
 }
 
 /** Turns the stream of the tool loop into run events (one set per step) and live phases. */
@@ -139,7 +196,9 @@ class StepLog {
 	}
 
 	succeeded(tool: string) {
-		return this.records.some((record) => record.calls.some((call) => call.tool === tool && !call.isError));
+		return this.records.some((record) =>
+			record.calls.some((call) => call.tool === tool && !call.isError)
+		);
 	}
 
 	endedWithToolCalls() {
@@ -162,7 +221,12 @@ class StepLog {
 			case 'tool-call':
 				return this.#recordToolCall(part);
 			case 'tool-result':
-				return this.#recordToolResult(part.toolCallId, part.toolName, textOf(part.output), isErrorResult(part.output));
+				return this.#recordToolResult(
+					part.toolCallId,
+					part.toolName,
+					textOf(part.output),
+					isErrorResult(part.output)
+				);
 			case 'tool-error':
 				return this.#recordToolResult(part.toolCallId, part.toolName, errorText(part.error), true);
 			case 'finish-step':
@@ -180,7 +244,11 @@ class StepLog {
 		const now = Date.now();
 		if (now - this.#lastPhaseAt < PHASE_INTERVAL_MS) return;
 		this.#lastPhaseAt = now;
-		this.#io.phase({ name, elapsedMs: now - this.#step.startedAt, lastLine: lastCompleteLine(text) });
+		this.#io.phase({
+			name,
+			elapsedMs: now - this.#step.startedAt,
+			lastLine: lastCompleteLine(text)
+		});
 	}
 
 	/** Reasoning and text of a step come before its first tool call; they are recorded once, with the step's first call or its end. */
@@ -191,22 +259,39 @@ class StepLog {
 		if (step.reasoning) {
 			// masked before cutting, so that a secret cut in half is still recognised; the end of the reasoning leads to the step's action
 			const text = mask(step.reasoning).slice(-REASONING_LIMIT);
-			this.#io.emit({ type: 'reasoning', key: `step:${step.number}:reasoning`, payload: { step: step.number, text, charsTotal: step.reasoning.length } });
+			this.#io.emit({
+				type: 'reasoning',
+				key: `step:${step.number}:reasoning`,
+				payload: { step: step.number, text, charsTotal: step.reasoning.length }
+			});
 		}
 		const text = step.text.trim();
 		if (!text) return;
 		this.lastMessage = text;
-		this.#io.emit({ type: 'message', key: `step:${step.number}:message`, payload: { step: step.number, text } });
+		this.#io.emit({
+			type: 'message',
+			key: `step:${step.number}:message`,
+			payload: { step: step.number, text }
+		});
 	}
 
 	#recordToolCall(part: Extract<Part, { type: 'tool-call' }>) {
 		this.#recordTexts();
-		this.#io.emit({ type: 'tool_call', key: part.toolCallId, payload: { step: this.#step.number, tool: part.toolName, args: part.input } });
+		this.#io.emit({
+			type: 'tool_call',
+			key: part.toolCallId,
+			payload: { step: this.#step.number, tool: part.toolName, args: part.input }
+		});
 	}
 
 	#recordToolResult(callId: string, tool: string, result: string, isError: boolean) {
 		this.#step.calls.push({ tool, isError });
-		const payload = { step: this.#step.number, tool, result: mask(result).slice(0, RESULT_LIMIT), isError };
+		const payload = {
+			step: this.#step.number,
+			tool,
+			result: mask(result).slice(0, RESULT_LIMIT),
+			isError
+		};
 		this.#io.emit({ type: 'tool_result', key: `${callId}:result`, payload });
 	}
 
@@ -218,15 +303,35 @@ class StepLog {
 		this.#io.emit({
 			type: 'log',
 			key: `step:${step.number}`,
-			payload: { kind: 'step', step: step.number, finishReason, ms: Date.now() - step.startedAt, reasoningTokens, cachedInputTokens },
+			payload: {
+				kind: 'step',
+				step: step.number,
+				finishReason,
+				ms: Date.now() - step.startedAt,
+				reasoningTokens,
+				cachedInputTokens
+			},
 			// ponytail: cost 0 while only local models are supported; priced providers bring their prices into the catalog
 			usage: { tokensIn: usage.inputTokens ?? 0, tokensOut: usage.outputTokens ?? 0, cost: 0 }
 		});
-		this.records.push({ step: step.number, finishReason, inputTokens: usage.inputTokens, reasoningTokens, calls: step.calls });
+		this.records.push({
+			step: step.number,
+			finishReason,
+			inputTokens: usage.inputTokens,
+			reasoningTokens,
+			calls: step.calls
+		});
 	}
 }
 
-const openStep = (number: number): OpenStep => ({ number, startedAt: Date.now(), reasoning: '', text: '', textsRecorded: false, calls: [] });
+const openStep = (number: number): OpenStep => ({
+	number,
+	startedAt: Date.now(),
+	reasoning: '',
+	text: '',
+	textsRecorded: false,
+	calls: []
+});
 
 function lastCompleteLine(text: string) {
 	const completeLines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n');

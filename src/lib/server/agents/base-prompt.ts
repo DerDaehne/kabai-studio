@@ -44,4 +44,7 @@ const COMPACT = `You work one ticket on a kanban board; your role below says wha
 - Finish: write the handoff with \`add_comment\`, then \`move_ticket\` as your last action, to a column from allowed moves.
 ${HANDOFF_TEMPLATE}`;
 
-export const BASE_PROMPT: Readonly<Record<PromptVariant, string>> = { full: FULL, compact: COMPACT };
+export const BASE_PROMPT: Readonly<Record<PromptVariant, string>> = {
+	full: FULL,
+	compact: COMPACT
+};

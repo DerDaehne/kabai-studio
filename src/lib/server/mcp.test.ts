@@ -19,32 +19,61 @@ function setup() {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const col = Object.fromEntries(db.prepare('SELECT name, id FROM columns WHERE project_id = ?').all(projectId).map((r) => [r.name, r.id])) as Record<string, number>;
-	const profileId = runs.createProfile(db, user, { name: 'Test', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
+	const col = Object.fromEntries(
+		db
+			.prepare('SELECT name, id FROM columns WHERE project_id = ?')
+			.all(projectId)
+			.map((r) => [r.name, r.id])
+	) as Record<string, number>;
+	const profileId = runs.createProfile(db, user, {
+		name: 'Test',
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'm'
+	}).id;
 	const ticket = (title = 'T') => board.createTicket(db, user, projectId, { title }).id;
 	/** Sets up a state directly, without going through the rules. */
-	const place = (id: number, column: string) => db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[column], id);
-	const columnOf = (id: number) => db.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?').get(id)?.name;
+	const place = (id: number, column: string) =>
+		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[column], id);
+	const columnOf = (id: number) =>
+		db
+			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+			.get(id)?.name;
 	const startRun = (ticketId: number, resumedFromRunId?: number) => {
 		const runId = runs.createRun(db, user, { ticketId, profileId, resumedFromRunId }).id;
 		return { runId, token: runs.startRun(db, system, runId).token };
 	};
 	const serve = mcpEndpoint(db);
-	const call = (token: string, name: string, args: object = {}) => callTool(serve, token, name, args);
+	const call = (token: string, name: string, args: object = {}) =>
+		callTool(serve, token, name, args);
 	return { db, projectId, col, ticket, place, columnOf, startRun, serve, call };
 }
 
 let requestId = 0;
 function rpc(serve: Serve, token: string | undefined, method: string, params?: object) {
-	const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
+	const headers: Record<string, string> = {
+		'content-type': 'application/json',
+		accept: 'application/json, text/event-stream'
+	};
 	if (token !== undefined) headers.authorization = `Bearer ${token}`;
-	return serve(new Request('http://127.0.0.1:3000/mcp', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }) }));
+	return serve(
+		new Request('http://127.0.0.1:3000/mcp', {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params })
+		})
+	);
 }
 
 async function messageOf(response: Response) {
 	const text = await response.text();
 	const isStream = response.headers.get('content-type')?.startsWith('text/event-stream');
-	const json = isStream ? text.split('\n').find((line) => line.startsWith('data: '))!.slice('data: '.length) : text;
+	const json = isStream
+		? text
+				.split('\n')
+				.find((line) => line.startsWith('data: '))!
+				.slice('data: '.length)
+		: text;
 	return JSON.parse(json);
 }
 
@@ -53,9 +82,17 @@ const resultOf = async (response: Response) => (await messageOf(response)).resul
 /** Everything a tool can write, to show that a refused call changed nothing. */
 const writableRows = (db: DatabaseSync) =>
 	JSON.stringify(
-		['comments', 'tickets', 'tasks', 'questions', 'ticket_relations', 'notes', 'note_links', 'note_tickets', 'note_projects'].map((table) =>
-			db.prepare(`SELECT * FROM ${table}`).all()
-		)
+		[
+			'comments',
+			'tickets',
+			'tasks',
+			'questions',
+			'ticket_relations',
+			'notes',
+			'note_links',
+			'note_tickets',
+			'note_projects'
+		].map((table) => db.prepare(`SELECT * FROM ${table}`).all())
 	);
 
 /** What the agent sees of a tool call: the error flag and the text, parsed when it is JSON. */
@@ -82,7 +119,10 @@ describe('run token', () => {
 			const response = await rpc(serve, token, 'tools/list');
 			expect(response.status).toBe(401);
 			expect(response.headers.get('www-authenticate')).toContain('Bearer');
-			expect(await response.json()).toMatchObject({ error: 'unauthorized', hint: expect.stringContaining('Bearer') });
+			expect(await response.json()).toMatchObject({
+				error: 'unauthorized',
+				hint: expect.stringContaining('Bearer')
+			});
 		}
 	});
 
@@ -105,7 +145,10 @@ describe('run token', () => {
 	it('answers 401 once the run was cancelled or has failed', async () => {
 		const { db, serve, startRun, ticket } = setup();
 		const id = ticket();
-		for (const end of [{ state: 'cancelled' }, { state: 'failed', error: 'executor crashed' }] as const) {
+		for (const end of [
+			{ state: 'cancelled' },
+			{ state: 'failed', error: 'executor crashed' }
+		] as const) {
 			const { runId, token } = startRun(id);
 			expect((await rpc(serve, token, 'tools/list')).status).toBe(200);
 			runs.finishRun(db, system, runId, end);
@@ -129,7 +172,10 @@ describe('scope of a run', () => {
 		expect((await call(token, 'get_ticket', { ticket: 'stu-2' })).body.ref).toBe('STU-2');
 		for (const ref of ['OTH-1', 'OTH-3', 'STU-9', '3']) {
 			const refused = await call(token, 'get_ticket', { ticket: ref });
-			expect(refused).toMatchObject({ isError: true, body: { error: 'not_found', hint: expect.stringContaining('STU-12') } });
+			expect(refused).toMatchObject({
+				isError: true,
+				body: { error: 'not_found', hint: expect.stringContaining('STU-12') }
+			});
 		}
 		expect((await call(token, 'get_ticket', { ticket: 3 })).isError).toBe(true);
 	});
@@ -141,19 +187,35 @@ describe('scope of a run', () => {
 		const { token } = startRun(own);
 
 		const complete = await call(token, 'complete_tasks', { task_ids: [foreignTask] });
-		expect(complete).toMatchObject({ isError: true, body: { error: 'not_found', message: expect.stringContaining(String(foreignTask)) } });
-		expect(db.prepare('SELECT done_at FROM tasks WHERE id = ?').get(foreignTask)?.done_at).toBeNull();
+		expect(complete).toMatchObject({
+			isError: true,
+			body: { error: 'not_found', message: expect.stringContaining(String(foreignTask)) }
+		});
+		expect(
+			db.prepare('SELECT done_at FROM tasks WHERE id = ?').get(foreignTask)?.done_at
+		).toBeNull();
 
 		const update = await call(token, 'update_ticket', { ticket: 'STU-2', title: 'Gekapert' });
 		expect(update.isError).toBe(true);
-		expect(db.prepare('SELECT title FROM tickets ORDER BY id').all().map((r) => r.title)).toEqual(['Eigenes', 'Nachbar']);
+		expect(
+			db
+				.prepare('SELECT title FROM tickets ORDER BY id')
+				.all()
+				.map((r) => r.title)
+		).toEqual(['Eigenes', 'Nachbar']);
 	});
 });
 
 describe('get_ticket', () => {
 	it('shows tasks with ids, the last ten comments, relations as waits_for/blocks, allowed moves and the approval state', async () => {
 		const { db, call, startRun, ticket, place } = setup();
-		const [open, finished, own, successor, epic] = [ticket('Offen'), ticket('Fertig'), ticket('Eigenes'), ticket('Danach'), ticket('Epic')];
+		const [open, finished, own, successor, epic] = [
+			ticket('Offen'),
+			ticket('Fertig'),
+			ticket('Eigenes'),
+			ticket('Danach'),
+			ticket('Epic')
+		];
 		place(finished, 'Done');
 		board.linkRelation(db, user, open, own, 'blocks');
 		board.linkRelation(db, user, finished, own, 'blocks');
@@ -165,12 +227,19 @@ describe('get_ticket', () => {
 		const { token } = startRun(own);
 
 		const { body } = await call(token, 'get_ticket');
-		expect(body).toMatchObject({ ref: 'STU-3', title: 'Eigenes', column: 'Backlog', review_approved: false });
+		expect(body).toMatchObject({
+			ref: 'STU-3',
+			title: 'Eigenes',
+			column: 'Backlog',
+			review_approved: false
+		});
 		expect(body.tasks).toEqual([
 			{ id: a, title: 'A', done: true },
 			{ id: b, title: 'B', done: false }
 		]);
-		expect(body.comments.map((c: { text: string }) => c.text)).toEqual(Array.from({ length: 10 }, (_, i) => `Kommentar ${i + 3}`));
+		expect(body.comments.map((c: { text: string }) => c.text)).toEqual(
+			Array.from({ length: 10 }, (_, i) => `Kommentar ${i + 3}`)
+		);
 		expect(body.comments[0]).toMatchObject({ by: 'user', at: expect.any(String) });
 		expect(body.waits_for).toEqual([
 			{ ref: 'STU-1', title: 'Offen', column: 'Backlog', blocking: true },
@@ -179,7 +248,11 @@ describe('get_ticket', () => {
 		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Backlog' }]);
 		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Backlog' }]);
 		expect(body.allowed_moves).toEqual([
-			{ column_id: expect.any(Number), name: 'Refine', blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).' },
+			{
+				column_id: expect.any(Number),
+				name: 'Refine',
+				blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).'
+			},
 			{ column_id: expect.any(Number), name: 'Human Intervention' }
 		]);
 
@@ -204,7 +277,9 @@ describe('move_ticket for agents', () => {
 
 		board.moveTicket(db, user, own, col['Refine']); // a human may start it deliberately
 		board.moveTicket(db, user, own, col.Backlog);
-		expect((await call(token, 'move_ticket', { column_id: col['Human Intervention'] })).isError).toBe(false);
+		expect(
+			(await call(token, 'move_ticket', { column_id: col['Human Intervention'] })).isError
+		).toBe(false);
 	});
 
 	it('lets the ticket into work once the predecessor is done, or approved when the project counts review_ok', async () => {
@@ -233,7 +308,10 @@ describe('batch tools', () => {
 		const added = await call(token, 'add_tasks', { titles: ['A', 'B', 'C'] });
 		expect(added.body.task_ids).toHaveLength(3);
 		const [a, b, c] = added.body.task_ids;
-		expect(await call(token, 'complete_tasks', { task_ids: [a, b] })).toEqual({ isError: false, body: { open_task_ids: [c] } });
+		expect(await call(token, 'complete_tasks', { task_ids: [a, b] })).toEqual({
+			isError: false,
+			body: { open_task_ids: [c] }
+		});
 
 		expect((await call(token, 'add_tasks', { titles: ['D', ' '] })).body.error).toBe('empty_title');
 		expect(db.prepare('SELECT count(*) AS n FROM tasks').get()?.n).toBe(3);
@@ -256,7 +334,9 @@ describe('create_child_tickets', () => {
 		});
 		expect(created).toEqual({ isError: false, body: { refs: ['STU-3', 'STU-4', 'STU-5'] } });
 
-		expect((await call(token, 'get_ticket')).body.children.map((c: { ref: string }) => c.ref)).toEqual(['STU-3', 'STU-4', 'STU-5']);
+		expect(
+			(await call(token, 'get_ticket')).body.children.map((c: { ref: string }) => c.ref)
+		).toEqual(['STU-3', 'STU-4', 'STU-5']);
 		const schema = (await call(token, 'get_ticket', { ticket: 'STU-3' })).body;
 		expect(schema.tasks.map((t: { title: string; done: boolean }) => [t.title, t.done])).toEqual([
 			['Migration', false],
@@ -270,22 +350,52 @@ describe('create_child_tickets', () => {
 		]);
 		expect(domain.parent).toEqual([{ ref: 'STU-1', title: 'Epic', column: 'Backlog' }]);
 		const ui = (await call(token, 'get_ticket', { ticket: 'STU-5' })).body;
-		expect(ui).toMatchObject({ description: 'Board', waits_for: [{ ref: 'STU-4', blocking: true }] });
+		expect(ui).toMatchObject({
+			description: 'Board',
+			waits_for: [{ ref: 'STU-4', blocking: true }]
+		});
 	});
 
 	const invalid: [string, object[], string][] = [
 		['a blank title', [{ title: 'A' }, { title: '  ' }], 'items[1]'],
 		['a blank task', [{ title: 'A', tasks: ['ok', ' '] }], 'items[0]'],
-		['an unknown local ref', [{ ref: 'a', title: 'A' }, { title: 'B' }, { title: 'C', waits_for: ['$b'] }], 'items[2]'],
-		['a ticket of another project', [{ title: 'A' }, { title: 'B', waits_for: ['OTH-1'] }], 'items[1]'],
-		['a local ref used twice', [{ ref: 'a', title: 'A' }, { ref: 'a', title: 'B' }], 'items[1]'],
-		['a cycle over local refs', [{ ref: 'a', title: 'A', waits_for: ['$b'] }, { ref: 'b', title: 'B', waits_for: ['$a'] }], 'items[1]'],
+		[
+			'an unknown local ref',
+			[{ ref: 'a', title: 'A' }, { title: 'B' }, { title: 'C', waits_for: ['$b'] }],
+			'items[2]'
+		],
+		[
+			'a ticket of another project',
+			[{ title: 'A' }, { title: 'B', waits_for: ['OTH-1'] }],
+			'items[1]'
+		],
+		[
+			'a local ref used twice',
+			[
+				{ ref: 'a', title: 'A' },
+				{ ref: 'a', title: 'B' }
+			],
+			'items[1]'
+		],
+		[
+			'a cycle over local refs',
+			[
+				{ ref: 'a', title: 'A', waits_for: ['$b'] },
+				{ ref: 'b', title: 'B', waits_for: ['$a'] }
+			],
+			'items[1]'
+		],
 		['an item waiting for itself', [{ ref: 'a', title: 'A', waits_for: ['$a'] }], 'items[0]']
 	];
 
 	it.each(invalid)('creates nothing for %s and names the item', async (_case, items, item) => {
 		const { db, call, startRun, ticket } = setup();
-		board.createTicket(db, user, board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id, { title: 'Fremd' });
+		board.createTicket(
+			db,
+			user,
+			board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id,
+			{ title: 'Fremd' }
+		);
 		const { token } = startRun(ticket());
 		const before = writableRows(db);
 
@@ -294,7 +404,9 @@ describe('create_child_tickets', () => {
 		expect(refused.body.message).toContain(item);
 		expect(refused.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
 		expect(writableRows(db)).toBe(before);
-		expect((await call(token, 'create_child_tickets', { items: [{ title: 'Danach' }] })).body.refs).toEqual(['STU-2']);
+		expect(
+			(await call(token, 'create_child_tickets', { items: [{ title: 'Danach' }] })).body.refs
+		).toEqual(['STU-2']);
 	});
 });
 
@@ -306,20 +418,34 @@ describe('link_tickets', () => {
 		ticket('Nachher');
 		const { token } = startRun(own);
 		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
-		expect(Object.keys(tools.find((t: { name: string }) => t.name === 'link_tickets').inputSchema.properties)).toEqual(['waits_for', 'blocks']);
+		expect(
+			Object.keys(
+				tools.find((t: { name: string }) => t.name === 'link_tickets').inputSchema.properties
+			)
+		).toEqual(['waits_for', 'blocks']);
 
-		expect(await call(token, 'link_tickets', { waits_for: ['STU-2'], blocks: ['STU-3'] })).toEqual({ isError: false, body: { ref: 'STU-1' } });
+		expect(await call(token, 'link_tickets', { waits_for: ['STU-2'], blocks: ['STU-3'] })).toEqual({
+			isError: false,
+			body: { ref: 'STU-1' }
+		});
 		const { body } = await call(token, 'get_ticket');
-		expect(body.waits_for).toEqual([{ ref: 'STU-2', title: 'Vorher', column: 'Backlog', blocking: true }]);
+		expect(body.waits_for).toEqual([
+			{ ref: 'STU-2', title: 'Vorher', column: 'Backlog', blocking: true }
+		]);
 		expect(body.blocks).toEqual([{ ref: 'STU-3', title: 'Nachher', column: 'Backlog' }]);
-		expect((await call(token, 'get_ticket', { ticket: 'STU-3' })).body.waits_for).toEqual([{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', blocking: true }]);
+		expect((await call(token, 'get_ticket', { ticket: 'STU-3' })).body.waits_for).toEqual([
+			{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', blocking: true }
+		]);
 		expect((await call(token, 'link_tickets', { waits_for: ['STU-2'] })).isError).toBe(false);
 	});
 
 	it('refuses a call that names nothing to link, with a way out', async () => {
 		const { call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
-		expect(await call(token, 'link_tickets', {})).toMatchObject({ isError: true, body: { error: 'nothing_to_link', hint: expect.stringContaining('waits_for') } });
+		expect(await call(token, 'link_tickets', {})).toMatchObject({
+			isError: true,
+			body: { error: 'nothing_to_link', hint: expect.stringContaining('waits_for') }
+		});
 	});
 
 	it('links all or none and explains a cycle in tool words', async () => {
@@ -332,9 +458,14 @@ describe('link_tickets', () => {
 		const before = writableRows(db);
 
 		const cycle = await call(token, 'link_tickets', { blocks: ['STU-3', 'STU-2'] });
-		expect(cycle).toMatchObject({ isError: true, body: { error: 'cycle', hint: expect.stringContaining('waits_for') } });
+		expect(cycle).toMatchObject({
+			isError: true,
+			body: { error: 'cycle', hint: expect.stringContaining('waits_for') }
+		});
 		expect(cycle.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
-		expect((await call(token, 'link_tickets', { waits_for: ['STU-3', 'STU-9'] })).body.error).toBe('not_found');
+		expect((await call(token, 'link_tickets', { waits_for: ['STU-3', 'STU-9'] })).body.error).toBe(
+			'not_found'
+		);
 		expect(writableRows(db)).toBe(before);
 	});
 });
@@ -344,7 +475,11 @@ describe('list_workable', () => {
 		const { db, projectId, call, startRun, ticket, place, col } = setup();
 		const own = ticket('Eigenes');
 		const [done, approved, open] = [ticket('Fertig'), ticket('Freigegeben'), ticket('Offen')];
-		const [afterDone, afterApproved, afterOpen] = [ticket('Nach Fertig'), ticket('Nach Freigabe'), ticket('Nach Offen')];
+		const [afterDone, afterApproved, afterOpen] = [
+			ticket('Nach Fertig'),
+			ticket('Nach Freigabe'),
+			ticket('Nach Offen')
+		];
 		place(done, 'Done');
 		place(approved, 'Review');
 		board.approveReview(db, user, approved);
@@ -362,8 +497,16 @@ describe('list_workable', () => {
 			{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }
 		]);
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
-		expect((await workable()).tickets.map((t: { ref: string }) => t.ref)).toEqual(['STU-1', 'STU-4', 'STU-5', 'STU-6', 'STU-3']);
-		expect(await workable({ column_id: col.Review })).toEqual({ tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }] });
+		expect((await workable()).tickets.map((t: { ref: string }) => t.ref)).toEqual([
+			'STU-1',
+			'STU-4',
+			'STU-5',
+			'STU-6',
+			'STU-3'
+		]);
+		expect(await workable({ column_id: col.Review })).toEqual({
+			tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }]
+		});
 	});
 
 	it('answers with at most 50 tickets and says how many more there are', async () => {
@@ -383,7 +526,10 @@ describe('approve_review', () => {
 		place(own, 'Review');
 		const { token } = startRun(own);
 
-		expect(await call(token, 'approve_review')).toEqual({ isError: false, body: { review_approved: true } });
+		expect(await call(token, 'approve_review')).toEqual({
+			isError: false,
+			body: { review_approved: true }
+		});
 		expect((await call(token, 'get_ticket')).body.review_approved).toBe(true);
 		await call(token, 'move_ticket', { column_id: col['In Arbeit'] });
 		expect((await call(token, 'get_ticket')).body.review_approved).toBe(false);
@@ -394,13 +540,28 @@ describe('approve_review', () => {
 		const own = ticket();
 		place(own, 'In Arbeit');
 		const developer = startRun(own);
-		const approved = () => db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(own)?.at !== null;
+		const approved = () =>
+			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(own)?.at !== null;
 
 		const outside = await call(developer.token, 'approve_review');
-		expect(outside).toMatchObject({ isError: true, body: { error: 'not_in_review', message: expect.stringContaining('STU-1'), hint: expect.stringContaining('add_comment') } });
+		expect(outside).toMatchObject({
+			isError: true,
+			body: {
+				error: 'not_in_review',
+				message: expect.stringContaining('STU-1'),
+				hint: expect.stringContaining('add_comment')
+			}
+		});
 		await call(developer.token, 'move_ticket', { column_id: col.Review });
 		const ownWork = await call(developer.token, 'approve_review');
-		expect(ownWork).toMatchObject({ isError: true, body: { error: 'self_approval', message: expect.stringContaining('STU-1'), hint: expect.stringContaining('add_comment') } });
+		expect(ownWork).toMatchObject({
+			isError: true,
+			body: {
+				error: 'self_approval',
+				message: expect.stringContaining('STU-1'),
+				hint: expect.stringContaining('add_comment')
+			}
+		});
 		expect(approved()).toBe(false);
 
 		runs.finishRun(db, system, developer.runId, { state: 'succeeded' });
@@ -414,7 +575,12 @@ describe('notes', () => {
 	it('lists no archived note in get_ticket', async () => {
 		const { db, projectId, call, startRun, ticket } = setup();
 		const own = ticket();
-		const old = notes.createNote(db, user, { slug: 'old-plan', title: 'Old plan', body: 'x', projectIds: [projectId] }).id;
+		const old = notes.createNote(db, user, {
+			slug: 'old-plan',
+			title: 'Old plan',
+			body: 'x',
+			projectIds: [projectId]
+		}).id;
 		notes.linkTicket(db, user, old, own, 'references');
 		notes.archiveNote(db, user, old);
 		const { token } = startRun(own);
@@ -427,11 +593,33 @@ describe('notes', () => {
 		notes.createNote(db, user, { slug: 'arch-base', title: 'Basis', body: 'Grundlage für alles' });
 		const { token } = startRun(own);
 
-		const created = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'Baut auf [[arch-base]] und [[missing-note]] auf.', tags: ['api'] });
-		expect(created).toEqual({ isError: false, body: { version: 1, warnings: ['Unbekannter Slug „missing-note“ im Wikilink — kein Link angelegt.'] } });
-		expect(await call(token, 'notes_create', { slug: 'api-hub', title: 'Hub', body: 'Einstieg', kind: 'hub' })).toEqual({ isError: false, body: { version: 1 } });
-		expect(await call(token, 'notes_link', { slug: 'api-hub', type: 'contains', target: 'arch-api' })).toEqual({ isError: false, body: { linked: true } });
-		expect(await call(token, 'link_note_to_ticket', { slug: 'arch-api', relation: 'documents' })).toEqual({ isError: false, body: { linked: true } });
+		const created = await call(token, 'notes_create', {
+			slug: 'arch-api',
+			title: 'API',
+			body: 'Baut auf [[arch-base]] und [[missing-note]] auf.',
+			tags: ['api']
+		});
+		expect(created).toEqual({
+			isError: false,
+			body: {
+				version: 1,
+				warnings: ['Unbekannter Slug „missing-note“ im Wikilink — kein Link angelegt.']
+			}
+		});
+		expect(
+			await call(token, 'notes_create', {
+				slug: 'api-hub',
+				title: 'Hub',
+				body: 'Einstieg',
+				kind: 'hub'
+			})
+		).toEqual({ isError: false, body: { version: 1 } });
+		expect(
+			await call(token, 'notes_link', { slug: 'api-hub', type: 'contains', target: 'arch-api' })
+		).toEqual({ isError: false, body: { linked: true } });
+		expect(
+			await call(token, 'link_note_to_ticket', { slug: 'arch-api', relation: 'documents' })
+		).toEqual({ isError: false, body: { linked: true } });
 
 		expect((await call(token, 'notes_get', { slug: 'arch-api' })).body).toEqual({
 			slug: 'arch-api',
@@ -444,24 +632,51 @@ describe('notes', () => {
 			contained_in: ['api-hub'],
 			tickets: [{ ref: 'STU-1', relation: 'documents' }]
 		});
-		expect((await call(token, 'notes_get', { slug: 'arch-base' })).body.referenced_by).toEqual(['arch-api']);
-		expect((await call(token, 'get_ticket')).body.notes).toEqual([{ slug: 'arch-api', title: 'API', relation: 'documents' }]);
-		expect(db.prepare("SELECT np.project_id FROM note_projects np JOIN notes n ON n.id = np.note_id WHERE n.slug = 'arch-api'").all()).toEqual([{ project_id: projectId }]);
+		expect((await call(token, 'notes_get', { slug: 'arch-base' })).body.referenced_by).toEqual([
+			'arch-api'
+		]);
+		expect((await call(token, 'get_ticket')).body.notes).toEqual([
+			{ slug: 'arch-api', title: 'API', relation: 'documents' }
+		]);
+		expect(
+			db
+				.prepare(
+					"SELECT np.project_id FROM note_projects np JOIN notes n ON n.id = np.note_id WHERE n.slug = 'arch-api'"
+				)
+				.all()
+		).toEqual([{ project_id: projectId }]);
 
 		const found = (await call(token, 'notes_search', { query: 'Grundlage' })).body.notes;
-		expect(found).toEqual([{ slug: 'arch-base', title: 'Basis', kind: 'note', snippet: expect.stringContaining('Grundlage'), chars: 19 }]);
+		expect(found).toEqual([
+			{
+				slug: 'arch-base',
+				title: 'Basis',
+				kind: 'note',
+				snippet: expect.stringContaining('Grundlage'),
+				chars: 19
+			}
+		]);
 	});
 
 	it('reads and links notes of your project and global ones, never those of another project', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'plan', projectIds: [other] });
+		notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'plan',
+			projectIds: [other]
+		});
 		notes.createNote(db, user, { slug: 'global-plan', title: 'Globaler Plan', body: 'plan' });
 		const { token } = startRun(ticket());
 		await call(token, 'notes_create', { slug: 'own-plan', title: 'Eigener Plan', body: 'plan' });
 		const before = writableRows(db);
 
-		expect((await call(token, 'notes_search', { query: 'plan' })).body.notes.map((n: { slug: string }) => n.slug).sort()).toEqual(['global-plan', 'own-plan']);
+		expect(
+			(await call(token, 'notes_search', { query: 'plan' })).body.notes
+				.map((n: { slug: string }) => n.slug)
+				.sort()
+		).toEqual(['global-plan', 'own-plan']);
 		for (const [name, args] of [
 			['notes_get', { slug: 'secret-plan' }],
 			['notes_link', { slug: 'own-plan', type: 'references', target: 'secret-plan' }],
@@ -469,7 +684,10 @@ describe('notes', () => {
 			['link_note_to_ticket', { slug: 'secret-plan', relation: 'references' }]
 		] as const) {
 			const refused = await call(token, name, args);
-			expect(refused).toMatchObject({ isError: true, body: { error: 'not_found', hint: expect.stringContaining('notes_search') } });
+			expect(refused).toMatchObject({
+				isError: true,
+				body: { error: 'not_found', hint: expect.stringContaining('notes_search') }
+			});
 			expect(JSON.stringify(refused.body)).not.toContain('Geheimer Plan');
 		}
 		expect(writableRows(db)).toBe(before);
@@ -477,9 +695,18 @@ describe('notes', () => {
 
 	it('answers a slug taken in your project with the way to notes_get and notes_update, without the internal note id', async () => {
 		const { db, projectId, call, startRun, ticket } = setup();
-		notes.createNote(db, user, { slug: 'arch-api', title: 'API', body: '', projectIds: [projectId] });
+		notes.createNote(db, user, {
+			slug: 'arch-api',
+			title: 'API',
+			body: '',
+			projectIds: [projectId]
+		});
 		const { token } = startRun(ticket());
-		const { body } = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'neu' });
+		const { body } = await call(token, 'notes_create', {
+			slug: 'arch-api',
+			title: 'API',
+			body: 'neu'
+		});
 		expect(body.error).toBe('slug_taken');
 		expect(body.message).not.toMatch(/Note \d+/);
 		expect(body.hint).toContain('notes_update');
@@ -490,7 +717,11 @@ describe('notes', () => {
 		const { db, call, startRun, ticket } = setup();
 		notes.createNote(db, user, { slug: 'arch-api', title: 'API', body: '' });
 		const { token } = startRun(ticket());
-		const { body } = await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'neu' });
+		const { body } = await call(token, 'notes_create', {
+			slug: 'arch-api',
+			title: 'API',
+			body: 'neu'
+		});
 		expect(body.error).toBe('slug_taken');
 		expect(body.hint).toContain('request_human');
 		expect(body.hint).not.toContain('notes_update');
@@ -499,9 +730,18 @@ describe('notes', () => {
 	it('answers a slug taken in another project without the note id and with a way out that does not loop through notes_get', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
+		notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'x',
+			projectIds: [other]
+		});
 		const { token } = startRun(ticket());
-		const { body } = await call(token, 'notes_create', { slug: 'secret-plan', title: 'Plan', body: 'x' });
+		const { body } = await call(token, 'notes_create', {
+			slug: 'secret-plan',
+			title: 'Plan',
+			body: 'x'
+		});
 		expect(body.error).toBe('slug_taken');
 		expect(body.message).not.toMatch(/Note \d+/);
 		expect(body.hint).not.toContain('notes_get');
@@ -509,17 +749,41 @@ describe('notes', () => {
 		expect(JSON.stringify(body)).not.toContain('Geheimer Plan');
 	});
 
-	it('links [[slug]] only to notes the run can see and warns about another project\'s slug like about an unknown one', async () => {
+	it("links [[slug]] only to notes the run can see and warns about another project's slug like about an unknown one", async () => {
 		const { db, call, startRun, ticket } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
+		notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'x',
+			projectIds: [other]
+		});
 		const { token } = startRun(ticket());
-		const linksToSecret = () => db.prepare("SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'").get()?.n;
+		const linksToSecret = () =>
+			db
+				.prepare(
+					"SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'"
+				)
+				.get()?.n;
 
-		const unknown = await call(token, 'notes_create', { slug: 'probe-a', title: 'A', body: '[[no-such-slug]]' });
-		const foreign = await call(token, 'notes_create', { slug: 'probe-b', title: 'B', body: '[[secret-plan]]' });
-		expect(foreign.body.warnings).toEqual([unknown.body.warnings[0].replace('no-such-slug', 'secret-plan')]);
-		const updated = await call(token, 'notes_update', { slug: 'probe-a', expected_version: 1, body: 'jetzt [[secret-plan]]' });
+		const unknown = await call(token, 'notes_create', {
+			slug: 'probe-a',
+			title: 'A',
+			body: '[[no-such-slug]]'
+		});
+		const foreign = await call(token, 'notes_create', {
+			slug: 'probe-b',
+			title: 'B',
+			body: '[[secret-plan]]'
+		});
+		expect(foreign.body.warnings).toEqual([
+			unknown.body.warnings[0].replace('no-such-slug', 'secret-plan')
+		]);
+		const updated = await call(token, 'notes_update', {
+			slug: 'probe-a',
+			expected_version: 1,
+			body: 'jetzt [[secret-plan]]'
+		});
 		expect(updated.body.warnings).toEqual(foreign.body.warnings);
 		expect(linksToSecret()).toBe(0);
 	});
@@ -527,13 +791,32 @@ describe('notes', () => {
 	it('keeps a link a human made from a visible note to a note of another project when the run edits the body', async () => {
 		const { db, projectId, call, startRun, ticket } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] });
-		notes.createNote(db, user, { slug: 'own-plan', title: 'Plan', body: 'siehe [[secret-plan]]', projectIds: [projectId] });
+		notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'x',
+			projectIds: [other]
+		});
+		notes.createNote(db, user, {
+			slug: 'own-plan',
+			title: 'Plan',
+			body: 'siehe [[secret-plan]]',
+			projectIds: [projectId]
+		});
 		const { token } = startRun(ticket());
-		const edges = () => db.prepare("SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'").get()?.n;
+		const edges = () =>
+			db
+				.prepare(
+					"SELECT count(*) AS n FROM note_links l JOIN notes t ON t.id = l.to_note_id WHERE t.slug = 'secret-plan'"
+				)
+				.get()?.n;
 		expect(edges()).toBe(1);
 
-		await call(token, 'notes_update', { slug: 'own-plan', expected_version: 1, body: 'siehe [[secret-plan]], ergänzt' });
+		await call(token, 'notes_update', {
+			slug: 'own-plan',
+			expected_version: 1,
+			body: 'siehe [[secret-plan]], ergänzt'
+		});
 		expect(edges()).toBe(1);
 	});
 
@@ -541,7 +824,12 @@ describe('notes', () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		const foreign = notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] }).id;
+		const foreign = notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'x',
+			projectIds: [other]
+		}).id;
 		notes.linkTicket(db, user, foreign, own, 'references');
 		const { token } = startRun(own);
 		const view = JSON.stringify((await call(token, 'get_ticket')).body);
@@ -552,8 +840,18 @@ describe('notes', () => {
 	it('names no linked note of another project in notes_get, in either direction', async () => {
 		const { db, projectId, call, startRun, ticket } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
-		const visible = notes.createNote(db, user, { slug: 'own-plan', title: 'Plan', body: 'x', projectIds: [projectId] }).id;
-		const foreign = notes.createNote(db, user, { slug: 'secret-plan', title: 'Geheimer Plan', body: 'x', projectIds: [other] }).id;
+		const visible = notes.createNote(db, user, {
+			slug: 'own-plan',
+			title: 'Plan',
+			body: 'x',
+			projectIds: [projectId]
+		}).id;
+		const foreign = notes.createNote(db, user, {
+			slug: 'secret-plan',
+			title: 'Geheimer Plan',
+			body: 'x',
+			projectIds: [other]
+		}).id;
 		notes.linkNote(db, user, foreign, visible, 'references');
 		notes.linkNote(db, user, visible, foreign, 'contains');
 		const { token } = startRun(ticket());
@@ -567,14 +865,46 @@ describe('global notes are read-only for runs', () => {
 	it('lets a run read, reference and link a global ADR to its ticket, but not change or supersede it', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket();
-		const adr = notes.createNote(db, user, { slug: 'adr-global', title: 'Globale ADR', body: 'v1', kind: 'adr', status: 'accepted' }).id;
+		const adr = notes.createNote(db, user, {
+			slug: 'adr-global',
+			title: 'Globale ADR',
+			body: 'v1',
+			kind: 'adr',
+			status: 'accepted'
+		}).id;
 		const { token } = startRun(own);
 
-		expect((await call(token, 'notes_get', { slug: 'adr-global' })).body).toMatchObject({ body: 'v1', status: 'accepted', version: 1 });
-		expect((await call(token, 'notes_create', { slug: 'adr-own', title: 'Eigene ADR', body: 'nach [[adr-global]]', kind: 'adr' })).isError).toBe(false);
-		expect((await call(token, 'notes_link', { slug: 'adr-own', type: 'references', target: 'adr-global' })).isError).toBe(false);
-		expect((await call(token, 'link_note_to_ticket', { slug: 'adr-global', relation: 'references' })).isError).toBe(false);
-		expect((await call(token, 'get_ticket')).body.notes).toEqual([{ slug: 'adr-global', title: 'Globale ADR', relation: 'references' }]);
+		expect((await call(token, 'notes_get', { slug: 'adr-global' })).body).toMatchObject({
+			body: 'v1',
+			status: 'accepted',
+			version: 1
+		});
+		expect(
+			(
+				await call(token, 'notes_create', {
+					slug: 'adr-own',
+					title: 'Eigene ADR',
+					body: 'nach [[adr-global]]',
+					kind: 'adr'
+				})
+			).isError
+		).toBe(false);
+		expect(
+			(
+				await call(token, 'notes_link', {
+					slug: 'adr-own',
+					type: 'references',
+					target: 'adr-global'
+				})
+			).isError
+		).toBe(false);
+		expect(
+			(await call(token, 'link_note_to_ticket', { slug: 'adr-global', relation: 'references' }))
+				.isError
+		).toBe(false);
+		expect((await call(token, 'get_ticket')).body.notes).toEqual([
+			{ slug: 'adr-global', title: 'Globale ADR', relation: 'references' }
+		]);
 
 		const before = writableRows(db);
 		for (const [name, args] of [
@@ -583,7 +913,14 @@ describe('global notes are read-only for runs', () => {
 			['notes_link', { slug: 'adr-global', type: 'references', target: 'adr-own' }]
 		] as const) {
 			const refused = await call(token, name, args);
-			expect(refused).toMatchObject({ isError: true, body: { error: 'note_read_only', message: expect.stringContaining('adr-global'), hint: expect.stringContaining('request_human') } });
+			expect(refused).toMatchObject({
+				isError: true,
+				body: {
+					error: 'note_read_only',
+					message: expect.stringContaining('adr-global'),
+					hint: expect.stringContaining('request_human')
+				}
+			});
 		}
 		expect(writableRows(db)).toBe(before);
 
@@ -598,7 +935,11 @@ describe('notes_search', () => {
 		notes.createNote(db, user, { slug: 'tools', title: 'Werkzeuge', body: 'nutzt kb.ai_tools' });
 		notes.createNote(db, user, { slug: 'alpha', title: 'Alpha', body: 'alpha' });
 		notes.createNote(db, user, { slug: 'omega', title: 'Omega', body: 'omega' });
-		notes.createNote(db, user, { slug: 'architecture', title: 'Architektur', body: 'architecture' });
+		notes.createNote(db, user, {
+			slug: 'architecture',
+			title: 'Architektur',
+			body: 'architecture'
+		});
 		const { token } = startRun(ticket());
 		const slugs = async (query: string) => {
 			const { isError, body } = await call(token, 'notes_search', { query });
@@ -610,7 +951,8 @@ describe('notes_search', () => {
 		expect(await slugs('alpha OR omega')).toEqual([]);
 		expect(await slugs('NOT alpha')).toEqual([]);
 		expect(await slugs('arch*')).toEqual([]);
-		for (const query of ['say "hi', 'title:(x', 'NEAR(a b)', '^alpha', 'a + b', '-alpha']) expect(await slugs(query)).toEqual(expect.any(Array));
+		for (const query of ['say "hi', 'title:(x', 'NEAR(a b)', '^alpha', 'a + b', '-alpha'])
+			expect(await slugs(query)).toEqual(expect.any(Array));
 	});
 });
 
@@ -621,19 +963,45 @@ describe('notes_update', () => {
 		const { token } = startRun(ticket());
 		await call(token, 'notes_create', { slug: 'arch-api', title: 'API', body: 'v1' });
 
-		expect(await call(token, 'notes_update', { slug: 'arch-api', expected_version: 1, body: 'nutzt [[arch-base]]' })).toEqual({ isError: false, body: { version: 2 } });
-		const stale = await call(token, 'notes_update', { slug: 'arch-api', expected_version: 1, title: 'Überschrieben' });
-		expect(stale).toMatchObject({ isError: true, body: { error: 'conflict', message: expect.stringContaining('aktuelle Version 2'), hint: expect.stringContaining('notes_get') } });
+		expect(
+			await call(token, 'notes_update', {
+				slug: 'arch-api',
+				expected_version: 1,
+				body: 'nutzt [[arch-base]]'
+			})
+		).toEqual({ isError: false, body: { version: 2 } });
+		const stale = await call(token, 'notes_update', {
+			slug: 'arch-api',
+			expected_version: 1,
+			title: 'Überschrieben'
+		});
+		expect(stale).toMatchObject({
+			isError: true,
+			body: {
+				error: 'conflict',
+				message: expect.stringContaining('aktuelle Version 2'),
+				hint: expect.stringContaining('notes_get')
+			}
+		});
 		expect(stale.body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
-		expect((await call(token, 'notes_get', { slug: 'arch-api' })).body).toMatchObject({ title: 'API', version: 2, references: ['arch-base'] });
+		expect((await call(token, 'notes_get', { slug: 'arch-api' })).body).toMatchObject({
+			title: 'API',
+			version: 2,
+			references: ['arch-base']
+		});
 
-		expect((await call(token, 'notes_update', { slug: 'arch-api', title: 'Ohne Version' })).body).toMatch(/^Input validation error/);
-		expect(await call(token, 'notes_update', { slug: 'arch-api', expected_version: 2, tags: [] })).toEqual({ isError: false, body: { version: 3 } });
+		expect(
+			(await call(token, 'notes_update', { slug: 'arch-api', title: 'Ohne Version' })).body
+		).toMatch(/^Input validation error/);
+		expect(
+			await call(token, 'notes_update', { slug: 'arch-api', expected_version: 2, tags: [] })
+		).toEqual({ isError: false, body: { version: 3 } });
 	});
 });
 
 describe('idempotency_key', () => {
-	const count = (db: DatabaseSync, table: string) => db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
+	const count = (db: DatabaseSync, table: string) =>
+		db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
 
 	it('answers a repeat with the same key with the first result instead of writing twice', async () => {
 		const { db, call, startRun, ticket } = setup();
@@ -658,8 +1026,16 @@ describe('idempotency_key', () => {
 	it('treats a retry with the same arguments in another key order as the same call', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
-		const first = await call(token, 'create_child_tickets', { items: [{ title: 'Kind', tasks: ['a'] }], idempotency_key: 'r' });
-		expect(await call(token, 'create_child_tickets', { idempotency_key: 'r', items: [{ tasks: ['a'], title: 'Kind' }] })).toEqual(first);
+		const first = await call(token, 'create_child_tickets', {
+			items: [{ title: 'Kind', tasks: ['a'] }],
+			idempotency_key: 'r'
+		});
+		expect(
+			await call(token, 'create_child_tickets', {
+				idempotency_key: 'r',
+				items: [{ tasks: ['a'], title: 'Kind' }]
+			})
+		).toEqual(first);
 		expect(count(db, 'tickets')).toBe(2);
 	});
 
@@ -668,19 +1044,30 @@ describe('idempotency_key', () => {
 		const { token } = startRun(ticket());
 		await call(token, 'add_comment', { text: 'A', idempotency_key: 'k' });
 
-		expect((await call(token, 'add_comment', { text: 'B', idempotency_key: 'k' })).body.error).toBe('idempotency_key_reused');
-		expect((await call(token, 'add_tasks', { titles: ['A'], idempotency_key: 'k' })).body.error).toBe('idempotency_key_reused');
+		expect((await call(token, 'add_comment', { text: 'B', idempotency_key: 'k' })).body.error).toBe(
+			'idempotency_key_reused'
+		);
+		expect(
+			(await call(token, 'add_tasks', { titles: ['A'], idempotency_key: 'k' })).body.error
+		).toBe('idempotency_key_reused');
 		db.exec("UPDATE idempotent_calls SET created_at = datetime('now', '-25 hours')");
 		const expired = await call(token, 'add_comment', { text: 'A', idempotency_key: 'k' });
-		expect(expired).toMatchObject({ isError: true, body: { error: 'idempotency_key_expired', message: expect.stringContaining('24 Stunden') } });
+		expect(expired).toMatchObject({
+			isError: true,
+			body: { error: 'idempotency_key_expired', message: expect.stringContaining('24 Stunden') }
+		});
 		expect([count(db, 'comments'), count(db, 'tasks')]).toEqual([1, 0]);
 	});
 
 	it('remembers nothing for a refused call, so a corrected retry with the same key runs', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
-		expect((await call(token, 'add_tasks', { titles: ['A', ' '], idempotency_key: 'x' })).body.error).toBe('empty_title');
-		expect((await call(token, 'add_tasks', { titles: ['A', 'B'], idempotency_key: 'x' })).body.task_ids).toHaveLength(2);
+		expect(
+			(await call(token, 'add_tasks', { titles: ['A', ' '], idempotency_key: 'x' })).body.error
+		).toBe('empty_title');
+		expect(
+			(await call(token, 'add_tasks', { titles: ['A', 'B'], idempotency_key: 'x' })).body.task_ids
+		).toHaveLength(2);
 		expect(count(db, 'tasks')).toBe(2);
 	});
 
@@ -708,16 +1095,25 @@ describe('identity from the run', () => {
 		expect(db.prepare('SELECT assignee FROM tickets WHERE id = ?').get(own)?.assignee).toBe(label);
 
 		const { body } = await call(token, 'add_comment', { text: 'Angefangen' });
-		expect(db.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?').get(body.comment_id)).toEqual({ author_kind: 'agent', author: label, run_id: runId });
+		expect(
+			db
+				.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?')
+				.get(body.comment_id)
+		).toEqual({ author_kind: 'agent', author: label, run_id: runId });
 		await call(token, 'move_ticket', { column_id: col['Refine'] });
-		expect(db.prepare('SELECT moved_by, assignee FROM tickets WHERE id = ?').get(own)).toEqual({ moved_by: JSON.stringify({ kind: 'agent', runId }), assignee: label });
+		expect(db.prepare('SELECT moved_by, assignee FROM tickets WHERE id = ?').get(own)).toEqual({
+			moved_by: JSON.stringify({ kind: 'agent', runId }),
+			assignee: label
+		});
 	});
 
 	it('offers no parameter for author, assignee or actor and rejects one sent anyway', async () => {
 		const { db, serve, call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
 		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
-		const parameters = tools.flatMap((t: { inputSchema: { properties?: object } }) => Object.keys(t.inputSchema.properties ?? {}));
+		const parameters = tools.flatMap((t: { inputSchema: { properties?: object } }) =>
+			Object.keys(t.inputSchema.properties ?? {})
+		);
 		expect(parameters).not.toContain('author');
 		expect(parameters).not.toContain('assignee');
 		expect(parameters).not.toContain('actor');
@@ -732,12 +1128,16 @@ describe('request_human', () => {
 		const { serve, call, startRun, ticket, columnOf } = setup();
 		const own = ticket();
 		const { token } = startRun(own);
-		const ask = (options: object[]) => call(token, 'request_human', { question: 'A oder B?', options });
+		const ask = (options: object[]) =>
+			call(token, 'request_human', { question: 'A oder B?', options });
 		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
-		const { options } = tools.find((t: { name: string }) => t.name === 'request_human').inputSchema.properties;
+		const { options } = tools.find((t: { name: string }) => t.name === 'request_human').inputSchema
+			.properties;
 		expect(options).toMatchObject({ maxItems: 3, items: { required: ['label'] } });
 
-		expect((await ask([{ label: '1' }, { label: '2' }, { label: '3' }, { label: '4' }])).isError).toBe(true);
+		expect(
+			(await ask([{ label: '1' }, { label: '2' }, { label: '3' }, { label: '4' }])).isError
+		).toBe(true);
 		expect((await ask([{ label: '' }])).isError).toBe(true);
 		expect((await ask([{ label: '  ' }])).body.error).toBe('empty_option');
 		expect(columnOf(own)).toBe('Backlog');
@@ -751,7 +1151,10 @@ describe('request_human', () => {
 			question: 'A oder B?',
 			options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }]
 		});
-		expect(asked).toEqual({ isError: false, body: { question_id: expect.any(Number), column: 'Human Intervention' } });
+		expect(asked).toEqual({
+			isError: false,
+			body: { question_id: expect.any(Number), column: 'Human Intervention' }
+		});
 		expect(columnOf(own)).toBe('Human Intervention');
 		runs.finishRun(db, system, first.runId, { state: 'paused' });
 
@@ -762,7 +1165,12 @@ describe('request_human', () => {
 
 		const resumed = startRun(own, first.runId);
 		const { body } = await call(resumed.token, 'get_ticket');
-		expect(body.human_answer).toEqual({ question_id: questionId, question: 'A oder B?', options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }], answer: { option: 2 } });
+		expect(body.human_answer).toEqual({
+			question_id: questionId,
+			question: 'A oder B?',
+			options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }],
+			answer: { option: 2 }
+		});
 		expect(() => questions.retractAnswer(db, user, questionId)).toThrow(/schon übernommen/);
 	});
 });
@@ -773,7 +1181,9 @@ describe('errors reach the agent with a way out in tool vocabulary', () => {
 		const { token } = startRun(ticket());
 		const { body } = await call(token, 'move_ticket', { column_id: col.Review });
 		expect(body.error).toBe('transition_not_allowed');
-		expect(body.hint).toBe(`Erreichbar: column_id ${col['Refine']} (Refine), column_id ${col['Human Intervention']} (Human Intervention).`);
+		expect(body.hint).toBe(
+			`Erreichbar: column_id ${col['Refine']} (Refine), column_id ${col['Human Intervention']} (Human Intervention).`
+		);
 	});
 
 	it('points to complete_tasks with the open task ids and to request_human for what only the human can do', async () => {
@@ -845,7 +1255,13 @@ describe('token budget', () => {
 			'request_human',
 			'update_ticket'
 		]);
-		const definitions = JSON.stringify(tools.map(({ name, description, inputSchema }: Record<string, unknown>) => ({ name, description, inputSchema })));
+		const definitions = JSON.stringify(
+			tools.map(({ name, description, inputSchema }: Record<string, unknown>) => ({
+				name,
+				description,
+				inputSchema
+			}))
+		);
 		expect(estimateTokens(definitions)).toBeLessThanOrEqual(4000);
 	});
 });
@@ -855,13 +1271,22 @@ describe('latest question', () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket();
 		const first = startRun(own);
-		const q1 = (await call(first.token, 'request_human', { question: 'Q1: A oder B?', options: [{ label: 'A' }, { label: 'B' }] })).body.question_id;
+		const q1 = (
+			await call(first.token, 'request_human', {
+				question: 'Q1: A oder B?',
+				options: [{ label: 'A' }, { label: 'B' }]
+			})
+		).body.question_id;
 		runs.finishRun(db, system, first.runId, { state: 'paused' });
 		questions.answerQuestion(db, user, q1, { option: 1 });
 
 		const second = startRun(own, first.runId);
-		expect((await call(second.token, 'get_ticket')).body.human_answer).toMatchObject({ question_id: q1, answer: { option: 1 } });
-		const q2 = (await call(second.token, 'request_human', { question: 'Q2: C oder D?' })).body.question_id;
+		expect((await call(second.token, 'get_ticket')).body.human_answer).toMatchObject({
+			question_id: q1,
+			answer: { option: 1 }
+		});
+		const q2 = (await call(second.token, 'request_human', { question: 'Q2: C oder D?' })).body
+			.question_id;
 		const { body } = await call(second.token, 'get_ticket');
 		expect(body).not.toHaveProperty('human_answer');
 		expect(body.pending_question).toEqual({ question_id: q2, question: 'Q2: C oder D?' });
@@ -879,7 +1304,10 @@ describe('secrets', () => {
 		await call(token, 'add_comment', { text: `key is ${secret}` });
 		await call(token, 'update_ticket', { description: `key ${secret}` });
 		await call(token, 'add_tasks', { titles: [`task ${secret}`] });
-		await call(token, 'request_human', { question: `use ${secret}?`, options: [{ label: secret }] });
+		await call(token, 'request_human', {
+			question: `use ${secret}?`,
+			options: [{ label: secret }]
+		});
 		const stored = writableRows(db);
 		expect(stored).not.toContain(secret);
 		expect(stored).toContain('[secret:probe]');
@@ -901,7 +1329,10 @@ describe('secrets', () => {
 			return prepare(sql);
 		});
 		try {
-			expect(await call(token, 'add_comment', { text: 'x' })).toEqual({ isError: true, body: 'database said: [secret:probe]' });
+			expect(await call(token, 'add_comment', { text: 'x' })).toEqual({
+				isError: true,
+				body: 'database said: [secret:probe]'
+			});
 		} finally {
 			failingInsert.mockRestore();
 		}
@@ -925,9 +1356,21 @@ describe('argument types', () => {
 		['task ids given as strings', 'complete_tasks', { task_ids: ['1'] }],
 		['a number as comment text', 'add_comment', { text: 42 }],
 		['an array as comment text', 'add_comment', { text: ['a'] }],
-		['a constructor key', 'add_comment', { text: 'x', constructor: { prototype: { polluted: true } } }],
-		['a __proto__ key inside an option', 'request_human', JSON.parse('{"question": "q", "options": [{"label": "a", "__proto__": {"polluted": true}}]}')],
-		['the relation verified_by, which only verifying a note sets', 'link_note_to_ticket', { slug: 'arch-api', relation: 'verified_by' }]
+		[
+			'a constructor key',
+			'add_comment',
+			{ text: 'x', constructor: { prototype: { polluted: true } } }
+		],
+		[
+			'a __proto__ key inside an option',
+			'request_human',
+			JSON.parse('{"question": "q", "options": [{"label": "a", "__proto__": {"polluted": true}}]}')
+		],
+		[
+			'the relation verified_by, which only verifying a note sets',
+			'link_note_to_ticket',
+			{ slug: 'arch-api', relation: 'verified_by' }
+		]
 	];
 
 	it.each(mistyped)('rejects %s in the schema, before anything is written', expectSchemaRefusal);
@@ -935,7 +1378,11 @@ describe('argument types', () => {
 	it('drops a top-level __proto__ key without polluting any prototype', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
-		const written = await call(token, 'add_comment', JSON.parse('{"text": "x", "__proto__": {"polluted": true}}'));
+		const written = await call(
+			token,
+			'add_comment',
+			JSON.parse('{"text": "x", "__proto__": {"polluted": true}}')
+		);
 		expect(written.isError).toBe(false);
 		expect(db.prepare('SELECT body FROM comments').all()).toEqual([{ body: 'x' }]);
 		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
@@ -944,9 +1391,13 @@ describe('argument types', () => {
 	it('answers arguments that are no object and unknown tools with a protocol error', async () => {
 		const { db, serve, startRun, ticket } = setup();
 		const { token } = startRun(ticket());
-		const callError = async (name: string, args: unknown) => (await messageOf(await rpc(serve, token, 'tools/call', { name, arguments: args }))).error;
+		const callError = async (name: string, args: unknown) =>
+			(await messageOf(await rpc(serve, token, 'tools/call', { name, arguments: args }))).error;
 		expect(await callError('add_comment', ['a'])).toMatchObject({ code: -32602 });
-		expect(await callError('delete_ticket', {})).toMatchObject({ code: -32602, message: expect.stringContaining('delete_ticket') });
+		expect(await callError('delete_ticket', {})).toMatchObject({
+			code: -32602,
+			message: expect.stringContaining('delete_ticket')
+		});
 		expect(db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(0);
 	});
 });
@@ -958,14 +1409,25 @@ describe('size limits', () => {
 		['ticket description', 'update_ticket', { description: 'x'.repeat(20_001) }],
 		['task title', 'add_tasks', { titles: ['x'.repeat(201)] }],
 		['number of new tasks', 'add_tasks', { titles: Array.from({ length: 51 }, (_, i) => `T${i}`) }],
-		['number of task ids', 'complete_tasks', { task_ids: Array.from({ length: 51 }, (_, i) => i + 1) }],
+		[
+			'number of task ids',
+			'complete_tasks',
+			{ task_ids: Array.from({ length: 51 }, (_, i) => i + 1) }
+		],
 		['question', 'request_human', { question: 'x'.repeat(2001) }],
 		['option label', 'request_human', { question: 'q', options: [{ label: 'x'.repeat(101) }] }],
-		['option effect', 'request_human', { question: 'q', options: [{ label: 'a', effect: 'x'.repeat(201) }] }],
+		[
+			'option effect',
+			'request_human',
+			{ question: 'q', options: [{ label: 'a', effect: 'x'.repeat(201) }] }
+		],
 		['ticket ref', 'get_ticket', { ticket: 'STU-'.padEnd(21, '1') }]
 	];
 
-	it.each(oversized)('rejects an oversized %s in the schema, before anything is written', expectSchemaRefusal);
+	it.each(oversized)(
+		'rejects an oversized %s in the schema, before anything is written',
+		expectSchemaRefusal
+	);
 
 	it('accepts a comment of exactly the maximum length', async () => {
 		const { call, startRun, ticket } = setup();
@@ -983,7 +1445,10 @@ describe('size limits', () => {
 		const [shown] = (await call(token, 'get_ticket')).body.comments;
 		expect(shown.text).toBe(`${'a'.repeat(1500)}…`);
 		expect(shown.more).toBe(`get_ticket {"comment": ${commentId}}`);
-		expect((await call(token, 'get_ticket', { comment: commentId })).body).toMatchObject({ id: commentId, text: long });
+		expect((await call(token, 'get_ticket', { comment: commentId })).body).toMatchObject({
+			id: commentId,
+			text: long
+		});
 	});
 });
 
@@ -1000,7 +1465,9 @@ describe('other projects', () => {
 		const { body } = await call(token, 'get_ticket');
 		expect(body.waits_for).toEqual([{ ref: 'OTH-1', other_project: true, blocking: true }]);
 		expect(JSON.stringify(body)).not.toContain('Geheimer Plan');
-		expect((await call(token, 'get_ticket', { comment: foreignComment })).body.error).toBe('not_found');
+		expect((await call(token, 'get_ticket', { comment: foreignComment })).body.error).toBe(
+			'not_found'
+		);
 	});
 });
 
@@ -1013,7 +1480,11 @@ describe('authorization header', () => {
 				await serve(
 					new Request('http://127.0.0.1:3000/mcp', {
 						method: 'POST',
-						headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization },
+						headers: {
+							'content-type': 'application/json',
+							accept: 'application/json, text/event-stream',
+							authorization
+						},
 						body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
 					})
 				)
@@ -1045,7 +1516,9 @@ describe('tool schemas', () => {
 		const registerTool = vi.spyOn(McpServer.prototype, 'registerTool');
 		try {
 			for (let i = 0; i < 3; i++) await rpc(serve, token, 'tools/list');
-			const schemas = registerTool.mock.calls.map(([, config]) => (config as { inputSchema: unknown }).inputSchema);
+			const schemas = registerTool.mock.calls.map(
+				([, config]) => (config as { inputSchema: unknown }).inputSchema
+			);
 			expect(schemas).toHaveLength(3 * toolCount);
 			expect(new Set(schemas).size).toBe(toolCount);
 		} finally {

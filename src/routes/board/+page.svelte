@@ -3,4 +3,6 @@
 </script>
 
 <h1>Board</h1>
-<EmptyState title="Board folgt">Diese Ansicht entsteht als Nächstes; die Docks und die Befehlszeile gelten schon.</EmptyState>
+<EmptyState title="Board folgt"
+	>Diese Ansicht entsteht als Nächstes; die Docks und die Befehlszeile gelten schon.</EmptyState
+>

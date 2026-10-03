@@ -40,7 +40,9 @@ export const init: ServerInit = async () => {
 		startRunner(db(), { builtin: builtinExecutor(db()) });
 		if (!hasOwner(db())) {
 			const token = issueSetupToken();
-			console.log(`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`);
+			console.log(
+				`\nkabai studio: noch kein Owner eingerichtet.\n  Einrichtung: ${origin ?? ''}/setup?token=${token}\n  Setup-Token: ${token}\n`
+			);
 		}
 	} catch (err) {
 		// A DomainError is a complete user-facing report; anything else is unexpected and needs its stack and cause.
@@ -68,7 +70,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Browser senden bei jedem Nicht-GET eine Origin, eine fremde wird abgewiesen. Ohne Origin = kein Browser (CLI, Agent).
 	const origin = event.request.headers.get('origin');
 	if (!SAFE_METHODS.has(event.request.method) && origin !== null && origin !== event.url.origin)
-		return text(`Anfrage von fremder Herkunft abgewiesen. Studio nur direkt über ${event.url.origin} aufrufen.`, { status: 403 });
+		return text(
+			`Anfrage von fremder Herkunft abgewiesen. Studio nur direkt über ${event.url.origin} aufrufen.`,
+			{ status: 403 }
+		);
 
 	const token = event.cookies.get(SESSION_COOKIE);
 	const session = token ? validateSession(db(), token) : null;
@@ -81,7 +86,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
 	if (!session && !PUBLIC.has(path) && path !== RUN_TOKEN_PATH) {
 		if (path === '/api' || path.startsWith('/api/')) {
-			const res = json({ error: 'unauthorized', hint: 'Keine gültige Session — im Browser unter /login anmelden.' }, { status: 401 });
+			const res = json(
+				{
+					error: 'unauthorized',
+					hint: 'Keine gültige Session — im Browser unter /login anmelden.'
+				},
+				{ status: 401 }
+			);
 			// direkt zurückgegebene Antworten bekommen event.cookies nicht angehängt → Löschung selbst setzen
 			if (token) res.headers.append('set-cookie', expiredSessionCookie(event.cookies, event.url));
 			return res;

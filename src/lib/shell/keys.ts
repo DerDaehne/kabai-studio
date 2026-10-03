@@ -55,7 +55,10 @@ export const contextKeys: Record<KeyContext, KeyHint[]> = {
 
 /** The hint reduced to the sequences that continue `prefix`; empty when none does. */
 export function continuing(hint: KeyHint, prefix: string): KeyHint[] {
-	const keys = hint.keys.filter((sequence) => sequence.length > prefix.length && sequence.slice(0, prefix.length).join('') === prefix);
+	const keys = hint.keys.filter(
+		(sequence) =>
+			sequence.length > prefix.length && sequence.slice(0, prefix.length).join('') === prefix
+	);
 	return keys.length ? [{ ...hint, keys }] : [];
 }
 
@@ -63,7 +66,10 @@ export function continuing(hint: KeyHint, prefix: string): KeyHint[] {
  * The keys that are valid right now. `pending` is what the key router has buffered so far: a count (`3`), a prefix
  * (`g`) or both (`5g`); only the keys that can continue it remain.
  */
-export function validKeys(context: KeyContext, pending: string): { count: string; prefix: string; hints: KeyHint[] } {
+export function validKeys(
+	context: KeyContext,
+	pending: string
+): { count: string; prefix: string; hints: KeyHint[] } {
 	const [, count = '', prefix = ''] = /^(\d*)(.*)$/.exec(pending) ?? [];
 	let hints = contextKeys[context];
 	if (count) hints = hints.filter((hint) => hint.counted);

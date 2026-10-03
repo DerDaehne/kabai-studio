@@ -21,7 +21,9 @@
 	// Ein Fehler zu einem gespeicherten Secret öffnet dessen Eingabe (auch ohne JS nach dem Neuladen); Ersetzen/Abbrechen überschreiben
 	// das. Nur mit `name` von Bedeutung — das Formular für ein neues Secret ist immer offen.
 	let replacing = $derived(!!error);
-	const nameInvalid = $derived(['secret_name_invalid', 'secret_name_is_value', 'secret_exists'].includes(error?.code ?? ''));
+	const nameInvalid = $derived(
+		['secret_name_invalid', 'secret_name_is_value', 'secret_exists'].includes(error?.code ?? '')
+	);
 	let replaceButton: HTMLButtonElement | undefined = $state();
 
 	/** Schließt das Ersetzen-Formular; der Fokus ginge mit ihm verloren, darum zurück auf „Ersetzen“. */
@@ -38,13 +40,20 @@
 {#if name && !replacing}
 	<p>
 		<strong>{name}</strong> — gesetzt, geändert {updatedAt} UTC
-		<button type="button" onclick={() => (replacing = true)} bind:this={replaceButton}>Ersetzen</button>
+		<button type="button" onclick={() => (replacing = true)} bind:this={replaceButton}
+			>Ersetzen</button
+		>
 	</p>
 	<form
 		method="POST"
 		action="?/deleteSecret"
 		use:enhance={({ cancel }) => {
-			if (!confirm(`Secret „${name}“ löschen? Der Wert ist danach unwiederbringlich weg; Verweise secret:${name} schlagen fehl.`)) cancel();
+			if (
+				!confirm(
+					`Secret „${name}“ löschen? Der Wert ist danach unwiederbringlich weg; Verweise secret:${name} schlagen fehl.`
+				)
+			)
+				cancel();
 		}}
 	>
 		<input type="hidden" name="field" value={name} />
@@ -55,7 +64,11 @@
 		method="POST"
 		action="?/setSecret"
 		use:enhance={({ cancel }) => {
-			if (name && !confirm(`Secret „${name}“ ersetzen? Der bisherige Wert ist danach unwiederbringlich weg.`)) return cancel();
+			if (
+				name &&
+				!confirm(`Secret „${name}“ ersetzen? Der bisherige Wert ist danach unwiederbringlich weg.`)
+			)
+				return cancel();
 			return async ({ result, update }) => {
 				await update(); // setzt den Fokus bei Erfolg zurück auf die Seite — darum erst danach schließen
 				if (result.type === 'success' && name) closeReplace();

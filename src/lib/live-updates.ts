@@ -4,7 +4,8 @@ const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1000;
 /** Ab dieser Zahl aufeinanderfolgender gescheiterter Reconnect-Versuche gilt die Verbindung als dauerhaft weg (UX-Kriterium #770). */
 const PERSISTENT_FAILURE_THRESHOLD = 3;
-const DISCONNECTED = 'Verbindung unterbrochen — Daten evtl. veraltet. Studio versucht es weiter; Seite neu laden holt den aktuellen Stand.';
+const DISCONNECTED =
+	'Verbindung unterbrochen — Daten evtl. veraltet. Studio versucht es weiter; Seite neu laden holt den aktuellen Stand.';
 const EXPIRED = 'Sitzung abgelaufen — Live-Updates gestoppt.';
 
 export type LiveUpdatesHandle = { close(): void };
@@ -51,7 +52,10 @@ export function connectLiveUpdates(
 
 	async function explainFailure() {
 		const abort = new AbortController();
-		const status = await fetch(url, { signal: abort.signal }).then((res) => res.status, () => 0);
+		const status = await fetch(url, { signal: abort.signal }).then(
+			(res) => res.status,
+			() => 0
+		);
 		abort.abort(); // bei 200 nicht als zweiten Stream offen halten
 		if (closed || attempt < PERSISTENT_FAILURE_THRESHOLD) return; // inzwischen geschlossen oder wieder verbunden
 		if (status === 401) {
@@ -81,7 +85,10 @@ export function connectLiveUpdates(
 			es = null;
 			if (closed) return;
 			attempt++;
-			retryTimer = setTimeout(connect, Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (attempt - 1)));
+			retryTimer = setTimeout(
+				connect,
+				Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (attempt - 1))
+			);
 			if (attempt >= PERSISTENT_FAILURE_THRESHOLD) void explainFailure();
 		};
 	}

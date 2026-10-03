@@ -21,7 +21,9 @@ interface PairResult {
 const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
 
 function declarationsOf(body: string): Map<string, string> {
-	return new Map([...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()]));
+	return new Map(
+		[...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()])
+	);
 }
 
 function ruleBody(selector: string): string {
@@ -31,7 +33,9 @@ function ruleBody(selector: string): string {
 	return css.slice(open, css.indexOf('}', open));
 }
 
-const reducedTransparencyRule = css.match(/@media \(prefers-reduced-transparency: reduce\) \{\s*([^{]+)\{([^}]*)\}/);
+const reducedTransparencyRule = css.match(
+	/@media \(prefers-reduced-transparency: reduce\) \{\s*([^{]+)\{([^}]*)\}/
+);
 const rootDeclarations = declarationsOf(ruleBody(':root'));
 
 const glassStrengths = {
@@ -45,7 +49,13 @@ function parseColor(value: string): Rgba {
 	const hex = value.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/);
 	if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 1];
 	const rgb = value.match(/^rgb\((\d+) (\d+) (\d+)(?: \/ ([\d.]+))?\)$/);
-	if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), rgb[4] === undefined ? 1 : Number(rgb[4])];
+	if (rgb)
+		return [
+			Number(rgb[1]),
+			Number(rgb[2]),
+			Number(rgb[3]),
+			rgb[4] === undefined ? 1 : Number(rgb[4])
+		];
 	throw new Error(`not a colour: ${value}`);
 }
 
@@ -89,7 +99,8 @@ function checkContrast(declarations: Declarations): PairResult[] {
 	const results: PairResult[] = [];
 	for (const mode of ['light', 'dark'] as const) {
 		const color = (token: string) => parseColor(resolve(declarations, `var(${token})`, mode));
-		const opaque = (...tokens: string[]): Backdrops => Object.fromEntries(tokens.map((token) => [token, color(token)]));
+		const opaque = (...tokens: string[]): Backdrops =>
+			Object.fromEntries(tokens.map((token) => [token, color(token)]));
 		const ground = color('--bg');
 		const check = (fg: string, backdrops: Backdrops, against: string, min = 4.5) => {
 			let worst = { ratio: Infinity, name: '' };
@@ -97,7 +108,14 @@ function checkContrast(declarations: Declarations): PairResult[] {
 				const ratio = contrast(color(fg), backdrop);
 				if (ratio < worst.ratio) worst = { ratio, name };
 			}
-			results.push({ fg, against, mode, min, ratio: Number(worst.ratio.toFixed(2)), worst: worst.name });
+			results.push({
+				fg,
+				against,
+				mode,
+				min,
+				ratio: Number(worst.ratio.toFixed(2)),
+				worst: worst.name
+			});
 		};
 
 		const underCards: Backdrops = { '--bg': ground };
@@ -105,7 +123,9 @@ function checkContrast(declarations: Declarations): PairResult[] {
 			if (/^--(aura|nebula)-/.test(token)) underCards[token] = over(color(token), ground);
 		}
 		const glassOver = (glass: string, backdrops: Backdrops): Backdrops =>
-			Object.fromEntries(Object.entries(backdrops).map(([name, backdrop]) => [name, over(color(glass), backdrop)]));
+			Object.fromEntries(
+				Object.entries(backdrops).map(([name, backdrop]) => [name, over(color(glass), backdrop)])
+			);
 		const withFills = (backdrops: Backdrops, fills: string[]): Backdrops => {
 			const result: Backdrops = { ...backdrops };
 			for (const [name, backdrop] of Object.entries(backdrops)) {
@@ -117,7 +137,9 @@ function checkContrast(declarations: Declarations): PairResult[] {
 		const cards: Backdrops = {
 			...withFills(glassOver('--glass-card', underCards), ['--fill-sel', '--fill-soft']),
 			...Object.fromEntries(
-				Object.entries(withFills(glassOver('--glass-raised', underCards), ['--fill-soft'])).map(([name, rgba]) => [`raised over ${name}`, rgba])
+				Object.entries(withFills(glassOver('--glass-raised', underCards), ['--fill-soft'])).map(
+					([name, rgba]) => [`raised over ${name}`, rgba]
+				)
 			)
 		};
 		const docks = glassOver('--glass-float', underCards);
@@ -149,28 +171,45 @@ function checkContrast(declarations: Declarations): PairResult[] {
 		check('--on-accent', opaque('--accent', '--accent-hover'), 'accent');
 		for (const status of [...statuses, 'neutral']) {
 			check(`--status-${status}`, opaque(`--status-${status}-tint`), 'own tint');
-			check(`--status-${status}`, { '--bg': ground, ...surfaces, ...cards }, 'ground, surfaces and cards');
+			check(
+				`--status-${status}`,
+				{ '--bg': ground, ...surfaces, ...cards },
+				'ground, surfaces and cards'
+			);
 			check(`--status-${status}`, { ...docks, ...overlays }, 'dock and overlay glass');
 		}
 		check('--text', opaque('--kbd-bg'), 'key cap');
 		// The focus ring sits on a halo in the ground colour, so the ground is its only backdrop
 		check('--focus', { '--bg': ground }, 'halo', 3);
 		// Input fields rest on the ground or a resting surface; the hover fill is a control's own background
-		check('--border-control', { '--bg': ground, ...opaque('--surface', '--surface-raised', '--surface-sunken') }, 'input field', 3);
-		for (const slot of projectSlots) check(`--project-${slot}`, opaque(`--project-${slot}-fill`), 'project tag');
+		check(
+			'--border-control',
+			{ '--bg': ground, ...opaque('--surface', '--surface-raised', '--surface-sunken') },
+			'input field',
+			3
+		);
+		for (const slot of projectSlots)
+			check(`--project-${slot}`, opaque(`--project-${slot}-fill`), 'project tag');
 	}
 	return results;
 }
 
 const withStrength = (strength: GlassStrength, overrides: Declarations = new Map()) =>
 	new Map([...rootDeclarations, ...glassStrengths[strength], ...overrides]);
-const belowMinimum = (results: PairResult[]) => results.filter((result) => result.ratio < result.min);
+const belowMinimum = (results: PairResult[]) =>
+	results.filter((result) => result.ratio < result.min);
 
-describe.each(Object.keys(glassStrengths) as GlassStrength[])('token contrast, spring accent with %s glass', (strength) => {
-	it.each(checkContrast(withStrength(strength)))('$fg on $against ($mode): $ratio:1 ≥ $min, worst on $worst', ({ ratio, min }) => {
-		expect(ratio).toBeGreaterThanOrEqual(min);
-	});
-});
+describe.each(Object.keys(glassStrengths) as GlassStrength[])(
+	'token contrast, spring accent with %s glass',
+	(strength) => {
+		it.each(checkContrast(withStrength(strength)))(
+			'$fg on $against ($mode): $ratio:1 ≥ $min, worst on $worst',
+			({ ratio, min }) => {
+				expect(ratio).toBeGreaterThanOrEqual(min);
+			}
+		);
+	}
+);
 
 describe('the default, spring accent with bold glass', () => {
 	const results = checkContrast(withStrength('bold'));
@@ -180,13 +219,19 @@ describe('the default, spring accent with bold glass', () => {
 	});
 
 	it('is what the root rule declares, so it applies without any data-glass attribute', () => {
-		expect(rootDeclarations.get('--glass-card')).toBe('light-dark(rgb(252 254 254 / 0.6), rgb(25 31 34 / 0.6))');
+		expect(rootDeclarations.get('--glass-card')).toBe(
+			'light-dark(rgb(252 254 254 / 0.6), rgb(25 31 34 / 0.6))'
+		);
 		expect(rootDeclarations.get('--accent')).toBe('light-dark(var(--a-500), var(--a-400))');
 	});
 
 	it('fails the check when card glass drops to 0.4 opacity', () => {
-		const thinCardGlass = new Map([['--glass-card', 'light-dark(rgb(252 254 254 / 0.4), rgb(25 31 34 / 0.4))']]);
-		expect(belowMinimum(checkContrast(withStrength('bold', thinCardGlass))).length).toBeGreaterThan(0);
+		const thinCardGlass = new Map([
+			['--glass-card', 'light-dark(rgb(252 254 254 / 0.4), rgb(25 31 34 / 0.4))']
+		]);
+		expect(belowMinimum(checkContrast(withStrength('bold', thinCardGlass))).length).toBeGreaterThan(
+			0
+		);
 	});
 });
 
@@ -206,8 +251,15 @@ describe('prefers-reduced-transparency', () => {
 	});
 
 	it('overrides an explicit glass choice by matching every data-glass value and coming last', () => {
-		expect(reducedTransparencyRule![1].split(',').map((selector) => selector.trim())).toEqual([':root', ':root[data-glass]']);
-		expect(css.indexOf('@media (prefers-reduced-transparency')).toBeGreaterThan(css.indexOf(":root[data-glass='solid']"));
-		expect(css.indexOf('@media (prefers-reduced-transparency')).toBeGreaterThan(css.indexOf(":root[data-glass='frosted']"));
+		expect(reducedTransparencyRule![1].split(',').map((selector) => selector.trim())).toEqual([
+			':root',
+			':root[data-glass]'
+		]);
+		expect(css.indexOf('@media (prefers-reduced-transparency')).toBeGreaterThan(
+			css.indexOf(":root[data-glass='solid']")
+		);
+		expect(css.indexOf('@media (prefers-reduced-transparency')).toBeGreaterThan(
+			css.indexOf(":root[data-glass='frosted']")
+		);
 	});
 });

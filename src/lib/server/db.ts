@@ -28,7 +28,9 @@ export function assertKnownMigrations(applied: Iterable<string>, known: Readonly
 
 // Sperren dieses Prozesses je Lock-Datei — auf globalThis, damit ein neu geladenes db.ts (Vite-HMR) die eigene Sperre
 // wiedererkennt, statt an ihr zu scheitern.
-const locks: Map<string, DatabaseSync> = ((globalThis as { studioLocks?: Map<string, DatabaseSync> }).studioLocks ??= new Map());
+const locks: Map<string, DatabaseSync> = ((
+	globalThis as { studioLocks?: Map<string, DatabaseSync> }
+).studioLocks ??= new Map());
 
 /**
  * Einzelinstanz-Sperre auf dem Datenverzeichnis: exklusive SQLite-Sperre auf `<dir>/studio.lock`, gehalten bis zum
@@ -64,7 +66,11 @@ export function migrate(
 	db: DatabaseSync,
 	// Beim Build eingebettet (das ausgelieferte Paket braucht keinen Pfad zu migrations/). Als Default-Parameter,
 	// damit db.ts auch ohne Vite importierbar bleibt (CLI reset-password).
-	migrations: Record<string, string> = import.meta.glob<string>('/migrations/*.sql', { query: '?raw', import: 'default', eager: true }),
+	migrations: Record<string, string> = import.meta.glob<string>('/migrations/*.sql', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	}),
 	beforeUpgrade?: () => void
 ): string[] {
 	db.exec(
@@ -73,7 +79,9 @@ export function migrate(
 	const known = new Set(Object.keys(migrations).map((path) => path.split('/').pop()!));
 	// Before any transaction: a DB with migrations this code doesn't know must not be written to.
 	assertKnownMigrations(
-		(db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name),
+		(db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map(
+			(r) => r.name
+		),
 		known
 	);
 	const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?');
@@ -81,7 +89,8 @@ export function migrate(
 		.map(([path, sql]) => [path.split('/').pop()!, sql] as const)
 		.filter(([name]) => !applied.get(name))
 		.sort(([a], [b]) => (a < b ? -1 : 1));
-	if (pending.length && db.prepare('SELECT 1 FROM schema_migrations LIMIT 1').get()) beforeUpgrade?.();
+	if (pending.length && db.prepare('SELECT 1 FROM schema_migrations LIMIT 1').get())
+		beforeUpgrade?.();
 
 	const ran: string[] = [];
 	for (const [name, sql] of pending) {

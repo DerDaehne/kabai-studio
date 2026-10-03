@@ -3,4 +3,6 @@
 </script>
 
 <h1>Takt</h1>
-<EmptyState title="Takt folgt">Diese Ansicht entsteht als Nächstes; die Docks und die Befehlszeile gelten schon.</EmptyState>
+<EmptyState title="Takt folgt"
+	>Diese Ansicht entsteht als Nächstes; die Docks und die Befehlszeile gelten schon.</EmptyState
+>

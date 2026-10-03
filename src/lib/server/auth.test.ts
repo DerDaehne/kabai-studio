@@ -43,7 +43,14 @@ describe('Passwort (scrypt)', () => {
 
 	it('liest die Parameter aus dem Hash (ältere Parameter bleiben gültig)', async () => {
 		const salt = Buffer.from('0123456789abcdef');
-		const old = ['scrypt', 1024, 8, 1, salt.toString('base64url'), scryptSync(PW, salt, 32, { N: 1024, r: 8, p: 1 }).toString('base64url')].join('$');
+		const old = [
+			'scrypt',
+			1024,
+			8,
+			1,
+			salt.toString('base64url'),
+			scryptSync(PW, salt, 32, { N: 1024, r: 8, p: 1 }).toString('base64url')
+		].join('$');
 		expect(await verifyPassword(PW, old)).toBe(true);
 		expect(await verifyPassword('falsch', old)).toBe(false);
 	});
@@ -66,7 +73,9 @@ describe('Owner und Sessions', () => {
 	migrate(db);
 	const now = Date.parse('2026-01-01T00:00:00Z');
 	const expiresAt = (token: string) =>
-		db.prepare('SELECT expires_at FROM sessions WHERE token_hash = ?').get(createHash('sha256').update(token).digest('hex'))?.expires_at;
+		db
+			.prepare('SELECT expires_at FROM sessions WHERE token_hash = ?')
+			.get(createHash('sha256').update(token).digest('hex'))?.expires_at;
 
 	it('legt genau einen Owner an', async () => {
 		expect(createOwner(db, 'owner', await hashPassword(PW))).toEqual({ id: 1, name: 'owner' });
@@ -86,12 +95,21 @@ describe('Owner und Sessions', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].token_hash).toBe(createHash('sha256').update(token).digest('hex'));
 		expect(JSON.stringify(rows)).not.toContain(token);
-		expect(() => db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, 1, '2099-01-01 00:00:00')").run(token)).toThrow(/CHECK/);
+		expect(() =>
+			db
+				.prepare(
+					"INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, 1, '2099-01-01 00:00:00')"
+				)
+				.run(token)
+		).toThrow(/CHECK/);
 	});
 
 	it('akzeptiert gültige Sessions und verlängert gleitend, höchstens einmal pro Tag', () => {
 		const token = createSession(db, 1, now);
-		expect(validateSession(db, token, now + 3_600_000)).toEqual({ user: { id: 1, name: 'owner' }, renewed: false });
+		expect(validateSession(db, token, now + 3_600_000)).toEqual({
+			user: { id: 1, name: 'owner' },
+			renewed: false
+		});
 		expect(expiresAt(token)).toBe('2026-01-31 00:00:00');
 		expect(validateSession(db, token, now + 2 * DAY)?.renewed).toBe(true);
 		expect(expiresAt(token)).toBe('2026-02-02 00:00:00');
@@ -99,7 +117,10 @@ describe('Owner und Sessions', () => {
 
 	it('renew: false prüft nur und verlängert nie — die Verlängerung bleibt dem nächsten Request', () => {
 		const token = createSession(db, 1, now);
-		expect(validateSession(db, token, now + 2 * DAY, { renew: false })).toEqual({ user: { id: 1, name: 'owner' }, renewed: false });
+		expect(validateSession(db, token, now + 2 * DAY, { renew: false })).toEqual({
+			user: { id: 1, name: 'owner' },
+			renewed: false
+		});
 		expect(expiresAt(token)).toBe('2026-01-31 00:00:00');
 		expect(validateSession(db, token, now + 2 * DAY)?.renewed).toBe(true);
 		expect(validateSession(db, token, now + 31 * DAY, { renew: false })).not.toBeNull(); // Ablauf gilt weiter

@@ -21,17 +21,35 @@ function setup(db = openDb(':memory:')) {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
 	const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
-	const local = runs.createProfile(db, user, { name: 'Local', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
-	const cloud = runs.createProfile(db, user, { name: 'Cloud', executor: 'builtin', provider: 'anthropic', model: 'm', pool: 'cloud' }).id;
-	const queue = (profileId: number, ticket = ticketId) => runs.createRun(db, user, { ticketId: ticket, profileId }).id;
+	const local = runs.createProfile(db, user, {
+		name: 'Local',
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'm'
+	}).id;
+	const cloud = runs.createProfile(db, user, {
+		name: 'Cloud',
+		executor: 'builtin',
+		provider: 'anthropic',
+		model: 'm',
+		pool: 'cloud'
+	}).id;
+	const queue = (profileId: number, ticket = ticketId) =>
+		runs.createRun(db, user, { ticketId: ticket, profileId }).id;
 	const row = (id: number) => db.prepare('SELECT * FROM runs WHERE id = ?').get(id)!;
 	const state = (id: number) => row(id).state;
-	const comments = () => db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
+	const comments = () =>
+		db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
 	return { db, projectId, ticketId, local, cloud, queue, row, state, comments };
 }
 
 type ExecutorResult = Awaited<ReturnType<Executor['execute']>>;
-type ExecutorCall = { run: RunContext; io: Parameters<Executor['execute']>[1]; done: (result?: ExecutorResult) => void; fail: (err: unknown) => void };
+type ExecutorCall = {
+	run: RunContext;
+	io: Parameters<Executor['execute']>[1];
+	done: (result?: ExecutorResult) => void;
+	fail: (err: unknown) => void;
+};
 
 /** An executor whose runs the test ends itself; like a real executor it gives up when the signal fires. */
 function fakeExecutor() {
@@ -63,7 +81,11 @@ function start(...args: Parameters<typeof startRunner>) {
 }
 
 /** Runs `claimRun` in a loop in `count` separate Node processes that all start at the same moment; returns the ids each claimed. */
-async function claimInParallelProcesses(file: string, limits: runs.Limits, count: number): Promise<number[][]> {
+async function claimInParallelProcesses(
+	file: string,
+	limits: runs.Limits,
+	count: number
+): Promise<number[][]> {
 	const startAt = Date.now() + 1500;
 	// Without Vite: the resolve hook adds the missing .ts extensions, transform-types handles DomainError's parameter properties.
 	const script = `
@@ -79,7 +101,11 @@ async function claimInParallelProcesses(file: string, limits: runs.Limits, count
 		for (let run; (run = runs.claimRun(db, { kind: 'system' }, ${JSON.stringify(limits)})); Atomics.wait(sleep, 0, 0, 1)) claimed.push(run.id);
 		console.log(JSON.stringify(claimed));`;
 	const children = Array.from({ length: count }, () =>
-		spawn(process.execPath, ['--input-type=module', '--experimental-transform-types', '--no-warnings', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] })
+		spawn(
+			process.execPath,
+			['--input-type=module', '--experimental-transform-types', '--no-warnings', '-e', script],
+			{ stdio: ['ignore', 'pipe', 'inherit'] }
+		)
 	);
 	try {
 		return await Promise.all(
@@ -88,7 +114,11 @@ async function claimInParallelProcesses(file: string, limits: runs.Limits, count
 					new Promise<number[]>((done, fail) => {
 						let output = '';
 						child.stdout!.on('data', (chunk) => (output += chunk));
-						child.on('exit', (code) => (code === 0 ? done(JSON.parse(output)) : fail(new Error(`child process exited with ${code}`))));
+						child.on('exit', (code) =>
+							code === 0
+								? done(JSON.parse(output))
+								: fail(new Error(`child process exited with ${code}`))
+						);
 					})
 			)
 		);
@@ -122,12 +152,21 @@ describe('claimRun', () => {
 		const { db, local, cloud, queue } = setup(openDb(file));
 		for (let i = 0; i < 200; i++) queue(i % 7 ? cloud : local); // 171 cloud runs, 29 local runs
 
-		const perProcess = await claimInParallelProcesses(file, { global: 1000, pools: { cloud: 1000, local: 3 } }, 2);
+		const perProcess = await claimInParallelProcesses(
+			file,
+			{ global: 1000, pools: { cloud: 1000, local: 3 } },
+			2
+		);
 
 		const claimed = perProcess.flat().sort((a, b) => a - b);
 		expect(new Set(claimed).size).toBe(claimed.length);
 		const runningIn = (pool: string) =>
-			db.prepare("SELECT r.id FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state = 'running' AND p.pool = ? ORDER BY r.id").all(pool).map((r) => r.id as number);
+			db
+				.prepare(
+					"SELECT r.id FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state = 'running' AND p.pool = ? ORDER BY r.id"
+				)
+				.all(pool)
+				.map((r) => r.id as number);
 		expect(runningIn('local')).toEqual([1, 8, 15]);
 		expect(runningIn('cloud')).toHaveLength(171);
 		expect(claimed).toEqual([...runningIn('local'), ...runningIn('cloud')].sort((a, b) => a - b));
@@ -140,21 +179,41 @@ describe('startRunner', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor }, { global: 2, pools: { local: 1, cloud: 2 } });
-		const [local1, local2, cloud1, cloud2] = [s.queue(s.local), s.queue(s.local), s.queue(s.cloud), s.queue(s.cloud)];
+		const [local1, local2, cloud1, cloud2] = [
+			s.queue(s.local),
+			s.queue(s.local),
+			s.queue(s.cloud),
+			s.queue(s.cloud)
+		];
 		await flush();
 		// local2 waits for its pool, cloud2 for the global limit although the cloud pool has room
-		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual(['running', 'queued', 'running', 'queued']);
+		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual([
+			'running',
+			'queued',
+			'running',
+			'queued'
+		]);
 		expect(runs.runForToken(s.db, fake.call(local1).run.token)?.runId).toBe(local1);
 
 		fake.call(local1).done({ usage: { tokensIn: 7, tokensOut: 3 } });
 		await flush();
-		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual(['succeeded', 'running', 'running', 'queued']);
+		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual([
+			'succeeded',
+			'running',
+			'running',
+			'queued'
+		]);
 		expect(s.row(local1)).toMatchObject({ tokens_in: 7, tokens_out: 3 });
 		expect(runs.runForToken(s.db, fake.call(local1).run.token)).toBeUndefined();
 
 		fake.call(cloud1).done({ state: 'paused' });
 		await flush();
-		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual(['succeeded', 'running', 'paused', 'running']);
+		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual([
+			'succeeded',
+			'running',
+			'paused',
+			'running'
+		]);
 		expect(fake.calls.map((c) => c.run.id)).toEqual([local1, cloud1, local2, cloud2]);
 	});
 
@@ -166,14 +225,19 @@ describe('startRunner', () => {
 		const [cancelled, waiting] = [s.queue(s.local), s.queue(s.local)];
 		await flush();
 		const { run, io } = fake.call(cancelled);
-		expect(io.emit({ type: 'log', payload: { msg: 'working' } })).toEqual({ seq: 1, duplicate: false });
+		expect(io.emit({ type: 'log', payload: { msg: 'working' } })).toEqual({
+			seq: 1,
+			duplicate: false
+		});
 
 		runner.cancel(cancelled);
 		expect(s.row(cancelled)).toMatchObject({ state: 'cancelled', token_hash: null });
 		expect(runs.runForToken(s.db, run.token)).toBeUndefined();
 		expect(io.signal.aborted).toBe(true);
 		expect(io.park.aborted).toBe(false);
-		expect(() => io.emit({ type: 'log' })).toThrow(expect.objectContaining({ code: 'run_not_active' }));
+		expect(() => io.emit({ type: 'log' })).toThrow(
+			expect.objectContaining({ code: 'run_not_active' })
+		);
 		await flush();
 		expect(s.state(cancelled)).toBe('cancelled');
 		expect(s.comments()).toEqual([]);
@@ -183,7 +247,9 @@ describe('startRunner', () => {
 		const queued = s.queue(s.local);
 		runner.cancel(queued);
 		expect(s.state(queued)).toBe('cancelled');
-		expect(() => runner.cancel(cancelled)).toThrow(expect.objectContaining({ code: 'invalid_run_transition' }));
+		expect(() => runner.cancel(cancelled)).toThrow(
+			expect.objectContaining({ code: 'invalid_run_transition' })
+		);
 	});
 
 	it('frees the pool slot as soon as a run is cancelled, even if its executor ignores the signal', async () => {
@@ -213,10 +279,18 @@ describe('startRunner', () => {
 
 		for (const id of [running, waiting]) {
 			expect(s.row(id)).toMatchObject({ state: 'failed', token_hash: null });
-			expect(s.row(id).error).toBe('[server_restart] Server-Neustart — der Run lief noch, als Studio beendet wurde.');
+			expect(s.row(id).error).toBe(
+				'[server_restart] Server-Neustart — der Run lief noch, als Studio beendet wurde.'
+			);
 		}
 		expect(s.comments()).toEqual(
-			[running, waiting].map((id) => ({ author_kind: 'system', run_id: id, body: expect.stringContaining(`Run ${id} ist fehlgeschlagen: [server_restart] Server-Neustart`) }))
+			[running, waiting].map((id) => ({
+				author_kind: 'system',
+				run_id: id,
+				body: expect.stringContaining(
+					`Run ${id} ist fehlgeschlagen: [server_restart] Server-Neustart`
+				)
+			}))
 		);
 		expect(s.state(queued)).toBe('running');
 		expect(fake.calls.map((c) => c.run.id)).toEqual([queued]);
@@ -232,28 +306,53 @@ describe('startRunner', () => {
 		await flush();
 
 		fake.call(crashed).fail(new Error(`provider answered 401 for ${secret}`));
-		fake.call(ruleBroken).fail(new DomainError('max_steps', 'Schrittlimit 40 erreicht.', 'max_steps im Profil erhöhen oder das Ticket teilen.'));
+		fake
+			.call(ruleBroken)
+			.fail(
+				new DomainError(
+					'max_steps',
+					'Schrittlimit 40 erreicht.',
+					'max_steps im Profil erhöhen oder das Ticket teilen.'
+				)
+			);
 		await flush();
 
-		expect(s.row(crashed)).toMatchObject({ state: 'failed', token_hash: null, error: '[executor_error] provider answered 401 for [secret:runner-test]' });
-		expect(s.row(ruleBroken)).toMatchObject({ state: 'failed', error: '[max_steps] Schrittlimit 40 erreicht.' });
+		expect(s.row(crashed)).toMatchObject({
+			state: 'failed',
+			token_hash: null,
+			error: '[executor_error] provider answered 401 for [secret:runner-test]'
+		});
+		expect(s.row(ruleBroken)).toMatchObject({
+			state: 'failed',
+			error: '[max_steps] Schrittlimit 40 erreicht.'
+		});
 		expect(s.comments()).toEqual([
 			{
 				author_kind: 'system',
 				run_id: crashed,
 				body: `Run ${crashed} ist fehlgeschlagen: [executor_error] provider answered 401 for [secret:runner-test]\nAusweg: Run-Log prüfen, Ursache beheben und einen neuen Run starten.`
 			},
-			{ author_kind: 'system', run_id: ruleBroken, body: `Run ${ruleBroken} ist fehlgeschlagen: [max_steps] Schrittlimit 40 erreicht.\nAusweg: max_steps im Profil erhöhen oder das Ticket teilen.` }
+			{
+				author_kind: 'system',
+				run_id: ruleBroken,
+				body: `Run ${ruleBroken} ist fehlgeschlagen: [max_steps] Schrittlimit 40 erreicht.\nAusweg: max_steps im Profil erhöhen oder das Ticket teilen.`
+			}
 		]);
 	});
 
 	it('fails a run with executor_unavailable instead of leaving it queued, and the way out names the installed executors', async () => {
 		const s = setup();
-		const acp = runs.createProfile(s.db, user, { name: 'ACP', executor: 'acp', command: 'agent' }).id;
+		const acp = runs.createProfile(s.db, user, {
+			name: 'ACP',
+			executor: 'acp',
+			command: 'agent'
+		}).id;
 		start(s.db, { builtin: fakeExecutor().executor });
 		const id = s.queue(acp);
 		await flush();
-		expect(s.row(id).error).toBe('[executor_unavailable] Für „acp“-Profile ist kein Executor installiert.');
+		expect(s.row(id).error).toBe(
+			'[executor_unavailable] Für „acp“-Profile ist kein Executor installiert.'
+		);
 		expect(s.comments()).toEqual([
 			{
 				author_kind: 'system',
@@ -299,13 +398,18 @@ describe('startRunner', () => {
 describe('priority queue', () => {
 	function withPriorities() {
 		const s = setup();
-		const column = (name: string) => s.db.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?').get(s.projectId, name)!.id as number;
+		const column = (name: string) =>
+			s.db
+				.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?')
+				.get(s.projectId, name)!.id as number;
 		const reviewColumn = column('Review');
-		const ticketIn = (columnId?: number) => board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
+		const ticketIn = (columnId?: number) =>
+			board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
 		const blockingTicket = ticketIn();
 		board.linkRelation(s.db, user, blockingTicket, ticketIn(), 'blocks');
 		const reviewTicket = ticketIn(reviewColumn);
-		const queueWith = (ticketId: number, trigger: 'manual' | 'on_enter') => runs.createRun(s.db, user, { ticketId, profileId: s.local, trigger }).id;
+		const queueWith = (ticketId: number, trigger: 'manual' | 'on_enter') =>
+			runs.createRun(s.db, user, { ticketId, profileId: s.local, trigger }).id;
 		const priority = (id: number) => s.row(id).priority;
 		return { ...s, column, ticketIn, blockingTicket, reviewTicket, queueWith, priority };
 	}
@@ -322,7 +426,8 @@ describe('priority queue', () => {
 		const s = withPriorities();
 		const [predecessor, successor] = [s.ticketIn(), s.ticketIn()];
 		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
-		for (const name of ['Refine', 'Ready', 'In Arbeit', 'Review', 'Abnahme', 'Done']) board.moveTicket(s.db, user, successor, s.column(name));
+		for (const name of ['Refine', 'Ready', 'In Arbeit', 'Review', 'Abnahme', 'Done'])
+			board.moveTicket(s.db, user, successor, s.column(name));
 		expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('normal');
 	});
 
@@ -330,14 +435,18 @@ describe('priority queue', () => {
 		const s = withPriorities();
 		const run = s.queue(s.local);
 		runs.claimRun(s.db, system, { global: 4, pools: {} });
-		expect(() => runs.prioritizeRun(s.db, user, run)).toThrow(expect.objectContaining({ code: 'run_not_queued' }));
+		expect(() => runs.prioritizeRun(s.db, user, run)).toThrow(
+			expect.objectContaining({ code: 'run_not_queued' })
+		);
 		expect(s.priority(run)).toBe('normal');
 	});
 
 	it('lets only the human prioritize a queued run; an agent gets requires_human', () => {
 		const s = withPriorities();
 		const run = s.queue(s.local);
-		expect(() => runs.prioritizeRun(s.db, { kind: 'agent', runId: run }, run)).toThrow(expect.objectContaining({ code: 'requires_human' }));
+		expect(() => runs.prioritizeRun(s.db, { kind: 'agent', runId: run }, run)).toThrow(
+			expect.objectContaining({ code: 'requires_human' })
+		);
 		expect(s.priority(run)).toBe('normal');
 		runs.prioritizeRun(s.db, user, run);
 		expect(s.priority(run)).toBe('human');
@@ -364,7 +473,14 @@ describe('priority queue', () => {
 			fake.call(run).done();
 		}
 		await flush();
-		expect(fake.calls.map((c) => c.run.id)).toEqual([first, human, olderBlocker, newerBlocker, review, normal]);
+		expect(fake.calls.map((c) => c.run.id)).toEqual([
+			first,
+			human,
+			olderBlocker,
+			newerBlocker,
+			review,
+			normal
+		]);
 	});
 
 	it('never aborts a running run for a queued run with a higher priority', async () => {
@@ -399,7 +515,11 @@ describe('priority queue', () => {
 			ahead: 2,
 			text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv), vor ihm in der Queue: 2 Runs.'
 		});
-		expect(runs.waitReason(s.db, human, limits)).toMatchObject({ priority: 'human', ahead: 0, text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv).' });
+		expect(runs.waitReason(s.db, human, limits)).toMatchObject({
+			priority: 'human',
+			ahead: 0,
+			text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv).'
+		});
 		expect(runs.waitReason(s.db, blocker, limits)).toMatchObject({ ahead: 1 });
 		expect(runs.waitReason(s.db, running, limits)).toBeUndefined();
 	});
@@ -410,7 +530,9 @@ describe('priority queue', () => {
 		s.queue(s.cloud);
 		runs.claimRun(s.db, system, limits);
 		const waiting = s.queue(s.local);
-		expect(runs.waitReason(s.db, waiting, limits)?.text).toBe('wartet: das globale Limit ist erreicht (1 von 1 aktiv).');
+		expect(runs.waitReason(s.db, waiting, limits)?.text).toBe(
+			'wartet: das globale Limit ist erreicht (1 von 1 aktiv).'
+		);
 	});
 });
 
@@ -426,7 +548,10 @@ describe('cold start of a model', () => {
 		const runner = start(...args);
 		const phaseEvents = (runId: number) =>
 			events
-				.filter((e) => e.type === 'run.event' && e.runId === runId && (e.payload as { phase?: string }).phase)
+				.filter(
+					(e) =>
+						e.type === 'run.event' && e.runId === runId && (e.payload as { phase?: string }).phase
+				)
 				.map(({ eventType, payload }) => ({ eventType, payload }));
 		return { runner, events, phaseEvents };
 	}
@@ -443,7 +568,12 @@ describe('cold start of a model', () => {
 		vi.advanceTimersByTime(coldStart.hintAfterMs - 1);
 		expect(phaseEvents(id)).toEqual([]);
 		vi.advanceTimersByTime(1);
-		expect(phaseEvents(id)).toEqual([{ eventType: 'log', payload: { phase: 'model_loading', text: 'Modell wird geladen …', hint: loadingHint } }]);
+		expect(phaseEvents(id)).toEqual([
+			{
+				eventType: 'log',
+				payload: { phase: 'model_loading', text: 'Modell wird geladen …', hint: loadingHint }
+			}
+		]);
 
 		vi.advanceTimersByTime(20_000); // the model answers after 50 s, between the soft threshold and the hard limit
 		expect(s.state(id)).toBe('running');
@@ -480,7 +610,12 @@ describe('cold start of a model', () => {
 		const s = setup();
 		const secret = 'sk-model-name-secret-0815';
 		setSecret(s.db, 'model-secret', secret, false, randomBytes(32));
-		const leaky = runs.createProfile(s.db, user, { name: 'Leaky', executor: 'builtin', provider: 'openai-compatible', model: secret }).id;
+		const leaky = runs.createProfile(s.db, user, {
+			name: 'Leaky',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: secret
+		}).id;
 		const fake = fakeExecutor();
 		startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
 		const [cold, waiting] = [s.queue(leaky), s.queue(s.local)];
@@ -491,7 +626,8 @@ describe('cold start of a model', () => {
 		vi.advanceTimersByTime(1);
 		await flush();
 
-		const error = '[model_loading_timeout] Das Modell „[secret:model-secret]“ hat nach 30 min noch nicht geantwortet.';
+		const error =
+			'[model_loading_timeout] Das Modell „[secret:model-secret]“ hat nach 30 min noch nicht geantwortet.';
 		expect(s.row(cold)).toMatchObject({ state: 'failed', token_hash: null, error });
 		expect(s.comments()).toEqual([
 			{
@@ -530,7 +666,11 @@ describe('cold start of a model', () => {
 		const id = s.queue(s.local);
 		await flush();
 		const { io } = fake.call(id);
-		const storedEventTypes = () => s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(id).map((e) => [e.type, JSON.parse(e.payload as string).phase]);
+		const storedEventTypes = () =>
+			s.db
+				.prepare('SELECT type, payload FROM run_events WHERE run_id = ?')
+				.all(id)
+				.map((e) => [e.type, JSON.parse(e.payload as string).phase]);
 
 		io.phase({ name: 'model_downloading', elapsedMs: 5_000 });
 		io.phase({ name: 'model_loading', elapsedMs: 10_000 });
@@ -538,17 +678,36 @@ describe('cold start of a model', () => {
 		expect(storedEventTypes()).toEqual([['log', 'model_loading']]);
 
 		const longLine = `checking ${secret} ${'x'.repeat(200)}`;
-		io.phase({ name: 'thinking', elapsedMs: 192_000, tokens: 4100, tokensPerSecond: 34, lastLine: longLine });
+		io.phase({
+			name: 'thinking',
+			elapsedMs: 192_000,
+			tokens: 4100,
+			tokensPerSecond: 34,
+			lastLine: longLine
+		});
 		vi.advanceTimersByTime(coldStart.failAfterMs);
 		await flush();
 
 		expect(s.state(id)).toBe('running');
 		const agent = { kind: 'agent', runId: id };
-		const phase = { type: 'run.phase', projectId: s.projectId, ticketId: s.ticketId, actor: agent, runId: id };
+		const phase = {
+			type: 'run.phase',
+			projectId: s.projectId,
+			ticketId: s.ticketId,
+			actor: agent,
+			runId: id
+		};
 		expect(events.filter((e) => e.type === 'run.phase')).toEqual([
 			{ ...phase, name: 'model_downloading', elapsedMs: 5_000 },
 			{ ...phase, name: 'model_loading', elapsedMs: 10_000 },
-			{ ...phase, name: 'thinking', elapsedMs: 192_000, tokens: 4100, tokensPerSecond: 34, lastLine: `checking [secret:phase-secret] ${'x'.repeat(200)}`.slice(0, 120) }
+			{
+				...phase,
+				name: 'thinking',
+				elapsedMs: 192_000,
+				tokens: 4100,
+				tokensPerSecond: 34,
+				lastLine: `checking [secret:phase-secret] ${'x'.repeat(200)}`.slice(0, 120)
+			}
 		]);
 		expect(storedEventTypes()).toEqual([['log', 'model_loading']]);
 	});
@@ -568,8 +727,14 @@ describe('cold start of a model', () => {
 });
 
 describe('parking and resuming a run', () => {
-	const runsOf = (s: ReturnType<typeof setup>) => s.db.prepare('SELECT id, state, trigger, resumed_from_run_id, resume_reason, not_before FROM runs ORDER BY id').all();
-	const lastRunId = (s: ReturnType<typeof setup>) => s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
+	const runsOf = (s: ReturnType<typeof setup>) =>
+		s.db
+			.prepare(
+				'SELECT id, state, trigger, resumed_from_run_id, resume_reason, not_before FROM runs ORDER BY id'
+			)
+			.all();
+	const lastRunId = (s: ReturnType<typeof setup>) =>
+		s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
 
 	it('raises io.park with reason and notBefore; the executor ends paused after its step, the token is revoked and the pool slot freed', async () => {
 		const s = setup();
@@ -600,21 +765,57 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
 		const [resumed, waitsForHuman] = [s.queue(s.local), s.queue(s.local)];
 		await flush();
-		const intervention: runs.Intervention = { kind: 'context_budget', attempt: 1, max: 1, reason: '72 % of the context used', hint: 'continue in a fresh run', stepTokens: 23_000 };
+		const intervention: runs.Intervention = {
+			kind: 'context_budget',
+			attempt: 1,
+			max: 1,
+			reason: '72 % of the context used',
+			hint: 'continue in a fresh run',
+			stepTokens: 23_000
+		};
 		fake.call(resumed).io.emit({ type: 'intervention', payload: intervention });
 
-		fake.call(resumed).done({ state: 'paused', resume: { reason: 'context_budget', handoffSeq: 2 } });
+		fake
+			.call(resumed)
+			.done({ state: 'paused', resume: { reason: 'context_budget', handoffSeq: 2 } });
 		fake.call(waitsForHuman).done({ state: 'paused' });
 		await flush();
 
 		const followUp = lastRunId(s);
 		expect(runsOf(s)).toEqual([
-			{ id: resumed, state: 'paused', trigger: 'manual', resumed_from_run_id: null, resume_reason: null, not_before: null },
-			{ id: waitsForHuman, state: 'paused', trigger: 'manual', resumed_from_run_id: null, resume_reason: null, not_before: null },
-			{ id: followUp, state: 'running', trigger: 'resume', resumed_from_run_id: resumed, resume_reason: 'context_budget', not_before: null }
+			{
+				id: resumed,
+				state: 'paused',
+				trigger: 'manual',
+				resumed_from_run_id: null,
+				resume_reason: null,
+				not_before: null
+			},
+			{
+				id: waitsForHuman,
+				state: 'paused',
+				trigger: 'manual',
+				resumed_from_run_id: null,
+				resume_reason: null,
+				not_before: null
+			},
+			{
+				id: followUp,
+				state: 'running',
+				trigger: 'resume',
+				resumed_from_run_id: resumed,
+				resume_reason: 'context_budget',
+				not_before: null
+			}
 		]);
-		expect(fake.call(followUp).run).toMatchObject({ ticketId: s.ticketId, projectId: s.projectId, profile: { id: s.local } });
-		expect(s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(resumed)).toEqual([{ type: 'intervention', payload: JSON.stringify(intervention) }]);
+		expect(fake.call(followUp).run).toMatchObject({
+			ticketId: s.ticketId,
+			projectId: s.projectId,
+			profile: { id: s.local }
+		});
+		expect(
+			s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(resumed)
+		).toEqual([{ type: 'intervention', payload: JSON.stringify(intervention) }]);
 	});
 
 	it('allows one fresh run per chain and then asks the human with reason and handoff; parking for the quota neither counts nor is refused', async () => {
@@ -641,9 +842,15 @@ describe('parking and resuming a run', () => {
 			['paused', 'quota']
 		]);
 		expect(lastRunId(s)).toBe(exhausted);
-		expect(s.db.prepare('SELECT c.kind FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?').get(s.ticketId)).toEqual({ kind: 'human_intervention' });
+		expect(
+			s.db
+				.prepare('SELECT c.kind FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+				.get(s.ticketId)
+		).toEqual({ kind: 'human_intervention' });
 		const question = `Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht (höchstens 1 je Kette). Den Stand beschreibt der Handoff von Run ${exhausted} (Event 7). Wie soll es weitergehen?`;
-		expect(s.db.prepare('SELECT run_id, question FROM questions').all()).toEqual([{ run_id: exhausted, question }]);
+		expect(s.db.prepare('SELECT run_id, question FROM questions').all()).toEqual([
+			{ run_id: exhausted, question }
+		]);
 		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: exhausted, body: question }]);
 	});
 
@@ -659,12 +866,21 @@ describe('parking and resuming a run', () => {
 		fake.call(fresh).done({ state: 'paused' }); // e.g. after request_human
 		await flush();
 
-		const resumedByHuman = runs.createRun(s.db, user, { ticketId: s.ticketId, profileId: s.local, resumedFromRunId: fresh }).id;
+		const resumedByHuman = runs.createRun(s.db, user, {
+			ticketId: s.ticketId,
+			profileId: s.local,
+			resumedFromRunId: fresh
+		}).id;
 		await flush();
-		fake.call(resumedByHuman).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 3 } });
+		fake
+			.call(resumedByHuman)
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 3 } });
 		await flush();
 
-		expect(runsOf(s).at(-1)).toMatchObject({ resumed_from_run_id: resumedByHuman, resume_reason: 'recovery' });
+		expect(runsOf(s).at(-1)).toMatchObject({
+			resumed_from_run_id: resumedByHuman,
+			resume_reason: 'recovery'
+		});
 	});
 
 	it('fails the run instead of leaving it paused without a follow-up when the human cannot be asked, and tells the human why and where the handoff is', async () => {
@@ -674,7 +890,9 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor });
 		s.queue(s.local);
 		await flush();
-		fake.call(lastRunId(s)).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
 		await flush();
 		const fresh = lastRunId(s);
 
@@ -689,21 +907,36 @@ describe('parking and resuming a run', () => {
 			'(höchstens 1 je Kette). Die Frage an den Menschen ging nicht: Das Board von STU-1 hat keine human_intervention-Spalte.';
 		const wayOut = `Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; den Stand beschreibt der Handoff von Run ${fresh} (Event 2).`;
 		expect(s.row(fresh).error).toBe(error);
-		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: fresh, body: `Run ${fresh} ist fehlgeschlagen: ${error}\nAusweg: ${wayOut}` }]);
+		expect(s.comments()).toEqual([
+			{
+				author_kind: 'system',
+				run_id: fresh,
+				body: `Run ${fresh} ist fehlgeschlagen: ${error}\nAusweg: ${wayOut}`
+			}
+		]);
 	});
 
 	it('claims a follow-up run only once its notBefore has passed, also after a server restart, by one timer instead of polling', async () => {
-		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+		vi.useFakeTimers({
+			toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date']
+		});
 		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor });
 		const first = s.queue(s.local);
 		await flush();
-		fake.call(first).done({ state: 'paused', resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-10-02T15:00:00Z' } });
+		fake.call(first).done({
+			state: 'paused',
+			resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-10-02T15:00:00Z' }
+		});
 		await flush();
 		const followUp = lastRunId(s);
-		expect(s.row(followUp)).toMatchObject({ state: 'queued', resume_reason: 'quota', not_before: '2026-10-02T15:00:00.000Z' });
+		expect(s.row(followUp)).toMatchObject({
+			state: 'queued',
+			resume_reason: 'quota',
+			not_before: '2026-10-02T15:00:00.000Z'
+		});
 		expect(vi.getTimerCount()).toBe(1);
 
 		runner.stop();
@@ -733,7 +966,10 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor });
 		const first = s.queue(s.local);
 		await flush();
-		fake.call(first).done({ state: 'paused', resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-11-01T12:00:00Z' } });
+		fake.call(first).done({
+			state: 'paused',
+			resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-11-01T12:00:00Z' }
+		});
 		await flush();
 		const followUp = lastRunId(s);
 

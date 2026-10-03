@@ -3,12 +3,31 @@ import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
 import { requestHuman } from './domain/questions';
-import { appendEvent, claimRun, createRun, finishRun, freshRunsInChain, type Limits, type Profile, type ResumeReason, type Usage } from './domain/runs';
+import {
+	appendEvent,
+	claimRun,
+	createRun,
+	finishRun,
+	freshRunsInChain,
+	type Limits,
+	type Profile,
+	type ResumeReason,
+	type Usage
+} from './domain/runs';
 import { publish, subscribe } from './events';
 import { mask } from './secrets';
 
-export type RunContext = { id: number; ticketId: number; projectId: number; token: string; profile: Profile & { id: number } };
-type EmitRunEvent = (event: Parameters<typeof appendEvent>[3]) => { seq: number; duplicate: boolean };
+export type RunContext = {
+	id: number;
+	ticketId: number;
+	projectId: number;
+	token: string;
+	profile: Profile & { id: number };
+};
+type EmitRunEvent = (event: Parameters<typeof appendEvent>[3]) => {
+	seq: number;
+	duplicate: boolean;
+};
 /** Live progress of a run, published on the bus as `run.phase` and never stored. */
 export type Phase = {
 	name: 'thinking' | 'writing' | 'tool' | 'compacting' | 'model_loading' | 'model_downloading';
@@ -22,7 +41,10 @@ export type Phase = {
 export type ParkReason = { reason: ResumeReason; notBefore?: string };
 /** Continues a paused run in a new run; `handoffSeq` is the event holding the handoff of the paused run. */
 export type Resume = ParkReason & { handoffSeq: number };
-export type ExecutorResult = { state?: 'succeeded'; usage?: Usage } | { state: 'paused'; usage?: Usage; resume?: Resume } | void;
+export type ExecutorResult =
+	| { state?: 'succeeded'; usage?: Usage }
+	| { state: 'paused'; usage?: Usage; resume?: Resume }
+	| void;
 export type ExecutorIo = {
 	/** Fires on cancel: the run is already `cancelled` by then and `emit` throws `run_not_active`. */
 	signal: AbortSignal;
@@ -51,29 +73,57 @@ const MODEL_LOADING_PHASES: Phase['name'][] = ['model_loading', 'model_downloadi
 const MAX_LAST_LINE = 120;
 // setTimeout fires at once beyond this delay; waking early only sets the timer again
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
-const FRESH_RUN_REASON_TEXT = { context_budget: 'Kontext-Budget erreicht', recovery: 'Stillstand oder Längenlimit' };
+const FRESH_RUN_REASON_TEXT = {
+	context_budget: 'Kontext-Budget erreicht',
+	recovery: 'Stillstand oder Längenlimit'
+};
 type FreshRunReason = keyof typeof FRESH_RUN_REASON_TEXT;
 
-const duration = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
+const duration = (ms: number) =>
+	ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
 
 type RunControls = { cancel: AbortController; park: AbortController };
 
 function failRun(db: DatabaseSync, runId: number, ticketId: number, err: unknown) {
 	const code = err instanceof DomainError ? err.code : 'executor_error';
-	const hint = err instanceof DomainError ? err.hint : 'Run-Log prüfen, Ursache beheben und einen neuen Run starten.';
+	const hint =
+		err instanceof DomainError
+			? err.hint
+			: 'Run-Log prüfen, Ursache beheben und einen neuen Run starten.';
 	const error = `[${code}] ${err instanceof Error ? err.message : String(err)}`;
 	finishRun(db, SYSTEM, runId, { state: 'failed', error });
 	// ponytail: two transactions — a crash in between loses only the comment, the run is already failed.
-	addComment(db, { kind: 'system', runId }, ticketId, mask(`Run ${runId} ist fehlgeschlagen: ${error}\nAusweg: ${hint}`));
+	addComment(
+		db,
+		{ kind: 'system', runId },
+		ticketId,
+		mask(`Run ${runId} ist fehlgeschlagen: ${error}\nAusweg: ${hint}`)
+	);
 }
 
 function failOrphanedRuns(db: DatabaseSync) {
-	const orphaned = db.prepare("SELECT id, ticket_id FROM runs WHERE state IN ('running', 'waiting_approval') ORDER BY id").all() as { id: number; ticket_id: number }[];
+	const orphaned = db
+		.prepare(
+			"SELECT id, ticket_id FROM runs WHERE state IN ('running', 'waiting_approval') ORDER BY id"
+		)
+		.all() as { id: number; ticket_id: number }[];
 	for (const run of orphaned)
-		failRun(db, run.id, run.ticket_id, new DomainError('server_restart', 'Server-Neustart — der Run lief noch, als Studio beendet wurde.', 'Starte einen neuen Run für das Ticket.'));
+		failRun(
+			db,
+			run.id,
+			run.ticket_id,
+			new DomainError(
+				'server_restart',
+				'Server-Neustart — der Run lief noch, als Studio beendet wurde.',
+				'Starte einen neuen Run für das Ticket.'
+			)
+		);
 }
 
-function executorFor(executors: Partial<Record<Profile['executor'], Executor>>, profile: Profile): Executor {
+function executorFor(
+	executors: Partial<Record<Profile['executor'], Executor>>,
+	profile: Profile
+): Executor {
 	const executor = executors[profile.executor];
 	if (executor) return executor;
 	const installed = Object.keys(executors);
@@ -90,12 +140,21 @@ function executorFor(executors: Partial<Record<Profile['executor'], Executor>>, 
  * Until the model's first answer a silent run is loading or downloading its model, not hanging: after the soft threshold
  * it reports the loading phase, after the hard limit it fails. Returns the function that ends the watch.
  */
-function watchColdStart(db: DatabaseSync, run: RunContext, controller: AbortController, coldStart: ColdStartLimits) {
+function watchColdStart(
+	db: DatabaseSync,
+	run: RunContext,
+	controller: AbortController,
+	coldStart: ColdStartLimits
+) {
 	const reportLoading = setTimeout(() => {
 		const hint = `Das Modell hat nach ${duration(coldStart.hintAfterMs)} noch nicht geantwortet — es wird geladen oder heruntergeladen. Warten oder den Run abbrechen; nach ${duration(coldStart.failAfterMs)} schlägt der Run mit model_loading_timeout fehl.`;
 		const payload = { phase: 'model_loading', text: 'Modell wird geladen …', hint };
 		try {
-			appendEvent(db, { kind: 'system', runId: run.id }, run.id, { type: 'log', payload, key: 'model_loading' });
+			appendEvent(db, { kind: 'system', runId: run.id }, run.id, {
+				type: 'log',
+				payload,
+				key: 'model_loading'
+			});
 		} catch (err) {
 			console.error(`Runner: Ladephase von Run ${run.id} nicht gemeldet:`, err);
 		}
@@ -124,10 +183,23 @@ function watchColdStart(db: DatabaseSync, run: RunContext, controller: AbortCont
 function publishPhase(run: RunContext, phase: Phase) {
 	const masked = mask(phase); // before cutting the line, so a secret cut in half is still recognised
 	const lastLine = masked.lastLine?.slice(0, MAX_LAST_LINE);
-	publish({ ...masked, lastLine, type: 'run.phase', projectId: run.projectId, ticketId: run.ticketId, actor: { kind: 'agent', runId: run.id }, runId: run.id });
+	publish({
+		...masked,
+		lastLine,
+		type: 'run.phase',
+		projectId: run.projectId,
+		ticketId: run.ticketId,
+		actor: { kind: 'agent', runId: run.id },
+		runId: run.id
+	});
 }
 
-function ioFor(db: DatabaseSync, run: RunContext, controls: RunControls, endColdStart: () => void): ExecutorIo {
+function ioFor(
+	db: DatabaseSync,
+	run: RunContext,
+	controls: RunControls,
+	endColdStart: () => void
+): ExecutorIo {
 	return {
 		signal: controls.cancel.signal,
 		park: controls.park.signal,
@@ -147,18 +219,32 @@ function ioFor(db: DatabaseSync, run: RunContext, controls: RunControls, endCold
 function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
 	const actor: Actor = { kind: 'system', runId: run.id };
 	if (resume.reason === 'quota' || freshRunsInChain(db, run.id) < FRESH_RUNS_PER_CHAIN) {
-		createRun(db, actor, { ticketId: run.ticketId, profileId: run.profile.id, resumedFromRunId: run.id, resumeReason: resume.reason, notBefore: resume.notBefore });
+		createRun(db, actor, {
+			ticketId: run.ticketId,
+			profileId: run.profile.id,
+			resumedFromRunId: run.id,
+			resumeReason: resume.reason,
+			notBefore: resume.notBefore
+		});
 		return;
 	}
 	askHumanAfterUsedUpChain(db, actor, run, resume.reason, resume.handoffSeq);
 }
 
 /** Stage 3 of the recovery; if the board cannot take the question, the failed run carries it and a way out for the human. */
-function askHumanAfterUsedUpChain(db: DatabaseSync, actor: Actor, run: RunContext, reason: FreshRunReason, handoffSeq: number) {
+function askHumanAfterUsedUpChain(
+	db: DatabaseSync,
+	actor: Actor,
+	run: RunContext,
+	reason: FreshRunReason,
+	handoffSeq: number
+) {
 	const stuck = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht (höchstens ${FRESH_RUNS_PER_CHAIN} je Kette).`;
 	const handoff = `Handoff von Run ${run.id} (Event ${handoffSeq})`;
 	try {
-		requestHuman(db, actor, run.ticketId, { question: `${stuck} Den Stand beschreibt der ${handoff}. Wie soll es weitergehen?` });
+		requestHuman(db, actor, run.ticketId, {
+			question: `${stuck} Den Stand beschreibt der ${handoff}. Wie soll es weitergehen?`
+		});
 	} catch (err) {
 		if (!(err instanceof DomainError) || err.code !== 'no_escalation_column') throw err;
 		throw new DomainError(
@@ -170,7 +256,11 @@ function askHumanAfterUsedUpChain(db: DatabaseSync, actor: Actor, run: RunContex
 }
 
 /** One transaction: a paused run never stays without its follow-up run or the question to the human. */
-function finishExecutedRun(db: DatabaseSync, run: RunContext, result: Exclude<ExecutorResult, void>) {
+function finishExecutedRun(
+	db: DatabaseSync,
+	run: RunContext,
+	result: Exclude<ExecutorResult, void>
+) {
 	tx(db, () => {
 		finishRun(db, SYSTEM, run.id, { state: result.state ?? 'succeeded', usage: result.usage });
 		if (result.state === 'paused' && result.resume) continuePausedRun(db, run, result.resume);
@@ -178,7 +268,9 @@ function finishExecutedRun(db: DatabaseSync, run: RunContext, result: Exclude<Ex
 }
 
 function nextNotBefore(db: DatabaseSync, now: Date) {
-	const { next } = db.prepare("SELECT min(not_before) AS next FROM runs WHERE state = 'queued' AND not_before > ?").get(now.toISOString()) as { next: string | null };
+	const { next } = db
+		.prepare("SELECT min(not_before) AS next FROM runs WHERE state = 'queued' AND not_before > ?")
+		.get(now.toISOString()) as { next: string | null };
 	return next;
 }
 
@@ -203,7 +295,11 @@ export function startRunner(
 		active.set(run.id, controls);
 		const endColdStart = watchColdStart(db, run, controls.cancel, coldStart);
 		try {
-			const result = (await executorFor(executors, run.profile).execute(run, ioFor(db, run, controls, endColdStart))) ?? {};
+			const result =
+				(await executorFor(executors, run.profile).execute(
+					run,
+					ioFor(db, run, controls, endColdStart)
+				)) ?? {};
 			if (!controls.cancel.signal.aborted) finishExecutedRun(db, run, result);
 		} catch (err) {
 			if (!controls.cancel.signal.aborted) failRun(db, run.id, run.ticketId, err); // after cancel() the run has already ended
@@ -219,7 +315,9 @@ export function startRunner(
 			const next = () => (stopped ? undefined : claimRun(db, SYSTEM, limits));
 			for (let run = next(); run; run = next()) {
 				const runId = run.id;
-				execute(run).catch((err) => console.error(`Runner: Run ${runId} nicht sauber beendet:`, err));
+				execute(run).catch((err) =>
+					console.error(`Runner: Run ${runId} nicht sauber beendet:`, err)
+				);
 			}
 			wakeAtNextNotBefore();
 		} catch (err) {

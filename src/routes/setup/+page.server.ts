@@ -22,8 +22,11 @@ export const load: PageServerLoad = ({ url }) => {
 export const actions: Actions = {
 	default: async ({ request, cookies, url, getClientAddress }) => {
 		const form = await request.formData();
-		const [token, name, password, confirm] = ['token', 'name', 'password', 'confirm'].map((k) => String(form.get(k) ?? ''));
-		const locked = () => fail(403, { name, error: 'Studio ist bereits eingerichtet — bitte unter /login anmelden.' });
+		const [token, name, password, confirm] = ['token', 'name', 'password', 'confirm'].map((k) =>
+			String(form.get(k) ?? '')
+		);
+		const locked = () =>
+			fail(403, { name, error: 'Studio ist bereits eingerichtet — bitte unter /login anmelden.' });
 		if (hasOwner(db())) return locked();
 
 		const ip = getClientAddress();
@@ -31,7 +34,8 @@ export const actions: Actions = {
 		if (!checkSetupToken(token))
 			return fail(403, {
 				name,
-				error: 'Setup-Token falsch. Den gültigen zeigt die Server-Konsole beim Start (Zeile „Setup-Token“); nach einem Neustart gilt ein neuer.'
+				error:
+					'Setup-Token falsch. Den gültigen zeigt die Server-Konsole beim Start (Zeile „Setup-Token“); nach einem Neustart gilt ein neuer.'
 			});
 		authLimiter.succeed(ip);
 

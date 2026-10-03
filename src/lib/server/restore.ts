@@ -18,9 +18,15 @@ function check(file: string) {
 	const db = new DatabaseSync(file);
 	try {
 		const result = db.prepare('PRAGMA integrity_check').all();
-		if (result.length !== 1 || result[0].integrity_check !== 'ok') throw new Error('Integritätsprüfung meldet Fehler');
-		const names = (db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name); // not a Studio DB → "no such table"
-		assertKnownMigrations(names, new Set(readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))));
+		if (result.length !== 1 || result[0].integrity_check !== 'ok')
+			throw new Error('Integritätsprüfung meldet Fehler');
+		const names = (
+			db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]
+		).map((r) => r.name); // not a Studio DB → "no such table"
+		assertKnownMigrations(
+			names,
+			new Set(readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')))
+		);
 	} finally {
 		db.close();
 	}
@@ -47,8 +53,12 @@ const tmp = `${file}.restore`;
 let locked = false; // erst mit der Sperre gehört die Temp-Kopie diesem Lauf
 try {
 	const src = process.argv[2];
-	if (!src) throw new Error(`Aufruf: npm run restore -- <backup-datei>. Sicherungen liegen unter ${backupDir()}.`);
-	if (!existsSync(src)) throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);
+	if (!src)
+		throw new Error(
+			`Aufruf: npm run restore -- <backup-datei>. Sicherungen liegen unter ${backupDir()}.`
+		);
+	if (!existsSync(src))
+		throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);
 	try {
 		locked = lockDataDir();
 	} catch {
@@ -59,7 +69,9 @@ try {
 		);
 	}
 	if (!locked)
-		throw new Error(`Studio läuft noch mit dem Datenverzeichnis ${resolve(dataDir())} (oder ein anderes restore). Server stoppen und erneut ausführen.`);
+		throw new Error(
+			`Studio läuft noch mit dem Datenverzeichnis ${resolve(dataDir())} (oder ein anderes restore). Server stoppen und erneut ausführen.`
+		);
 
 	// Geprüft wird die Kopie, die gleich eingesetzt wird — so entstehen auch keine -wal/-shm-Dateien neben der Quelle.
 	copyFileSync(src, tmp);
@@ -67,7 +79,9 @@ try {
 		check(tmp);
 	} catch (err) {
 		if (err instanceof DomainError) throw err;
-		throw new Error(`${src} ist keine intakte Studio-Sicherung (${(err as Error).message}). Eine andere Datei aus ${backupDir()} wählen.`);
+		throw new Error(
+			`${src} ist keine intakte Studio-Sicherung (${(err as Error).message}). Eine andere Datei aus ${backupDir()} wählen.`
+		);
 	}
 
 	if (existsSync(file)) {
@@ -91,7 +105,9 @@ try {
 	rmSync(`${file}-wal`, { force: true });
 	rmSync(`${file}-shm`, { force: true });
 	renameSync(tmp, file);
-	console.log(`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`);
+	console.log(
+		`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`
+	);
 } catch (err) {
 	if (locked) rmSync(tmp, { force: true });
 	console.error(`restore: ${formatError(fsError(err))}`);

@@ -13,10 +13,22 @@ function setup() {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
 	const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
-	const profileId = runs.createProfile(db, user, { name: 'Test', executor: 'builtin', provider: 'openai-compatible', model: 'm' }).id;
-	const agent: Actor = { kind: 'agent', runId: runs.createRun(db, user, { ticketId, profileId }).id };
-	const column = () => db.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?').get(ticketId)?.name;
-	const ask = (options?: questions.QuestionOption[]) => questions.requestHuman(db, agent, ticketId, { question: 'A oder B?', options }).id;
+	const profileId = runs.createProfile(db, user, {
+		name: 'Test',
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'm'
+	}).id;
+	const agent: Actor = {
+		kind: 'agent',
+		runId: runs.createRun(db, user, { ticketId, profileId }).id
+	};
+	const column = () =>
+		db
+			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+			.get(ticketId)?.name;
+	const ask = (options?: questions.QuestionOption[]) =>
+		questions.requestHuman(db, agent, ticketId, { question: 'A oder B?', options }).id;
 	return { db, ticketId, agent, column, ask };
 }
 
@@ -35,12 +47,16 @@ describe('requestHuman', () => {
 		const { db, ticketId, agent, column, ask } = setup();
 		const id = ask([{ label: 'A', effect: 'schnell' }, { label: 'B' }]);
 		expect(column()).toBe('Human Intervention');
-		expect(db.prepare('SELECT author, body, run_id FROM comments WHERE ticket_id = ?').get(ticketId)).toEqual({
+		expect(
+			db.prepare('SELECT author, body, run_id FROM comments WHERE ticket_id = ?').get(ticketId)
+		).toEqual({
 			author: 'agent (Run 1)',
 			body: 'A oder B?\n1. A — schnell\n2. B',
 			run_id: agent.runId
 		});
-		expect(db.prepare('SELECT run_id, options, answer FROM questions WHERE id = ?').get(id)).toEqual({
+		expect(
+			db.prepare('SELECT run_id, options, answer FROM questions WHERE id = ?').get(id)
+		).toEqual({
 			run_id: agent.runId,
 			options: '[{"label":"A","effect":"schnell"},{"label":"B"}]',
 			answer: null
@@ -52,7 +68,9 @@ describe('requestHuman', () => {
 		const four = [{ label: '1' }, { label: '2' }, { label: '3' }, { label: '4' }];
 		expect(caught(() => ask(four)).code).toBe('too_many_options');
 		expect(caught(() => ask([{ label: '  ' }])).code).toBe('empty_option');
-		expect(caught(() => questions.requestHuman(db, agent, ticketId, { question: ' ' })).code).toBe('empty_question');
+		expect(caught(() => questions.requestHuman(db, agent, ticketId, { question: ' ' })).code).toBe(
+			'empty_question'
+		);
 		expect(column()).toBe('Backlog');
 		expect(db.prepare('SELECT count(*) AS n FROM questions').get()?.n).toBe(0);
 		expect(db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(0);
@@ -63,11 +81,19 @@ describe('answers', () => {
 	it('only the human answers, and only with an existing option or non-empty text', () => {
 		const { db, agent, ask } = setup();
 		const id = ask([{ label: 'A' }, { label: 'B' }]);
-		expect(caught(() => questions.answerQuestion(db, agent, id, { option: 1 })).code).toBe('requires_human');
-		expect(caught(() => questions.answerQuestion(db, user, id, { option: 3 })).message).toContain('1–2');
-		expect(caught(() => questions.answerQuestion(db, user, id, { text: ' ' })).code).toBe('invalid_answer');
+		expect(caught(() => questions.answerQuestion(db, agent, id, { option: 1 })).code).toBe(
+			'requires_human'
+		);
+		expect(caught(() => questions.answerQuestion(db, user, id, { option: 3 })).message).toContain(
+			'1–2'
+		);
+		expect(caught(() => questions.answerQuestion(db, user, id, { text: ' ' })).code).toBe(
+			'invalid_answer'
+		);
 		questions.answerQuestion(db, user, id, { option: 2 });
-		expect(db.prepare('SELECT answer FROM questions WHERE id = ?').get(id)?.answer).toBe('{"option":2}');
+		expect(db.prepare('SELECT answer FROM questions WHERE id = ?').get(id)?.answer).toBe(
+			'{"option":2}'
+		);
 	});
 
 	it('the human can retract or change an answer until the agent collects it; afterwards it is final', () => {
@@ -80,22 +106,39 @@ describe('answers', () => {
 		questions.answerQuestion(db, user, id, { text: 'Weder noch, C.' });
 
 		const collected = questions.collectAnswer(db, agent, ticketId);
-		expect(collected).toEqual({ id, question: 'A oder B?', options: [{ label: 'A' }, { label: 'B' }], answer: { text: 'Weder noch, C.' } });
+		expect(collected).toEqual({
+			id,
+			question: 'A oder B?',
+			options: [{ label: 'A' }, { label: 'B' }],
+			answer: { text: 'Weder noch, C.' }
+		});
 		const late = caught(() => questions.retractAnswer(db, user, id));
 		expect(late.code).toBe('answer_collected');
 		expect(late.message).toContain('schon übernommen');
-		expect(caught(() => questions.answerQuestion(db, user, id, { option: 1 })).code).toBe('answer_collected');
-		expect(questions.collectAnswer(db, agent, ticketId)?.answer).toEqual({ text: 'Weder noch, C.' });
+		expect(caught(() => questions.answerQuestion(db, user, id, { option: 1 })).code).toBe(
+			'answer_collected'
+		);
+		expect(questions.collectAnswer(db, agent, ticketId)?.answer).toEqual({
+			text: 'Weder noch, C.'
+		});
 	});
 
 	it('reports only the newest question, so an old answer never stands for a newer open question', () => {
 		const { db, ticketId, agent, ask } = setup();
 		const first = ask([{ label: 'A' }, { label: 'B' }]);
 		questions.answerQuestion(db, user, first, { option: 1 });
-		expect(questions.collectAnswer(db, agent, ticketId)).toMatchObject({ id: first, answer: { option: 1 } });
+		expect(questions.collectAnswer(db, agent, ticketId)).toMatchObject({
+			id: first,
+			answer: { option: 1 }
+		});
 
 		const second = questions.requestHuman(db, agent, ticketId, { question: 'C oder D?' }).id;
-		expect(questions.collectAnswer(db, agent, ticketId)).toEqual({ id: second, question: 'C oder D?', options: [], answer: null });
+		expect(questions.collectAnswer(db, agent, ticketId)).toEqual({
+			id: second,
+			question: 'C oder D?',
+			options: [],
+			answer: null
+		});
 	});
 
 	it('announces asking, answering, retracting and collecting on the bus', () => {

@@ -3,7 +3,12 @@
 	let { label = 'Lädt …', size = 16 }: { label?: string; size?: number } = $props();
 </script>
 
-<span class="spinner" style:--size="{size}px" role={label ? 'status' : undefined} aria-hidden={label ? undefined : 'true'}>
+<span
+	class="spinner"
+	style:--size="{size}px"
+	role={label ? 'status' : undefined}
+	aria-hidden={label ? undefined : 'true'}
+>
 	{#if label}<span class="visually-hidden">{label}</span>{/if}
 </span>
 

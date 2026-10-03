@@ -104,6 +104,7 @@ recognition and default profile settings once those consumers land. Generated
 from `src/lib/agents/model-catalog.ts` — edit the catalog, then run
 `npm run docs:models`.
 
+<!-- prettier-ignore-start -->
 <!-- BEGIN GENERATED: model-catalog -->
 | Model | Recommended for | Thinking | Min. context | Known pitfalls |
 |---|---|---|---|---|
@@ -113,6 +114,7 @@ from `src/lib/agents/model-catalog.ts` — edit the catalog, then run
 | `gpt-oss-20b` | code (acceptable) | on (fixed) | 32k | weak refinement quality and mixes languages in its output → use only for small, well-scoped auxiliary tasks, not for refine or review |
 | `qwen3.8-27b` | — | configurable (chat_template_kwargs) | — | too slow once it no longer fits fully in VRAM (dense model, no MoE expert offloading) → prefer an MoE model of similar size, e.g. ornith-1.5-35b or qwen3.6-35b |
 <!-- END GENERATED: model-catalog -->
+<!-- prettier-ignore-end -->
 
 ## License
 

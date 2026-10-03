@@ -29,9 +29,16 @@ function caught(fn: () => unknown): DomainError {
 describe('createNote / updateNote / archiveNote', () => {
 	it('legt eine Note an, setzt nur freigegebene Felder und archiviert idempotent', () => {
 		const { db } = setup();
-		const { id, warnings } = notes.createNote(db, user, { slug: 'n-1', title: 'Titel', body: 'x', tags: ['a', 'b'] });
+		const { id, warnings } = notes.createNote(db, user, {
+			slug: 'n-1',
+			title: 'Titel',
+			body: 'x',
+			tags: ['a', 'b']
+		});
 		expect(warnings).toEqual([]);
-		expect(db.prepare('SELECT slug, title, tags, archived, version FROM notes WHERE id = ?').get(id)).toEqual({
+		expect(
+			db.prepare('SELECT slug, title, tags, archived, version FROM notes WHERE id = ?').get(id)
+		).toEqual({
 			slug: 'n-1',
 			title: 'Titel',
 			tags: '["a","b"]',
@@ -40,7 +47,10 @@ describe('createNote / updateNote / archiveNote', () => {
 		});
 
 		notes.updateNote(db, user, id, { title: 'Neu' });
-		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({ title: 'Neu', version: 2 });
+		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({
+			title: 'Neu',
+			version: 2
+		});
 
 		const err = caught(() => notes.updateNote(db, user, id, { slug: 'anders' } as never));
 		expect(err.code).toBe('unknown_field');
@@ -57,11 +67,21 @@ describe('Wikilinks', () => {
 		const { db } = setup();
 		const b = notes.createNote(db, user, { slug: 'b', title: 'B', body: '' }).id;
 		const c = notes.createNote(db, user, { slug: 'c', title: 'C', body: '' }).id;
-		const created = notes.createNote(db, user, { slug: 'a', title: 'A', body: 'siehe [[b]] und [[fehlt]]' });
-		expect(created.warnings).toEqual(['Unbekannter Slug „fehlt“ im Wikilink — kein Link angelegt.']);
+		const created = notes.createNote(db, user, {
+			slug: 'a',
+			title: 'A',
+			body: 'siehe [[b]] und [[fehlt]]'
+		});
+		expect(created.warnings).toEqual([
+			'Unbekannter Slug „fehlt“ im Wikilink — kein Link angelegt.'
+		]);
 
 		const edges = () =>
-			db.prepare("SELECT to_note_id AS toId, origin FROM note_links WHERE from_note_id = ? AND type = 'references' ORDER BY to_note_id").all(created.id);
+			db
+				.prepare(
+					"SELECT to_note_id AS toId, origin FROM note_links WHERE from_note_id = ? AND type = 'references' ORDER BY to_note_id"
+				)
+				.all(created.id);
 		expect(edges()).toEqual([{ toId: b, origin: 'wikilink' }]);
 
 		notes.linkNote(db, user, created.id, c, 'references'); // manuell, anderes Ziel
@@ -86,7 +106,12 @@ describe('Wikilinks', () => {
 		const a = notes.createNote(db, user, { slug: 'a', title: 'A', body: '' }).id;
 		notes.linkNote(db, user, a, b, 'references');
 		notes.updateNote(db, user, a, { body: '[[b]]' });
-		const origin = () => db.prepare("SELECT origin FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'").get(a, b);
+		const origin = () =>
+			db
+				.prepare(
+					"SELECT origin FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'"
+				)
+				.get(a, b);
 		expect(origin()).toEqual({ origin: 'manual' });
 
 		notes.updateNote(db, user, a, { body: 'kein Wikilink mehr' }); // Wikilink entfernt — manuelle Kante bleibt
@@ -104,7 +129,12 @@ describe('Wikilinks', () => {
 		const { db } = setup();
 		const b = notes.createNote(db, user, { slug: 'b', title: 'B', body: '' }).id;
 		const a = notes.createNote(db, user, { slug: 'a', title: 'A', body: '[[b]]' }).id; // Kante entsteht zuerst als origin=wikilink
-		const origin = () => db.prepare("SELECT origin FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'").get(a, b);
+		const origin = () =>
+			db
+				.prepare(
+					"SELECT origin FROM note_links WHERE from_note_id = ? AND to_note_id = ? AND type = 'references'"
+				)
+				.get(a, b);
 		expect(origin()).toEqual({ origin: 'wikilink' });
 
 		notes.linkNote(db, user, a, b, 'references'); // dieselbe Kante manuell bestätigt
@@ -118,21 +148,50 @@ describe('Wikilinks', () => {
 	it('[[slug|Anzeigetext]] verlinkt auf slug wie ein einfacher Wikilink', () => {
 		const { db } = setup();
 		const b = notes.createNote(db, user, { slug: 'b', title: 'B', body: '' }).id;
-		const created = notes.createNote(db, user, { slug: 'a', title: 'A', body: 'siehe [[b|Schönerer Text]]' });
+		const created = notes.createNote(db, user, {
+			slug: 'a',
+			title: 'A',
+			body: 'siehe [[b|Schönerer Text]]'
+		});
 		expect(created.warnings).toEqual([]);
-		expect(db.prepare("SELECT to_note_id AS toId FROM note_links WHERE from_note_id = ? AND type = 'references'").all(created.id)).toEqual([{ toId: b }]);
+		expect(
+			db
+				.prepare(
+					"SELECT to_note_id AS toId FROM note_links WHERE from_note_id = ? AND type = 'references'"
+				)
+				.all(created.id)
+		).toEqual([{ toId: b }]);
 	});
 });
 
 describe('supersedes', () => {
 	it('setzt die Ziel-ADR auf superseded; die Suche rankt sie herab, egal wie relevant eine gewöhnliche Note ist', () => {
 		const { db } = setup();
-		const old = notes.createNote(db, user, { slug: 'adr-old', title: 'Alt', kind: 'adr', status: 'accepted', body: 'Datenbankentscheidung' }).id;
-		const neu = notes.createNote(db, user, { slug: 'adr-new', title: 'Neu', kind: 'adr', status: 'accepted', body: 'Datenbankentscheidung, neu gefasst' }).id;
+		const old = notes.createNote(db, user, {
+			slug: 'adr-old',
+			title: 'Alt',
+			kind: 'adr',
+			status: 'accepted',
+			body: 'Datenbankentscheidung'
+		}).id;
+		const neu = notes.createNote(db, user, {
+			slug: 'adr-new',
+			title: 'Neu',
+			kind: 'adr',
+			status: 'accepted',
+			body: 'Datenbankentscheidung, neu gefasst'
+		}).id;
 		// gewöhnliche Note (status IS NULL) mit demselben Suchbegriff nur einmal am Rand erwähnt — testet die NULL-sichere Sortierung
-		notes.createNote(db, user, { slug: 'note-beilaeufig', title: 'Unwichtig', body: `${Array(50).fill('füllwort').join(' ')} Datenbankentscheidung` });
+		notes.createNote(db, user, {
+			slug: 'note-beilaeufig',
+			title: 'Unwichtig',
+			body: `${Array(50).fill('füllwort').join(' ')} Datenbankentscheidung`
+		});
 		notes.linkNote(db, user, neu, old, 'supersedes');
-		expect(db.prepare('SELECT status, version FROM notes WHERE id = ?').get(old)).toEqual({ status: 'superseded', version: 2 }); // version erhöht (Lost-Update-Schutz)
+		expect(db.prepare('SELECT status, version FROM notes WHERE id = ?').get(old)).toEqual({
+			status: 'superseded',
+			version: 2
+		}); // version erhöht (Lost-Update-Schutz)
 
 		const hits = notes.searchNotes(db, 'Datenbankentscheidung');
 		expect(hits.map((h) => h.slug)).toEqual(['adr-new', 'note-beilaeufig', 'adr-old']); // superseded zuletzt, auch hinter der schwach relevanten Note
@@ -144,18 +203,35 @@ describe('supersedes', () => {
 		const old = notes.createNote(db, user, { slug: 'note-old', title: 'Alt', body: '' }).id;
 		const neu = notes.createNote(db, user, { slug: 'note-new', title: 'Neu', body: '' }).id;
 		notes.linkNote(db, user, neu, old, 'supersedes');
-		expect(db.prepare('SELECT status, version FROM notes WHERE id = ?').get(old)).toEqual({ status: null, version: 1 });
+		expect(db.prepare('SELECT status, version FROM notes WHERE id = ?').get(old)).toEqual({
+			status: null,
+			version: 1
+		});
 	});
 
 	it('supersedes zählt als Änderung: ein Update mit der davor gelesenen Version bekommt conflict statt den neuen Status still zu überschreiben', () => {
 		const { db } = setup();
-		const old = notes.createNote(db, user, { slug: 'adr-old', title: 'Alt', kind: 'adr', status: 'accepted', body: '' }); // version 1
-		const neu = notes.createNote(db, user, { slug: 'adr-new', title: 'Neu', kind: 'adr', status: 'accepted', body: '' }).id;
+		const old = notes.createNote(db, user, {
+			slug: 'adr-old',
+			title: 'Alt',
+			kind: 'adr',
+			status: 'accepted',
+			body: ''
+		}); // version 1
+		const neu = notes.createNote(db, user, {
+			slug: 'adr-new',
+			title: 'Neu',
+			kind: 'adr',
+			status: 'accepted',
+			body: ''
+		}).id;
 		notes.linkNote(db, user, neu, old.id, 'supersedes'); // old -> version 2, status superseded
 
 		const err = caught(() => notes.updateNote(db, user, old.id, { status: 'accepted' }, 1)); // kennt nur die alte Version 1
 		expect(err.code).toBe('conflict');
-		expect(db.prepare('SELECT status FROM notes WHERE id = ?').get(old.id)).toEqual({ status: 'superseded' }); // still nicht überschrieben
+		expect(db.prepare('SELECT status FROM notes WHERE id = ?').get(old.id)).toEqual({
+			status: 'superseded'
+		}); // still nicht überschrieben
 	});
 });
 
@@ -172,33 +248,63 @@ describe('Validierung: Slug und status/kind', () => {
 	it('createNote weist einen nicht kebab-case Slug mit invalid_slug ab, ohne einen rohen SQLite-Fehler', () => {
 		const { db } = setup();
 		for (const slug of ['Adr-A', 'ADR_A', '-adr-a', ''])
-			expect(caught(() => notes.createNote(db, user, { slug, title: 'x', body: '' })).code).toBe('invalid_slug');
+			expect(caught(() => notes.createNote(db, user, { slug, title: 'x', body: '' })).code).toBe(
+				'invalid_slug'
+			);
 	});
 
 	it('status bei kind≠adr weist mit invalid_status ab, bei create und bei einem kind-Wechsel weg von adr per update', () => {
 		const { db } = setup();
-		expect(caught(() => notes.createNote(db, user, { slug: 'n', title: 'x', body: '', status: 'accepted' })).code).toBe('invalid_status');
+		expect(
+			caught(() =>
+				notes.createNote(db, user, { slug: 'n', title: 'x', body: '', status: 'accepted' })
+			).code
+		).toBe('invalid_status');
 
-		const { id } = notes.createNote(db, user, { slug: 'a', title: 'A', body: '', kind: 'adr', status: 'accepted' });
+		const { id } = notes.createNote(db, user, {
+			slug: 'a',
+			title: 'A',
+			body: '',
+			kind: 'adr',
+			status: 'accepted'
+		});
 		const err = caught(() => notes.updateNote(db, user, id, { kind: 'note' })); // status bleibt 'accepted', kind wechselt weg von adr
 		expect(err.code).toBe('invalid_status');
 		expect(db.prepare('SELECT kind FROM notes WHERE id = ?').get(id)).toEqual({ kind: 'adr' }); // abgewiesen, unverändert
 
 		notes.updateNote(db, user, id, { kind: 'note', status: null }); // Status im selben Aufruf geräumt -> erlaubt
-		expect(db.prepare('SELECT kind, status FROM notes WHERE id = ?').get(id)).toEqual({ kind: 'note', status: null });
+		expect(db.prepare('SELECT kind, status FROM notes WHERE id = ?').get(id)).toEqual({
+			kind: 'note',
+			status: null
+		});
 	});
 });
 
 describe('searchNotes', () => {
 	it('findet Treffer in Titel/Tags/Body; Sonderzeichen im Suchbegriff brechen nichts', () => {
 		const { db } = setup();
-		notes.createNote(db, user, { slug: 'n-tag', title: 'Ohne Treffer im Titel', body: 'nichts', tags: ['kb.ai_import'] });
-		notes.createNote(db, user, { slug: 'n-body', title: 'Auch ohne', body: 'kb.ai_import steht hier im Body' });
+		notes.createNote(db, user, {
+			slug: 'n-tag',
+			title: 'Ohne Treffer im Titel',
+			body: 'nichts',
+			tags: ['kb.ai_import']
+		});
+		notes.createNote(db, user, {
+			slug: 'n-body',
+			title: 'Auch ohne',
+			body: 'kb.ai_import steht hier im Body'
+		});
 		notes.createNote(db, user, { slug: 'n-title', title: 'kb.ai_import als Titel', body: '' });
-		expect(notes.searchNotes(db, 'kb.ai_import').map((h) => h.slug).sort()).toEqual(['n-body', 'n-tag', 'n-title']);
+		expect(
+			notes
+				.searchNotes(db, 'kb.ai_import')
+				.map((h) => h.slug)
+				.sort()
+		).toEqual(['n-body', 'n-tag', 'n-title']);
 
 		// Sonderzeichen: darf nicht als FTS5-Syntaxfehler durchschlagen (inkl. eingebettetem NUL, das den gebundenen String kappt)
-		for (const q of ['a"b', 'a (b) c', 'a-b:c*', 'NOT AND OR', '   ', 'a\0b', '\0']) expect(() => notes.searchNotes(db, q)).not.toThrow();
+		for (const q of ['a"b', 'a (b) c', 'a-b:c*', 'NOT AND OR', '   ', 'a\0b', '\0'])
+			expect(() => notes.searchNotes(db, q)).not.toThrow();
 		expect(notes.searchNotes(db, '   ')).toEqual([]);
 	});
 
@@ -215,11 +321,29 @@ describe('searchNotes', () => {
 
 	it('filtert optional nach kind, projectId und tag', () => {
 		const { db, projectId } = setup();
-		notes.createNote(db, user, { slug: 'adr-x', title: 'X', kind: 'adr', status: 'proposed', body: 'gemeinsamer suchbegriff' });
-		notes.createNote(db, user, { slug: 'note-x', title: 'X', body: 'gemeinsamer suchbegriff', tags: ['wichtig'], projectIds: [projectId] });
-		expect(notes.searchNotes(db, 'suchbegriff', { kind: 'adr' }).map((h) => h.slug)).toEqual(['adr-x']);
-		expect(notes.searchNotes(db, 'suchbegriff', { projectId }).map((h) => h.slug)).toEqual(['note-x']);
-		expect(notes.searchNotes(db, 'suchbegriff', { tag: 'wichtig' }).map((h) => h.slug)).toEqual(['note-x']);
+		notes.createNote(db, user, {
+			slug: 'adr-x',
+			title: 'X',
+			kind: 'adr',
+			status: 'proposed',
+			body: 'gemeinsamer suchbegriff'
+		});
+		notes.createNote(db, user, {
+			slug: 'note-x',
+			title: 'X',
+			body: 'gemeinsamer suchbegriff',
+			tags: ['wichtig'],
+			projectIds: [projectId]
+		});
+		expect(notes.searchNotes(db, 'suchbegriff', { kind: 'adr' }).map((h) => h.slug)).toEqual([
+			'adr-x'
+		]);
+		expect(notes.searchNotes(db, 'suchbegriff', { projectId }).map((h) => h.slug)).toEqual([
+			'note-x'
+		]);
+		expect(notes.searchNotes(db, 'suchbegriff', { tag: 'wichtig' }).map((h) => h.slug)).toEqual([
+			'note-x'
+		]);
 	});
 });
 
@@ -242,10 +366,16 @@ describe('FTS-Index bleibt nach Update/Archivieren synchron', () => {
 
 	it('rankt eine mit includeArchived einbezogene archivierte Note klar hinter lebenden Notes', () => {
 		const { db } = setup();
-		const { id } = notes.createNote(db, user, { slug: 'n-alt', title: 'T', body: 'gemeinsam relevanter suchbegriff mehrfach suchbegriff suchbegriff' });
+		const { id } = notes.createNote(db, user, {
+			slug: 'n-alt',
+			title: 'T',
+			body: 'gemeinsam relevanter suchbegriff mehrfach suchbegriff suchbegriff'
+		});
 		notes.createNote(db, user, { slug: 'n-neu', title: 'T', body: 'suchbegriff einmal' });
 		notes.archiveNote(db, user, id);
-		expect(notes.searchNotes(db, 'suchbegriff', { includeArchived: true }).map((h) => h.slug)).toEqual(['n-neu', 'n-alt']);
+		expect(
+			notes.searchNotes(db, 'suchbegriff', { includeArchived: true }).map((h) => h.slug)
+		).toEqual(['n-neu', 'n-alt']);
 	});
 });
 
@@ -258,7 +388,9 @@ describe('Ticket-Verknüpfung', () => {
 		expect(db.prepare('SELECT count(*) AS n FROM note_tickets').get()?.n).toBe(1);
 		notes.unlinkTicket(db, user, noteId, ticketId, 'documents');
 		expect(db.prepare('SELECT count(*) AS n FROM note_tickets').get()?.n).toBe(0);
-		expect(caught(() => notes.linkTicket(db, user, noteId, 999999, 'documents')).code).toBe('not_found');
+		expect(caught(() => notes.linkTicket(db, user, noteId, 999999, 'documents')).code).toBe(
+			'not_found'
+		);
 	});
 
 	it('linkTicket/unlinkTicket emittieren je einmal mit dem projectId des Tickets; eine Wiederholung emittiert nichts', () => {
@@ -282,10 +414,16 @@ describe('Ticket-Verknüpfung', () => {
 		const { db, ticketId } = setup();
 		const { id: noteId } = notes.createNote(db, user, { slug: 'n', title: 'T', body: '' });
 		notes.verifyNote(db, dev, noteId, ticketId);
-		const row = db.prepare('SELECT verified_at, verified_by_run_id FROM notes WHERE id = ?').get(noteId) as { verified_at: string | null; verified_by_run_id: number | null };
+		const row = db
+			.prepare('SELECT verified_at, verified_by_run_id FROM notes WHERE id = ?')
+			.get(noteId) as { verified_at: string | null; verified_by_run_id: number | null };
 		expect(row.verified_at).not.toBeNull();
 		expect(row.verified_by_run_id).toBe(1);
-		expect(db.prepare('SELECT relation FROM note_tickets WHERE note_id = ? AND ticket_id = ?').get(noteId, ticketId)).toEqual({ relation: 'verified_by' });
+		expect(
+			db
+				.prepare('SELECT relation FROM note_tickets WHERE note_id = ? AND ticket_id = ?')
+				.get(noteId, ticketId)
+		).toEqual({ relation: 'verified_by' });
 	});
 });
 
@@ -298,9 +436,15 @@ describe('optimistische Nebenläufigkeit (updateNote)', () => {
 		const err = caught(() => notes.updateNote(db, user, id, { title: 'Agent B (veraltet)' }, 1)); // kennt nur Version 1
 		expect(err.code).toBe('conflict');
 		expect(err.hint).toContain('neu lesen');
-		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({ title: 'Agent A', version: 2 }); // Agent Bs Schreibversuch griff nicht
+		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({
+			title: 'Agent A',
+			version: 2
+		}); // Agent Bs Schreibversuch griff nicht
 
 		notes.updateNote(db, user, id, { title: 'Agent B (aktuell)' }, 2); // aktuelle Version -> erlaubt
-		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({ title: 'Agent B (aktuell)', version: 3 });
+		expect(db.prepare('SELECT title, version FROM notes WHERE id = ?').get(id)).toEqual({
+			title: 'Agent B (aktuell)',
+			version: 3
+		});
 	});
 });
