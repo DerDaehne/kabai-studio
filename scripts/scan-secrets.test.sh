@@ -157,6 +157,71 @@ echo x >"$work/ok.txt"
 git -C "$work" add ok.txt
 check "invalid regex is reported, not silently skipped" 1 "Invalid regex"
 
+# Board references: the planted values are assembled at runtime, so this file does not match itself.
+slug="arch-"'studio-demo'
+adr_id="studio-"'011'
+comment_id="comment "'1148'
+ticket='#''823'
+
+board_case() {
+	reset_work
+	printf 'ProbeNoop\n' >"$work/.privacy-patterns"
+	mkdir -p "$work/$(dirname "$1")"
+	printf '%s\n' "$2" >"$work/$1"
+	git -C "$work" add "$1"
+}
+
+board_case code.ts "// builds on $slug"
+check "board: note slug in a code comment" 1 "Board reference in code.ts:1"
+
+board_case schema.sql "-- see ADR $adr_id"
+check "board: ADR id in a SQL comment" 1 "Board reference in schema.sql:1"
+
+board_case notes.md "As agreed in $comment_id."
+check "board: comment id in markdown" 1 "Board reference in notes.md:1"
+
+board_case fix.ts "const y = 2; // fixes $ticket"
+check "board: ticket id in a code comment" 1 "Board reference in fix.ts:1"
+
+board_case a.test.ts "it('$ticket: rejects the move', () => {});"
+check "board: ticket id in a test name" 1 "Board reference in a.test.ts:1"
+
+board_case guide.md "See $ticket for details."
+check "board: ticket id in markdown" 1 "Board reference in guide.md:1"
+
+board_case notes.test.ts "const body = '[[some-note]] and [[other|label]]'; /* tint #818b90 */ const c = 'color: #555';"
+check "board: wikilinks and hex colours are no board references" 0
+
+reset_work
+printf 'ProbeNoop\n' >"$work/.privacy-patterns"
+echo x >"$work/s.txt"
+git -C "$work" add s.txt
+commit_as Neutral neutral@example.invalid "feat: add s ($ticket)"
+check "board: ticket id at the end of the commit subject is allowed" 0
+
+git -C "$work" commit -q --amend -m "feat: add s" -m "Follow-up of $ticket."
+check "board: ticket id in the commit body" 1 "Board reference in the message of commit"
+
+git -C "$work" commit -q --amend -m "feat: add s" -m "Documented in $slug."
+check "board: note slug in the commit body" 1 "Board reference in the message of commit"
+
+git -C "$work" -c user.name='dependabot[bot]' -c user.email='1+dependabot[bot]@users.noreply.github.com' \
+	commit -q --amend --reset-author -m "chore(deps): bump x" -m "Release notes: fixes $ticket upstream."
+check "board: a bot commit may quote upstream issue numbers" 0
+
+# Language: German comments and test names in src/ fail; quoted product texts and other directories do not.
+board_case src/x.test.ts "it('wird ohne Titel abgewiesen', () => {});"
+check "language: German test name in src" 1 "German comment or test name in src/x.test.ts:1"
+
+board_case src/y.ts "const n = 1; // prüft den Wert"
+check "language: German comment in src" 1 "German comment or test name in src/y.ts:1"
+
+board_case src/z.test.ts "it('shows \"Schließen\" and „Abbrechen“ only for stored secrets', () => toast('Verbindung unterbrochen'));"
+check "language: quoted German product texts are fine" 0
+
+board_case scripts/tool.sh "# prüft nur das Werkzeug"
+check "language: German outside src is not checked" 0
+
 if command -v gitleaks >/dev/null 2>&1 || command -v nix >/dev/null 2>&1; then
 	reset_work
 	printf 'ProbeNoop\n' >"$work/.privacy-patterns"

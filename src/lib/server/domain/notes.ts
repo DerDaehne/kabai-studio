@@ -84,7 +84,7 @@ function checkSlug(db: DatabaseSync, slug: string) {
 		throw new DomainError(
 			'invalid_slug',
 			`Slug „${slug}“ ist nicht kebab-case.`,
-			'Nur Kleinbuchstaben, Ziffern und „-“, beginnend mit Buchstabe/Ziffer (Beispiel: „arch-studio-notes“).'
+			'Nur Kleinbuchstaben, Ziffern und „-“, beginnend mit Buchstabe/Ziffer (Beispiel: „arch-notes“).'
 		);
 	const existing = db.prepare('SELECT id FROM notes WHERE slug = ?').get(slug) as
 		{ id: number } | undefined;

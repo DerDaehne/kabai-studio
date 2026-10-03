@@ -43,3 +43,9 @@ jobs:
       # this checkout) — gitleaks is already installed in this job, so the secret scenario
       # covers the real call instead of only the local nix fallback.
       - run: bash scripts/scan-secrets.test.sh
+
+      # gitleaks already ran above; this runs the built-in board reference and language checks.
+      - name: Board references and language
+        run: bash scripts/scan-secrets.sh
+        env:
+          SCAN_SECRETS_SKIP_GITLEAKS: '1'

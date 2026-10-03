@@ -3,8 +3,13 @@
 # 1) gitleaks over the full history (like the CI job .github/workflows/gitleaks.yml), over
 #    staged AND unstaged changes to tracked files, so a secret is caught at every stage
 #    before the commit. SCAN_SECRETS_SKIP_GITLEAKS=1 skips this part
-#    (for scripts/scan-secrets.test.sh, which exercises gitleaks separately).
-# 2) Privacy scan: patterns from the gitignored .privacy-patterns (case-insensitive) against
+#    (for scripts/scan-secrets.test.sh, which exercises gitleaks separately; CI runs it on its own).
+# 2) Built-in, public checks over all non-ignored files and the unpushed commit messages: board
+#    references (note slugs, ADR and comment ids, ticket ids in code comments, test names and docs)
+#    and German comments or test names in src/.
+#    ponytail: only the current files and messages, not every intermediate commit's content —
+#    the private patterns of part 3 cover that if a reference must never reach the history.
+# 3) Privacy scan: patterns from the gitignored .privacy-patterns (case-insensitive) against
 #    - file names AND contents of the working tree (including the index),
 #    - file names AND contents of EVERY unpushed commit on its own (not just the net diff,
 #      otherwise a name added in commit A and removed in commit B would pass the scan
@@ -20,8 +25,64 @@ cd "$(git rev-parse --show-toplevel)"
 GITLEAKS_HINT="Rotate the secret now and clean the history before pushing; false positive → add its fingerprint to .gitleaksignore."
 CONTENT_HINT="Remove it; if already committed → git commit --amend or git rebase -i origin/main, before pushing."
 PATH_HINT="Rename the file (git mv); if already committed → git rebase -i origin/main, before pushing."
+BOARD_HINT="Remove the board reference: a ticket id belongs only in the commit subject as (#<id>), knowledge in the knowledge base."
+LANGUAGE_HINT="Write comments and test names in English; quote product texts in \"…\" or „…“."
+
+# Generic board reference patterns. They are public on purpose and always run, also in CI.
+# Wikilinks alone are fine (the notes feature uses [[slug]]); only real board slug prefixes count.
+NOTE_SLUG='(^|[^a-z0-9-])(arch|adr|concept|guide|retro)-studio-[a-z0-9]'
+ADR_ID='(^|[^a-z0-9-])studio-[0-9]{3}([^0-9]|$)'
+COMMENT_ID='(kommentare?|comments?) #?[0-9]{3,}'
+B='[^&[:alnum:]]'
+TICKET_ID="(^|$B)#[0-9]{3,4}([^[:alnum:]]|$)"
+# A ticket id inside a comment or a test name; a closed /* */ before it does not count, so CSS colours stay out.
+QUOTE="['\"\`]"
+NOT_QUOTE="[^'\"\`]"
+IN_CODE_COMMENT_OR_TEST_NAME="((^|[^:])//(.*$B)?|/\*(([^*]|\*+[^*/])*$B)?|^[[:space:]]*\*(.*$B)?|<!--(([^-]|-[^-])*$B)?|(it|test|describe)\($QUOTE($NOT_QUOTE*$B)?)"
+TICKET_ID_IN_CODE="$IN_CODE_COMMENT_OR_TEST_NAME#[0-9]{3,4}([^[:alnum:]]|$)"
+GERMAN='(ä|ö|ü|Ä|Ö|Ü|ß)|(^|[^[:alnum:]_])(und|nicht|oder|mit|ohne|wird|werden|kein|keine|auch|noch|sonst|dass|statt|bleibt|eine|einen|der|das|dem|den|ist|sind|für|auf|bei|zum|zur|nur|wenn|weil|schon|über)([^[:alnum:]_]|$)'
 
 status=0
+
+# Prints "<file>:<line>" for every board reference in tracked and untracked (not ignored) files.
+board_references_in_files() {
+	{
+		git grep -n -I -i --untracked -E -e "$NOTE_SLUG" -e "$ADR_ID" -e "$COMMENT_ID" -- . || true
+		git grep -n -I --untracked -E -e "$TICKET_ID_IN_CODE" -- '*.ts' '*.js' '*.svelte' || true
+		git grep -n -I --untracked -E -e "$TICKET_ID" -- '*.md' ':!*CHANGELOG*' || true
+	} | cut -d: -f1,2
+}
+
+# Prints the short sha of every unpushed commit whose message references the board. The subject may end in
+# "(#<id>)"; bot commits may quote upstream issue numbers (Dependabot release notes).
+board_references_in_messages() {
+	local sha message
+	for sha in $(git rev-list origin/main..HEAD); do
+		message="$(git log -1 --format='%s%n%b' "$sha" | sed -E '1s/ \(#[0-9]+\)$//')"
+		if printf '%s\n' "$message" | grep -qiE -e "$NOTE_SLUG" -e "$ADR_ID" -e "$COMMENT_ID"; then
+			echo "${sha:0:7}"
+		elif ! git log -1 --format='%ae' "$sha" | grep -q '\[bot\]@' && printf '%s\n' "$message" | grep -qE "$TICKET_ID"; then
+			echo "${sha:0:7}"
+		fi
+	done
+}
+
+# Prints "<file>:<line>" for German comments and test names in src/. Quoted text ("…", „…“, `…`) is skipped,
+# so test names and comments may still quote the German product texts they are about.
+german_in_src() {
+	git grep -n -I --untracked -E -e "^[[:space:]]*(//|/\*|\*|<!--)|[^:]//[[:space:]]|^[[:space:]]*(it|test|describe)(\.[a-z]+)*\(" \
+		-- 'src/*.ts' 'src/*.js' 'src/*.svelte' |
+		sed -E 's/"[^"]*"//g; s/„[^“]*“//g; s/`[^`]*`//g' |
+		{ grep -E "$GERMAN" || true; } |
+		cut -d: -f1,2
+}
+
+report() {
+	local what="$1" hint="$2" hits="$3"
+	[ -z "$hits" ] && return 0
+	while IFS= read -r hit; do echo "$what in $hit — $hint" >&2; done <<<"$hits"
+	return 1
+}
 
 run_gitleaks() {
 	if command -v gitleaks >/dev/null 2>&1; then
@@ -56,6 +117,22 @@ else
 		echo "$GITLEAKS_HINT" >&2
 		status=1
 	fi
+fi
+
+echo
+echo "== Board references and language (built-in patterns) =="
+conventions=0
+report "Board reference" "$BOARD_HINT" "$(board_references_in_files)" || conventions=1
+if git rev-parse --verify -q origin/main >/dev/null; then
+	report "Board reference in the message of commit" "$BOARD_HINT" "$(board_references_in_messages)" || conventions=1
+else
+	echo "origin/main unknown (git fetch needed) — commit messages not checked."
+fi
+report "German comment or test name" "$LANGUAGE_HINT" "$(german_in_src)" || conventions=1
+if [ "$conventions" -eq 0 ]; then
+	echo "Board references and language: no matches."
+else
+	status=1
 fi
 
 echo
