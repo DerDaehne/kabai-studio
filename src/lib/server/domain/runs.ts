@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
 import { mask } from '../secrets';
-import { ticket } from './board';
+import { ticket, type Ticket } from './board';
 import { actorLabel, DomainError, tx, type Actor } from './core';
 
 export type RunState =
@@ -166,15 +166,7 @@ export function createRun(
 	return tx(db, (emit) => {
 		const t = ticket(db, r.ticketId);
 		getProfile(db, r.profileId);
-		if (r.resumedFromRunId !== undefined) {
-			const prev = run(db, r.resumedFromRunId);
-			if (prev.ticket_id !== t.id || prev.state !== 'paused')
-				throw new DomainError(
-					'invalid_resume',
-					`Fortsetzen geht nur mit einem pausierten Run von ${t.ref}; Run ${prev.id} ist „${prev.state}“${prev.ticket_id === t.id ? '' : ' und gehört zu einem anderen Ticket'}.`,
-					'Lege den Run ohne resumedFromRunId an oder nenne den pausierten Run dieses Tickets.'
-				);
-		}
+		if (r.resumedFromRunId !== undefined) assertResumable(db, t, r.resumedFromRunId);
 		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
 		const priority = derivePriority(db, t.id, t.column_id, trigger);
 		const notBefore = r.notBefore === undefined ? null : canonicalTime(r.notBefore);
@@ -196,6 +188,16 @@ export function createRun(
 		emit({ type: 'run.created', projectId: t.project_id, ticketId: t.id, actor, runId: id });
 		return { id };
 	});
+}
+
+function assertResumable(db: DatabaseSync, t: Ticket, previousRunId: number) {
+	const prev = run(db, previousRunId);
+	if (prev.ticket_id === t.id && prev.state === 'paused') return;
+	throw new DomainError(
+		'invalid_resume',
+		`Fortsetzen geht nur mit einem pausierten Run von ${t.ref}; Run ${prev.id} ist „${prev.state}“${prev.ticket_id === t.id ? '' : ' und gehört zu einem anderen Ticket'}.`,
+		'Lege den Run ohne resumedFromRunId an oder nenne den pausierten Run dieses Tickets.'
+	);
 }
 
 /** The form runs.not_before stores, so that claimRun can compare it as text. */
@@ -445,29 +447,10 @@ export function appendEvent(
 		const r = run(db, runId);
 		// Secret-Werte maskiert der Secrets-Store (ADR studio-011) hier, bevor der Payload gespeichert und publiziert wird (#819).
 		const payload = JSON.stringify(mask(e.payload ?? {}));
-		if (e.key !== undefined) {
-			const old = db
-				.prepare(
-					'SELECT seq, type, payload FROM run_events WHERE run_id = ? AND idempotency_key = ?'
-				)
-				.get(r.id, e.key);
-			if (old && old.type === e.type && old.payload === payload)
-				return { seq: old.seq as number, duplicate: true };
-			if (old)
-				throw new DomainError(
-					'idempotency_conflict',
-					`Run ${r.id} hat unter dem Schlüssel „${e.key}“ schon ein anderes Event (seq ${old.seq}).`,
-					'Eine Wiederholung sendet Typ und Payload unverändert; ein neues Event braucht einen neuen Schlüssel.'
-				);
-		}
-		if (r.state !== 'running' && r.state !== 'waiting_approval')
-			throw new DomainError(
-				'run_not_active',
-				`Run ${r.id} ist „${r.state}“ — Events nimmt nur ein laufender Run an.`,
-				r.state === 'queued'
-					? 'Starte den Run zuerst (startRun).'
-					: 'Events vor finishRun schreiben; weitere Arbeit braucht einen neuen Run.'
-			);
+		const repeatedSeq =
+			e.key === undefined ? undefined : repeatedEventSeq(db, r.id, e.key, e.type, payload);
+		if (repeatedSeq !== undefined) return { seq: repeatedSeq, duplicate: true };
+		assertAcceptsEvents(r);
 		const { seq } = db
 			.prepare(
 				`INSERT INTO run_events (run_id, seq, type, payload, idempotency_key)
@@ -488,6 +471,37 @@ export function appendEvent(
 		});
 		return { seq, duplicate: false };
 	});
+}
+
+/** The seq of an identical event already stored under `key`; throws if the key holds a different event. */
+function repeatedEventSeq(
+	db: DatabaseSync,
+	runId: number,
+	key: string,
+	type: RunEventType,
+	payload: string
+): number | undefined {
+	const old = db
+		.prepare('SELECT seq, type, payload FROM run_events WHERE run_id = ? AND idempotency_key = ?')
+		.get(runId, key);
+	if (!old) return undefined;
+	if (old.type === type && old.payload === payload) return old.seq as number;
+	throw new DomainError(
+		'idempotency_conflict',
+		`Run ${runId} hat unter dem Schlüssel „${key}“ schon ein anderes Event (seq ${old.seq}).`,
+		'Eine Wiederholung sendet Typ und Payload unverändert; ein neues Event braucht einen neuen Schlüssel.'
+	);
+}
+
+function assertAcceptsEvents(r: Run) {
+	if (r.state === 'running' || r.state === 'waiting_approval') return;
+	throw new DomainError(
+		'run_not_active',
+		`Run ${r.id} ist „${r.state}“ — Events nimmt nur ein laufender Run an.`,
+		r.state === 'queued'
+			? 'Starte den Run zuerst (startRun).'
+			: 'Events vor finishRun schreiben; weitere Arbeit braucht einen neuen Run.'
+	);
 }
 
 /** Der laufende Run zu einem Run-Token (Studio-MCP); undefined, wenn unbekannt oder der Run beendet ist. */

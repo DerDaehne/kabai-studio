@@ -154,30 +154,46 @@ function blockers(
 	actor: Actor
 ): Blocker[] {
 	const out: Blocker[] = [];
-	if (requiresHuman && actor.kind !== 'user' && t.column_kind === 'done')
-		out.push({
+	if (requiresHuman && actor.kind !== 'user') out.push(requiresHumanBlocker(t, to));
+	if (to.kind === 'done') out.push(...completionBlockers(db, t));
+	return out;
+}
+
+function requiresHumanBlocker(t: Ticket, to: Column): Blocker {
+	if (t.column_kind === 'done')
+		return {
 			code: 'requires_human',
 			message: `Nur ein Mensch darf ${t.ref} aus „${t.column_name}“ wieder öffnen.`,
 			hint: 'Abgenommene Tickets öffnet nur der Mensch. Für Nacharbeit ein Folgeticket anlegen und per relates_to verknüpfen.'
-		});
-	else if (requiresHuman && actor.kind !== 'user')
-		out.push({
-			code: 'requires_human',
-			message: `Nur ein Mensch darf ${t.ref} nach „${to.name}“ verschieben.`,
-			hint: 'Lass das Ticket in der aktuellen Spalte, den Wechsel übernimmt der Mensch. Brauchst du vorher eine Entscheidung: Frage als Kommentar, dann in die human_intervention-Spalte.'
-		});
-	if (to.kind !== 'done') return out;
+		};
+	return {
+		code: 'requires_human',
+		message: `Nur ein Mensch darf ${t.ref} nach „${to.name}“ verschieben.`,
+		hint: 'Lass das Ticket in der aktuellen Spalte, den Wechsel übernimmt der Mensch. Brauchst du vorher eine Entscheidung: Frage als Kommentar, dann in die human_intervention-Spalte.'
+	};
+}
+
+function completionBlockers(db: DatabaseSync, t: Ticket): Blocker[] {
+	return [openTasksBlocker(db, t), openChildrenBlocker(db, t), missingNoteBlocker(db, t)].filter(
+		(b) => b !== undefined
+	);
+}
+
+function openTasksBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 	const open = db
 		.prepare(
 			'SELECT title FROM tasks WHERE ticket_id = ? AND done_at IS NULL ORDER BY position, id'
 		)
 		.all(t.id);
-	if (open.length)
-		out.push({
-			code: 'open_tasks',
-			message: `${t.ref} hat ${open.length} offene Tasks: ${quoted(open.map((r) => r.title as string))}.`,
-			hint: 'Erledige die Tasks (completeTask) oder lösche überholte mit Begründung (deleteTask).'
-		});
+	if (!open.length) return undefined;
+	return {
+		code: 'open_tasks',
+		message: `${t.ref} hat ${open.length} offene Tasks: ${quoted(open.map((r) => r.title as string))}.`,
+		hint: 'Erledige die Tasks (completeTask) oder lösche überholte mit Begründung (deleteTask).'
+	};
+}
+
+function openChildrenBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 	const kids = db
 		.prepare(
 			`SELECT p.key || '-' || k.number AS ref FROM ticket_relations r JOIN tickets k ON k.id = r.to_ticket_id
@@ -185,26 +201,27 @@ function blockers(
 			WHERE r.from_ticket_id = ? AND r.type = 'parent_of' AND c.kind <> 'done' ORDER BY k.project_id, k.number`
 		)
 		.all(t.id);
-	if (kids.length)
-		out.push({
-			code: 'open_children',
-			message: `${t.ref} hat nicht abgeschlossene Kind-Tickets: ${kids.map((r) => r.ref).join(', ')}.`,
-			hint: 'Schließe die Kind-Tickets zuerst ab oder löse sie per unlinkRelation vom Epic und begründe das im Kommentar.'
-		});
-	if (
-		t.docs_required &&
-		!db
-			.prepare(
-				'SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0'
-			)
-			.get(t.id)
-	)
-		out.push({
-			code: 'docs_required',
-			message: `${t.ref} verlangt vor dem Abschluss eine verknüpfte Note, hat aber keine.`,
-			hint: 'Lege eine Note an (createNote) und verknüpfe sie mit dem Ticket (linkTicket, z. B. relation "documents").'
-		});
-	return out;
+	if (!kids.length) return undefined;
+	return {
+		code: 'open_children',
+		message: `${t.ref} hat nicht abgeschlossene Kind-Tickets: ${kids.map((r) => r.ref).join(', ')}.`,
+		hint: 'Schließe die Kind-Tickets zuerst ab oder löse sie per unlinkRelation vom Epic und begründe das im Kommentar.'
+	};
+}
+
+function missingNoteBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
+	if (!t.docs_required) return undefined;
+	const hasNote = db
+		.prepare(
+			'SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0'
+		)
+		.get(t.id);
+	if (hasNote) return undefined;
+	return {
+		code: 'docs_required',
+		message: `${t.ref} verlangt vor dem Abschluss eine verknüpfte Note, hat aber keine.`,
+		hint: 'Lege eine Note an (createNote) und verknüpfe sie mit dem Ticket (linkTicket, z. B. relation "documents").'
+	};
 }
 
 /**
@@ -362,27 +379,7 @@ export function createTicket(
 ): { id: number; number: number } {
 	return tx(db, (emit) => {
 		const { column_id, ...rest } = fields;
-		const col = columns(db, projectId).find((c) =>
-			column_id === undefined ? c.kind === 'normal' : c.id === column_id
-		);
-		if (!col)
-			throw new DomainError(
-				'not_found',
-				`Projekt ${projectId} hat keine Spalte ${column_id ?? 'der Art normal'}.`,
-				'Prüfe Projekt- und Spalten-ID.'
-			);
-		if (col.kind === 'done')
-			throw new DomainError(
-				'invalid_column',
-				`Tickets starten nicht in der done-Spalte „${col.name}“.`,
-				'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.'
-			);
-		if (col.kind === 'human_answered' && actor.kind !== 'user')
-			throw new DomainError(
-				'requires_human',
-				`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
-				'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
-			);
+		const col = startColumn(db, actor, projectId, column_id);
 		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest, 0));
 		const { n } = db
 			.prepare(
@@ -397,6 +394,36 @@ export function createTicket(
 		emit({ type: 'ticket.created', projectId, ticketId: id, actor });
 		return { id, number: n };
 	});
+}
+
+function startColumn(
+	db: DatabaseSync,
+	actor: Actor,
+	projectId: number,
+	columnId: number | undefined
+): Column {
+	const col = columns(db, projectId).find((c) =>
+		columnId === undefined ? c.kind === 'normal' : c.id === columnId
+	);
+	if (!col)
+		throw new DomainError(
+			'not_found',
+			`Projekt ${projectId} hat keine Spalte ${columnId ?? 'der Art normal'}.`,
+			'Prüfe Projekt- und Spalten-ID.'
+		);
+	if (col.kind === 'done')
+		throw new DomainError(
+			'invalid_column',
+			`Tickets starten nicht in der done-Spalte „${col.name}“.`,
+			'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.'
+		);
+	if (col.kind === 'human_answered' && actor.kind !== 'user')
+		throw new DomainError(
+			'requires_human',
+			`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
+			'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
+		);
+	return col;
 }
 
 export function updateTicket(
@@ -456,8 +483,27 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 			`Spalte ${columnId} gibt es im Projekt von ${t.ref} nicht.`,
 			'allowedMoves listet die erreichbaren Spalten mit ID.'
 		);
+	assertMoveAllowed(db, actor, t, to);
+	db.prepare(
+		'UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+	).run(columnId, JSON.stringify(actor), t.id);
+	if (invalidatesApproval(t, to, cols))
+		db.prepare(
+			'UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?'
+		).run(t.id);
+	emit({
+		type: 'ticket.moved',
+		projectId: t.project_id,
+		ticketId: t.id,
+		actor,
+		from: t.column_id,
+		to: columnId
+	});
+}
+
+function assertMoveAllowed(db: DatabaseSync, actor: Actor, t: Ticket, to: Column) {
 	const moves = targets(db, t);
-	const move = moves.find((m) => m.column.id === columnId);
+	const move = moves.find((m) => m.column.id === to.id);
 	if (!move)
 		throw new DomainError(
 			'transition_not_allowed',
@@ -471,27 +517,19 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 			bs.map((b) => b.message).join(' '),
 			bs.map((b) => b.hint).join(' ')
 		);
-	db.prepare(
-		'UPDATE tickets SET column_id = ?, moved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-	).run(columnId, JSON.stringify(actor), t.id);
-	// The approval is good for the reviewed state; it clears only when the ticket moves back into earlier work, or
-	// returns from a human column into a normal one — the human column case is judged by kind, not by where the
-	// human columns happen to sit, so reordering the board cannot flip the direction.
+}
+
+/**
+ * The approval is good for the reviewed state; it clears only when the ticket moves back into earlier work, or
+ * returns from a human column into a normal one — the human column case is judged by kind, not by where the
+ * human columns happen to sit, so reordering the board cannot flip the direction.
+ */
+function invalidatesApproval(t: Ticket, to: Column, cols: Column[]): boolean {
+	if (to.kind !== 'normal') return false;
 	const returnsFromHuman =
 		t.column_kind === 'human_intervention' || t.column_kind === 'human_answered';
 	const movesBack = cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
-	if (to.kind === 'normal' && (returnsFromHuman || movesBack))
-		db.prepare(
-			'UPDATE tickets SET review_approved_at = NULL, review_approved_by = NULL WHERE id = ?'
-		).run(t.id);
-	emit({
-		type: 'ticket.moved',
-		projectId: t.project_id,
-		ticketId: t.id,
-		actor,
-		from: t.column_id,
-		to: columnId
-	});
+	return returnsFromHuman || movesBack;
 }
 
 /** Review approval. The human may always; an agent only in a review column and not after it moved the ticket last. */

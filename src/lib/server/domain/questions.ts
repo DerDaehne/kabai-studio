@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { appendComment, applyMove, ticket } from './board';
+import { appendComment, applyMove, ticket, type Ticket } from './board';
 import { DomainError, tx, type Actor } from './core';
 
 export type QuestionOption = { label: string; effect?: string };
@@ -70,17 +70,7 @@ export function requestHuman(
 				'Formuliere die Frage so, dass der Mensch sie ohne weiteren Kontext beantworten kann.'
 			);
 		const options = normalizedOptions(q.options ?? []);
-		const escalation = db
-			.prepare(
-				`SELECT id, name FROM columns WHERE project_id = ? AND kind = 'human_intervention' ORDER BY position, id LIMIT 1`
-			)
-			.get(t.project_id) as { id: number; name: string } | undefined;
-		if (!escalation)
-			throw new DomainError(
-				'no_escalation_column',
-				`Das Board von ${t.ref} hat keine human_intervention-Spalte.`,
-				'Stell die Frage als Kommentar; eine human_intervention-Spalte legt der Mensch im Board an.'
-			);
+		const escalation = escalationColumn(db, t);
 		appendComment(db, emit, actor, t, asComment(q.question, options));
 		const { id } = db
 			.prepare(
@@ -97,6 +87,21 @@ export function requestHuman(
 		});
 		return { id, column: escalation.name };
 	});
+}
+
+function escalationColumn(db: DatabaseSync, t: Ticket): { id: number; name: string } {
+	const column = db
+		.prepare(
+			`SELECT id, name FROM columns WHERE project_id = ? AND kind = 'human_intervention' ORDER BY position, id LIMIT 1`
+		)
+		.get(t.project_id) as { id: number; name: string } | undefined;
+	if (!column)
+		throw new DomainError(
+			'no_escalation_column',
+			`Das Board von ${t.ref} hat keine human_intervention-Spalte.`,
+			'Stell die Frage als Kommentar; eine human_intervention-Spalte legt der Mensch im Board an.'
+		);
+	return column;
 }
 
 /** Only the human answers, and only until the agent has collected the answer. */
