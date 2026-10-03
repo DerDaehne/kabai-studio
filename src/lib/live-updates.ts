@@ -2,97 +2,112 @@ import { dismiss, toast } from './ui/toast.svelte';
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1000;
-/** Ab dieser Zahl aufeinanderfolgender gescheiterter Reconnect-Versuche gilt die Verbindung als dauerhaft weg (UX-Kriterium #770). */
+/** After this many failed reconnects in a row the connection counts as lost for good. */
 const PERSISTENT_FAILURE_THRESHOLD = 3;
 const DISCONNECTED =
 	'Verbindung unterbrochen — Daten evtl. veraltet. Studio versucht es weiter; Seite neu laden holt den aktuellen Stand.';
 const EXPIRED = 'Sitzung abgelaufen — Live-Updates gestoppt.';
 
 export type LiveUpdatesHandle = { close(): void };
+type LiveUpdatesOptions = {
+	onReload: () => void;
+	onEvent?: (event: Record<string, unknown>) => void;
+};
 
 /**
- * Verbindet mit dem projektbezogenen SSE-Endpunkt (`/api/events?project=<id>`) und hält die Verbindung offen.
- * Natives `EventSource`-Reconnect reicht nicht: fester ~3s-Takt ohne Backoff und kein Signal für „gibt endgültig
- * auf" — das übernimmt dieser Helfer, indem er die Verbindung bei jedem Fehler selbst schließt und mit
- * exponentiellem Backoff neu aufbaut.
+ * Connects to the project's SSE endpoint (`/api/events?project=<id>`) and keeps the connection open.
+ * Native `EventSource` reconnects are not enough: a fixed ~3 s rhythm without backoff and no signal for
+ * "gave up for good" — so this helper closes the connection on every error and reconnects with exponential backoff.
  *
- * `onReload` läuft nach jedem *Reconnect* (nicht beim ersten Verbindungsaufbau) — zwischen Abbruch und
- * Wiederverbindung gehen Events verloren (kein Replay im Bus, siehe `events.ts`), der Aufrufer holt den
- * betroffenen Zustand daher frisch vom Server.
- * `onEvent`, falls angegeben, bekommt jedes eintreffende Event roh für granulare Updates ohne vollen Reload.
+ * `onReload` runs after every *reconnect* (not on the first connect): events sent while disconnected are lost
+ * (the bus has no replay), so the caller fetches the affected state again. `onEvent`, if given, receives every
+ * incoming event raw for granular updates without a full reload.
  *
- * Ab `PERSISTENT_FAILURE_THRESHOLD` gescheiterten Versuchen in Folge fragt ein `fetch` nach dem Grund
- * (`EventSource` verrät keinen HTTP-Status): 401 → Sitzung weg, Versuche enden, Fehler-Toast mit Link zu /login;
- * sonst Fehler-Toast „Verbindung unterbrochen" (UX-Kriterium #770, bleibt bis zum Reconnect oder Schließen).
+ * After `PERSISTENT_FAILURE_THRESHOLD` failed attempts in a row a `fetch` asks for the reason (`EventSource`
+ * exposes no HTTP status): 401 → session gone, attempts stop, error toast with a link to /login; otherwise an
+ * error toast "connection lost" that stays until the reconnect or until closed.
  */
 export function connectLiveUpdates(
 	projectId: number,
-	options: { onReload: () => void; onEvent?: (event: Record<string, unknown>) => void }
+	options: LiveUpdatesOptions
 ): LiveUpdatesHandle {
-	const url = `/api/events?project=${projectId}`;
-	let es: EventSource | null = null;
-	let attempt = 0;
-	let retryTimer: ReturnType<typeof setTimeout> | undefined;
-	let toastId: number | undefined;
-	let closed = false;
+	const connection = new LiveConnection(`/api/events?project=${projectId}`, options);
+	connection.connect();
+	return { close: () => connection.close() };
+}
 
-	function hideNotice() {
-		if (toastId !== undefined) {
-			dismiss(toastId);
-			toastId = undefined;
+class LiveConnection {
+	private readonly url: string;
+	private readonly options: LiveUpdatesOptions;
+	private es: EventSource | null = null;
+	private attempt = 0;
+	private retryTimer: ReturnType<typeof setTimeout> | undefined;
+	private toastId: number | undefined;
+	private closed = false;
+
+	constructor(url: string, options: LiveUpdatesOptions) {
+		this.url = url;
+		this.options = options;
+	}
+
+	connect() {
+		this.es = new EventSource(this.url);
+		this.es.onopen = () => this.opened();
+		this.es.onmessage = (ev) => this.received(ev);
+		this.es.onerror = () => this.failed();
+	}
+
+	close() {
+		this.closed = true;
+		clearTimeout(this.retryTimer);
+		this.es?.close();
+		this.hideNotice();
+	}
+
+	private opened() {
+		const wasReconnect = this.attempt > 0;
+		this.attempt = 0;
+		this.hideNotice();
+		if (wasReconnect) this.options.onReload();
+	}
+
+	private received(ev: MessageEvent) {
+		if (!this.options.onEvent) return;
+		try {
+			this.options.onEvent(JSON.parse(ev.data));
+		} catch {
+			// an unexpected message is ignored; heartbeats are comment lines and never arrive here
 		}
 	}
 
-	function close() {
-		closed = true;
-		clearTimeout(retryTimer);
-		es?.close();
-		hideNotice();
+	private failed() {
+		this.es?.close();
+		this.es = null;
+		if (this.closed) return;
+		this.attempt++;
+		const backoff = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (this.attempt - 1));
+		this.retryTimer = setTimeout(() => this.connect(), backoff);
+		if (this.attempt >= PERSISTENT_FAILURE_THRESHOLD) void this.explainFailure();
 	}
 
-	async function explainFailure() {
+	private async explainFailure() {
 		const abort = new AbortController();
-		const status = await fetch(url, { signal: abort.signal }).then(
+		const status = await fetch(this.url, { signal: abort.signal }).then(
 			(res) => res.status,
 			() => 0
 		);
-		abort.abort(); // bei 200 nicht als zweiten Stream offen halten
-		if (closed || attempt < PERSISTENT_FAILURE_THRESHOLD) return; // inzwischen geschlossen oder wieder verbunden
+		abort.abort(); // on 200, don't keep it open as a second stream
+		const reconnectedOrClosed = this.closed || this.attempt < PERSISTENT_FAILURE_THRESHOLD;
+		if (reconnectedOrClosed) return;
 		if (status === 401) {
-			close();
-			toastId = toast(EXPIRED, 'error', 0, { label: 'Neu anmelden', href: '/login' });
-		} else toastId ??= toast(DISCONNECTED, 'error');
+			this.close();
+			this.toastId = toast(EXPIRED, 'error', 0, { label: 'Neu anmelden', href: '/login' });
+		} else this.toastId ??= toast(DISCONNECTED, 'error');
 	}
 
-	function connect() {
-		es = new EventSource(url);
-		es.onopen = () => {
-			const wasReconnect = attempt > 0;
-			attempt = 0;
-			hideNotice();
-			if (wasReconnect) options.onReload();
-		};
-		es.onmessage = (ev) => {
-			if (!options.onEvent) return;
-			try {
-				options.onEvent(JSON.parse(ev.data));
-			} catch {
-				// unerwartete Nachricht (z. B. Heartbeat käme als Kommentarzeile nie hier an) — ignorieren
-			}
-		};
-		es.onerror = () => {
-			es?.close();
-			es = null;
-			if (closed) return;
-			attempt++;
-			retryTimer = setTimeout(
-				connect,
-				Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (attempt - 1))
-			);
-			if (attempt >= PERSISTENT_FAILURE_THRESHOLD) void explainFailure();
-		};
+	private hideNotice() {
+		if (this.toastId === undefined) return;
+		dismiss(this.toastId);
+		this.toastId = undefined;
 	}
-	connect();
-
-	return { close };
 }
