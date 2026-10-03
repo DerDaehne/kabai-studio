@@ -200,7 +200,7 @@
 
 	async function release() {
 		if (!(await switchHalt('DELETE', 'Fortsetzen ging nicht.'))) return;
-		toast('Fortgesetzt: wartende Runs starten wieder.', 'success');
+		toast('Not-Aus gelöst: wartende Runs starten wieder.', 'success');
 		await invalidate(LIVE_DEPENDENCY);
 	}
 
