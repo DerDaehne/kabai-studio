@@ -25,6 +25,12 @@ export const commands: Suggestion[] = [
 	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
 	{ id: 'halt', label: ':anhalten', detail: 'Not-Aus: alle Agent-Runs sofort anhalten' },
 	{ id: 'release', label: ':fortsetzen', detail: 'Nach dem Not-Aus: wartende Runs starten wieder' },
+	{
+		id: 'projects',
+		label: ':projekte',
+		detail: 'Alle Projekte, Projekt anlegen',
+		href: '/projects'
+	},
 	{ id: 'fokus-aus', label: ':fokus aus', detail: 'Projekt-Fokus aufheben' },
 	{ id: 'theme-light', label: ':set farbschema hell', detail: 'Helles Farbschema' },
 	{ id: 'theme-dark', label: ':set farbschema dunkel', detail: 'Dunkles Farbschema' },

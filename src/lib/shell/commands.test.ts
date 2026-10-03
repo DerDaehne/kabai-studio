@@ -145,3 +145,11 @@ describe('withViewCommands', () => {
 		expect(merged).toHaveLength(commands.length + 1);
 	});
 });
+
+describe('the project list command', () => {
+	it('offers :projekte by name and by "anlegen", leading to the project list', () => {
+		const [byName] = suggest(':', 'proj', sources);
+		expect(byName).toMatchObject({ label: ':projekte', href: '/projects' });
+		expect(labels(suggest(':', 'projekt anlegen', sources))).toEqual([':projekte']);
+	});
+});
