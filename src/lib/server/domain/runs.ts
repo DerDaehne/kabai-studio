@@ -538,14 +538,18 @@ function profileFields(input: object): [string, SQLInputValue][] {
 		});
 }
 
-/** Checks a complete profile. Messages never repeat the value of api_key_ref — it could be a key pasted by mistake. */
-function checkProfile(db: DatabaseSync, p: Partial<Profile>, id: number | null) {
-	if (p.api_key_ref != null && !/^(secret:\S+|\$\{\w+\})$/.test(p.api_key_ref))
+/** Accepts only a reference to a key. The message never repeats the value — it could be a key pasted by mistake. */
+export function checkKeyRef(ref: string) {
+	if (!/^(secret:\S+|\$\{\w+\})$/.test(ref))
 		throw new DomainError(
 			'invalid_secret_ref',
 			'api_key_ref ist kein Verweis. Erlaubt sind secret:<name> (verschlüsselt gespeichertes Secret) und ${NAME} (Umgebungsvariable); der Key selbst wird hier nie gespeichert.',
 			'Speichere den Key als Secret und trage secret:<name> ein.'
 		);
+}
+
+function checkProfile(db: DatabaseSync, p: Partial<Profile>, id: number | null) {
+	if (p.api_key_ref != null) checkKeyRef(p.api_key_ref);
 	const missing = (
 		p.executor === 'acp' ? (['command'] as const) : (['provider', 'model'] as const)
 	).filter((k) => !p[k]);
@@ -635,7 +639,7 @@ export function deleteProfile(db: DatabaseSync, actor: Actor, id: number) {
 			throw new DomainError(
 				'profile_in_use',
 				`Profil „${name}“ wird von aktiven Runs genutzt: ${active.map((r) => r.id).join(', ')}.`,
-				'Warte, bis die Runs enden, oder brich sie ab (finishRun mit cancelled).'
+				'Warte, bis die Runs enden, oder brich sie ab, dann erneut löschen.'
 			);
 		db.prepare('DELETE FROM agent_profiles WHERE id = ?').run(id);
 	});
