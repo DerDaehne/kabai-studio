@@ -139,6 +139,7 @@ ORIGIN=http://127.0.0.1:3000 nix develop --command node build   # server on http
 nix develop --command npm run reset-password   # set a new owner password, ends all sessions
 nix develop --command npm run restore -- <backup-file>   # server stopped: backs up the current DB, restores the backup
 nix develop --command npm test         # vitest (src/**/*.test.ts)
+nix develop --command npm run test:browser   # Playwright (tests/browser/*.test.ts) against build/ — run npm run build first (CI)
 nix develop --command npm run format   # Prettier (with the Svelte plugin) rewrites all files
 nix develop --command npm run format:check   # fails on unformatted files (CI)
 nix develop --command npm run lint     # ESLint: nesting > 3 fails; functions > 40 lines and complexity > 15 warn (CI)
@@ -150,6 +151,12 @@ nix develop --command npm run scan:secrets   # before committing: gitleaks, boar
   (long or complex functions) as findings too. `scan:secrets` also runs its built-in
   board-reference and language checks without a private pattern file, and CI runs them
   in the gitleaks workflow.
+
+- The browser suite starts `node build` on a fresh database, seeds it through the domain
+  layer and stands in for model providers with a local fake model server
+  (`tests/browser/fixtures.ts`); Chromium runs with the back/forward cache on, as in real
+  browsers. Under the devshell it uses the devshell's Chromium. A new or changed UI flow
+  gets a test file there — not a throwaway script.
 
 - Dependencies sparingly: standard library first (`node:crypto`, `node:sqlite`,
   `node:events`), then the platform, then a new package — with a justification in

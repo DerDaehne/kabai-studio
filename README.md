@@ -45,6 +45,7 @@ npm install
 npm run dev            # dev server
 npm run check          # svelte-check / TypeScript
 npm test               # vitest
+npm run build && npm run test:browser   # key flows in headless Chromium (without Nix: npx playwright install --no-shell chromium first)
 npm run build && ORIGIN=http://127.0.0.1:3000 node build   # production build on http://127.0.0.1:3000
 npm run reset-password # recovery: set a new owner password, ends all sessions
 npm run restore -- data/backups/studio-20260101-0300.db   # stop the server first; saves the current DB, then restores
