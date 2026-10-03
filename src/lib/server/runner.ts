@@ -231,7 +231,7 @@ function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
 	askHumanAfterUsedUpChain(db, actor, run, resume.reason, resume.handoffSeq);
 }
 
-/** Stage 3 of the recovery; if the board cannot take the question, the failed run carries it and a way out for the human. */
+/** If the board cannot take the question, the failed run carries it and a way out for the human. */
 function askHumanAfterUsedUpChain(
 	db: DatabaseSync,
 	actor: Actor,
