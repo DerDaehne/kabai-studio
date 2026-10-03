@@ -1,7 +1,9 @@
 <script lang="ts">
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
-	import { keymap } from './keys';
+	import { focusKeys } from './focus';
+	import { anyLetter, keymap } from './keys';
+	import { live } from './live.svelte';
 	import { keyboard, setSingleKeys } from './router.svelte';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
@@ -29,15 +31,28 @@
 			<h3>{title}</h3>
 			<dl>
 				{#each bindings as binding (binding.label)}
-					<div>
-						<dt>
-							{#each binding.keys as sequence, index (index)}
-								{#if index > 0}<span class="or">/</span>{/if}
-								{#each sequence as key, position (position)}<Kbd {key} />{/each}
-							{/each}
-						</dt>
-						<dd>{binding.label}</dd>
-					</div>
+					{#if binding.keys[0]?.includes(anyLetter)}
+						{#each focusKeys(live.projects) as { letter, project } (project.id)}
+							<div>
+								<dt>
+									{#each binding.keys[0] as key, position (position)}
+										<Kbd key={key === anyLetter ? letter : key} />
+									{/each}
+								</dt>
+								<dd>Fokus auf {project.name}</dd>
+							</div>
+						{/each}
+					{:else}
+						<div>
+							<dt>
+								{#each binding.keys as sequence, index (index)}
+									{#if index > 0}<span class="or">/</span>{/if}
+									{#each sequence as key, position (position)}<Kbd {key} />{/each}
+								{/each}
+							</dt>
+							<dd>{binding.label}</dd>
+						</div>
+					{/if}
 				{/each}
 			</dl>
 		</section>

@@ -1,3 +1,5 @@
+import type { ProjectRef } from './shell.svelte';
+
 /** `:` runs a command, `/` searches the current view and all tickets. */
 export type CommandMode = ':' | '/';
 
@@ -19,7 +21,6 @@ export type SuggestionSources = {
 export const commands: Suggestion[] = [
 	{ id: 'run', label: ':run', detail: 'Ticket als Run starten', available: false },
 	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
-	{ id: 'fokus', label: ':fokus', detail: 'Projekt-Fokus setzen', available: false },
 	{ id: 'fokus-aus', label: ':fokus aus', detail: 'Projekt-Fokus aufheben' },
 	{ id: 'theme-light', label: ':set farbschema hell', detail: 'Helles Farbschema' },
 	{ id: 'theme-dark', label: ':set farbschema dunkel', detail: 'Dunkles Farbschema' },
@@ -31,6 +32,29 @@ export const commands: Suggestion[] = [
 	{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
 	{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
 ];
+
+const focusCommandId = (projectId: number) => `fokus-${projectId}`;
+
+/** One `:fokus <code>` suggestion per project, for `sources.commands` alongside the fixed {@link commands}. */
+export function focusCommands(projects: ProjectRef[]): Suggestion[] {
+	return projects.map((project) => ({
+		id: focusCommandId(project.id),
+		label: `:fokus ${project.code.toLowerCase()}`,
+		detail: `Fokus auf ${project.name}`
+	}));
+}
+
+/**
+ * What executing `suggestion` means for the focus: the project to focus, `null` to clear it (`:fokus aus`), or
+ * `undefined` when it isn't a focus command at all — the single place that reads the id {@link focusCommands} writes.
+ */
+export function focusTarget(
+	suggestion: Suggestion,
+	projects: ProjectRef[]
+): ProjectRef | null | undefined {
+	if (suggestion.id === 'fokus-aus') return null;
+	return projects.find((project) => focusCommandId(project.id) === suggestion.id);
+}
 
 export function parseInput(value: string): { mode: CommandMode | null; query: string } {
 	const first = value.charAt(0);

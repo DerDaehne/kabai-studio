@@ -7,9 +7,10 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
-	import { commands, type Suggestion } from '$lib/shell/commands';
+	import { commands, focusCommands, focusTarget, type Suggestion } from '$lib/shell/commands';
+	import { focusKeys, projectForLetter } from '$lib/shell/focus';
 	import KeyOverview from '$lib/shell/KeyOverview.svelte';
-	import { contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
+	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
 		live,
@@ -57,7 +58,11 @@
 		commandFocused ? 'commandline' : (currentView?.context ?? 'page')
 	);
 	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
-	const sources = $derived({ commands, view: shell.viewItems, tickets: shell.tickets });
+	const sources = $derived({
+		commands: [...commands, ...focusCommands(live.projects)],
+		view: shell.viewItems,
+		tickets: shell.tickets
+	});
 
 	const compact = new MediaQuery('max-width: 719px');
 	const overlayOpen = $derived(page.state.commandLine === true);
@@ -98,6 +103,20 @@
 			jumpBack: () => history.back()
 		});
 	});
+	// focusAll only while something is focused, focusProject only while there is a project to focus — otherwise the
+	// key bar would offer a key that does nothing
+	$effect(() => {
+		if (bare) return;
+		return bindKeys({
+			focusAll: shell.focus ? () => (shell.focus = null) : undefined,
+			focusProject: live.projects.length
+				? (_count, key) => {
+						const project = projectForLetter(live.projects, key);
+						if (project) shell.focus = project;
+					}
+				: undefined
+		});
+	});
 	// u and Ctrl+r are only valid while there is something to take back or repeat
 	$effect(() =>
 		bindKeys({
@@ -136,8 +155,9 @@
 	async function execute(suggestion: Suggestion) {
 		await closeOverlay();
 		commandInput?.blur();
+		const focusCommand = focusTarget(suggestion, live.projects);
 		if (suggestion.href) await goto(suggestion.href);
-		else if (suggestion.id === 'fokus-aus') shell.focus = null;
+		else if (focusCommand !== undefined) shell.focus = focusCommand;
 		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
 		else if (suggestion.id.startsWith('single-keys'))
 			setSingleKeys(suggestion.id === 'single-keys-on');
@@ -283,9 +303,14 @@
 				{/if}
 				{#each keyBar.hints as hint (hint.label)}
 					<li>
-						{#each hint.keys as sequence, index (index)}
-							{#each sequence as key, position (position)}<Kbd {key} />{/each}
-						{/each}
+						{#if hint.keys[0]?.includes(anyLetter)}
+							<Kbd key={hint.keys[0][0]} />
+							{#each focusKeys(live.projects) as { letter } (letter)}<Kbd key={letter} />{/each}
+						{:else}
+							{#each hint.keys as sequence, index (index)}
+								{#each sequence as key, position (position)}<Kbd {key} />{/each}
+							{/each}
+						{/if}
 						<span>{hint.label}</span>
 					</li>
 				{/each}

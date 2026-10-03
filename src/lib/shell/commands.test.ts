@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
 	commands,
+	focusCommands,
+	focusTarget,
 	matchesWordStart,
 	parseInput,
 	suggest,
 	suggestionsFor,
 	type Suggestion
 } from './commands';
+import type { ProjectRef } from './shell.svelte';
 
 const view: Suggestion[] = [{ id: 'view-1', label: 'Spur von qwen3-coder', href: '/#spur' }];
 const tickets: Suggestion[] = [
@@ -60,6 +63,42 @@ describe('suggest', () => {
 	it('keeps the modes apart', () => {
 		expect(labels(suggest('/', 'run', sources))).toEqual([]);
 		expect(labels(suggest(':', 'push', sources))).toEqual([]);
+	});
+});
+
+describe('focusCommands', () => {
+	const projects: ProjectRef[] = [
+		{ id: 1, code: 'STU', name: 'kabai studio', palette: 1 },
+		{ id: 2, code: 'WEB', name: 'Website', palette: 2 }
+	];
+
+	it('offers one :fokus <code> suggestion per project', () => {
+		expect(labels(focusCommands(projects))).toEqual([':fokus stu', ':fokus web']);
+	});
+
+	it('is findable alongside :fokus aus for the "fokus" query', () => {
+		const found = labels(suggest(':', 'fokus', { ...sources, commands: focusCommands(projects) }));
+		expect(found).toEqual([':fokus stu', ':fokus web']);
+		expect(labels(suggest(':', 'fokus', sources))).toContain(':fokus aus');
+	});
+});
+
+describe('focusTarget', () => {
+	const projects: ProjectRef[] = [
+		{ id: 1, code: 'STU', name: 'kabai studio', palette: 1 },
+		{ id: 2, code: 'WEB', name: 'Website', palette: 2 }
+	];
+
+	it('resolves a :fokus <code> suggestion to its project, by the id focusCommands gave it', () => {
+		expect(focusTarget(focusCommands(projects)[1], projects)).toEqual(projects[1]);
+	});
+
+	it('resolves :fokus aus to null, to clear the focus', () => {
+		expect(focusTarget({ id: 'fokus-aus', label: ':fokus aus' }, projects)).toBeNull();
+	});
+
+	it('resolves any other suggestion to undefined, to leave the focus untouched', () => {
+		expect(focusTarget({ id: 'q', label: ':q' }, projects)).toBeUndefined();
 	});
 });
 
