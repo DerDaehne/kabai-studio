@@ -24,10 +24,7 @@ const NAME = /^studio-(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(?:-(\d+))?\.db$/;
 
 export type Backup = { file: string; at: Date; n: number };
 
-/**
- * Creates a directory for the owner only (0700). An existing one that others can access stays as it is — silently
- * changing it could break a deliberate setup — and only gets a warning.
- */
+/** Creates a directory with mode 0700; an existing one open to others only gets a warning, as it may be deliberate. */
 export function privateDir(dir: string) {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	if (process.platform !== 'win32' && statSync(dir).mode & 0o077)
@@ -61,9 +58,8 @@ export function listBackups(dir: string): Backup[] {
 }
 
 /**
- * Consistent snapshot of `db` into `dir`; returns the path. Writes a temp file, fsyncs, then renames — an aborted run
- * leaves at most a .tmp file. Two backups in the same minute get `-2`, `-3`, ….
- * Throws an error with a way out; must not run inside a transaction (a VACUUM restriction).
+ * Consistent snapshot of `db` into `dir`, written to a temp file, fsynced and renamed, so an aborted run leaves at most
+ * a .tmp file. Must not run inside a transaction (a VACUUM restriction).
  */
 export function backup(db: DatabaseSync, dir: string, now = new Date()): string {
 	const stamp = now.toISOString().replace(/\D/g, '');
@@ -95,10 +91,8 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 }
 
 /**
- * Retention: the newest backup of each of the last `daily` days and the last `weekly` weeks (Monday-based, UTC),
- * counted over days/weeks that have a backup at all — long pauses therefore delete nothing. The newest always stays.
- * Future-dated backups (at > now) are never deleted and take no retention slot, because they may be the only good state.
- * Returns the deleted file names.
+ * Keeps the newest backup of each of the last `daily` days and `weekly` weeks (Monday-based, UTC) that have one, so
+ * long pauses delete nothing. Future-dated backups are never deleted and take no slot: they may be the only good state.
  */
 export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date()): string[] {
 	const present = listBackups(dir).filter((b) => b.at.getTime() <= now.getTime());
@@ -142,11 +136,8 @@ export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
 	}
 }
 
-/**
- * Checks at startup and then hourly, so the daily rhythm survives frequent restarts.
- * ponytail: VACUUM INTO runs synchronously in the server process and briefly holds up all requests on a large DB —
- * move it into a worker once that becomes noticeable.
- */
+/** Checks at startup and then hourly, so the daily rhythm survives frequent restarts. */
+// ponytail: VACUUM INTO blocks the server briefly on a large DB; move it into a worker once that is noticeable.
 export function startBackups(db: DatabaseSync, dir: string) {
 	backupIfDue(db, dir);
 	setInterval(() => backupIfDue(db, dir), HOUR).unref();

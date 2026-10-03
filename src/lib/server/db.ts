@@ -54,11 +54,9 @@ export function lockDataDir(dir = dataDir()): boolean {
 }
 
 /**
- * Applies pending migrations in name order, each in its own transaction, so migration files must not contain
- * BEGIN/COMMIT themselves. Returns the applied names. Safe across processes: BEGIN IMMEDIATE takes the write lock
- * (busy_timeout waits), then schema_migrations is checked again inside the transaction — a second process skips what
- * the first one already applied. `beforeUpgrade` runs once before the first migration when some are pending and the
- * DB already has migrations; if it throws, migrate aborts without applying anything.
+ * Applies pending migrations in name order, each in its own transaction (so migration files contain no BEGIN/COMMIT),
+ * and returns their names. Safe across processes: each transaction re-checks schema_migrations under the write lock.
+ * `beforeUpgrade` runs once before upgrading a non-empty DB; if it throws, nothing is applied.
  */
 export function migrate(
 	db: DatabaseSync,

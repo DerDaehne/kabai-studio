@@ -195,9 +195,8 @@ export function createNote(
 }
 
 /**
- * `expectedVersion`, if given, must equal the current `version`, otherwise `conflict` (optimistic concurrency: comparing
- * `updated_at` is not enough, because `CURRENT_TIMESTAMP` resolves to the second only and two fast agent writers would
- * hit the same value). Every applied change increments `version`. A changed body re-syncs the wikilinks.
+ * Optimistic concurrency: a given `expectedVersion` must equal the current `version`, otherwise `conflict`
+ * (`updated_at` resolves to the second only, so two fast agent writers could not be told apart).
  */
 export function updateNote(
 	db: DatabaseSync,
@@ -227,9 +226,8 @@ export function updateNote(
 }
 
 /**
- * `actor` is reserved for later rules (convention: mutations take it as the second parameter) and unused today.
- * Increments `version`: otherwise a parallel `updateNote` with an `expectedVersion` read before would silently overwrite
- * the archived state instead of seeing `conflict`.
+ * Increments `version`, so a parallel `updateNote` with an older `expectedVersion` gets `conflict` instead of
+ * silently overwriting the archived state.
  */
 export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): void {
 	tx(db, () => {
@@ -242,11 +240,8 @@ export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): voi
 }
 
 /**
- * Links two notes, set manually (`origin='manual'`) — even if an automatic wikilink edge already exists: `DO UPDATE`
- * raises it to `manual`, otherwise removing the wikilink from the body later would also delete the edge that has since
- * been set deliberately (manual links stay untouched regardless of the order).
- * `supersedes` on an adr note sets its status to `superseded` automatically and increments its `version` (otherwise a
- * lost update, see `archiveNote`).
+ * Links two notes manually. An existing automatic wikilink edge is raised to `manual`, so removing the wikilink later
+ * keeps the deliberate link. `supersedes` on an adr note also marks it `superseded` and increments its `version`.
  */
 export function linkNote(
 	db: DatabaseSync,
@@ -387,8 +382,8 @@ export type NoteSearchHit = {
 };
 
 /**
- * Quotes every search term on its own as an FTS5 string literal, so special characters (dots, underscores, brackets, "-" …) break nothing.
- * An embedded NUL would cut the bound string before the closing quote ("unterminated string" in FTS5), so it is removed first.
+ * Quotes every search term as an FTS5 string literal, so special characters break nothing. NUL is removed first:
+ * it would cut the bound string before the closing quote ("unterminated string").
  */
 function ftsQuery(query: string): string {
 	return query
@@ -401,10 +396,8 @@ function ftsQuery(query: string): string {
 }
 
 /**
- * Ranking: bm25 (best matches first), superseded adr notes ranked down. `n.status = 'superseded'` would be NULL for
- * status IS NULL (every other note kind), and NULL sorts before 0/1 in SQLite — every normal note would rank above every live adr note, however relevant.
- * `IS` is NULL-safe (yields 0). Archived notes are filtered out by default (`archived` means "wrong or irrelevant");
- * `includeArchived` shows them, but sorted clearly to the end. Snippet + bodyChars instead of the full text.
+ * bm25 ranking with superseded adr notes and (with `includeArchived`) archived notes sorted last. The comparison uses
+ * `IS`, because `=` yields NULL for notes without a status and NULL sorts before 0/1 in SQLite.
  */
 export function searchNotes(
 	db: DatabaseSync,

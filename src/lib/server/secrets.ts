@@ -25,10 +25,7 @@ const invalidKey = (what: string, hint: string) =>
 		hint
 	);
 
-/**
- * Loads the key: `STUDIO_SECRET_KEY` wins, otherwise `<dir>/secret.key` — a missing file is created with mode 0600.
- * Both hold the same Base64 text, so the key can move between file and env.
- */
+/** `STUDIO_SECRET_KEY` wins over `<dir>/secret.key`, which is created with mode 0600 when missing; both hold the same Base64 text. */
 export function loadKey(dir = dataDir(), env = process.env[KEY_ENV]): Buffer {
 	if (env !== undefined) {
 		// empty is an error too: otherwise a new secret.key would appear silently and the stored secrets would be unreadable
@@ -92,8 +89,6 @@ function decrypt(key: Buffer, row: Row): string {
 	}
 }
 
-// ---- Masking ----
-
 /** Known secret values → placeholder. Deleted ones stay until a restart: masking too much does no harm. */
 const known = new Map<string, string>();
 
@@ -112,12 +107,9 @@ function maskText(text: string): string {
 }
 
 /**
- * Replaces known secret values with `[secret:<name>]`, `[env:<NAME>]` or `[secret-key]` — in strings, arrays, plain
- * objects (values and keys) and errors (message, stack, cause, own fields like code/hint; the type stays). Other objects
- * (URL, Date, Map, class instances) come back in their JSON form, as they would be stored; without a JSON form as
- * masked inspect text. Cycles become `[Circular]`. The original stays unchanged.
- * Required for everything an agent or the browser can read later: run_events payloads, error messages, tool results.
- * Works the same on serialised payloads: `mask(JSON.stringify(payload))` (the JSON-escaped form is remembered too).
+ * Returns a copy with known secret values replaced by their placeholder, in strings, arrays, plain objects, errors
+ * (keeping their type) and other objects through their JSON or inspect form. Required for everything an agent or the
+ * browser can read later; it also works on serialised payloads.
  */
 export const mask = <T>(value: T): T => walk(value, new Set()) as T;
 
@@ -165,10 +157,7 @@ function tryStringify(value: object): string | undefined {
 
 const LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
 
-/**
- * Wraps console.* in the masking, so every log line of the process passes through it, including those of libraries
- * and SvelteKit's error output. Formats first (objects, errors with cause), then masks the finished text.
- */
+/** Masks every console.* line of the process, including library and SvelteKit output, after formatting it. */
 export function maskConsole(target: Pick<Console, (typeof LEVELS)[number]> = console): void {
 	// ponytail: direct writes to process.stdout/stderr (e.g. Node's output on uncaughtException) bypass this — add a hook if that becomes relevant.
 	for (const level of LEVELS) {
@@ -177,8 +166,6 @@ export function maskConsole(target: Pick<Console, (typeof LEVELS)[number]> = con
 	}
 }
 
-// ---- Store ----
-
 /** Names and timestamps, never values or ciphertexts — all the UI ever sees of secrets. */
 export const listSecrets = (db: DatabaseSync) =>
 	db
@@ -186,9 +173,8 @@ export const listSecrets = (db: DatabaseSync) =>
 		.all() as SecretMeta[];
 
 /**
- * Stores a secret encrypted. It overwrites an existing name only with `replace`, because replacing cannot be undone
- * and must be intended. Surrounding whitespace (from pasting) is dropped.
- * Error messages never repeat the entered value — not even an invalid name, in case the key ended up there by mistake.
+ * Overwrites an existing name only with `replace`, since replacing cannot be undone. Error messages never repeat the
+ * entered value, not even an invalid name, in case the key ended up there by mistake.
  */
 export function setSecret(
 	db: DatabaseSync,
@@ -266,9 +252,8 @@ function getSecret(db: DatabaseSync, name: string, key: Buffer): string {
 }
 
 /**
- * The one place that resolves references in configuration values: `secret:<name>` (the whole value) → decrypted secret;
- * otherwise every `${ENV_NAME}` is replaced by the environment variable and other text stays (`Bearer ${TOKEN}`).
- * Resolved values are masked. `${STUDIO_*}` is refused (the key and other internals).
+ * The one place that resolves configuration values: `secret:<name>` (the whole value) → decrypted secret, otherwise
+ * every `${ENV_NAME}` → environment variable. Resolved values are masked; `${STUDIO_*}` is refused.
  */
 export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): string {
 	if (ref.startsWith('secret:')) return getSecret(db, ref.slice('secret:'.length), key);
@@ -291,10 +276,7 @@ export function resolveRef(db: DatabaseSync, ref: string, key = secretKey()): st
 	});
 }
 
-/**
- * At startup: loads or creates the key and decrypts all secrets for the masking. Secrets that cannot be decrypted
- * are reported but do not abort the start; they can be replaced in the UI.
- */
+/** Decrypts all secrets for the masking; undecryptable ones are reported without aborting the start. */
 export function initSecrets(db: DatabaseSync, key = secretKey()): void {
 	for (const row of db
 		.prepare('SELECT name, ciphertext, iv, auth_tag FROM secrets')

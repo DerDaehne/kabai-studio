@@ -10,8 +10,6 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest();
 /** Constant-time string comparison, also for strings of different length. */
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b));
 
-// --- Password: scrypt, parameters inside the hash string ---
-
 // OWASP equivalent of N=2^17/p=1, but 32 MiB instead of 128 MiB per hash (less memory DoS with parallel logins).
 const N = 2 ** 15,
 	R = 8,
@@ -33,7 +31,6 @@ function derive(
 	);
 }
 
-/** The error message for an unacceptable password, otherwise null. */
 export function passwordProblem(password: string): string | null {
 	if (password.length < PASSWORD_MIN)
 		return `Das Passwort braucht mindestens ${PASSWORD_MIN} Zeichen.`;
@@ -60,8 +57,6 @@ export async function verifyPassword(password: string, stored: string): Promise<
 	});
 	return timingSafeEqual(key, expected);
 }
-
-// --- Owner ---
 
 export const hasOwner = (db: DatabaseSync) => db.prepare('SELECT 1 FROM users').get() !== undefined;
 
@@ -103,7 +98,7 @@ export function resetPassword(db: DatabaseSync, passwordHash: string): boolean {
 	}
 }
 
-// --- Setup token: one-time, in memory only, printed to the console when starting without an owner ---
+// The setup token is one-time, kept in memory only and printed to the console when starting without an owner.
 
 let setupToken: string | null = null;
 
@@ -112,7 +107,7 @@ export const checkSetupToken = (input: string) =>
 	setupToken !== null && safeEqual(input, setupToken);
 export const clearSetupToken = () => void (setupToken = null);
 
-// --- Sessions: the token lives only in the cookie, the DB keeps its SHA-256 ---
+// A session token lives only in the cookie; the DB keeps its SHA-256.
 
 export const SESSION_COOKIE = 'studio_session';
 const SESSION_DAYS = 30;
@@ -134,10 +129,9 @@ export function createSession(db: DatabaseSync, userId: number, now = Date.now()
 }
 
 /**
- * Checks a session token. null = unknown or expired (an expired row is deleted).
- * Sliding expiry: extends to 30 days once less than 29 days remain (at most one write per day).
- * `renew: false` only checks — for places that cannot set the cookie again (an open SSE stream). Otherwise a heartbeat
- * would use up the renewal, the guard would never set the cookie again, and an open tab would keep the session forever.
+ * null = unknown or expired (an expired row is deleted). Sliding expiry: extends to 30 days once fewer than 29 remain.
+ * `renew: false` only checks, for places that cannot set the cookie again (an open SSE stream) — otherwise a heartbeat
+ * would use up the renewal and an open tab would keep the session alive forever.
  */
 export function validateSession(
 	db: DatabaseSync,
@@ -184,8 +178,6 @@ export function clearSessionCookie(cookies: Cookies, url: URL) {
 /** A Set-Cookie value that deletes the session cookie, for responses that SvelteKit does not attach event.cookies to. */
 export const expiredSessionCookie = (cookies: Cookies, url: URL) =>
 	cookies.serialize(SESSION_COOKIE, '', { ...cookieOptions(url), maxAge: 0 });
-
-// --- Rate limit ---
 
 /**
  * In-memory limit per key (client IP) in a sliding window. An attempt counts BEFORE the check and is only taken back

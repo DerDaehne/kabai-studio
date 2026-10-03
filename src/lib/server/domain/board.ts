@@ -225,10 +225,9 @@ function missingNoteBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 }
 
 /**
- * Epics always carry docs_required: if it is missing it gets set; setting it to 0 explicitly is an error. `current` is the
- * stored value (0 for createTicket, since the row does not exist yet) — if it is already 1, `fields` stays unchanged;
- * otherwise every update of an epic (even of the title only) would silently slip in a docs_required field that did not
- * change: no longer a no-op, and a misleading `ticket.updated` event with `fields:['docs_required']`.
+ * Epics always carry docs_required: it is set when missing, and an explicit 0 is an error. `current` is the stored
+ * value (0 on create); when it is already 1, `fields` stays unchanged, so an epic update does not report docs_required
+ * as a changed field.
  */
 function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(
 	type: string,

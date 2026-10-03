@@ -445,7 +445,6 @@ export function appendEvent(
 ): { seq: number; duplicate: boolean } {
 	return tx(db, (emit) => {
 		const r = run(db, runId);
-		// Secret values are masked before the payload is stored and published.
 		const payload = JSON.stringify(mask(e.payload ?? {}));
 		const repeatedSeq =
 			e.key === undefined ? undefined : repeatedEventSeq(db, r.id, e.key, e.type, payload);
