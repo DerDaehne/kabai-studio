@@ -193,6 +193,9 @@ export const expiredSessionCookie = (cookies: Cookies, url: URL) =>
  */
 export function rateLimiter(max = 5, windowMs = 60_000) {
 	const hits = new Map<string, number[]>();
+	const forgetExpired = (now: number) => {
+		for (const [key, times] of hits) if (times.every((t) => t <= now - windowMs)) hits.delete(key);
+	};
 	return {
 		/** false = Limit erreicht, Versuch abweisen. */
 		attempt(key: string, now = Date.now()): boolean {
@@ -200,9 +203,8 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 			const allowed = recent.length < max;
 			if (allowed) recent.push(now);
 			hits.set(key, recent);
-			// ponytail: voller Sweep ab 10k Schlüsseln; bei echten Massenangriffen gehört Studio hinter einen Proxy
-			if (hits.size > 10_000)
-				for (const [k, ts] of hits) if (ts.every((t) => t <= now - windowMs)) hits.delete(k);
+			// ponytail: full sweep above 10k keys; against real mass attacks Studio belongs behind a proxy
+			if (hits.size > 10_000) forgetExpired(now);
 			return allowed;
 		},
 		/** Erfolgreicher Versuch zählt nicht als Fehlversuch. */

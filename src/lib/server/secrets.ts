@@ -128,32 +128,38 @@ function walk(value: unknown, parents: Set<object>): unknown {
 	parents.add(value);
 	try {
 		if (Array.isArray(value)) return value.map((v) => walk(v, parents));
-		if (value instanceof Error) {
-			const copy = Object.assign(
-				Object.create(Object.getPrototypeOf(value)),
-				walk({ ...value }, parents),
-				{
-					message: maskText(value.message),
-					stack: value.stack && maskText(value.stack)
-				}
-			);
-			if ('cause' in value) copy.cause = walk(value.cause, parents);
-			return copy;
-		}
+		if (value instanceof Error) return walkError(value, parents);
 		const proto = Object.getPrototypeOf(value);
 		if (proto === Object.prototype || proto === null)
 			return Object.fromEntries(
 				Object.entries(value).map(([k, v]) => [maskText(k), walk(v, parents)])
 			);
-		let json: string | undefined;
-		try {
-			json = JSON.stringify(value);
-		} catch {
-			// Zyklus, BigInt, werfender Getter
-		}
+		const json = tryStringify(value);
 		return json === undefined ? maskText(inspect(value)) : walk(JSON.parse(json), parents);
 	} finally {
 		parents.delete(value); // nur Vorfahren zählen: dasselbe Objekt zweimal nebeneinander ist kein Zyklus
+	}
+}
+
+function walkError(error: Error, parents: Set<object>): Error {
+	const copy = Object.assign(
+		Object.create(Object.getPrototypeOf(error)),
+		walk({ ...error }, parents),
+		{
+			message: maskText(error.message),
+			stack: error.stack && maskText(error.stack)
+		}
+	);
+	if ('cause' in error) copy.cause = walk(error.cause, parents);
+	return copy;
+}
+
+/** undefined for values JSON cannot represent: cycles, BigInt, throwing getters. */
+function tryStringify(value: object): string | undefined {
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return undefined;
 	}
 }
 
@@ -192,6 +198,23 @@ export function setSecret(
 	key = secretKey()
 ): void {
 	value = value.trim();
+	assertStorable(name, value);
+	if (!replace && db.prepare('SELECT 1 FROM secrets WHERE name = ?').get(name))
+		throw new DomainError(
+			'secret_exists',
+			`Secret „${name}“ gibt es schon.`,
+			'Nutze „Ersetzen“ beim vorhandenen Eintrag — der bisherige Wert geht dabei verloren.'
+		);
+
+	const { ciphertext, iv, tag } = encrypt(key, name, value);
+	db.prepare(
+		`INSERT INTO secrets (name, ciphertext, iv, auth_tag) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO UPDATE
+		SET ciphertext = excluded.ciphertext, iv = excluded.iv, auth_tag = excluded.auth_tag, updated_at = CURRENT_TIMESTAMP`
+	).run(name, ciphertext, iv, tag);
+	remember(value, `[secret:${name}]`);
+}
+
+function assertStorable(name: string, value: string) {
 	if (name === value)
 		throw new DomainError(
 			'secret_name_is_value',
@@ -216,19 +239,6 @@ export function setSecret(
 			`Der Wert hat nur ${value.length} Zeichen, nötig sind mindestens ${MIN_LENGTH}.`,
 			'Prüfe, ob der Key vollständig eingefügt wurde. So kurze Werte lassen sich in Logs nicht sicher maskieren und gehören nicht in den Secret-Store.'
 		);
-	if (!replace && db.prepare('SELECT 1 FROM secrets WHERE name = ?').get(name))
-		throw new DomainError(
-			'secret_exists',
-			`Secret „${name}“ gibt es schon.`,
-			'Nutze „Ersetzen“ beim vorhandenen Eintrag — der bisherige Wert geht dabei verloren.'
-		);
-
-	const { ciphertext, iv, tag } = encrypt(key, name, value);
-	db.prepare(
-		`INSERT INTO secrets (name, ciphertext, iv, auth_tag) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO UPDATE
-		SET ciphertext = excluded.ciphertext, iv = excluded.iv, auth_tag = excluded.auth_tag, updated_at = CURRENT_TIMESTAMP`
-	).run(name, ciphertext, iv, tag);
-	remember(value, `[secret:${name}]`);
 }
 
 /** Löscht ein Secret. Idempotent: `false`, wenn es keins (mehr) gab. */

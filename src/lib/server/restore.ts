@@ -1,7 +1,7 @@
-// Wiederherstellung ohne UI: `npm run restore -- <backup-datei>` ersetzt die DB durch eine Sicherung (#808).
-// Nur bei gestopptem Server: restore hält die Einzelinstanz-Sperre des Datenverzeichnisses für seine ganze Laufzeit — läuft ein
-// Server, bricht restore ab; startet einer währenddessen, bricht der ab. Reihenfolge schützt die Daten: Quelle prüfen →
-// aktuelle DB sichern → ersetzen. Läuft direkt mit Node (Type-Stripping, kein Build), wie reset-password.
+// `npm run restore -- <backup-file>` replaces the database with a backup; runs directly under Node like
+// reset-password. It holds the data directory's single-instance lock for its whole run, so it refuses to
+// run next to a server, and a server started meanwhile refuses to start. The order protects the data:
+// verify the source → back up the current database → replace it.
 import { copyFileSync, existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,8 +9,7 @@ import { backup } from './backup.ts';
 import { assertKnownMigrations, backupDir, dataDir, lockDataDir, openDb } from './db.ts';
 import { DomainError, formatError } from './domain/error.ts';
 
-// Migration filenames this code knows, resolved relative to this module rather than the process cwd — restore may
-// run with any working directory.
+// Resolved relative to this module rather than the process cwd — restore may run from any directory.
 const MIGRATIONS_DIR = new URL('../../../migrations', import.meta.url);
 
 /** Throws if `file` isn't an intact Studio database, or contains migrations this code doesn't know. */
@@ -48,10 +47,7 @@ function fsError(err: unknown): unknown {
 	);
 }
 
-const file = join(dataDir(), 'studio.db');
-const tmp = `${file}.restore`;
-let locked = false; // erst mit der Sperre gehört die Temp-Kopie diesem Lauf
-try {
+function requireSourceArgument(): string {
 	const src = process.argv[2];
 	if (!src)
 		throw new Error(
@@ -59,6 +55,11 @@ try {
 		);
 	if (!existsSync(src))
 		throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);
+	return src;
+}
+
+function lockDataDirOrThrow() {
+	let locked: boolean;
 	try {
 		locked = lockDataDir();
 	} catch {
@@ -72,39 +73,54 @@ try {
 		throw new Error(
 			`Studio läuft noch mit dem Datenverzeichnis ${resolve(dataDir())} (oder ein anderes restore). Server stoppen und erneut ausführen.`
 		);
+}
 
-	// Geprüft wird die Kopie, die gleich eingesetzt wird — so entstehen auch keine -wal/-shm-Dateien neben der Quelle.
-	copyFileSync(src, tmp);
+/** Verifies the copy that is about to be swapped in, so no -wal/-shm files appear next to the source. */
+function copyAndVerify(src: string, copy: string) {
+	copyFileSync(src, copy);
 	try {
-		check(tmp);
+		check(copy);
 	} catch (err) {
 		if (err instanceof DomainError) throw err;
 		throw new Error(
 			`${src} ist keine intakte Studio-Sicherung (${(err as Error).message}). Eine andere Datei aus ${backupDir()} wählen.`
 		);
 	}
+}
 
-	if (existsSync(file)) {
-		let saved: string;
+function backUpCurrentDb(file: string): string {
+	try {
+		const current = openDb(file); // throws already if the current file is no SQLite database anymore
 		try {
-			const current = openDb(file); // wirft schon hier, wenn die aktuelle Datei keine SQLite-DB mehr ist
-			try {
-				saved = backup(current, backupDir());
-			} finally {
-				current.close(); // letzte Verbindung: SQLite schreibt das WAL zurück und löscht es
-			}
-		} catch (err) {
-			const reason = (((err as Error).cause as Error | undefined) ?? (err as Error)).message;
-			throw new Error(
-				`Die aktuelle Datenbank ${file} lässt sich vorher nicht sichern (${reason}). Ist sie defekt: sie samt -wal/-shm von Hand beiseitelegen (umbenennen) und erneut ausführen; sonst Speicherplatz und Schreibrechte in ${backupDir()} prüfen.`
-			);
+			return backup(current, backupDir());
+		} finally {
+			current.close(); // last connection: SQLite checkpoints the WAL and deletes it
 		}
-		console.log(`Aktuelle Datenbank gesichert: ${saved}`);
+	} catch (err) {
+		const reason = (((err as Error).cause as Error | undefined) ?? (err as Error)).message;
+		throw new Error(
+			`Die aktuelle Datenbank ${file} lässt sich vorher nicht sichern (${reason}). Ist sie defekt: sie samt -wal/-shm von Hand beiseitelegen (umbenennen) und erneut ausführen; sonst Speicherplatz und Schreibrechte in ${backupDir()} prüfen.`
+		);
 	}
-	// Ein altes WAL würde sonst auf die eingesetzte Datei angewendet und sie zerstören.
+}
+
+function swapIn(copy: string, file: string) {
+	// A leftover WAL would otherwise be replayed onto the restored file and corrupt it.
 	rmSync(`${file}-wal`, { force: true });
 	rmSync(`${file}-shm`, { force: true });
-	renameSync(tmp, file);
+	renameSync(copy, file);
+}
+
+const file = join(dataDir(), 'studio.db');
+const tmp = `${file}.restore`;
+let locked = false; // only once locked does the temporary copy belong to this run
+try {
+	const src = requireSourceArgument();
+	lockDataDirOrThrow();
+	locked = true;
+	copyAndVerify(src, tmp);
+	if (existsSync(file)) console.log(`Aktuelle Datenbank gesichert: ${backUpCurrentDb(file)}`);
+	swapIn(tmp, file);
 	console.log(
 		`Wiederhergestellt aus ${src}. Studio jetzt starten; Secrets brauchen den passenden secret.key.`
 	);

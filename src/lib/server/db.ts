@@ -84,30 +84,39 @@ export function migrate(
 		),
 		known
 	);
-	const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?');
 	const pending = Object.entries(migrations)
 		.map(([path, sql]) => [path.split('/').pop()!, sql] as const)
-		.filter(([name]) => !applied.get(name))
+		.filter(([name]) => !isApplied(db, name))
 		.sort(([a], [b]) => (a < b ? -1 : 1));
 	if (pending.length && db.prepare('SELECT 1 FROM schema_migrations LIMIT 1').get())
 		beforeUpgrade?.();
 
 	const ran: string[] = [];
 	for (const [name, sql] of pending) {
-		db.exec('BEGIN IMMEDIATE');
-		try {
-			if (!applied.get(name)) {
-				db.exec(sql);
-				db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(name);
-				ran.push(name);
-			}
-			db.exec('COMMIT');
-		} catch (err) {
-			if (db.isTransaction) db.exec('ROLLBACK'); // manche Fehler beenden die Transaktion bereits selbst
-			throw new Error(`Migration ${name} fehlgeschlagen`, { cause: err });
-		}
+		if (applyMigration(db, name, sql)) ran.push(name);
 	}
 	return ran;
+}
+
+function isApplied(db: DatabaseSync, name: string): boolean {
+	return !!db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(name);
+}
+
+/** Applies one migration in its own write transaction; false if another process applied it first. */
+function applyMigration(db: DatabaseSync, name: string, sql: string): boolean {
+	db.exec('BEGIN IMMEDIATE');
+	try {
+		const runsHere = !isApplied(db, name);
+		if (runsHere) {
+			db.exec(sql);
+			db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(name);
+		}
+		db.exec('COMMIT');
+		return runsHere;
+	} catch (err) {
+		if (db.isTransaction) db.exec('ROLLBACK'); // some errors already end the transaction themselves
+		throw new Error(`Migration ${name} fehlgeschlagen`, { cause: err });
+	}
 }
 
 let conn: DatabaseSync | undefined;

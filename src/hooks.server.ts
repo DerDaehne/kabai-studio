@@ -1,5 +1,12 @@
 import { dev } from '$app/environment';
-import { json, redirect, text, type Handle, type ServerInit } from '@sveltejs/kit';
+import {
+	json,
+	redirect,
+	text,
+	type Handle,
+	type RequestEvent,
+	type ServerInit
+} from '@sveltejs/kit';
 import {
 	SESSION_COOKIE,
 	clearSessionCookie,
@@ -66,38 +73,51 @@ const RUN_TOKEN_PATH = '/mcp';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
-	// CSRF auch jenseits von SvelteKits Formular-Check (der nur Formular-Content-Types prüft, z. B. POST /logout ohne Body):
-	// Browser senden bei jedem Nicht-GET eine Origin, eine fremde wird abgewiesen. Ohne Origin = kein Browser (CLI, Agent).
-	const origin = event.request.headers.get('origin');
-	if (!SAFE_METHODS.has(event.request.method) && origin !== null && origin !== event.url.origin)
+	if (isCrossOriginWrite(event))
 		return text(
 			`Anfrage von fremder Herkunft abgewiesen. Studio nur direkt über ${event.url.origin} aufrufen.`,
 			{ status: 403 }
 		);
 
 	const token = event.cookies.get(SESSION_COOKIE);
-	const session = token ? validateSession(db(), token) : null;
-	if (token && !session) clearSessionCookie(event.cookies, event.url);
-	if (session) {
-		event.locals.user = session.user;
-		if (session.renewed) setSessionCookie(event.cookies, event.url, token!);
-	}
-
+	const hasSession = !!token && restoreSession(event, token);
 	const path = event.url.pathname;
-	if (!session && !PUBLIC.has(path) && path !== RUN_TOKEN_PATH) {
-		if (path === '/api' || path.startsWith('/api/')) {
-			const res = json(
-				{
-					error: 'unauthorized',
-					hint: 'Keine gültige Session — im Browser unter /login anmelden.'
-				},
-				{ status: 401 }
-			);
-			// direkt zurückgegebene Antworten bekommen event.cookies nicht angehängt → Löschung selbst setzen
-			if (token) res.headers.append('set-cookie', expiredSessionCookie(event.cookies, event.url));
-			return res;
-		}
-		redirect(303, hasOwner(db()) ? '/login' : '/setup');
-	}
-	return resolve(event);
+	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH) return resolve(event);
+	if (path === '/api' || path.startsWith('/api/')) return unauthorizedApiResponse(event, !!token);
+	redirect(303, hasOwner(db()) ? '/login' : '/setup');
 };
+
+/**
+ * CSRF protection beyond SvelteKit's form check, which only covers form content types (e.g. not a bodyless
+ * POST /logout): browsers send an Origin with every non-GET request. No Origin means no browser (CLI, agent).
+ */
+function isCrossOriginWrite(event: RequestEvent): boolean {
+	const origin = event.request.headers.get('origin');
+	return !SAFE_METHODS.has(event.request.method) && origin !== null && origin !== event.url.origin;
+}
+
+/** Sets `locals.user` from a valid session token and renews its cookie; clears the cookie of an invalid one. */
+function restoreSession(event: RequestEvent, token: string): boolean {
+	const session = validateSession(db(), token);
+	if (!session) {
+		clearSessionCookie(event.cookies, event.url);
+		return false;
+	}
+	event.locals.user = session.user;
+	if (session.renewed) setSessionCookie(event.cookies, event.url, token);
+	return true;
+}
+
+function unauthorizedApiResponse(event: RequestEvent, hadSessionCookie: boolean): Response {
+	const res = json(
+		{
+			error: 'unauthorized',
+			hint: 'Keine gültige Session — im Browser unter /login anmelden.'
+		},
+		{ status: 401 }
+	);
+	// Responses returned directly don't get event.cookies attached, so the cookie deletion is set by hand.
+	if (hadSessionCookie)
+		res.headers.append('set-cookie', expiredSessionCookie(event.cookies, event.url));
+	return res;
+}

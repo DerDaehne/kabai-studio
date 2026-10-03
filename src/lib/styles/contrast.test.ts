@@ -119,9 +119,8 @@ function checkContrast(declarations: Declarations): PairResult[] {
 		};
 
 		const underCards: Backdrops = { '--bg': ground };
-		for (const token of declarations.keys()) {
-			if (/^--(aura|nebula)-/.test(token)) underCards[token] = over(color(token), ground);
-		}
+		const backgroundTokens = [...declarations.keys()].filter((t) => /^--(aura|nebula)-/.test(t));
+		for (const token of backgroundTokens) underCards[token] = over(color(token), ground);
 		const glassOver = (glass: string, backdrops: Backdrops): Backdrops =>
 			Object.fromEntries(
 				Object.entries(backdrops).map(([name, backdrop]) => [name, over(color(glass), backdrop)])
