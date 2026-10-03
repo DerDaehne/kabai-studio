@@ -13,6 +13,8 @@
 	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
+		haltLabel,
+		haltQuestion,
 		live,
 		LIVE_DEPENDENCY,
 		openQuestionsLabel,
@@ -23,11 +25,13 @@
 		boundActions,
 		handleKey,
 		keyboard,
+		readKey,
 		restoreSingleKeys,
 		setSingleKeys
 	} from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
@@ -163,6 +167,40 @@
 		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
 		else if (suggestion.id.startsWith('single-keys'))
 			setSingleKeys(suggestion.id === 'single-keys-on');
+		else if (suggestion.id === 'halt') haltOpen = true;
+		else if (suggestion.id === 'release') await release();
+	}
+
+	let haltOpen = $state(false);
+
+	/** Calls the kill switch route; on failure a toast offers the way out and nothing comes back. */
+	async function switchHalt(method: 'POST' | 'DELETE', failure: string) {
+		const response = await fetch('/api/halt', { method }).catch(() => undefined);
+		if (response?.ok) return response;
+		toast(`${failure} Verbindung prüfen und erneut versuchen.`, 'error');
+	}
+
+	async function halt() {
+		haltOpen = false;
+		const response = await switchHalt('POST', 'Anhalten ging nicht.');
+		if (!response) return;
+		const { cancelled } = (await response.json()) as { cancelled: number };
+		toast(`Angehalten: ${cancelled} ${cancelled === 1 ? 'Run' : 'Runs'} abgebrochen.`, 'success');
+		await invalidate(LIVE_DEPENDENCY); // without waiting for the event, which a broken connection would lose
+	}
+
+	async function release() {
+		if (!(await switchHalt('DELETE', 'Fortsetzen ging nicht.'))) return;
+		toast('Fortgesetzt: wartende Runs starten wieder.', 'success');
+		await invalidate(LIVE_DEPENDENCY);
+	}
+
+	// The router stays out of open dialogs, so the halt confirmation takes its y itself — with Alt when single keys are off.
+	function onWindowKey(event: KeyboardEvent) {
+		if (haltOpen && readKey(event) === 'y') {
+			event.preventDefault();
+			void halt();
+		} else handleKey(event);
 	}
 
 	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
@@ -195,7 +233,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<svelte:window onkeydown={handleKey} />
+<svelte:window onkeydown={onWindowKey} />
 
 {#snippet viewLabel(view: View)}
 	{view.label}
@@ -246,6 +284,13 @@
 						<Icon name="x" size={14} />
 					</button>
 				</span>
+			{/if}
+			{#if live.halted}
+				<div class="chip halted">
+					<Icon name="pause" size={14} />
+					<span role="status">{haltLabel(live.runs)}</span>
+					<Button size="sm" onclick={release}>Fortsetzen</Button>
+				</div>
 			{/if}
 			<ul class="agents" aria-label="Agents">
 				{#if groupAgents}
@@ -339,6 +384,13 @@
 		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
 	</Dialog>
 	<KeyOverview bind:open={keysOpen} />
+	<Dialog bind:open={haltOpen} title="Alle Agents anhalten?">
+		<p>{haltQuestion(live.activeRuns)}</p>
+		{#snippet footer()}
+			<Button onclick={() => (haltOpen = false)}>Abbrechen</Button>
+			<Button variant="danger" onclick={halt}>Anhalten (y)</Button>
+		{/snippet}
+	</Dialog>
 {/if}
 
 <Toaster />
@@ -454,6 +506,17 @@
 	}
 	.chip.halt .state {
 		color: var(--status-waiting);
+	}
+	/* The kill switch stays visible until it is released: it never shrinks away like the agent chips */
+	.halted {
+		flex-shrink: 0;
+		height: auto;
+		min-height: 30px;
+		padding-right: 3px;
+		background: var(--status-paused-tint);
+		box-shadow: 0 0 16px var(--aura-paused);
+		color: var(--status-paused);
+		font-weight: 560;
 	}
 	.focus-chip {
 		flex-shrink: 0;

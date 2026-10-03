@@ -6,6 +6,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { createOwner, createSession } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
+import { haltRuns, releaseHalt } from '$lib/server/domain/halt';
 import type { Actor } from '$lib/server/domain/core';
 import * as questions from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
@@ -174,4 +175,37 @@ it('serves every view from the one connection of its tab: views subscribe with o
 	expect(RouteEventSource.instances.slice(connectionsBefore).map((es) => es.url)).toEqual([
 		'/api/events'
 	]);
+});
+
+it('shows the halt with the number of waiting runs in every open tab and drops it on release, without a page reload', async () => {
+	const open = [await openTab(), await openTab()];
+	const { ticketId } = startRun();
+	runs.createRun(db(), system, { ticketId, profileId });
+	for (const tab of open)
+		await vi.waitFor(() => expect(tab.live).toMatchObject({ halted: false, activeRuns: 1 }));
+
+	haltRuns(db(), user);
+	const queued = db().prepare("SELECT count(*) AS n FROM runs WHERE state = 'queued'").get()!.n;
+	expect(queued).toBeGreaterThan(0);
+	for (const tab of open) {
+		await vi.waitFor(() => expect(tab.live).toMatchObject({ halted: true, activeRuns: 0 }));
+		expect(tab.haltLabel(tab.live.runs)).toBe(`Angehalten · ${queued} wartend`);
+		expect(tab.shell.agents).toEqual([]); // the cancelled run's chip is gone
+	}
+
+	releaseHalt(db(), user);
+	for (const tab of open) await vi.waitFor(() => expect(tab.live.halted).toBe(false));
+});
+
+it('names the runs a halt cancels in its confirmation, and how the waiting ones go on', async () => {
+	const { haltQuestion } = await import('./live.svelte');
+	expect(haltQuestion(0)).toBe(
+		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+	);
+	expect(haltQuestion(1)).toBe(
+		'1 Run läuft und wird sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+	);
+	expect(haltQuestion(3)).toBe(
+		'3 Runs laufen und werden sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+	);
 });

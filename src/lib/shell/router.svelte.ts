@@ -113,7 +113,7 @@ function characterBehind(event: KeyInput): string {
 }
 
 /** The key as the keymap names it, or null when it is the browser's or single keys are off. */
-function readKey(event: KeyInput): string | null {
+export function readKey(event: KeyInput): string | null {
 	const altGraph = event.getModifierState('AltGraph');
 	// Windows reports AltGr as Ctrl+Alt; AltGr only types characters such as { and }
 	const ctrl = event.ctrlKey && !altGraph;

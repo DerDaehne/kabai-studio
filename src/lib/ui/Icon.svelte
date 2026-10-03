@@ -6,6 +6,7 @@
 		inbox: 'M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5M5.5 5h13l2 8.5V19h-17v-5.5z',
 		notes: 'M6 3.5h8.5l3.5 3.5v13.5H6zM14 3.5V7.5h4M9 12h6M9 15.5h4.5',
 		settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4',
+		pause: 'M9 5.5v13M15 5.5v13',
 		// comment author kinds (Run-Akte): a head-and-shoulders mark for the human, a chip for the agent
 		user: 'M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM5 20c0-4 3-6.5 7-6.5s7 2.5 7 6.5',
 		agent: 'M9 9h6v6H9zM9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3'

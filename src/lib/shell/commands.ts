@@ -21,6 +21,8 @@ export type SuggestionSources = {
 export const commands: Suggestion[] = [
 	{ id: 'run', label: ':run', detail: 'Ticket als Run starten', available: false },
 	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
+	{ id: 'halt', label: ':anhalten', detail: 'Not-Aus: alle Agent-Runs sofort anhalten' },
+	{ id: 'release', label: ':fortsetzen', detail: 'Nach dem Not-Aus: wartende Runs starten wieder' },
 	{ id: 'fokus-aus', label: ':fokus aus', detail: 'Projekt-Fokus aufheben' },
 	{ id: 'theme-light', label: ':set farbschema hell', detail: 'Helles Farbschema' },
 	{ id: 'theme-dark', label: ':set farbschema dunkel', detail: 'Dunkles Farbschema' },

@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { LiveRun, LiveState } from '$lib/shell/live.svelte';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
+import { haltedSince } from './domain/halt';
 import type { RunState } from './domain/runs';
 
 type ProjectRow = { id: number; key: string; name: string };
@@ -47,14 +48,24 @@ const OPEN_QUESTIONS = `
 	JOIN projects p ON p.id = t.project_id
 	WHERE p.archived = 0 AND ${OPEN_QUESTION}`;
 
-/** What every view shows live across all projects: projects, active and holding runs, open questions. */
+// Every run the kill switch would cancel, in archived projects too.
+const ACTIVE_RUN_COUNT =
+	"SELECT count(*) AS count FROM runs WHERE state IN ('running', 'waiting_approval')";
+
+/** What every view shows live across all projects: projects, active and holding runs, open questions, the kill switch. */
 export function liveState(db: DatabaseSync): LiveState {
 	const projects = db
 		.prepare('SELECT id, key, name FROM projects WHERE archived = 0 ORDER BY key')
 		.all() as ProjectRow[];
 	const runs = db.prepare(ACTIVE_RUNS).all() as RunRow[];
-	const { count } = db.prepare(OPEN_QUESTIONS).get() as { count: number };
-	return { projects: projects.map(projectRef), runs: runs.map(liveRun), openQuestions: count };
+	const count = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
+	return {
+		projects: projects.map(projectRef),
+		runs: runs.map(liveRun),
+		openQuestions: count(OPEN_QUESTIONS),
+		halted: haltedSince(db) !== null,
+		activeRuns: count(ACTIVE_RUN_COUNT)
+	};
 }
 
 function liveRun(row: RunRow): LiveRun {

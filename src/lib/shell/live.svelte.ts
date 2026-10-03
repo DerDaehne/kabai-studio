@@ -12,10 +12,18 @@ export type LiveRun = {
 	state: 'queued' | 'running' | 'waiting';
 };
 
-export type LiveState = { projects: ProjectRef[]; runs: LiveRun[]; openQuestions: number };
+export type LiveState = {
+	projects: ProjectRef[];
+	runs: LiveRun[];
+	openQuestions: number;
+	/** The kill switch is set: no run starts until the human releases it. */
+	halted: boolean;
+	/** Running or waiting for an approval, in every project: what the kill switch would cancel. */
+	activeRuns: number;
+};
 
-/** An event of any project, as the event route sends it. */
-export type LiveEvent = { type: string; projectId: number; [key: string]: unknown };
+/** An event as the event route sends it; one that concerns every project, such as the kill switch, has no projectId. */
+export type LiveEvent = { type: string; projectId?: number; [key: string]: unknown };
 
 /** The root layout load depends on this; invalidating it loads the live state again. */
 export const LIVE_DEPENDENCY = 'studio:live';
@@ -30,11 +38,19 @@ const STATE_CHANGES = new Set([
 	'ticket.moved',
 	'ticket.deleted',
 	'project.created',
-	'project.updated'
+	'project.updated',
+	'runner.halted',
+	'runner.released'
 ]);
 
 /** Live state of all projects in this tab; `showLive` replaces it. */
-export const live: LiveState = $state({ projects: [], runs: [], openQuestions: 0 });
+export const live: LiveState = $state({
+	projects: [],
+	runs: [],
+	openQuestions: 0,
+	halted: false,
+	activeRuns: 0
+});
 
 const listeners = new Set<(event: LiveEvent) => void>();
 
@@ -61,6 +77,20 @@ export const agentChips = (runs: LiveRun[]): AgentChip[] =>
 
 export const openQuestionsLabel = (count: number) =>
 	`${count} offene ${count === 1 ? 'Frage' : 'Fragen'}`;
+
+/** The head dock's signal while the kill switch is set. */
+export const haltLabel = (runs: LiveRun[]) =>
+	`Angehalten · ${runs.filter((run) => run.state === 'queued').length} wartend`;
+
+function activeRunsText(count: number) {
+	if (count === 0) return 'Gerade läuft kein Run.';
+	if (count === 1) return '1 Run läuft und wird sofort abgebrochen.';
+	return `${count} Runs laufen und werden sofort abgebrochen.`;
+}
+
+/** The confirmation before halting: what gets cancelled and how the queue goes on. */
+export const haltQuestion = (activeRuns: number) =>
+	`${activeRunsText(activeRuns)} Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).`;
 
 /** Lets a view follow the events of all projects over the tab's one connection; returns the unsubscribe function. */
 export function onLiveEvent(listener: (event: LiveEvent) => void): () => void {

@@ -115,3 +115,11 @@ describe('suggestionsFor', () => {
 		expect(labels(suggestionsFor('/push', sources))).toEqual(['Push bei neuer Freigabe']);
 	});
 });
+
+describe('kill switch commands', () => {
+	it('offers :anhalten and :fortsetzen by name and both by "Not-Aus"', () => {
+		expect(labels(suggest(':', 'anh', sources))).toEqual([':anhalten']);
+		expect(labels(suggest(':', 'fort', sources))).toEqual([':fortsetzen']);
+		expect(labels(suggest(':', 'not-aus', sources))).toEqual([':anhalten', ':fortsetzen']);
+	});
+});

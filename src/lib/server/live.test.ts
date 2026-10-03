@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
+import { haltRuns } from './domain/halt';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
 import { liveState, projectRef } from './live';
@@ -98,5 +99,21 @@ describe('liveState', () => {
 		]);
 		expect(state.projects.map((p) => p.code)).toEqual(['STU']);
 		expect(state.openQuestions).toBe(1);
+	});
+
+	it('counts the runs the kill switch would cancel, in archived projects too, and tells whether it is set', () => {
+		const s = setup();
+		const local = s.profile('qwen', 'local');
+		const stu = s.project('STU', 'Studio');
+		const approving = s.running(s.ticket(stu), local);
+		runs.setRunState(s.db, user, approving, 'waiting_approval');
+		s.queued(s.ticket(stu), local);
+		const archived = s.project('OLD', 'Alt');
+		s.running(s.ticket(archived), local);
+		s.db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archived);
+		expect(liveState(s.db)).toMatchObject({ halted: false, activeRuns: 2 });
+
+		haltRuns(s.db, user);
+		expect(liveState(s.db)).toMatchObject({ halted: true, activeRuns: 0 });
 	});
 });
