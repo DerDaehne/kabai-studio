@@ -5,6 +5,9 @@
 # (gitleaks is installed there, so the gitleaks scenarios cover the real call instead of
 # only the local fallback).
 set -euo pipefail
+# Ignore the caller's global/system git config so a missing identity on an
+# amend fails the same way here as on a runner with no identity configured.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 repo_root="$(git rev-parse --show-toplevel)"
 script="$repo_root/scripts/scan-secrets.sh"
 tmp="$(mktemp -d)"
@@ -199,10 +202,12 @@ git -C "$work" add s.txt
 commit_as Neutral neutral@example.invalid "feat: add s ($ticket)"
 check "board: ticket id at the end of the commit subject is allowed" 0
 
-git -C "$work" commit -q --amend -m "feat: add s" -m "Follow-up of $ticket."
+git -C "$work" -c user.name=Neutral -c user.email=neutral@example.invalid \
+	commit -q --amend -m "feat: add s" -m "Follow-up of $ticket."
 check "board: ticket id in the commit body" 1 "Board reference in the message of commit"
 
-git -C "$work" commit -q --amend -m "feat: add s" -m "Documented in $slug."
+git -C "$work" -c user.name=Neutral -c user.email=neutral@example.invalid \
+	commit -q --amend -m "feat: add s" -m "Documented in $slug."
 check "board: note slug in the commit body" 1 "Board reference in the message of commit"
 
 git -C "$work" -c user.name='dependabot[bot]' -c user.email='1+dependabot[bot]@users.noreply.github.com' \
