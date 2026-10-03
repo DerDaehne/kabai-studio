@@ -18,7 +18,7 @@ export type Ticket = {
 type Emit = (event: StudioEvent) => void;
 export type RelationType = 'parent_of' | 'blocks' | 'relates_to' | 'duplicate_of';
 export type Blocker = { code: string; message: string; hint: string };
-/** Ein erreichbares Ziel; `blockers` leer = der Wechsel ist für diesen Actor jetzt erlaubt. */
+/** A reachable target; empty `blockers` = this actor may make the move now. */
 export type Move = {
 	columnId: number;
 	name: string;
@@ -27,7 +27,7 @@ export type Move = {
 	blockers: Blocker[];
 };
 
-/** Direkt setzbare Ticketfelder — die Spalte wechselt nur über moveTicket, die Freigabe nur über approveReview. */
+/** Ticket fields that can be set directly — the column changes only through moveTicket, the approval only through approveReview. */
 const FIELDS = [
 	'title',
 	'description',
@@ -83,7 +83,7 @@ const DEFAULT_COLUMNS: [string, Kind, string][] = [
 	['Human Answered', 'human_answered', HUMAN_ANSWERED_ROLE]
 ];
 
-/** Default für requires_human: Abschließen und „der Mensch hat geantwortet“ darf nur ein Mensch. */
+/** Default for requires_human: only a human may complete a ticket or mark that the human has answered. */
 const humanOnly = (kind: Kind) => kind === 'done' || kind === 'human_answered';
 const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ');
 
@@ -121,8 +121,8 @@ const columns = (db: DatabaseSync, projectId: number) =>
 		.all(projectId) as Column[];
 
 /**
- * Erreichbare Spalten: gespeicherte Transitionen plus implizit jede Spalte → human_intervention und human_answered → jede Spalte.
- * Aus einer done-Spalte heraus (Reopen) darf nur der Mensch — unabhängig von der Kante.
+ * Reachable columns: the stored transitions plus, implicitly, every column → human_intervention and human_answered → every column.
+ * Only the human may leave a done column (reopen), whatever the edge says.
  */
 function targets(db: DatabaseSync, t: Ticket) {
 	const rows = db
@@ -145,7 +145,7 @@ function targets(db: DatabaseSync, t: Ticket) {
 		}));
 }
 
-/** Die eine Regelprüfung für allowedMoves und moveTicket. */
+/** The single rule check shared by allowedMoves and moveTicket. */
 function blockers(
 	db: DatabaseSync,
 	t: Ticket,
@@ -225,10 +225,10 @@ function missingNoteBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 }
 
 /**
- * Epics tragen docs_required immer: fehlt es, wird es gesetzt; explizit auf 0 gesetzt ist ein Fehler. `current` ist der
- * gespeicherte Wert (0 bei createTicket, da die Zeile noch nicht existiert) — ist er schon 1, bleibt `fields` unverändert,
- * sonst würde jedes Update eines Epics (auch nur der Titel) still ein docs_required-Feld einschmuggeln, das sich gar nicht
- * geändert hat: kein No-op mehr, ein irreführendes `ticket.updated`-Event mit `fields:['docs_required']`.
+ * Epics always carry docs_required: if it is missing it gets set; setting it to 0 explicitly is an error. `current` is the
+ * stored value (0 for createTicket, since the row does not exist yet) — if it is already 1, `fields` stays unchanged;
+ * otherwise every update of an epic (even of the title only) would silently slip in a docs_required field that did not
+ * change: no longer a no-op, and a misleading `ticket.updated` event with `fields:['docs_required']`.
  */
 function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }>(
 	type: string,
@@ -246,7 +246,7 @@ function withEpicDocsRequired<T extends { type?: string; docs_required?: 0 | 1 }
 	return fields.docs_required === 1 || current === 1 ? fields : { ...fields, docs_required: 1 };
 }
 
-/** Nur freigegebene Felder; alles andere ist ein Fehler statt still ignoriert. Liefert [Spalte, Wert]-Paare. */
+/** Only the allowed fields; anything else is an error instead of being ignored silently. Returns [column, value] pairs. */
 function fieldsOf(input: object): [string, SQLInputValue][] {
 	return Object.entries(input)
 		.filter(([, v]) => v !== undefined)
@@ -370,7 +370,7 @@ export function setBlocksSatisfiedAt(
 	});
 }
 
-/** Nummer = Projektzähler + 1; ohne `column_id` landet das Ticket in der ersten normalen Spalte. */
+/** Number = project counter + 1; without `column_id` the ticket lands in the first normal column. */
 export function createTicket(
 	db: DatabaseSync,
 	actor: Actor,
@@ -545,7 +545,7 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 				'Freigeben gehört zur Review-Rolle. Halte dein Ergebnis als Kommentar fest; freigeben kann ein Review-Run oder der Mensch.'
 			);
 		const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
-		// ponytail: „Autor der letzten Arbeit“ ≈ wer zuletzt verschoben hat; mit Runs (#779) den letzten Arbeits-Run bzw. dessen Profil vergleichen
+		// ponytail: "author of the last work" ≈ whoever moved the ticket last; compare the last working run or its profile once that distinction matters
 		if (actor.kind !== 'user' && last?.kind === actor.kind && last.runId === actor.runId)
 			throw new DomainError(
 				'self_approval',
@@ -563,8 +563,8 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 const PREDECESSOR_OPEN = `bc.kind <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
 
 /**
- * Tickets ohne offene blocks-Vorgänger (ohne done- und human_intervention-Spalten). Offen ist ein Vorgänger,
- * solange er nicht in einer done-Spalte liegt — bei `blocks_satisfied_at = 'review_ok'` genügt seine Review-Freigabe.
+ * Tickets without unfinished blocks predecessors (excluding done and human_intervention columns). A predecessor is
+ * unfinished until it is in a done column — with `blocks_satisfied_at = 'review_ok'` its review approval suffices.
  */
 export function workableTickets(db: DatabaseSync, projectId: number, columnId?: number) {
 	return db
@@ -684,7 +684,7 @@ export const completeTask = (db: DatabaseSync, actor: Actor, taskId: number) =>
 export const reopenTask = (db: DatabaseSync, actor: Actor, taskId: number) =>
 	setTaskDone(db, actor, taskId, false);
 
-/** Benennt einen Task um; die Begründung landet als System-Kommentar am Ticket. */
+/** Renames a task; the reason is recorded as a system comment on the ticket. */
 export function updateTask(
 	db: DatabaseSync,
 	actor: Actor,
@@ -708,7 +708,7 @@ export function updateTask(
 	});
 }
 
-/** Löscht einen Task; die Begründung landet als System-Kommentar am Ticket. */
+/** Deletes a task; the reason is recorded as a system comment on the ticket. */
 export function deleteTask(db: DatabaseSync, actor: Actor, taskId: number, reason: string) {
 	tx(db, (emit) => {
 		requireReason(reason);
@@ -735,7 +735,7 @@ export function addComment(
 	return tx(db, (emit) => appendComment(db, emit, actor, ticket(db, ticketId), body));
 }
 
-/** Verknüpft zwei Tickets (idempotent). parent_of und blocks bleiben zyklenfrei. */
+/** Links two tickets (idempotent). parent_of and blocks stay free of cycles. */
 export function linkRelation(
 	db: DatabaseSync,
 	actor: Actor,

@@ -3,7 +3,7 @@ import { publish, type StudioEvent } from '../events';
 
 export { DomainError } from './error';
 
-/** Wer eine Mutation auslöst. Agents handeln immer in einem Run. */
+/** Who triggers a mutation. Agents always act within a run. */
 export type Actor = { kind: 'user' | 'agent' | 'system'; runId?: number };
 
 /** How an actor appears as comment author or assignee, e.g. "agent (Run 3)". */

@@ -12,7 +12,7 @@ const user: Actor = { kind: 'user' };
 const dev: Actor = { kind: 'agent', runId: 1 };
 const reviewer: Actor = { kind: 'agent', runId: 2 };
 
-/** Agent-Actors handeln in echten Runs (comments.run_id hat einen FK): legt Run 1 und 2 in einem eigenen Projekt an. */
+/** Agent actors act in real runs (comments.run_id has a FK), so this creates runs 1 and 2 in a separate project. */
 function withRuns(db: DatabaseSync) {
 	const p = board.createProject(db, user, { key: 'RUN', name: 'Runs' }).id;
 	const ticketId = board.createTicket(db, user, p, { title: 'Runs' }).id;
@@ -34,7 +34,7 @@ function setup() {
 	const col = Object.fromEntries(rows.map((r) => [r.name, r.id])) as Record<string, number>;
 	const ticket = (fields: Partial<board.TicketFields> = {}) =>
 		board.createTicket(db, user, projectId, { title: 'T', ...fields }).id;
-	/** Setzt den Ausgangszustand direkt, ohne die Regeln zu durchlaufen. */
+	/** Sets the initial state directly, bypassing the rules. */
 	const place = (id: number, column: string) =>
 		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[column], id);
 	const columnOf = (id: number) =>
@@ -102,7 +102,7 @@ describe('createProject / createTicket', () => {
 		expect(flagged.map((c) => c.name)).toEqual(['Review']);
 	});
 
-	it('vergibt Ticketnummern fortlaufend pro Projekt und nie doppelt, auch nach Löschen', () => {
+	it('numbers tickets consecutively per project and never twice, even after a deletion', () => {
 		const { db, projectId, ticket, columnOf } = setup();
 		const other = board.createProject(db, user, { key: 'OTH', name: 'Anderes' }).id;
 		const a = ticket();
@@ -115,10 +115,10 @@ describe('createProject / createTicket', () => {
 			.all(projectId);
 		expect(numbers.map((r) => r.number)).toEqual([1, 3]);
 		expect(c.number).toBe(3);
-		expect(columnOf(a)).toBe('Backlog'); // Default: erste normale Spalte
+		expect(columnOf(a)).toBe('Backlog'); // default: the first normal column
 	});
 
-	it('Anlage: nie in done, in human_answered nur durch user, in human_intervention auch durch Agent', () => {
+	it('creates tickets never in done, in human_answered only as user, and in human_intervention also as agent', () => {
 		const { db, projectId, col } = setup();
 		expect(
 			caught(() => board.createTicket(db, user, projectId, { title: 'X', column_id: col.Done }))
@@ -133,13 +133,13 @@ describe('createProject / createTicket', () => {
 		board.createTicket(db, dev, projectId, {
 			title: 'Frage',
 			column_id: col['Human Intervention']
-		}); // Agent darf eskalieren
+		}); // an agent may escalate
 		expect(
 			db.prepare('SELECT count(*) AS n FROM tickets WHERE project_id = ?').get(projectId)?.n
 		).toBe(2);
 	});
 
-	it('updateTicket setzt nur freigegebene Felder', () => {
+	it('sets only the allowed fields in updateTicket', () => {
 		const { db, ticket, col } = setup();
 		const id = ticket();
 		board.updateTicket(db, dev, id, { title: 'Neu', docs_required: 1 });
@@ -152,7 +152,7 @@ describe('createProject / createTicket', () => {
 		expect(err.hint).toContain('moveTicket');
 	});
 
-	it('Epics tragen docs_required immer: wird beim Anlegen erzwungen, explizites 0 wird abgelehnt (Anlegen und Ändern)', () => {
+	it('always gives epics docs_required: forced on create, an explicit 0 is refused on create and update', () => {
 		const { db, projectId, ticket } = setup();
 		const epic = board.createTicket(db, user, projectId, { title: 'Epic', type: 'epic' }).id;
 		expect(db.prepare('SELECT docs_required FROM tickets WHERE id = ?').get(epic)).toEqual({
@@ -171,7 +171,7 @@ describe('createProject / createTicket', () => {
 		});
 		const err = caught(() => board.updateTicket(db, user, plain, { docs_required: 0 }));
 		expect(err.code).toBe('epic_docs_required');
-		expect(err.message).toContain('STU-'); // Meldung nennt den Ticket-Ref
+		expect(err.message).toContain('STU-'); // the message names the ticket ref
 	});
 
 	describe('default role prompts', () => {
@@ -203,9 +203,8 @@ describe('createProject / createTicket', () => {
 			expect(prompts.Done.trim()).toBe('');
 		});
 
-		// Stand-in for the shared board pattern check (not yet merged into this repository): no ticket/comment
-		// numbers, no note slugs, no known product/tool names, ASCII English only. Switch to the shared check
-		// once it lands.
+		// Role prompts reach agents of every project, so they stay generic: no ticket or comment numbers, note slugs,
+		// product or tool names or paths, and ASCII English only.
 		const FORBIDDEN_PATTERNS: RegExp[] = [
 			/#\d/, // ticket or comment number
 			/\b(adr|arch|concept)-[a-z]+(-[a-z]+)*\b/i, // note slug prefixes
@@ -224,26 +223,26 @@ describe('createProject / createTicket', () => {
 		});
 	});
 
-	it('ein unbeteiligtes Update eines Epics schmuggelt docs_required nicht als geändertes Feld ins Event', () => {
+	it('does not report docs_required as a changed field when an unrelated epic field is updated', () => {
 		const { db, projectId } = setup();
-		const epic = board.createTicket(db, user, projectId, { title: 'Epic', type: 'epic' }).id; // docs_required bereits 1
+		const epic = board.createTicket(db, user, projectId, { title: 'Epic', type: 'epic' }).id; // docs_required already 1
 		const events: StudioEvent[] = [];
 		const off = subscribe((e) => events.push(e));
 		board.updateTicket(db, user, epic, { title: 'Anderer Titel' });
 		off();
 		expect(events).toHaveLength(1);
-		expect(events[0]).toMatchObject({ type: 'ticket.updated', fields: ['title'] }); // kein docs_required in fields, obwohl das Epic es trägt
+		expect(events[0]).toMatchObject({ type: 'ticket.updated', fields: ['title'] }); // no docs_required in fields although the epic carries it
 
 		const events2: StudioEvent[] = [];
 		const off2 = subscribe((e) => events2.push(e));
-		board.updateTicket(db, user, epic, {}); // leeres Update auf einem Epic bleibt No-op, kein Event
+		board.updateTicket(db, user, epic, {}); // an empty update on an epic stays a no-op without an event
 		off2();
 		expect(events2).toEqual([]);
 	});
 });
 
 describe('moveTicket', () => {
-	it('weist eine illegale Transition ab und nennt die erlaubten Ziele', () => {
+	it('rejects an illegal transition and names the allowed targets', () => {
 		const { db, ticket, col, columnOf } = setup();
 		const id = ticket();
 		const err = caught(() => board.moveTicket(db, user, id, col.Review));
@@ -255,12 +254,12 @@ describe('moveTicket', () => {
 		expect(columnOf(id)).toBe('Backlog');
 	});
 
-	it('erreicht human_intervention aus jeder Spalte und aus human_answered jede Spalte', () => {
+	it('reaches human_intervention from every column, and every column from human_answered', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		for (const from of ['Backlog', 'In Arbeit', 'Review', 'Done', 'Human Answered']) {
 			place(id, from);
-			board.moveTicket(db, from === 'Done' ? user : dev, id, col['Human Intervention']); // aus done nur der Mensch (Reopen)
+			board.moveTicket(db, from === 'Done' ? user : dev, id, col['Human Intervention']); // out of done only the human (reopen)
 			expect(columnOf(id)).toBe('Human Intervention');
 		}
 		place(id, 'Human Answered');
@@ -274,12 +273,12 @@ describe('moveTicket', () => {
 			['Done', true],
 			['Human Intervention', false]
 		]);
-		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('requires_human'); // implizite Kante, trotzdem nur Mensch
-		board.moveTicket(db, dev, id, col.Backlog); // keine gespeicherte Kante
+		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('requires_human'); // implicit edge, still human only
+		board.moveTicket(db, dev, id, col.Backlog); // no stored edge
 		expect(columnOf(id)).toBe('Backlog');
 	});
 
-	it('weist den Wechsel in eine done-Spalte mit offenen Tasks ab', () => {
+	it('rejects a move into a done column while tasks are open', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		place(id, 'Abnahme');
@@ -292,7 +291,7 @@ describe('moveTicket', () => {
 		expect(columnOf(id)).toBe('Done');
 	});
 
-	it('lässt nur user in eine done-Spalte und nach human_answered verschieben', () => {
+	it('lets only the user move into a done column and into human_answered', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		place(id, 'Abnahme');
@@ -308,7 +307,7 @@ describe('moveTicket', () => {
 		);
 	});
 
-	it('lässt nur user ein Ticket aus einer done-Spalte heraus verschieben (Reopen)', () => {
+	it('lets only the user move a ticket out of a done column (reopen)', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		place(id, 'Done');
@@ -327,11 +326,11 @@ describe('moveTicket', () => {
 		expect(columnOf(id)).toBe('Abnahme');
 	});
 
-	it('weist Epic → done mit offenem Kind ab', () => {
+	it('rejects moving an epic to done while a child is open', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const epic = ticket({ type: 'epic' });
 		const { id: noteId } = notes.createNote(db, user, { slug: 'epic-doku', title: 'N', body: '' });
-		notes.linkTicket(db, user, noteId, epic, 'documents'); // Epics sind immer docs_required — Note vorab verknüpft, damit nur open_children prüft
+		notes.linkTicket(db, user, noteId, epic, 'documents'); // epics are always docs_required — a note is linked first so that only open_children applies
 		const child = ticket();
 		board.linkRelation(db, user, epic, child, 'parent_of');
 		place(epic, 'Abnahme');
@@ -343,7 +342,7 @@ describe('moveTicket', () => {
 		expect(columnOf(epic)).toBe('Done');
 	});
 
-	it('weist done mit fehlender docs_required-Note ab und lässt es mit verknüpfter Note zu', () => {
+	it('rejects done without the docs_required note and allows it once a note is linked', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket({ docs_required: 1 });
 		place(id, 'Abnahme');
@@ -357,7 +356,7 @@ describe('moveTicket', () => {
 		expect(columnOf(id)).toBe('Done');
 	});
 
-	it('eine archivierte Note zählt nicht als docs_required-Nachweis', () => {
+	it('does not accept an archived note as docs_required evidence', () => {
 		const { db, ticket, place, col } = setup();
 		const id = ticket({ docs_required: 1 });
 		const { id: noteId } = notes.createNote(db, user, { slug: 'n-2', title: 'N', body: '' });
@@ -383,7 +382,7 @@ describe('moveTicket', () => {
 });
 
 describe('linkRelation', () => {
-	it('weist Zyklen in parent_of und blocks sowie Selbst-Relationen ab', () => {
+	it('rejects cycles in parent_of and blocks as well as self relations', () => {
 		const { db, ticket } = setup();
 		const [a, b, c] = [ticket(), ticket(), ticket()];
 		board.linkRelation(db, user, a, b, 'blocks');
@@ -400,14 +399,14 @@ describe('linkRelation', () => {
 			'self_relation'
 		);
 
-		board.linkRelation(db, user, c, a, 'relates_to'); // kein Zyklus-Begriff für relates_to
+		board.linkRelation(db, user, c, a, 'relates_to'); // relates_to has no notion of cycles
 		board.linkRelation(db, user, a, b, 'blocks'); // idempotent
 		expect(db.prepare('SELECT count(*) AS n FROM ticket_relations').get()?.n).toBe(4);
 	});
 });
 
 describe('allowedMoves', () => {
-	it('liefert Ziele inkl. human_*-Kanten mit Sperrgründen je Actor', () => {
+	it('lists targets including the human_* edges with blockers per actor', () => {
 		const { db, ticket, place } = setup();
 		const id = ticket();
 		place(id, 'Abnahme');
@@ -426,8 +425,8 @@ describe('allowedMoves', () => {
 	});
 });
 
-describe('Review-Freigabe', () => {
-	it('weist Selbstfreigabe ab und erlaubt sie anderem Agent und dem Menschen', () => {
+describe('review approval', () => {
+	it('rejects self-approval and allows another agent and the human to approve', () => {
 		const { db, ticket, place, col } = setup();
 		const id = ticket();
 		place(id, 'In Arbeit');
@@ -444,7 +443,7 @@ describe('Review-Freigabe', () => {
 
 		board.moveTicket(db, user, id, col['In Arbeit']);
 		board.moveTicket(db, user, id, col.Review);
-		board.approveReview(db, user, id); // der Mensch darf immer
+		board.approveReview(db, user, id); // the human may always approve
 	});
 
 	it('lets an agent approve only in a column flagged as review column, the human in any column', () => {
@@ -464,7 +463,7 @@ describe('Review-Freigabe', () => {
 		board.approveReview(db, reviewer, id);
 	});
 
-	it('erlischt beim Zurückschieben nach „In Arbeit“, bleibt beim Wechsel nach done', () => {
+	it('clears the approval when moved back to "In Arbeit" and keeps it when moved to done', () => {
 		const { db, ticket, place, col } = setup();
 		const approved = (id: number) =>
 			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at !== null;
@@ -517,12 +516,12 @@ describe('Review-Freigabe', () => {
 describe('workableTickets', () => {
 	const refs = (rows: { ref: string }[]) => rows.map((r) => r.ref);
 
-	it('blendet Tickets mit offenen blocks-Vorgängern aus', () => {
+	it('hides tickets with unfinished blocks predecessors', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [a, b] = [ticket(), ticket()];
 		const done = ticket();
 		place(done, 'Done');
-		place(ticket(), 'Human Intervention'); // wartet auf den Menschen, nicht bearbeitbar
+		place(ticket(), 'Human Intervention'); // waits for the human, not workable
 		board.linkRelation(db, user, a, b, 'blocks');
 		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-1']);
 		place(a, 'Done');
@@ -530,7 +529,7 @@ describe('workableTickets', () => {
 		expect(refs(board.workableTickets(db, projectId, col['In Arbeit']))).toEqual([]);
 	});
 
-	it('respektiert blocks_satisfied_at: done vs. review_ok', () => {
+	it('respects blocks_satisfied_at: done versus review_ok', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [a, b] = [ticket(), ticket()];
 		board.linkRelation(db, user, a, b, 'blocks');
@@ -538,16 +537,16 @@ describe('workableTickets', () => {
 		board.approveReview(db, reviewer, a);
 		const workable = () => refs(board.workableTickets(db, projectId, col.Backlog));
 
-		expect(workable()).toEqual([]); // Default done: Freigabe reicht nicht
+		expect(workable()).toEqual([]); // default done: an approval is not enough
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		expect(workable()).toEqual(['STU-2']);
-		board.moveTicket(db, reviewer, a, col['In Arbeit']); // Freigabe erlischt
+		board.moveTicket(db, reviewer, a, col['In Arbeit']); // the approval clears
 		expect(workable()).toEqual([]);
 	});
 });
 
-describe('Tasks mit Begründung', () => {
-	it('updateTask und deleteTask schreiben einen System-Kommentar; ohne Begründung abgewiesen', () => {
+describe('tasks with a reason', () => {
+	it('writes a system comment for updateTask and deleteTask and rejects them without a reason', () => {
 		const { db, ticket } = setup();
 		const id = ticket();
 		const { id: task } = board.addTask(db, dev, id, 'Alt');
@@ -574,8 +573,8 @@ describe('Tasks mit Begründung', () => {
 	});
 });
 
-describe('Event-Bus', () => {
-	it('jede Mutation emittiert ein Event, und zwar außerhalb der Transaktion', () => {
+describe('event bus', () => {
+	it('emits an event for every mutation, outside the transaction', () => {
 		const db = openDb(':memory:');
 		migrate(db);
 		withRuns(db);
@@ -626,11 +625,11 @@ describe('Event-Bus', () => {
 			'ticket.deleted'
 		]);
 		expect(events.every((e) => e.projectId === p && e.actor)).toBe(true);
-		expect(inTx.every((t) => t === false)).toBe(true); // erst nach COMMIT publiziert
+		expect(inTx.every((t) => t === false)).toBe(true); // published only after COMMIT
 		expect(events[5]).toMatchObject({ ticketId: a, actor: dev, to: inArbeit });
 	});
 
-	it('eine zurückgerollte Transaktion meldet nichts, auch wenn sie schon emittiert hatte', () => {
+	it('reports nothing for a rolled back transaction, even if it had already emitted', () => {
 		const db = openDb(':memory:');
 		migrate(db);
 		const events: StudioEvent[] = [];

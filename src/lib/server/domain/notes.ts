@@ -19,7 +19,7 @@ type Note = {
 	version: number;
 };
 
-/** Direkt setzbare Notefelder — der Slug ist permanent, Archivieren hat eine eigene Funktion. */
+/** Note fields that can be set directly — the slug is permanent, and archiving has its own function. */
 const FIELDS = ['title', 'kind', 'status', 'body', 'tags'] as const;
 export type NoteFields = {
 	title: string;
@@ -44,7 +44,7 @@ function note(db: DatabaseSync, id: number): Note {
 	return n;
 }
 
-/** Volle Sicht für UI/MCP (#777/#780): alle Spalten, `tags` als Array statt JSON-Text. */
+/** The full view for UI and MCP: all columns, with `tags` as an array instead of JSON text. */
 export function getNote(db: DatabaseSync, id: number) {
 	const row = db
 		.prepare(
@@ -60,7 +60,7 @@ export function getNote(db: DatabaseSync, id: number) {
 	return { ...row, tags: JSON.parse(row.tags) as string[] };
 }
 
-/** Nur freigegebene Felder; alles andere ist ein Fehler statt still ignoriert. `tags` wird als JSON gespeichert. */
+/** Only the allowed fields; anything else is an error instead of being ignored silently. `tags` is stored as JSON. */
 function fieldsOf(input: object): [string, SQLInputValue][] {
 	return Object.entries(input)
 		.filter(([, v]) => v !== undefined)
@@ -75,10 +75,10 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 		});
 }
 
-/** DB-CHECK exakt gespiegelt (Migration 005): beginnt mit Kleinbuchstabe/Ziffer, sonst nur Kleinbuchstaben/Ziffern/„-“. */
+/** Mirrors the DB CHECK exactly: starts with a lower-case letter or digit, then only lower-case letters, digits and "-". */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
-/** Slug-Format und -Eindeutigkeit vorab prüfen, statt den rohen SQLite-Fehler (CHECK/UNIQUE) an den Aufrufer durchzureichen. */
+/** Checks slug format and uniqueness up front instead of passing the raw SQLite error (CHECK/UNIQUE) to the caller. */
 function checkSlug(db: DatabaseSync, slug: string) {
 	if (!SLUG_RE.test(slug))
 		throw new DomainError(
@@ -96,7 +96,7 @@ function checkSlug(db: DatabaseSync, slug: string) {
 		);
 }
 
-/** `status` ist nur bei `kind="adr"` erlaubt (DB-CHECK) — vorab geprüft, damit ein kind-Wechsel weg von adr keinen rohen CHECK-Fehler wirft. */
+/** `status` is only allowed with `kind="adr"` (DB CHECK) — checked up front, so changing the kind away from adr throws no raw CHECK error. */
 function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) {
 	if (status != null && kind !== 'adr')
 		throw new DomainError(
@@ -107,12 +107,12 @@ function checkKindStatus(kind: NoteKind, status: NoteStatus | null | undefined) 
 }
 
 /**
- * Which notes a caller may see. `visibleIn` limits that to the notes of one project plus the global ones: [[slug]] links
+ * Which notes a caller may see. `visibleIn` limits that to the notes of one project plus the global ones: wikilinks
  * then neither reach nor reveal nor remove notes of other projects.
  */
 export type NoteScope = { visibleIn?: number };
 
-/** [[slug]] bzw. [[slug|Anzeigetext]]-Verweise im Body: bekannte Slugs (ohne sich selbst) → Ziel-ID, unbekannte separat. */
+/** Wikilinks in the body (`[[slug]]` or `[[slug|label]]`): known slugs (except the note itself) → target id, unknown ones separately. */
 function wikilinks(
 	db: DatabaseSync,
 	selfId: number,
@@ -136,8 +136,8 @@ function wikilinks(
 }
 
 /**
- * Gleicht automatische (origin=wikilink) references-Kanten mit den [[slug]]-Verweisen im Body ab. Manuelle Kanten bleiben unberührt.
- * ponytail: reine Note-Note-Kanten lösen kein Bus-Event aus (kein Ticket, also kein projectId) — wie Agent-Profile in domain/runs.ts.
+ * Syncs the automatic (origin=wikilink) references edges with the wikilinks in the body. Manual edges stay untouched.
+ * ponytail: pure note-to-note edges emit no bus event (no ticket, so no projectId) — like agent profiles in domain/runs.ts.
  */
 function syncWikilinks(db: DatabaseSync, fromId: number, body: string, scope: NoteScope): string[] {
 	const { known, unknown } = wikilinks(db, fromId, body, scope);
@@ -195,9 +195,9 @@ export function createNote(
 }
 
 /**
- * `expectedVersion`, wenn gegeben, muss der aktuellen `version` entsprechen — sonst `conflict` (optimistische Nebenläufigkeit:
- * ein `updated_at`-Vergleich reicht nicht, `CURRENT_TIMESTAMP` löst nur sekundengenau auf und zwei schnelle Agent-Schreiber
- * träfen sonst denselben Wert). Jede angewandte Änderung erhöht `version` um 1. Body geändert → Wikilinks werden neu abgeglichen.
+ * `expectedVersion`, if given, must equal the current `version`, otherwise `conflict` (optimistic concurrency: comparing
+ * `updated_at` is not enough, because `CURRENT_TIMESTAMP` resolves to the second only and two fast agent writers would
+ * hit the same value). Every applied change increments `version`. A changed body re-syncs the wikilinks.
  */
 export function updateNote(
 	db: DatabaseSync,
@@ -227,9 +227,9 @@ export function updateNote(
 }
 
 /**
- * `actor` ist für spätere Regeln vorgesehen (Konvention: Mutationen nehmen ihn als zweiten Parameter) — heute ungenutzt.
- * Erhöht `version`: ein paralleles `updateNote` mit einer davor gelesenen `expectedVersion` bekommt sonst still den
- * archivierten Stand überschrieben, statt `conflict` zu sehen.
+ * `actor` is reserved for later rules (convention: mutations take it as the second parameter) and unused today.
+ * Increments `version`: otherwise a parallel `updateNote` with an `expectedVersion` read before would silently overwrite
+ * the archived state instead of seeing `conflict`.
  */
 export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): void {
 	tx(db, () => {
@@ -242,11 +242,11 @@ export function archiveNote(db: DatabaseSync, actor: Actor, noteId: number): voi
 }
 
 /**
- * Verknüpft zwei Notes. Manuell gesetzt (`origin='manual'`) — auch wenn schon eine automatische Wikilink-Kante existiert:
- * `DO UPDATE` hebt sie auf `manual`, sonst würde ein späteres Entfernen des `[[slug]]` aus dem Body die inzwischen bewusst
- * gesetzte Kante mitlöschen (verletzt „manuelle Links bleiben unberührt“ unabhängig von der Reihenfolge).
- * `supersedes` auf eine ADR setzt deren Status automatisch auf `superseded` und erhöht ihre `version` (sonst Lost Update,
- * s. `archiveNote`).
+ * Links two notes, set manually (`origin='manual'`) — even if an automatic wikilink edge already exists: `DO UPDATE`
+ * raises it to `manual`, otherwise removing the wikilink from the body later would also delete the edge that has since
+ * been set deliberately (manual links stay untouched regardless of the order).
+ * `supersedes` on an adr note sets its status to `superseded` automatically and increments its `version` (otherwise a
+ * lost update, see `archiveNote`).
  */
 export function linkNote(
 	db: DatabaseSync,
@@ -291,7 +291,7 @@ export function unlinkNote(
 	});
 }
 
-/** Verknüpft eine Note mit einem Ticket (idempotent); `linkTicketRow` wird auch von verifyNote genutzt. */
+/** Links a note to a ticket (idempotent); verifyNote uses `linkTicketRow` too. */
 function linkTicketRow(
 	db: DatabaseSync,
 	emit: Emit,
@@ -354,7 +354,7 @@ export function unlinkTicket(
 	});
 }
 
-/** Markiert eine Note als verifiziert; mit `ticketId` zusätzlich eine `verified_by`-Verknüpfung (das Ticket bestätigt den Stand). */
+/** Marks a note as verified; with `ticketId` it also adds a `verified_by` link (the ticket confirms the state). */
 export function verifyNote(
 	db: DatabaseSync,
 	actor: Actor,
@@ -387,8 +387,8 @@ export type NoteSearchHit = {
 };
 
 /**
- * Quotet jeden Suchbegriff einzeln als FTS5-Stringliteral — Sonderzeichen (Punkte, Unterstriche, Klammern, „-“ …) brechen nichts.
- * Ein eingebettetes NUL kappt den gebundenen String vor dem schließenden Anführungszeichen („unterminated string“ in FTS5) — vorher entfernt.
+ * Quotes every search term on its own as an FTS5 string literal, so special characters (dots, underscores, brackets, "-" …) break nothing.
+ * An embedded NUL would cut the bound string before the closing quote ("unterminated string" in FTS5), so it is removed first.
  */
 function ftsQuery(query: string): string {
 	return query
@@ -401,10 +401,10 @@ function ftsQuery(query: string): string {
 }
 
 /**
- * Ranking: bm25 (beste Treffer zuerst), superseded ADRs herabgestuft. `n.status = 'superseded'` wäre für status IS NULL (jede
- * Nicht-ADR) NULL, und NULL sortiert in SQLite vor 0/1 — jede normale Note stünde vor jeder lebenden ADR, egal wie relevant.
- * `IS` ist NULL-sicher (liefert 0). Archivierte Notes sind standardmäßig herausgefiltert (`archived` heißt „falsch/irrelevant“);
- * `includeArchived` zeigt sie, dann aber klar ans Ende sortiert. Snippet + bodyChars statt Volltext.
+ * Ranking: bm25 (best matches first), superseded adr notes ranked down. `n.status = 'superseded'` would be NULL for
+ * status IS NULL (every other note kind), and NULL sorts before 0/1 in SQLite — every normal note would rank above every live adr note, however relevant.
+ * `IS` is NULL-safe (yields 0). Archived notes are filtered out by default (`archived` means "wrong or irrelevant");
+ * `includeArchived` shows them, but sorted clearly to the end. Snippet + bodyChars instead of the full text.
  */
 export function searchNotes(
 	db: DatabaseSync,

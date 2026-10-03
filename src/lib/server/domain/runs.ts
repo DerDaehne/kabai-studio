@@ -30,7 +30,7 @@ export type Intervention = {
 };
 /** Why a paused run continues in a new run; `quota` is a clean stop before a usage limit, the others are fresh runs after getting stuck. */
 export type ResumeReason = 'context_budget' | 'recovery' | 'quota';
-/** Verbrauch ist additiv: pro Schritt mit dem Event melden (live sichtbar, übersteht Abstürze) oder gesammelt bei finishRun. Kosten in USD. */
+/** Usage adds up: report it per step with the event (visible live, survives crashes) or in total with finishRun. Cost in USD. */
 export type Usage = { tokensIn?: number; tokensOut?: number; cost?: number };
 
 export type Profile = {
@@ -41,7 +41,7 @@ export type Profile = {
 	model: string | null;
 	command: string | null;
 	args: string[];
-	/** Verweis `secret:<name>` oder `${ENV_NAME}` — nie der Key selbst. */
+	/** A reference `secret:<name>` or `${ENV_NAME}` — never the key itself. */
 	api_key_ref: string | null;
 	params: Record<string, unknown>;
 	extra_prompt: string;
@@ -63,7 +63,7 @@ const rank = (column: string) =>
 type Emit = (event: StudioEvent) => void;
 type Run = { id: number; ticket_id: number; project_id: number; state: RunState };
 
-/** Zustandsmaschine laut Run-Lebenszyklus. paused beendet den Run; fortgesetzt wird mit einem neuen Run (resumedFromRunId). */
+/** The run state machine. paused ends the run; it continues in a new run (resumedFromRunId). */
 const NEXT: Record<RunState, RunState[]> = {
 	queued: ['running', 'cancelled'],
 	running: ['waiting_approval', 'paused', 'succeeded', 'failed', 'cancelled'],
@@ -73,7 +73,7 @@ const NEXT: Record<RunState, RunState[]> = {
 	failed: [],
 	cancelled: []
 };
-/** Welche Funktion einen Übergang ausführt: startRun erzeugt dabei das Token, finishRun entwertet es. */
+/** Which function performs a transition: startRun creates the token, finishRun revokes it. */
 const via = (from: RunState, to: RunState) =>
 	NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState';
 
@@ -109,7 +109,7 @@ function run(db: DatabaseSync, id: number): Run {
 	return r;
 }
 
-/** Prüft den Übergang gegen NEXT und die zuständige Funktion und schreibt ihn; `set` ergänzt weitere Spalten. */
+/** Checks the transition against NEXT and the responsible function, then writes it; `set` adds more columns. */
 function transition(
 	db: DatabaseSync,
 	emit: Emit,
@@ -150,7 +150,7 @@ function transition(
 	return totals;
 }
 
-/** Legt einen Run `queued` an; die Spalte des Tickets wird als Rolle festgehalten. Mit `resumedFromRunId` setzt er einen pausierten Run fort. */
+/** Creates a `queued` run that records the ticket's column as its role. With `resumedFromRunId` it continues a paused run. */
 export function createRun(
 	db: DatabaseSync,
 	actor: Actor,
@@ -324,8 +324,8 @@ function waitText(r: Omit<WaitReason, 'text'>) {
 }
 
 /**
- * queued → running. Erzeugt das Run-Token und gibt es genau hier einmal im Klartext zurück; gespeichert wird nur der Hash.
- * (Nicht schon bei createRun: queued-Runs überdauern einen Neustart, der Klartext wäre dann verloren.)
+ * queued → running. Creates the run token and returns it in plain text exactly once, here; only its hash is stored.
+ * (Not in createRun already: queued runs outlive a restart, and the plain text would then be lost.)
  */
 export function startRun(db: DatabaseSync, actor: Actor, runId: number): { token: string } {
 	return tx(db, (emit) => start(db, emit, actor, runId));
@@ -394,7 +394,7 @@ export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = n
 	});
 }
 
-/** running ↔ waiting_approval (Freigabe angefragt bzw. entschieden). */
+/** running ↔ waiting_approval (approval requested or decided). */
 export function setRunState(
 	db: DatabaseSync,
 	actor: Actor,
@@ -404,12 +404,12 @@ export function setRunState(
 	tx(db, (emit) => transition(db, emit, actor, runId, to, 'setRunState'));
 }
 
-/** Ende eines Runs; `failed` verlangt einen Fehlertext — im Typ und zur Laufzeit. */
+/** The end of a run; `failed` requires an error text, in the type and at runtime. */
 export type RunEnd = (
 	{ state: 'failed'; error: string } | { state: Exclude<EndState, 'failed'>; error?: string }
 ) & { usage?: Usage };
 
-/** Beendet den Run: entwertet das Token, addiert den letzten Verbrauch und liefert die Summen. */
+/** Ends the run: revokes the token, adds the last usage and returns the totals. */
 export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: RunEnd) {
 	return tx(db, (emit) => {
 		if (end.state === 'failed' && !end.error?.trim())
@@ -418,7 +418,7 @@ export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: Ru
 				`Run ${runId} als „failed“ beenden geht nur mit Fehlertext.`,
 				'Gib `error` an: in einem Satz, was schiefging — der Mensch sieht ihn am Run.'
 			);
-		// Fehlertext kommt von Agent/Provider und kann ein Secret enthalten (ADR studio-011) — vor dem Schreiben maskieren (#824), wie appendEvent es für Event-Payloads schon tut (#819).
+		// The error text comes from the agent or provider and may contain a secret, so it is masked before writing.
 		return transition(
 			db,
 			emit,
@@ -434,8 +434,8 @@ export function finishRun(db: DatabaseSync, actor: Actor, runId: number, end: Ru
 }
 
 /**
- * Hängt ein Event an: `seq` lückenlos pro Run (MAX+1 in derselben Schreibtransaktion). Retry-sicher über `key`:
- * dieselbe Anfrage noch einmal liefert die vorhandene seq mit `duplicate: true` — kein zweites Event, kein Bus-Event, kein doppelter Verbrauch.
+ * Appends an event: `seq` has no gaps per run (MAX+1 in the same write transaction). Retry-safe through `key`:
+ * the same request again returns the existing seq with `duplicate: true` — no second event, no bus event, no double usage.
  */
 export function appendEvent(
 	db: DatabaseSync,
@@ -445,7 +445,7 @@ export function appendEvent(
 ): { seq: number; duplicate: boolean } {
 	return tx(db, (emit) => {
 		const r = run(db, runId);
-		// Secret-Werte maskiert der Secrets-Store (ADR studio-011) hier, bevor der Payload gespeichert und publiziert wird (#819).
+		// Secret values are masked before the payload is stored and published.
 		const payload = JSON.stringify(mask(e.payload ?? {}));
 		const repeatedSeq =
 			e.key === undefined ? undefined : repeatedEventSeq(db, r.id, e.key, e.type, payload);
@@ -504,7 +504,7 @@ function assertAcceptsEvents(r: Run) {
 	);
 }
 
-/** Der laufende Run zu einem Run-Token (Studio-MCP); undefined, wenn unbekannt oder der Run beendet ist. */
+/** The running run of a run token (studio MCP); undefined if the token is unknown or the run has ended. */
 export function runForToken(db: DatabaseSync, token: string) {
 	return db
 		.prepare(
@@ -513,9 +513,9 @@ export function runForToken(db: DatabaseSync, token: string) {
 		.get(hash(token)) as { runId: number; ticketId: number; projectId: number } | undefined;
 }
 
-// ponytail: Profil-Änderungen melden kein Bus-Event (StudioEvent verlangt projectId); nachrüsten, wenn die Profil-UI Live-Updates braucht.
+// ponytail: profile changes emit no bus event (StudioEvent requires a projectId); add one when the profile UI needs live updates.
 
-/** Profile bestimmen Modell, Rechte und Freigaben der Runs — ein Agent darf sie nicht ändern (sonst könnte er sich selbst Rechte geben). */
+/** Profiles decide the model, permissions and approvals of runs — an agent must not change them, or it could grant itself permissions. */
 function requireNotAgent(actor: Actor) {
 	if (actor.kind === 'agent')
 		throw new DomainError(
@@ -539,7 +539,7 @@ function profileFields(input: object): [string, SQLInputValue][] {
 		});
 }
 
-/** Prüft ein vollständiges Profil. Meldungen wiederholen nie den Wert von api_key_ref — es könnte ein versehentlich eingefügter Key sein. */
+/** Checks a complete profile. Messages never repeat the value of api_key_ref — it could be a key pasted by mistake. */
 function checkProfile(db: DatabaseSync, p: Partial<Profile>, id: number | null) {
 	if (p.api_key_ref != null && !/^(secret:\S+|\$\{\w+\})$/.test(p.api_key_ref))
 		throw new DomainError(
@@ -622,7 +622,7 @@ export function updateProfile(db: DatabaseSync, actor: Actor, id: number, patch:
 	});
 }
 
-/** Löscht ein Profil, solange kein aktiver Run es nutzt; beendete Runs behalten ihren Verlauf (agent_profile_id wird NULL). */
+/** Deletes a profile while no active run uses it; ended runs keep their history (agent_profile_id becomes NULL). */
 export function deleteProfile(db: DatabaseSync, actor: Actor, id: number) {
 	tx(db, () => {
 		requireNotAgent(actor);

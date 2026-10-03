@@ -18,7 +18,7 @@ const LOCAL = {
 	provider: 'openai-compatible',
 	model: 'm'
 } as const;
-const SECRET_KEY = randomBytes(32); // eigener Schlüssel, damit der Test kein secret.key im Datenverzeichnis anlegt
+const SECRET_KEY = randomBytes(32); // a key of its own, so the test creates no secret.key in the data directory
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-runs-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -54,8 +54,8 @@ const seqs = (db: ReturnType<typeof openDb>, runId: number) =>
 		.all(runId)
 		.map((r) => r.seq);
 
-describe('Zustandsübergänge', () => {
-	it('durchläuft queued → running → waiting_approval → running → succeeded', () => {
+describe('state transitions', () => {
+	it('goes through queued → running → waiting_approval → running → succeeded', () => {
 		const { db, ticketId, queued, row } = setup();
 		const id = queued();
 		const backlog = db
@@ -77,7 +77,7 @@ describe('Zustandsübergänge', () => {
 		expect(row(id).finished_at).not.toBeNull();
 	});
 
-	it('weist ungültige Übergänge ab und nennt aktuellen Zustand und erlaubte Folgezustände', () => {
+	it('rejects invalid transitions and names the current state and the allowed next states', () => {
 		const { db, queued, row } = setup();
 		const id = queued();
 		const early = caught(() => runs.finishRun(db, system, id, { state: 'succeeded' }));
@@ -85,7 +85,7 @@ describe('Zustandsübergänge', () => {
 		expect(early.message).toBe(
 			'Run 1 ist „queued“ und kann mit finishRun nicht nach „succeeded“ wechseln. Erlaubt: running (startRun), cancelled (finishRun).'
 		);
-		// running ist ein erlaubter Folgezustand, aber nur startRun erzeugt dabei das Token
+		// running is an allowed next state, but only startRun creates the token on the way
 		expect(caught(() => runs.setRunState(db, system, id, 'running')).message).toContain(
 			'kann mit setRunState nicht nach „running“ wechseln. Erlaubt: running (startRun)'
 		);
@@ -108,11 +108,11 @@ describe('Zustandsübergänge', () => {
 		expect(late.hint).toContain('createRun');
 		expect(row(id).state).toBe('cancelled');
 
-		runs.finishRun(db, user, queued(), { state: 'cancelled' }); // Abbruch vor dem Start
+		runs.finishRun(db, user, queued(), { state: 'cancelled' }); // cancelled before the start
 		expect(caught(() => runs.startRun(db, system, 99)).code).toBe('not_found');
 	});
 
-	it('paused beendet den Run; fortgesetzt wird nur ein pausierter Run desselben Tickets', () => {
+	it('ends the run on paused and resumes only a paused run of the same ticket', () => {
 		const { db, projectId, ticketId, profileId, running, row } = setup();
 		const paused = running();
 		runs.finishRun(db, system, paused, { state: 'paused' });
@@ -149,7 +149,7 @@ describe('Zustandsübergänge', () => {
 		).toContain('gehört zu einem anderen Ticket');
 	});
 
-	it('createRun prüft Ticket und Profil', () => {
+	it('checks ticket and profile in createRun', () => {
 		const { db, ticketId, profileId } = setup();
 		expect(caught(() => runs.createRun(db, system, { ticketId, profileId: 99 })).code).toBe(
 			'not_found'
@@ -161,8 +161,8 @@ describe('Zustandsübergänge', () => {
 	});
 });
 
-describe('Run-Token', () => {
-	it('startRun gibt das Token einmal im Klartext zurück, gespeichert wird nur der SHA-256-Hash', () => {
+describe('run token', () => {
+	it('returns the token once in plain text from startRun and stores only its SHA-256 hash', () => {
 		const { db, queued, row } = setup();
 		const id = queued();
 		const { token } = runs.startRun(db, system, id);
@@ -177,7 +177,7 @@ describe('Run-Token', () => {
 		expect(runs.startRun(db, system, queued()).token).not.toBe(token);
 	});
 
-	it('gilt, solange der Run läuft, und verfällt mit dem Ende', () => {
+	it('is valid while the run is active and expires with its end', () => {
 		const { db, projectId, ticketId, queued, row } = setup();
 		const id = queued();
 		const { token } = runs.startRun(db, system, id);
@@ -192,10 +192,10 @@ describe('Run-Token', () => {
 });
 
 describe('appendEvent', () => {
-	it('vergibt seq lückenlos pro Run, auch bei schneller Folge über zwei Verbindungen und mit abgewiesenen Events dazwischen', () => {
+	it('assigns seq without gaps per run, even in quick succession over two connections and with rejected events in between', () => {
 		const file = join(tmp, 'seq.db');
 		const { db, running } = setup(openDb(file));
-		const other = openDb(file); // zweite Verbindung wie ein zweiter Schreiber
+		const other = openDb(file); // a second connection like a second writer
 		const [a, b] = [running(), running()];
 		const expected = { [a]: 0, [b]: 0 };
 		for (let i = 0; i < 300; i++) {
@@ -204,7 +204,7 @@ describe('appendEvent', () => {
 			if (i % 50 === 7) {
 				expect(() => runs.appendEvent(conn, system, runId, { type: 'chat' as never })).toThrow(
 					/CHECK/
-				); // abgewiesen → kein seq verbraucht
+				); // rejected → no seq used up
 				continue;
 			}
 			const { seq } = runs.appendEvent(conn, system, runId, {
@@ -219,7 +219,7 @@ describe('appendEvent', () => {
 		expect(seqs(db, b)).toEqual(Array.from({ length: count(b) }, (_, i) => i + 1));
 	});
 
-	it('ist retry-sicher: derselbe Aufruf noch einmal erzeugt kein Duplikat, kein Bus-Event und keinen doppelten Verbrauch', () => {
+	it('is retry-safe: the same call again creates no duplicate, no bus event and no double usage', () => {
 		const { db, running, row } = setup();
 		const id = running();
 		const events: StudioEvent[] = [];
@@ -231,7 +231,7 @@ describe('appendEvent', () => {
 			usage: { tokensIn: 10 }
 		} as const;
 		expect(runs.appendEvent(db, system, id, call)).toEqual({ seq: 1, duplicate: false });
-		expect(runs.appendEvent(db, system, id, call)).toEqual({ seq: 1, duplicate: true }); // z. B. nach Timeout wiederholt
+		expect(runs.appendEvent(db, system, id, call)).toEqual({ seq: 1, duplicate: true }); // e.g. repeated after a timeout
 		expect(
 			runs.appendEvent(db, system, id, { type: 'tool_result', payload: { ok: true } })
 		).toEqual({ seq: 2, duplicate: false });
@@ -245,14 +245,14 @@ describe('appendEvent', () => {
 		);
 
 		runs.finishRun(db, system, id, { state: 'succeeded' });
-		expect(runs.appendEvent(db, system, id, call)).toEqual({ seq: 1, duplicate: true }); // Retry über das Run-Ende hinweg
+		expect(runs.appendEvent(db, system, id, call)).toEqual({ seq: 1, duplicate: true }); // a retry after the run has ended
 		off();
 		expect(seqs(db, id)).toEqual([1, 2]);
 		expect(events.filter((e) => e.type === 'run.event').map((e) => e.seq)).toEqual([1, 2]);
 		expect(row(id).tokens_in).toBe(10);
 	});
 
-	it('maskiert bekannte Secret-Werte im Payload vor dem Speichern und Emittieren; Idempotenz bleibt korrekt (#819)', () => {
+	it('masks known secret values in the payload before storing and emitting, and stays idempotent', () => {
 		const { db, running } = setup();
 		const id = running();
 		const SECRET = 'sk-test-appendevent-secret-123';
@@ -276,7 +276,7 @@ describe('appendEvent', () => {
 			payload: { output: 'token=[secret:appendevent-test]' }
 		});
 
-		// Wiederholter Aufruf mit gleichem Schlüssel bleibt idempotent — Vergleich läuft auf dem maskierten Payload.
+		// A repeated call with the same key stays idempotent, because the comparison runs on the masked payload.
 		expect(
 			runs.appendEvent(db, system, id, {
 				type: 'tool_result',
@@ -286,7 +286,7 @@ describe('appendEvent', () => {
 		).toEqual({ seq, duplicate: true });
 	});
 
-	it('nimmt Events nur von laufenden Runs an', () => {
+	it('accepts events only from active runs', () => {
 		const { db, queued, running } = setup();
 		const err = caught(() => runs.appendEvent(db, system, queued(), { type: 'log' }));
 		expect(err.code).toBe('run_not_active');
@@ -301,8 +301,8 @@ describe('appendEvent', () => {
 	});
 });
 
-describe('Event-Bus', () => {
-	it('jeder Run-Schritt und jedes Event erscheint nach dem COMMIT auf dem Bus, abgewiesene nicht', () => {
+describe('event bus', () => {
+	it('publishes every run step and event on the bus after COMMIT, and rejected ones not at all', () => {
 		const { db, projectId, ticketId, profileId } = setup();
 		const events: StudioEvent[] = [];
 		const inTx: boolean[] = [];
@@ -354,7 +354,7 @@ describe('Event-Bus', () => {
 });
 
 describe('finishRun', () => {
-	it('summiert den Verbrauch aus den Events und dem Abschluss', () => {
+	it('sums the usage of the events and the finish', () => {
 		const { db, running, row } = setup();
 		const id = running();
 		runs.appendEvent(db, system, id, {
@@ -370,7 +370,7 @@ describe('finishRun', () => {
 		expect(row(id)).toMatchObject({ tokens_in: 151, tokens_out: 26, cost: 0.75 });
 	});
 
-	it('failed braucht einen Fehlertext (DomainError statt rohem CHECK-Fehler)', () => {
+	it('requires an error text for failed (a DomainError instead of a raw CHECK error)', () => {
 		const { db, running, row } = setup();
 		const id = running();
 		for (const end of [{ state: 'failed' }, { state: 'failed', error: '  ' }] as never[]) {
@@ -382,7 +382,7 @@ describe('finishRun', () => {
 		expect(row(id).state).toBe('running');
 	});
 
-	it('maskiert bekannte Secret-Werte im Fehlertext vor dem Speichern (#824)', () => {
+	it('masks known secret values in the error text before storing it', () => {
 		const { db, running, row } = setup();
 		const id = running();
 		const SECRET = 'sk-test-finishrun-secret-456';
@@ -398,8 +398,8 @@ describe('finishRun', () => {
 	});
 });
 
-describe('Agent-Profile', () => {
-	it('legt an, liest, ändert und löscht', () => {
+describe('agent profiles', () => {
+	it('creates, reads, updates and deletes', () => {
 		const { db, profileId } = setup();
 		const id = runs.createProfile(db, user, {
 			name: 'Claude',
@@ -421,7 +421,7 @@ describe('Agent-Profile', () => {
 			model: 'y',
 			api_key_ref: '${ANTHROPIC_API_KEY}'
 		});
-		expect(runs.listProfiles(db).map((p) => p.id)).toEqual([id, profileId]); // nach Name
+		expect(runs.listProfiles(db).map((p) => p.id)).toEqual([id, profileId]); // by name
 		runs.deleteProfile(db, user, id);
 		expect(caught(() => runs.getProfile(db, id)).code).toBe('not_found');
 		runs.createProfile(db, system, {
@@ -429,10 +429,10 @@ describe('Agent-Profile', () => {
 			executor: 'acp',
 			command: 'agent',
 			args: ['--acp']
-		}); // Onboarding legt Defaults als system an
+		}); // onboarding creates the defaults as system
 	});
 
-	it('weist einen Klartext-Key ab, ohne ihn in der Meldung zu wiederholen', () => {
+	it('rejects a plain-text key without repeating it in the message', () => {
 		const { db, profileId } = setup();
 		for (const ref of ['sk-geheim-123', 'secret:', 'secret:mit leerzeichen', '${NICHT-ERLAUBT}']) {
 			const err = caught(() => runs.updateProfile(db, user, profileId, { api_key_ref: ref }));
@@ -442,7 +442,7 @@ describe('Agent-Profile', () => {
 		expect(runs.getProfile(db, profileId).api_key_ref).toBeNull();
 	});
 
-	it('prüft Pflichtfelder je Executor, eindeutige Namen und unbekannte Felder', () => {
+	it('checks required fields per executor, unique names and unknown fields', () => {
 		const { db, profileId } = setup();
 		expect(
 			caught(() => runs.createProfile(db, user, { name: 'X', executor: 'builtin', provider: 'p' }))
@@ -452,13 +452,13 @@ describe('Agent-Profile', () => {
 			'Ein acp-Profil braucht command.'
 		);
 		expect(caught(() => runs.createProfile(db, user, LOCAL)).code).toBe('name_taken');
-		runs.updateProfile(db, user, profileId, { name: 'Lokal' }); // eigener Name ist kein Konflikt
+		runs.updateProfile(db, user, profileId, { name: 'Lokal' }); // its own name is no conflict
 		expect(
 			caught(() => runs.updateProfile(db, user, profileId, { api_key: 'x' } as never)).code
 		).toBe('unknown_field');
 	});
 
-	it('ein Agent darf Profile weder anlegen noch ändern noch löschen', () => {
+	it('lets no agent create, update or delete profiles', () => {
 		const { db, profileId } = setup();
 		const agent: Actor = { kind: 'agent', runId: 1 };
 		expect(caught(() => runs.createProfile(db, agent, { ...LOCAL, name: 'Meins' })).code).toBe(
@@ -473,7 +473,7 @@ describe('Agent-Profile', () => {
 		expect(runs.getProfile(db, profileId).permission_policy).toEqual({});
 	});
 
-	it('Löschen nur ohne aktive Runs (queued, running, waiting_approval); beendete Runs behalten ihren Verlauf', () => {
+	it('deletes only without active runs (queued, running, waiting_approval), and ended runs keep their history', () => {
 		const { db, profileId, queued, running, row } = setup();
 		const [waiting, active, approval] = [queued(), running(), running()];
 		runs.setRunState(db, system, approval, 'waiting_approval');
@@ -482,7 +482,7 @@ describe('Agent-Profile', () => {
 		expect(err.message).toBe('Profil „Lokal“ wird von aktiven Runs genutzt: 1, 2, 3.');
 		runs.finishRun(db, system, active, { state: 'succeeded' });
 		runs.finishRun(db, user, approval, { state: 'cancelled' });
-		// ein wartender Run sperrt allein: ohne Profil könnte der Runner ihn nicht mehr starten
+		// a queued run alone blocks it: without a profile the runner could not start it any more
 		expect(caught(() => runs.deleteProfile(db, user, profileId)).message).toBe(
 			'Profil „Lokal“ wird von aktiven Runs genutzt: 1.'
 		);
@@ -492,8 +492,8 @@ describe('Agent-Profile', () => {
 	});
 });
 
-describe('Kommentare', () => {
-	it('ein Agent-Kommentar trägt die Run-ID, ein Menschen-Kommentar keine', () => {
+describe('comments', () => {
+	it('gives an agent comment the run id and a human comment none', () => {
 		const { db, ticketId, running } = setup();
 		const id = running();
 		board.addComment(db, { kind: 'agent', runId: id }, ticketId, 'erledigt');
