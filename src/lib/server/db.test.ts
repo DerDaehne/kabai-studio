@@ -15,17 +15,17 @@ const names = (db: ReturnType<typeof openDb>) =>
 		.map((r) => r.name);
 
 describe('openDb', () => {
-	it('setzt WAL, foreign_keys und busy_timeout', () => {
+	it('sets WAL, foreign_keys and busy_timeout', () => {
 		const db = openDb(join(tmp, 'pragmas.db'));
 		expect(db.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
 		expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
 		expect(db.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
 	});
 
-	it('wartet auf eine zweite, bereits offene Verbindung statt sofort mit "database is locked" zu scheitern (#817)', async () => {
+	it('waits for a second, already open connection instead of failing with "database is locked" at once', async () => {
 		const file = join(tmp, 'zweiter-prozess.db');
-		// Simuliert einen zweiten, bereits laufenden Prozess auf der frischen Datei: hält eine
-		// Lese-Transaktion (Shared Lock), die journal_mode=WAL zwingend braucht, für 300ms.
+		// Simulates a second, already running process on the fresh file: holds a read transaction
+		// (shared lock), which journal_mode=WAL needs, for 300 ms.
 		const childScript = `
 			const { DatabaseSync } = require('node:sqlite');
 			const db = new DatabaseSync(${JSON.stringify(file)});
@@ -45,8 +45,8 @@ describe('openDb', () => {
 		});
 
 		const t0 = Date.now();
-		const db = openDb(file); // darf nicht sofort scheitern — muss auf die Freigabe warten
-		expect(Date.now() - t0).toBeGreaterThanOrEqual(250); // hat wirklich gewartet, nicht nur Glück gehabt
+		const db = openDb(file); // must not fail at once — has to wait for the release
+		expect(Date.now() - t0).toBeGreaterThanOrEqual(250); // really waited rather than got lucky
 		expect(db.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
 
 		await new Promise((resolve) => child.on('exit', resolve));
@@ -54,19 +54,19 @@ describe('openDb', () => {
 });
 
 describe('migrate', () => {
-	it('ist idempotent: zweiter Lauf führt nichts aus', () => {
+	it('is idempotent: a second run applies nothing', () => {
 		const file = join(tmp, 'idem.db');
 		const first = migrate(openDb(file));
 		expect(first.slice(0, 2)).toEqual(['001_core_schema.sql', '002_workflow_state.sql']);
 		expect(first).toContain('006_runs.sql');
-		const db = openDb(file); // wie ein Neustart
+		const db = openDb(file); // like a restart
 		expect(migrate(db)).toEqual([]);
 		expect(names(db)).toEqual(first);
 	});
 
-	it('überspringt, was ein anderer Prozess inzwischen angewendet hat (Prüfung in der Transaktion)', () => {
+	it('skips what another process applied in the meantime (checked inside the transaction)', () => {
 		const db = openDb(':memory:');
-		// 001 simuliert den Konkurrenten: trägt 002 als angewendet ein, nachdem die Pending-Liste schon feststeht
+		// 001 simulates the competitor: it records 002 as applied after the pending list is already fixed
 		const ran = migrate(db, {
 			'/m/001_a.sql':
 				"CREATE TABLE a (id INTEGER); INSERT INTO schema_migrations (name) VALUES ('002_b.sql')",
@@ -76,15 +76,15 @@ describe('migrate', () => {
 		expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'b'").get()).toBeUndefined();
 	});
 
-	it('hält die Schreibsperre ab BEGIN: ein zweiter Prozess kann nicht dazwischen schreiben', () => {
+	it('holds the write lock from BEGIN on, so a second process cannot write in between', () => {
 		const file = join(tmp, 'konkurrenz.db');
 		const base = { '/m/001_side.sql': 'CREATE TABLE side (x INTEGER)' };
 		migrate(openDb(file), base);
 		const other = openDb(file);
 		other.exec('PRAGMA busy_timeout = 0');
 		const [a, rival] = [openDb(file), { wrote: false }];
-		// Direkt bevor A die Migration ausführt (nach BEGIN und Re-Check), versucht ein zweiter Prozess zu schreiben.
-		// Mit plain BEGIN gelänge das, und A scheiterte danach mit „database is locked" (veralteter Snapshot).
+		// Right before A runs the migration (after BEGIN and the re-check), a second process tries to write.
+		// With a plain BEGIN that would succeed, and A would then fail with "database is locked" (stale snapshot).
 		const spy = new Proxy(a, {
 			get(target, prop) {
 				if (prop === 'exec')
@@ -94,7 +94,7 @@ describe('migrate', () => {
 								other.exec('INSERT INTO side VALUES (1)');
 								rival.wrote = true;
 							} catch {
-								/* gesperrt — erwartet */
+								/* locked, as expected */
 							}
 						return target.exec(sql);
 					};
@@ -108,7 +108,7 @@ describe('migrate', () => {
 		expect(rival.wrote).toBe(false);
 	});
 
-	it('wendet in Namensreihenfolge an, unabhängig von der Eingabereihenfolge', () => {
+	it('applies in name order regardless of the input order', () => {
 		const db = openDb(':memory:');
 		const ran = migrate(db, {
 			'/m/002_b.sql': 'CREATE TABLE b (a_id INTEGER REFERENCES a (id))',
@@ -117,7 +117,7 @@ describe('migrate', () => {
 		expect(ran).toEqual(['001_a.sql', '002_b.sql']);
 	});
 
-	it('rollt eine fehlgeschlagene Migration vollständig zurück', () => {
+	it('rolls a failed migration back completely', () => {
 		const db = openDb(':memory:');
 		const ok = { '/m/001_ok.sql': 'CREATE TABLE a (id INTEGER PRIMARY KEY)' };
 		const bad = {
@@ -130,7 +130,7 @@ describe('migrate', () => {
 		expect(db.prepare('SELECT count(*) AS n FROM a').get()).toEqual({ n: 0 });
 		expect(db.isTransaction).toBe(false);
 
-		// korrigiert läuft sie beim nächsten Start
+		// once fixed, it runs on the next start
 		expect(migrate(db, { ...ok, '/m/002_bad.sql': 'CREATE TABLE b (id INTEGER)' })).toEqual([
 			'002_bad.sql'
 		]);
@@ -177,7 +177,7 @@ describe('migrate', () => {
 		expect(beforeUpgrade).not.toHaveBeenCalled();
 	});
 
-	it('006 ergänzt comments.run_id (mit FK) auch in einer DB mit Kommentaren', () => {
+	it('006 adds comments.run_id (with FK) also to a DB that has comments', () => {
 		const bundled = import.meta.glob<string>('/migrations/*.sql', {
 			query: '?raw',
 			import: 'default',
@@ -205,7 +205,7 @@ describe('migrate', () => {
 		).toThrow(/FOREIGN KEY/);
 	});
 
-	it('005 setzt docs_required für Epics, die schon vor der Migration bestanden (die Domain-Regel „Epic immer docs_required" kennt nur das Flag, keinen Sonderfall für type=epic)', () => {
+	it('005 sets docs_required on epics that existed before the migration, because the domain rule only knows the flag', () => {
 		const bundled = import.meta.glob<string>('/migrations/*.sql', {
 			query: '?raw',
 			import: 'default',
@@ -227,8 +227,8 @@ describe('migrate', () => {
 		`);
 		expect(migrate(db)).toEqual(['005_notes.sql']);
 		expect(db.prepare('SELECT id, docs_required FROM tickets ORDER BY id').all()).toEqual([
-			{ id: 100, docs_required: 1 }, // Bestands-Epic nachgezogen
-			{ id: 101, docs_required: 0 } // gewöhnliches Ticket unberührt
+			{ id: 100, docs_required: 1 }, // existing epic updated
+			{ id: 101, docs_required: 0 } // ordinary ticket untouched
 		]);
 	});
 
@@ -319,7 +319,7 @@ describe('migrate', () => {
 	});
 });
 
-describe('Kernschema', () => {
+describe('core schema', () => {
 	const db = openDb(':memory:');
 	migrate(db);
 	db.exec(`
@@ -337,160 +337,164 @@ describe('Kernschema', () => {
 	`);
 
 	it.each([
-		['Projekt-Key doppelt', "INSERT INTO projects (key, name) VALUES ('STU', 'x')", /UNIQUE/],
+		['duplicate project key', "INSERT INTO projects (key, name) VALUES ('STU', 'x')", /UNIQUE/],
 		[
-			'Projekt-Key nicht Großbuchstaben/Ziffern',
+			'project key not upper-case letters/digits',
 			"INSERT INTO projects (key, name) VALUES ('st-u', 'x')",
 			/CHECK/
 		],
 		[
-			'Spalte ohne Projekt',
+			'column without project',
 			"INSERT INTO columns (project_id, name) VALUES (99, 'x')",
 			/FOREIGN KEY/
 		],
 		[
-			'Spaltenart unbekannt',
+			'unknown column kind',
 			"INSERT INTO columns (project_id, name, kind) VALUES (1, 'x', 'archive')",
 			/CHECK/
 		],
 		[
-			'Transition in Spalte eines anderen Projekts',
+			"transition into another project's column",
 			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 20)',
 			/FOREIGN KEY/
 		],
 		[
-			'Transition auf sich selbst',
+			'transition to itself',
 			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 10)',
 			/CHECK/
 		],
 		[
-			'Transition doppelt',
+			'duplicate transition',
 			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 11)',
 			/UNIQUE|PRIMARY KEY/
 		],
 		[
-			'Ticketnummer im Projekt doppelt',
+			'duplicate ticket number in a project',
 			"INSERT INTO tickets (project_id, number, column_id, title) VALUES (1, 1, 10, 'x')",
 			/UNIQUE/
 		],
 		[
-			'Ticket in Spalte eines anderen Projekts',
+			"ticket in another project's column",
 			"INSERT INTO tickets (project_id, number, column_id, title) VALUES (1, 3, 20, 'x')",
 			/FOREIGN KEY/
 		],
 		[
-			'Tickettyp unbekannt',
+			'unknown ticket type',
 			"INSERT INTO tickets (project_id, number, column_id, title, type) VALUES (1, 3, 10, 'x', 'bug')",
 			/CHECK/
 		],
 		[
-			'Ticket ohne Titel',
+			'ticket without title',
 			"INSERT INTO tickets (project_id, number, column_id, title) VALUES (1, 3, 10, '')",
 			/CHECK/
 		],
 		[
-			'falscher Datentyp (STRICT)',
+			'wrong data type (STRICT)',
 			"INSERT INTO tickets (project_id, number, column_id, title) VALUES (1, 'drei', 10, 'x')",
 			/cannot store TEXT value in INTEGER column/
 		],
-		['Task ohne Ticket', "INSERT INTO tasks (ticket_id, title) VALUES (999, 'x')", /FOREIGN KEY/],
 		[
-			'Kommentar mit unbekannter Autorenart',
+			'task without ticket',
+			"INSERT INTO tasks (ticket_id, title) VALUES (999, 'x')",
+			/FOREIGN KEY/
+		],
+		[
+			'comment with unknown author kind',
 			"INSERT INTO comments (ticket_id, author_kind, author, body) VALUES (100, 'bot', 'x', 'x')",
 			/CHECK/
 		],
 		[
-			'Redaktion ohne Grund',
+			'redaction without reason',
 			"INSERT INTO comments (ticket_id, author_kind, author, body, redacted_at) VALUES (100, 'user', 'x', 'x', CURRENT_TIMESTAMP)",
 			/CHECK/
 		],
+		['relation to itself', "INSERT INTO ticket_relations VALUES (100, 100, 'blocks')", /CHECK/],
 		[
-			'Relation auf sich selbst',
-			"INSERT INTO ticket_relations VALUES (100, 100, 'blocks')",
-			/CHECK/
-		],
-		[
-			'Relationstyp unbekannt',
+			'unknown relation type',
 			"INSERT INTO ticket_relations VALUES (100, 101, 'depends_on')",
 			/CHECK/
 		],
 		[
-			'Relation zu fehlendem Ticket',
+			'relation to a missing ticket',
 			"INSERT INTO ticket_relations VALUES (100, 999, 'blocks')",
 			/FOREIGN KEY/
 		],
-		['Spalte mit Tickets löschen', 'DELETE FROM columns WHERE id = 10', /FOREIGN KEY/],
+		['deleting a column that holds tickets', 'DELETE FROM columns WHERE id = 10', /FOREIGN KEY/],
 		[
-			'blocks_satisfied_at unbekannt',
+			'unknown blocks_satisfied_at',
 			"UPDATE projects SET blocks_satisfied_at = 'review' WHERE id = 1",
 			/CHECK/
 		],
 		[
-			'Review-Freigabe ohne Actor',
+			'review approval without actor',
 			'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP WHERE id = 100',
 			/CHECK/
 		],
-		['Actor kein JSON', "UPDATE tickets SET moved_by = 'dev' WHERE id = 100", /CHECK/],
+		['actor not JSON', "UPDATE tickets SET moved_by = 'dev' WHERE id = 100", /CHECK/],
 		[
-			'Profil mit Klartext-Key statt Verweis',
+			'profile with a plain-text key instead of a reference',
 			"UPDATE agent_profiles SET api_key_ref = 'sk-abc123' WHERE id = 1",
 			/CHECK/
 		],
 		[
-			'builtin-Profil ohne Modell',
+			'builtin profile without model',
 			"INSERT INTO agent_profiles (name, executor, provider) VALUES ('x', 'builtin', 'p')",
 			/CHECK/
 		],
 		[
-			'acp-Profil ohne Kommando',
+			'acp profile without command',
 			"INSERT INTO agent_profiles (name, executor) VALUES ('x', 'acp')",
 			/CHECK/
 		],
 		[
-			'Profil-Parameter kein JSON-Objekt',
+			'profile parameters not a JSON object',
 			"UPDATE agent_profiles SET params = '[1]' WHERE id = 1",
 			/CHECK/
 		],
 		['profile without a pool', "UPDATE agent_profiles SET pool = '' WHERE id = 1", /CHECK/],
-		['Run-Zustand unbekannt', "UPDATE runs SET state = 'done' WHERE id = 1", /CHECK/],
+		['unknown run state', "UPDATE runs SET state = 'done' WHERE id = 1", /CHECK/],
 		[
-			'Run-Token in wartendem Run',
+			'run token on a queued run',
 			"UPDATE runs SET token_hash = printf('%064d', 0) WHERE id = 1",
 			/CHECK/
 		],
 		[
-			'Run-Token im Klartext (falsche Länge)',
+			'run token in plain text (wrong length)',
 			"UPDATE runs SET state = 'running', token_hash = 'klartext' WHERE id = 1",
 			/CHECK/
 		],
-		['Endzustand ohne finished_at', "UPDATE runs SET state = 'succeeded' WHERE id = 1", /CHECK/],
 		[
-			'failed ohne Fehlertext',
+			'final state without finished_at',
+			"UPDATE runs SET state = 'succeeded' WHERE id = 1",
+			/CHECK/
+		],
+		[
+			'failed without error text',
 			"UPDATE runs SET state = 'failed', finished_at = CURRENT_TIMESTAMP WHERE id = 1",
 			/CHECK/
 		],
 		[
-			'Run-Event mit doppelter seq',
+			'run event with duplicate seq',
 			"INSERT INTO run_events (run_id, seq, type) VALUES (1, 1, 'log')",
 			/UNIQUE|PRIMARY KEY/
 		],
 		[
-			'Run-Event-Typ unbekannt',
+			'unknown run event type',
 			"INSERT INTO run_events (run_id, seq, type) VALUES (1, 2, 'chat')",
 			/CHECK/
 		],
 		[
-			'Run-Event-Payload kein JSON',
+			'run event payload not JSON',
 			"INSERT INTO run_events (run_id, seq, type, payload) VALUES (1, 2, 'log', '{kaputt')",
 			/CHECK/
 		],
 		[
-			'Idempotenz-Schlüssel doppelt',
+			'duplicate idempotency key',
 			"INSERT INTO run_events (run_id, seq, type, idempotency_key) VALUES (1, 2, 'log', 'k'), (1, 3, 'log', 'k')",
 			/UNIQUE/
 		],
 		[
-			'Kommentar mit unbekanntem Run',
+			'comment with unknown run',
 			"INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'x', 'x', 99)",
 			/FOREIGN KEY/
 		],
@@ -509,11 +513,11 @@ describe('Kernschema', () => {
 			"INSERT INTO questions (ticket_id, question, collected_at) VALUES (100, 'q', CURRENT_TIMESTAMP)",
 			/CHECK/
 		]
-	])('weist ab: %s', (_, sql, error) => {
+	])('rejects %s', (_, sql, error) => {
 		expect(() => db.exec(sql)).toThrow(error);
 	});
 
-	it('löscht ein Projekt samt Board kaskadierend', () => {
+	it('deletes a project with its board by cascade', () => {
 		db.exec('DELETE FROM projects WHERE id = 1');
 		const count = (table: string) => db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
 		const tables = [
@@ -527,11 +531,11 @@ describe('Kernschema', () => {
 			'run_events',
 			'agent_profiles'
 		];
-		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]); // übrig: die Spalte von OTH und das Profil (global)
+		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]); // left: the column of OTH and the (global) profile
 	});
 });
 
-describe('Notes-Schema', () => {
+describe('notes schema', () => {
 	const db = openDb(':memory:');
 	migrate(db);
 	db.exec(`
@@ -545,67 +549,67 @@ describe('Notes-Schema', () => {
 	`);
 
 	it.each([
-		['Slug nicht kebab-case', "INSERT INTO notes (slug, title) VALUES ('Adr-A', 'x')", /CHECK/],
+		['slug not kebab-case', "INSERT INTO notes (slug, title) VALUES ('Adr-A', 'x')", /CHECK/],
 		[
-			'Notekind unbekannt',
+			'unknown note kind',
 			"INSERT INTO notes (slug, title, kind) VALUES ('n-x', 'x', 'faq')",
 			/CHECK/
 		],
 		[
-			'Status ohne kind=adr',
+			'status without kind=adr',
 			"INSERT INTO notes (slug, title, status) VALUES ('n-y', 'x', 'accepted')",
 			/CHECK/
 		],
 		[
-			'Status-Wert unbekannt',
+			'unknown status value',
 			"INSERT INTO notes (slug, title, kind, status) VALUES ('n-z', 'x', 'adr', 'draft')",
 			/CHECK/
 		],
-		['tags kein JSON-Array', "UPDATE notes SET tags = '{}' WHERE id = 1", /CHECK/],
-		['Slug doppelt', "INSERT INTO notes (slug, title) VALUES ('adr-a', 'x')", /UNIQUE/],
+		['tags not a JSON array', "UPDATE notes SET tags = '{}' WHERE id = 1", /CHECK/],
+		['duplicate slug', "INSERT INTO notes (slug, title) VALUES ('adr-a', 'x')", /UNIQUE/],
 		[
-			'note_projects ohne Projekt',
+			'note_projects without project',
 			'INSERT INTO note_projects (note_id, project_id) VALUES (1, 999)',
 			/FOREIGN KEY/
 		],
 		[
-			'note_links auf sich selbst',
+			'note_links to itself',
 			"INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (1, 1, 'references')",
 			/CHECK/
 		],
 		[
-			'note_links Typ unbekannt',
+			'unknown note_links type',
 			"INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (1, 2, 'related')",
 			/CHECK/
 		],
 		[
-			'note_tickets Relation unbekannt',
+			'unknown note_tickets relation',
 			"INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'mentions')",
 			/CHECK/
 		],
 		[
-			'note_tickets ohne Ticket',
+			'note_tickets without ticket',
 			"INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 999, 'documents')",
 			/FOREIGN KEY/
 		],
 		[
-			'note_tickets Relation doppelt',
+			'duplicate note_tickets relation',
 			"INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'documents')",
 			/UNIQUE|PRIMARY KEY/
 		]
-	])('weist ab: %s', (_, sql, error) => {
+	])('rejects %s', (_, sql, error) => {
 		expect(() => db.exec(sql)).toThrow(error);
 	});
 
-	it('löscht eine Note kaskadierend aus note_projects/note_links/note_tickets; ein Ticket löschen kaskadiert note_tickets', () => {
-		db.exec('DELETE FROM notes WHERE id = 2'); // note-b verweist per note_links auf adr-a
+	it('deletes a note by cascade from note_projects/note_links/note_tickets, and deleting a ticket cascades note_tickets', () => {
+		db.exec('DELETE FROM notes WHERE id = 2'); // note-b links to adr-a via note_links
 		expect(db.prepare('SELECT count(*) AS n FROM note_links').get()?.n).toBe(0);
 		db.exec('DELETE FROM tickets WHERE id = 100');
 		expect(db.prepare('SELECT count(*) AS n FROM note_tickets').get()?.n).toBe(0);
-		expect(db.prepare('SELECT count(*) AS n FROM note_projects').get()?.n).toBe(1); // adr-a bleibt, nur ihr Ticket-Link ist weg
+		expect(db.prepare('SELECT count(*) AS n FROM note_projects').get()?.n).toBe(1); // adr-a stays, only its ticket link is gone
 	});
 
-	it('FTS5-Trigger halten notes_fts synchron mit INSERT/UPDATE/DELETE', () => {
+	it('keeps notes_fts in sync with INSERT/UPDATE/DELETE through FTS5 triggers', () => {
 		const hits = (q: string) =>
 			db
 				.prepare(
@@ -613,8 +617,8 @@ describe('Notes-Schema', () => {
 				)
 				.all(q)
 				.map((r) => r.slug);
-		// ohne JOIN: ein fehlender AD-Trigger ließe eine verwaiste Zeile in notes_fts zurück, die der gejointe Check maskiert
-		// (die Zeile in notes fehlt dann ja auch), eine spätere Wiederverwendung derselben rowid träfe aber falsch.
+		// without a JOIN: a missing delete trigger would leave an orphaned row in notes_fts that a joined check masks
+		// (the row in notes is gone as well), but a later reuse of the same rowid would then match wrongly.
 		const rawHits = (q: string) =>
 			db
 				.prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?')

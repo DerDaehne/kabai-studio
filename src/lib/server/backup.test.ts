@@ -21,8 +21,8 @@ import { backup, backupIfDue, backupStatus, listBackups, prune } from './backup'
 import { migrate, openDb } from './db';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-backup-'));
-// Zeitzone weit weg von UTC (UTC+14): Namen, Alter und Tagesgrenzen müssen trotzdem UTC sein — so fällt Lokalzeit auch in
-// einer CI mit TZ=UTC auf. Gilt auch für die restore-Kindprozesse (erben die Umgebung).
+// A time zone far from UTC (UTC+14): names, ages and day boundaries must still be UTC, so local time shows up even
+// in a CI running with TZ=UTC. Applies to the restore child processes too (they inherit the environment).
 const tz = process.env.TZ;
 process.env.TZ = 'Pacific/Kiritimati';
 afterAll(() => {
@@ -37,7 +37,7 @@ const names = (dir: string) => listBackups(dir).map((b) => b.file);
 const mode = (path: string) => statSync(path).mode & 0o777;
 
 const DB_TS = JSON.stringify(resolve('src/lib/server/db.ts'));
-/** Node-Kindprozess, der db.ts direkt lädt (ohne Vite, wie Server-Start bzw. CLI) und `code` ausführt. */
+/** A Node child process that loads db.ts directly (without Vite, like the server start or the CLI) and runs `code`. */
 const nodeWithDb = (dir: string, code: string) =>
 	[
 		process.execPath,
@@ -63,7 +63,7 @@ async function holdLock(dir: string): Promise<ChildProcess> {
 	return child;
 }
 
-/** Schema + alle Zeilen aller Tabellen; Zeilen sortiert, weil VACUUM Rowids ohne INTEGER PRIMARY KEY neu vergeben darf. */
+/** Schema plus all rows of all tables; rows sorted because VACUUM may reassign rowids without INTEGER PRIMARY KEY. */
 function dump(db: DatabaseSync) {
 	const tables = db.prepare('SELECT type, name, sql FROM sqlite_schema ORDER BY name').all();
 	const rows = tables
@@ -79,7 +79,7 @@ function dump(db: DatabaseSync) {
 	return { tables, rows: Object.fromEntries(rows) };
 }
 
-/** Kleine Studio-DB mit Daten in mehreren Tabellen (inkl. FTS5 und BLOBs). */
+/** A small Studio DB with data in several tables (including FTS5 and BLOBs). */
 function seed(file: string) {
 	const db = openDb(file);
 	migrate(db);
@@ -91,7 +91,7 @@ function seed(file: string) {
 	return db;
 }
 
-/** Überschreibt die Wurzelseite einer Tabelle mit Müll (DB-Datei ohne offenes WAL). */
+/** Overwrites a table's root page with garbage (DB file without an open WAL). */
 function corruptTable(file: string, table: string) {
 	const db = new DatabaseSync(file);
 	const { rootpage } = db.prepare('SELECT rootpage FROM sqlite_schema WHERE name = ?').get(table)!;
@@ -108,18 +108,18 @@ function corruptTable(file: string, table: string) {
 	closeSync(fd);
 }
 
-describe('Sicherung vor Migration', () => {
+describe('backup before migration', () => {
 	const m1 = { '/m/001_a.sql': 'CREATE TABLE a (x INTEGER) STRICT;' };
 	const m2 = { ...m1, '/m/002_b.sql': 'CREATE TABLE b (x INTEGER) STRICT;' };
 
-	it('sichert nur, wenn Migrationen anstehen und die DB nicht leer ist — mit dem Stand davor', () => {
+	it('backs up the previous state only when migrations are pending and the DB is not empty', () => {
 		const dir = join(tmp, 'pre');
 		const db = openDb(join(tmp, 'pre.db'));
 		const hook = () => void backup(db, dir);
-		migrate(db, m1, hook); // leere DB: nichts zu sichern
+		migrate(db, m1, hook); // empty DB: nothing to back up
 		expect(names(dir)).toEqual([]);
 		db.exec('INSERT INTO a VALUES (42)');
-		migrate(db, m1, hook); // nichts steht an
+		migrate(db, m1, hook); // nothing pending
 		expect(names(dir)).toEqual([]);
 
 		expect(migrate(db, m2, hook)).toEqual(['002_b.sql']);
@@ -132,7 +132,7 @@ describe('Sicherung vor Migration', () => {
 		copy.close();
 	});
 
-	it('scheitert die Sicherung, wird nichts migriert', () => {
+	it('migrates nothing when the backup fails', () => {
 		const db = openDb(join(tmp, 'pre-fail.db'));
 		migrate(db, m1);
 		expect(() =>
@@ -144,12 +144,12 @@ describe('Sicherung vor Migration', () => {
 	});
 });
 
-describe('Sicherung', () => {
-	it('benennt nach UTC-Minute und bleibt in derselben Minute eindeutig', () => {
+describe('backup', () => {
+	it('names backups by UTC minute and keeps names unique within the same minute', () => {
 		const dir = join(tmp, 'names');
 		const db = seed(join(tmp, 'names.db'));
-		expect(new Date('2026-03-01T00:00:00Z').getTimezoneOffset()).toBe(-14 * 60); // Test läuft wirklich in UTC+14
-		const at = new Date('2026-03-01T23:59:30+01:00'); // in UTC 22:59, in der Test-Zeitzone schon der 2.3. 12:59
+		expect(new Date('2026-03-01T00:00:00Z').getTimezoneOffset()).toBe(-14 * 60); // the test really runs in UTC+14
+		const at = new Date('2026-03-01T23:59:30+01:00'); // 22:59 in UTC, already 12:59 on 2 March in the test time zone
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259.db'));
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259-2.db'));
 		expect(backup(db, dir, at)).toBe(join(dir, 'studio-20260301-2259-3.db'));
@@ -160,18 +160,18 @@ describe('Sicherung', () => {
 		]);
 	});
 
-	it('ein abgebrochener Lauf hinterlässt keine gültige Sicherung', () => {
+	it('leaves no valid backup behind after an aborted run', () => {
 		const dir = join(tmp, 'abort');
 		const file = join(tmp, 'abort.db');
 		seed(file).close();
-		corruptTable(file, 'projects'); // VACUUM INTO bricht beim Lesen ab, nachdem es die Zieldatei schon angelegt hat
+		corruptTable(file, 'projects'); // VACUUM INTO fails while reading, after it has already created the target file
 		expect(() => backup(openDb(file), dir)).toThrow(
 			/Sicherung nach .* fehlgeschlagen .* Speicherplatz und Schreibrechte prüfen/
 		);
-		expect(readdirSync(dir)).toEqual([]); // weder gültige Sicherung noch Temp-Rest
+		expect(readdirSync(dir)).toEqual([]); // neither a valid backup nor a temp leftover
 	});
 
-	it('ein Temp-Rest aus einem Absturz gilt nie als Sicherung und blockiert die nächste nicht', () => {
+	it('never counts a temp leftover from a crash as a backup, and it does not block the next one', () => {
 		const dir = join(tmp, 'stale');
 		mkdirSync(dir, { mode: 0o700 });
 		writeFileSync(join(dir, 'studio-20260101-0000.db.tmp'), 'halb geschrieben');
@@ -182,16 +182,16 @@ describe('Sicherung', () => {
 	});
 });
 
-describe('Aufbewahrung', () => {
-	it('sichert täglich und behält 7 tägliche + 4 wöchentliche', () => {
+describe('retention', () => {
+	it('backs up daily and keeps 7 daily plus 4 weekly backups', () => {
 		const dir = join(tmp, 'days');
 		const db = seed(join(tmp, 'days.db'));
-		// 60 Tage ab Do 2026-01-01 03:00 UTC, Prüfung alle 6 Stunden wie der Timer (stündlich) oder häufige Neustarts
+		// 60 days from Thu 2026-01-01 03:00 UTC, checked every 6 hours like the timer (hourly) or frequent restarts
 		const start = Date.UTC(2026, 0, 1, 3);
 		for (let t = start; t < start + 60 * 24 * HOUR; t += 6 * HOUR)
 			backupIfDue(db, dir, new Date(t));
 		expect(names(dir)).toEqual([
-			// täglich: die letzten 7 Tage (Mo 23.2. – So 1.3.)
+			// daily: the last 7 days (Mon 23 Feb – Sun 1 Mar)
 			'studio-20260301-0300.db',
 			'studio-20260228-0300.db',
 			'studio-20260227-0300.db',
@@ -199,29 +199,29 @@ describe('Aufbewahrung', () => {
 			'studio-20260225-0300.db',
 			'studio-20260224-0300.db',
 			'studio-20260223-0300.db',
-			// wöchentlich: die neueste der letzten 4 Wochen (Wochen beginnen montags); die jüngste Woche deckt der 1.3. ab
+			// weekly: the newest of each of the last 4 weeks (weeks start on Monday); 1 Mar covers the latest week
 			'studio-20260222-0300.db',
 			'studio-20260215-0300.db',
 			'studio-20260208-0300.db'
 		]);
 	});
 
-	it('eine lange Pause löscht nichts: gezählt werden Tage und Wochen mit Sicherung, nicht Kalendertage', () => {
+	it('deletes nothing after a long pause, because it counts days and weeks with a backup, not calendar days', () => {
 		const dir = join(tmp, 'pause');
 		const db = seed(join(tmp, 'pause.db'));
-		const start = Date.UTC(2026, 0, 1, 3); // Do 1.1.
-		for (let d = 0; d < 10; d++) backupIfDue(db, dir, new Date(start + d * DAY)); // bis Sa 10.1.
-		backupIfDue(db, dir, new Date(start + 70 * DAY)); // 60 Tage Server aus, dann Do 12.3.
+		const start = Date.UTC(2026, 0, 1, 3); // Thu 1 Jan
+		for (let d = 0; d < 10; d++) backupIfDue(db, dir, new Date(start + d * DAY)); // until Sat 10 Jan
+		backupIfDue(db, dir, new Date(start + 70 * DAY)); // server off for 60 days, then Thu 12 Mar
 		expect(names(dir)).toEqual([
 			'studio-20260312-0300.db',
-			// die 6 jüngsten Tage davor (täglich) …
+			// the 6 latest days before that (daily) …
 			'studio-20260110-0300.db',
 			'studio-20260109-0300.db',
 			'studio-20260108-0300.db',
 			'studio-20260107-0300.db',
 			'studio-20260106-0300.db',
 			'studio-20260105-0300.db',
-			// … und die neueste der Woche 1.–4.1. (wöchentlich)
+			// … and the newest of the week 1–4 Jan (weekly)
 			'studio-20260104-0300.db'
 		]);
 	});
@@ -239,7 +239,7 @@ describe('Aufbewahrung', () => {
 		expect(readdirSync(dir).sort()).toEqual(['studio-20260101-0005.db']);
 	});
 
-	it('behält je Tag die neueste und löscht nie die jüngste Sicherung', () => {
+	it('keeps the newest backup per day and never deletes the latest one', () => {
 		const dir = join(tmp, 'keep');
 		const db = seed(join(tmp, 'keep.db'));
 		for (const at of ['2026-01-05T08:00:00Z', '2026-01-05T20:00:00Z', '2026-01-06T08:00:00Z'])
@@ -304,8 +304,8 @@ describe('freshness ignores a backup in the future', () => {
 	});
 });
 
-describe('Rechte', () => {
-	it('Sicherungen 0600 in einem Verzeichnis mit 0700', () => {
+describe('permissions', () => {
+	it('writes backups with 0600 into a directory with 0700', () => {
 		const dir = join(tmp, 'rechte', 'backups');
 		const file = backup(seed(join(tmp, 'rechte.db')), dir);
 		expect(mode(join(tmp, 'rechte'))).toBe(0o700);
@@ -313,7 +313,7 @@ describe('Rechte', () => {
 		expect(mode(file)).toBe(0o600);
 	});
 
-	it('ein vorhandenes, für andere offenes Verzeichnis bleibt, wie es ist — mit Warnung und Ausweg', () => {
+	it('leaves an existing directory open to others as it is, with a warning and a way out', () => {
 		const dir = join(tmp, 'offen');
 		mkdirSync(dir);
 		chmodSync(dir, 0o755);
@@ -331,23 +331,23 @@ describe('Rechte', () => {
 	});
 });
 
-describe('Einzelinstanz', () => {
-	it('eine zweite Instanz bricht vor jeder DB-Aktion ab und lässt die Sperre der ersten stehen; nach kill -9 ist sie frei', async () => {
-		const dir = join(tmp, 'instanz'); // existiert noch nicht
-		const first = await holdLock(dir); // wie ein laufender Server
+describe('single instance', () => {
+	it('aborts a second instance before any DB access and keeps the first one locked; after kill -9 the lock is free', async () => {
+		const dir = join(tmp, 'instanz'); // does not exist yet
+		const first = await holdLock(dir); // like a running server
 		let saved: string;
 		try {
-			expect(mode(dir)).toBe(0o700); // von Studio angelegt → nur für den eigenen Nutzer
+			expect(mode(dir)).toBe(0o700); // created by Studio → owner only
 
-			// zweiter Server-Start auf demselben Verzeichnis (versehentlich doppelt gestartet)
+			// a second server start on the same directory (started twice by accident)
 			const second = spawnSync(...nodeWithDb(dir, 'studio.db();'));
 			expect(second.status).not.toBe(0);
 			expect(second.stderr).toMatch(
 				/Studio läuft bereits mit dem Datenverzeichnis .*instanz \(zweiter Server oder laufendes restore\)\. Die laufende Instanz verwenden oder beenden/
 			);
-			expect(readdirSync(dir)).not.toContain('studio.db'); // nichts geöffnet, migriert oder gesichert
+			expect(readdirSync(dir)).not.toContain('studio.db'); // nothing opened, migrated or backed up
 
-			// die erste Instanz ist weiter geschützt: restore erkennt sie (Szenario aus dem Review)
+			// the first instance stays protected: restore detects it
 			saved = backup(seed(join(tmp, 'instanz-quelle.db')), join(tmp, 'instanz-backups'));
 			const blocked = spawnSync(process.execPath, ['src/lib/server/restore.ts', saved], {
 				env: { ...process.env, STUDIO_DATA_DIR: dir },
@@ -372,7 +372,7 @@ describe('Einzelinstanz', () => {
 });
 
 describe('backupStatus', () => {
-	it('zeigt letzte Sicherung, Größe und Pfad — und markiert ausbleibende oder fehlgeschlagene mit Ausweg', () => {
+	it('shows the newest backup with size and path, and flags missing or failed backups with a way out', () => {
 		const dir = join(tmp, 'status');
 		const db = seed(join(tmp, 'status.db'));
 		const now = new Date('2026-02-01T12:00:00Z');
@@ -393,7 +393,7 @@ describe('backupStatus', () => {
 			/Keine Sicherung aus den letzten 24 Stunden/
 		);
 
-		db.close(); // nächste Sicherung scheitert
+		db.close(); // the next backup fails
 		const later = new Date(now.getTime() + 25 * HOUR);
 		backupIfDue(db, dir, later);
 		expect(backupStatus(dir, later).error).toMatch(
@@ -413,7 +413,7 @@ describe('restore (CLI)', () => {
 			env: { ...process.env, STUDIO_DATA_DIR: data },
 			encoding: 'utf8'
 		});
-	/** Aktueller Stand der Server-DB (Verbindung wieder zu, wie bei gestopptem Server). */
+	/** Current state of the server DB (connection closed again, as with a stopped server). */
 	const current = () => {
 		const db = openDb(file);
 		const d = dump(db);
@@ -429,9 +429,9 @@ describe('restore (CLI)', () => {
 	const changed = dump(db);
 	db.close();
 
-	it('bricht ab, solange der Server läuft — ohne etwas zu verändern oder zu sichern', async () => {
+	it('aborts while the server runs, without changing or backing up anything', async () => {
 		const server = await holdLock(data);
-		writeFileSync(`${file}.restore`, 'Temp-Kopie eines laufenden restore'); // gehört dem Sperrinhaber
+		writeFileSync(`${file}.restore`, 'Temp-Kopie eines laufenden restore'); // belongs to the lock holder
 		try {
 			const r = restore(saved);
 			expect(r.status).toBe(1);
@@ -447,7 +447,7 @@ describe('restore (CLI)', () => {
 		}
 	});
 
-	it('aktuelle DB defekt → Exit 1, benennt die aktuelle DB und den Ausweg; nichts verändert', () => {
+	it('exits 1 on a broken current DB, naming it and the way out, and changes nothing', () => {
 		const dir = join(tmp, 'aktuell-defekt');
 		mkdirSync(dir, { mode: 0o700 });
 		const garbage = 'kein SQLite '.repeat(500);
@@ -461,13 +461,17 @@ describe('restore (CLI)', () => {
 			/^restore: Die aktuelle Datenbank .*studio\.db lässt sich vorher nicht sichern \(file is not a database\)\. Ist sie defekt: sie samt -wal\/-shm von Hand beiseitelegen \(umbenennen\) und erneut ausführen; sonst Speicherplatz und Schreibrechte in .* prüfen\.\n$/
 		);
 		expect(readFileSync(join(dir, 'studio.db'), 'utf8')).toBe(garbage);
-		expect(readdirSync(dir).filter((f) => f.startsWith('studio.db'))).toEqual(['studio.db']); // keine Kopie, kein WAL
+		expect(readdirSync(dir).filter((f) => f.startsWith('studio.db'))).toEqual(['studio.db']); // no copy, no WAL
 	});
 
 	it.each([
-		['fehlt', () => join(tmp, 'gibt-es-nicht.db'), /nicht gefunden\. Sicherungen liegen unter /],
 		[
-			'ist kein SQLite',
+			'is missing',
+			() => join(tmp, 'gibt-es-nicht.db'),
+			/nicht gefunden\. Sicherungen liegen unter /
+		],
+		[
+			'is not SQLite',
 			() => (
 				writeFileSync(join(tmp, 'kaputt.db'), 'kein SQLite '.repeat(500)),
 				join(tmp, 'kaputt.db')
@@ -475,7 +479,7 @@ describe('restore (CLI)', () => {
 			/keine intakte Studio-Sicherung .* andere Datei aus /
 		],
 		[
-			'ist abgeschnitten',
+			'is truncated',
 			() => (
 				writeFileSync(
 					join(tmp, 'halb.db'),
@@ -486,17 +490,17 @@ describe('restore (CLI)', () => {
 			/keine intakte Studio-Sicherung/
 		],
 		[
-			'widerspricht ihrem Index (lesbar, nur integrity_check merkt es)',
+			'contradicts its index (readable, only integrity_check notices)',
 			() => {
 				const bytes = readFileSync(saved);
-				bytes.write('ALPHB', bytes.indexOf('ALPHA')); // Tabellenzeile ändern, UNIQUE-Index behält „ALPHA"
+				bytes.write('ALPHB', bytes.indexOf('ALPHA')); // change the table row; the UNIQUE index keeps "ALPHA"
 				writeFileSync(join(tmp, 'index.db'), bytes);
 				return join(tmp, 'index.db');
 			},
 			/keine intakte Studio-Sicherung \(Integritätsprüfung meldet Fehler\)/
 		],
 		[
-			'ist keine Studio-DB',
+			'is no Studio DB',
 			() => (
 				new DatabaseSync(join(tmp, 'fremd.db')).exec('CREATE TABLE t (x)'),
 				join(tmp, 'fremd.db')
@@ -514,22 +518,25 @@ describe('restore (CLI)', () => {
 			},
 			/^restore: \[db_newer_than_code\] Datenbank enthält unbekannte Migrationen, die dieser Code nicht kennt: 999_future\.sql\. Eine neuere Studio-Version installieren oder eine ältere Sicherung wiederherstellen\.\n$/
 		]
-	])('Datei %s → Exit 1, eine Zeile mit Ausweg, DB unverändert', (_, source, message) => {
-		const r = restore(source());
-		expect(r.status).toBe(1);
-		expect(r.stderr).toMatch(message);
-		expect(r.stderr.trim().split('\n')).toHaveLength(1);
-		expect(current()).toEqual(changed);
-		expect(readdirSync(data).filter((f) => f.includes('.restore'))).toEqual([]);
-	});
+	])(
+		'exits 1 with one line and a way out when the file %s, leaving the DB unchanged',
+		(_, source, message) => {
+			const r = restore(source());
+			expect(r.status).toBe(1);
+			expect(r.stderr).toMatch(message);
+			expect(r.stderr.trim().split('\n')).toHaveLength(1);
+			expect(current()).toEqual(changed);
+			expect(readdirSync(data).filter((f) => f.includes('.restore'))).toEqual([]);
+		}
+	);
 
-	it('ohne Argument → Exit 1 mit Aufruf', () => {
+	it('exits 1 with the usage when called without an argument', () => {
 		const r = restore();
 		expect(r.status).toBe(1);
 		expect(r.stderr).toMatch(/^restore: Aufruf: npm run restore -- <backup-datei>/);
 	});
 
-	it('stellt den gesicherten Stand identisch wieder her und sichert vorher die aktuelle DB', () => {
+	it('restores the saved state identically and backs up the current DB first', () => {
 		const r = restore(saved);
 		expect(r.stderr).toBe('');
 		expect(r.status).toBe(0);
@@ -539,14 +546,14 @@ describe('restore (CLI)', () => {
 		expect(current()).toEqual(atBackup);
 
 		const pre = new DatabaseSync(join(backups, names(backups)[0]));
-		expect(dump(pre)).toEqual(changed); // der Stand vor dem Restore ist nicht verloren
+		expect(dump(pre)).toEqual(changed); // the state before the restore is not lost
 		pre.close();
-		expect(readdirSync(data).filter((f) => f.startsWith('studio.db'))).toEqual(['studio.db']); // keine Temp-Kopie, kein altes WAL
-		expect(mode(file)).toBe(0o600); // eingesetzt aus einer 0600-Sicherung
+		expect(readdirSync(data).filter((f) => f.startsWith('studio.db'))).toEqual(['studio.db']); // no temp copy, no old WAL
+		expect(mode(file)).toBe(0o600); // swapped in from a 0600 backup
 	});
 
-	it('wendet ein liegengebliebenes WAL nicht auf die eingesetzte Sicherung an', () => {
-		// Absturz mit ungeschriebenem WAL, danach studio.db von Hand beiseitegelegt (Ausweg bei defekter DB) — -wal/-shm bleiben liegen
+	it('does not replay a leftover WAL onto the restored backup', () => {
+		// crash with an unwritten WAL, then studio.db moved aside by hand (the way out for a broken DB) — -wal/-shm stay behind
 		const crash = `const db = new (require('node:sqlite').DatabaseSync)(${JSON.stringify(file)});
 			db.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; UPDATE projects SET name = 'aus dem WAL'; INSERT INTO projects (key, name) VALUES ('WAL', 'x')");
 			process.kill(process.pid, 'SIGKILL');`;

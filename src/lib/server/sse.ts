@@ -10,17 +10,16 @@ export const SSE_HEADERS = {
 	'Content-Type': 'text/event-stream',
 	'Cache-Control': 'no-cache',
 	Connection: 'keep-alive',
-	'X-Accel-Buffering': 'no' // Proxy-Puffer aus, sonst kommen Events verzögert an
+	'X-Accel-Buffering': 'no' // no proxy buffering, otherwise events arrive late
 } as const;
 
 /**
- * SSE-Stream für den Event-Bus, gefiltert durch `filter` — für Projekte hier `e => e.projectId === id`,
- * später von Run-Events mit eigenem Filter wiederverwendbar (#770-Out-Klausel). Heartbeat hält Proxys/Browser
- * am Leben; `cancel` (Verbindungsende) meldet den Bus-Listener ab und stoppt den Timer — sonst ein Leck pro
- * offener Verbindung, siehe `events.ts`.
+ * SSE stream for the event bus, filtered by `filter` (for a project: `e => e.projectId === id`). A heartbeat keeps
+ * proxies and browsers alive; `cancel` (connection end) unsubscribes the bus listener and stops the timer —
+ * otherwise every open connection would leak one.
  *
- * `alive` läuft vor jedem Event und jedem Heartbeat (Route: Session noch gültig?). Ist es falsch oder wirft,
- * schließt der Stream sofort und räumt auf — so bekommt ein offener Stream nach Logout/Reset/Ablauf nichts mehr.
+ * `alive` runs before every event and every heartbeat (the route checks the session). If it is false or throws, the
+ * stream closes at once and cleans up, so an open stream gets nothing after logout, password reset or expiry.
  */
 export function eventStream(
 	filter: (event: StudioEvent) => boolean,
@@ -32,19 +31,19 @@ export function eventStream(
 	let stop = () => {};
 	return new ReadableStream({
 		start(controller) {
-			// Wirft nie: läuft im Bus-Listener, und Listener dürfen nicht werfen (Fehler landete sonst beim Aufrufer der Mutation).
+			// Never throws: it runs in the bus listener, and a throwing listener hands its error to whoever made the mutation.
 			const send = (event?: StudioEvent) => {
 				try {
 					if (event && !filter(event)) return;
 					if (alive()) return controller.enqueue(event ? frame(event) : HEARTBEAT);
 				} catch {
-					// DB-Fehler in alive(), kaputtes Event oder Verbindung schon zu → schließen, der Client verbindet neu und lädt neu
+					// DB error in alive(), broken event or closed connection → close; the client reconnects and reloads
 				}
 				stop();
 				try {
 					controller.close();
 				} catch {
-					// schon geschlossen
+					// already closed
 				}
 			};
 			const unsubscribe = subscribe(send);
@@ -53,8 +52,8 @@ export function eventStream(
 				clearInterval(timer);
 				unsubscribe();
 			};
-			// Node schickt die Response-Header erst mit dem ersten Chunk — ohne diese Zeile feuerte `onopen` im Browser
-			// erst beim ersten Event oder Heartbeat (bis 25 s), und `onReload` nach einem Reconnect käme so spät.
+			// Node sends the response headers only with the first chunk — without this line the browser's `onopen` would
+			// fire only on the first event or heartbeat (up to 25 s), and `onReload` after a reconnect would come as late.
 			controller.enqueue(CONNECTED);
 		},
 		cancel() {

@@ -1,6 +1,6 @@
-// Recovery ohne UI: `npm run reset-password` setzt das Owner-Passwort neu und beendet alle Sessions.
-// Läuft direkt mit Node (Type-Stripping, kein Build) und auch neben dem laufenden Server (WAL + busy_timeout).
-// Passwort: im Terminal verdeckt zweimal abgefragt; bei einer Pipe die erste Zeile von stdin.
+// Recovery without UI: `npm run reset-password` sets a new owner password and ends all sessions.
+// Runs directly under Node (type stripping, no build), also next to the running server (WAL + busy_timeout).
+// Password: asked twice with hidden input in a terminal; from a pipe, the first line of stdin.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -17,7 +17,7 @@ async function readPassword(): Promise<string> {
 	let muted = false;
 	const output = new Writable({
 		write(chunk, _enc, done) {
-			if (!muted) process.stdout.write(chunk); // verdeckte Eingabe: Echo unterdrücken
+			if (!muted) process.stdout.write(chunk); // hidden input: suppress the echo
 			done();
 		}
 	});
@@ -51,7 +51,7 @@ try {
 		try {
 			return hasOwner(db);
 		} catch {
-			return false; // DB älter als die Auth-Migration
+			return false; // DB older than the auth migration
 		}
 	})();
 	if (!owner)
@@ -68,7 +68,7 @@ try {
 		'Passwort gesetzt, alle Sessions beendet. Jetzt mit dem neuen Passwort unter /login anmelden.'
 	);
 } catch (err) {
-	// SQLITE_BUSY (errcode 5): trotz busy_timeout gesperrt geblieben — Klartext statt roher SQLite-Meldung (#817).
+	// SQLITE_BUSY (errcode 5): still locked despite busy_timeout — plain text instead of the raw SQLite message.
 	const locked = (err as NodeJS.ErrnoException & { errcode?: number }).errcode === 5;
 	console.error(
 		locked

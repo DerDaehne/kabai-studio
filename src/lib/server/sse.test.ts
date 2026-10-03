@@ -15,7 +15,7 @@ async function readChunk(reader: ReadableStreamDefaultReader<Uint8Array>) {
 	return decoder.decode(value);
 }
 
-/** Öffnet einen Stream und liest die sofortige `: connected`-Zeile schon weg. */
+/** Opens a stream and consumes the immediate `: connected` line. */
 async function open(
 	filter: (e: StudioEvent) => boolean,
 	options: Parameters<typeof eventStream>[1] = { heartbeatMs: 60_000 }
@@ -28,14 +28,14 @@ async function open(
 afterEach(() => void vi.useRealTimers());
 
 describe('eventStream', () => {
-	it('schickt sofort eine Kommentarzeile — ohne Event und ohne Heartbeat (Header gehen damit gleich raus)', async () => {
+	it('sends a comment line at once, before any event or heartbeat, so the headers go out immediately', async () => {
 		vi.useFakeTimers();
 		const reader = eventStream(() => true, { heartbeatMs: 60_000 }).getReader();
-		expect(await readChunk(reader)).toBe(': connected\n\n'); // Fake-Timer: kein Heartbeat kann gelaufen sein
+		expect(await readChunk(reader)).toBe(': connected\n\n'); // fake timers: no heartbeat can have run
 		await reader.cancel();
 	});
 
-	it('gibt ein passendes Event als SSE-Nachricht weiter', async () => {
+	it('forwards a matching event as an SSE message', async () => {
 		const reader = await open((e) => e.projectId === 1);
 		const event = evt({ ticketId: 7 });
 		publish(event);
@@ -45,10 +45,10 @@ describe('eventStream', () => {
 		await reader.cancel();
 	});
 
-	it('filtert Events anderer Projekte heraus (Projektfilter)', async () => {
+	it('filters out events of other projects', async () => {
 		const reader = await open((e) => e.projectId === 1);
-		publish(evt({ projectId: 2, ticketId: 1 })); // gehört nicht zum Filter, darf nicht ankommen
-		publish(evt({ projectId: 1, ticketId: 9 })); // passiert den Filter
+		publish(evt({ projectId: 2, ticketId: 1 })); // outside the filter, must not arrive
+		publish(evt({ projectId: 1, ticketId: 9 })); // passes the filter
 		const chunk = await readChunk(reader);
 		expect(JSON.parse(chunk.slice('data: '.length, -2))).toMatchObject({
 			projectId: 1,
@@ -57,7 +57,7 @@ describe('eventStream', () => {
 		await reader.cancel();
 	});
 
-	it('meldet beim Schließen Bus-Listener und Heartbeat-Timer ab (kein Leck)', async () => {
+	it('removes the bus listener and the heartbeat timer on close', async () => {
 		vi.useFakeTimers();
 		const before = listenerCount();
 		const reader = await open(() => true);
@@ -68,25 +68,25 @@ describe('eventStream', () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it('schickt einen Heartbeat-Kommentar im Intervall', async () => {
+	it('sends a heartbeat comment at the interval', async () => {
 		const reader = await open(() => false, { heartbeatMs: 5 });
 		expect(await readChunk(reader)).toBe(': heartbeat\n\n');
 		await reader.cancel();
 	});
 
-	it('widerrufen (alive falsch): kein Event mehr, Stream endet, Listener und Timer weg', async () => {
+	it('stops events, ends the stream and cleans up once alive turns false', async () => {
 		vi.useFakeTimers();
 		const before = listenerCount();
 		let alive = true;
 		const reader = await open(() => true, { alive: () => alive, heartbeatMs: 60_000 });
-		alive = false; // z. B. Logout in einem anderen Tab
+		alive = false; // e.g. logout in another tab
 		publish(evt({ ticketId: 3 }));
 		expect(await reader.read()).toEqual({ done: true, value: undefined });
 		expect(listenerCount()).toBe(before);
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it('widerrufen ohne Events: der Heartbeat prüft und schließt den Stream', async () => {
+	it('closes a revoked stream on the heartbeat when no events arrive', async () => {
 		vi.useFakeTimers();
 		let alive = true;
 		const reader = await open(() => false, { alive: () => alive, heartbeatMs: 1000 });
@@ -96,7 +96,7 @@ describe('eventStream', () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it('wirft alive (z. B. DB-Fehler), schließt der Stream — der Fehler erreicht den Publisher nicht', async () => {
+	it('closes the stream when alive throws (e.g. a DB error) without passing the error to the publisher', async () => {
 		const reader = await open(() => true, {
 			alive: () => {
 				throw new Error('database is locked');

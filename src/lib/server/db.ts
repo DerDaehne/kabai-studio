@@ -6,13 +6,12 @@ import { DomainError } from './domain/error.ts';
 
 export function openDb(file: string): DatabaseSync {
 	const db = new DatabaseSync(file);
-	// busy_timeout zuerst: sonst scheitert journal_mode=WAL bei einer zweiten Verbindung sofort mit
-	// "database is locked" statt zu warten (#817).
+	// busy_timeout first: otherwise journal_mode=WAL fails on a second connection right away with
+	// "database is locked" instead of waiting.
 	db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 	return db;
 }
 
-/** Datenverzeichnis: `STUDIO_DATA_DIR`, Default `./data`. */
 export const dataDir = () => process.env.STUDIO_DATA_DIR || 'data';
 export const backupDir = () => join(dataDir(), 'backups');
 
@@ -26,16 +25,16 @@ export function assertKnownMigrations(applied: Iterable<string>, known: Readonly
 		);
 }
 
-// Sperren dieses Prozesses je Lock-Datei — auf globalThis, damit ein neu geladenes db.ts (Vite-HMR) die eigene Sperre
-// wiedererkennt, statt an ihr zu scheitern.
+// This process's locks per lock file — on globalThis so that a reloaded db.ts (Vite HMR) recognises its own lock
+// instead of failing on it.
 const locks: Map<string, DatabaseSync> = ((
 	globalThis as { studioLocks?: Map<string, DatabaseSync> }
 ).studioLocks ??= new Map());
 
 /**
- * Einzelinstanz-Sperre auf dem Datenverzeichnis: exklusive SQLite-Sperre auf `<dir>/studio.lock`, gehalten bis zum
- * Prozessende. Der Kernel gibt sie auch nach Absturz oder kill -9 frei — keine verwaisten Dateien, keine PID-Wiederverwendung,
- * und eine zweite Instanz kann sie weder übernehmen noch löschen. false = ein anderer Prozess (Server oder restore) hält sie.
+ * Single-instance lock on the data directory: an exclusive SQLite lock on `<dir>/studio.lock`, held until the process
+ * ends. The kernel releases it even after a crash or kill -9 — no stale files, no PID reuse, and a second instance can
+ * neither take it over nor delete it. false = another process (server or restore) holds it.
  */
 export function lockDataDir(dir = dataDir()): boolean {
 	const file = resolve(dir, 'studio.lock');
@@ -43,11 +42,11 @@ export function lockDataDir(dir = dataDir()): boolean {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const lock = new DatabaseSync(file);
 	try {
-		// im EXCLUSIVE-Modus bleibt die mit BEGIN EXCLUSIVE geholte Sperre nach COMMIT bestehen, bis die Verbindung schließt
+		// in EXCLUSIVE locking mode the lock taken by BEGIN EXCLUSIVE outlives COMMIT until the connection closes
 		lock.exec('PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;');
 	} catch (err) {
 		lock.close();
-		if ((err as { errcode?: number }).errcode === 5) return false; // SQLITE_BUSY: gehalten
+		if ((err as { errcode?: number }).errcode === 5) return false; // SQLITE_BUSY: held elsewhere
 		throw err;
 	}
 	locks.set(file, lock);
@@ -55,17 +54,16 @@ export function lockDataDir(dir = dataDir()): boolean {
 }
 
 /**
- * Wendet noch nicht angewendete Migrationen in Namensreihenfolge an, jede in eigener Transaktion.
- * Migrationsdateien dürfen daher selbst kein BEGIN/COMMIT enthalten. Gibt die angewendeten Namen zurück.
- * Mehrprozessfest: BEGIN IMMEDIATE holt die Schreibsperre (busy_timeout wartet), danach wird
- * schema_migrations in der Transaktion erneut geprüft — ein zweiter Prozess überspringt, was der erste schon anwendete.
- * `beforeUpgrade` läuft einmal vor der ersten Migration, wenn welche anstehen und die DB schon Migrationen hat (nicht leer);
- * wirft er, bricht migrate ab, ohne etwas anzuwenden.
+ * Applies pending migrations in name order, each in its own transaction, so migration files must not contain
+ * BEGIN/COMMIT themselves. Returns the applied names. Safe across processes: BEGIN IMMEDIATE takes the write lock
+ * (busy_timeout waits), then schema_migrations is checked again inside the transaction — a second process skips what
+ * the first one already applied. `beforeUpgrade` runs once before the first migration when some are pending and the
+ * DB already has migrations; if it throws, migrate aborts without applying anything.
  */
 export function migrate(
 	db: DatabaseSync,
-	// Beim Build eingebettet (das ausgelieferte Paket braucht keinen Pfad zu migrations/). Als Default-Parameter,
-	// damit db.ts auch ohne Vite importierbar bleibt (CLI reset-password).
+	// Embedded at build time (the shipped package needs no path to migrations/). As a default parameter, so that
+	// db.ts stays importable without Vite (reset-password CLI).
 	migrations: Record<string, string> = import.meta.glob<string>('/migrations/*.sql', {
 		query: '?raw',
 		import: 'default',
@@ -122,8 +120,8 @@ function applyMigration(db: DatabaseSync, name: string, sql: string): boolean {
 let conn: DatabaseSync | undefined;
 
 /**
- * Die eine Verbindung des Prozesses — beim ersten Aufruf: Datenverzeichnis sperren (vor jeder DB-Aktion), öffnen,
- * sichern (falls Migrationen anstehen) und migrieren.
+ * The process's single connection — on the first call it locks the data directory (before any DB access), opens,
+ * backs up (if migrations are pending) and migrates.
  */
 export function db(): DatabaseSync {
 	if (!conn) {
@@ -134,7 +132,7 @@ export function db(): DatabaseSync {
 					`Die laufende Instanz verwenden oder beenden — für eine weitere Instanz STUDIO_DATA_DIR auf ein eigenes Verzeichnis setzen.`
 			);
 		const c = openDb(join(dataDir(), 'studio.db'));
-		migrate(c, undefined, () => backup(c, backupDir())); // Sicherung scheitert → Start bricht ab, nichts wird migriert
+		migrate(c, undefined, () => backup(c, backupDir())); // a failed backup aborts the start before any migration
 		conn = c;
 	}
 	return conn;

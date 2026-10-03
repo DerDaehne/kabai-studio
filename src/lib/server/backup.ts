@@ -1,5 +1,5 @@
-// Sicherungen der SQLite-DB (#808): `VACUUM INTO` nach `<datenverzeichnis>/backups/studio-YYYYMMDD-HHMM[-N].db` (UTC).
-// Nur node:-Importe: die CLI restore lädt diese Datei direkt mit Node, ohne Vite.
+// Backups of the SQLite DB: `VACUUM INTO` to `<data-dir>/backups/studio-YYYYMMDD-HHMM[-N].db` (UTC).
+// node: imports only — the restore CLI loads this file directly under Node, without Vite.
 import {
 	closeSync,
 	fsyncSync,
@@ -16,17 +16,17 @@ import type { DatabaseSync } from 'node:sqlite';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-// ponytail: fest verdrahtet, weil es noch keine settings-Tabelle gibt — im UI änderbar machen, sobald #812 sie anlegt.
+// ponytail: hard-wired because there is no settings table yet — make it editable in the UI once one exists.
 export const RETENTION = { daily: 7, weekly: 4 };
 
-// Nur fertige Sicherungen passen: eine abgebrochene endet auf .tmp und gilt nie als Backup.
+// Only finished backups match: an aborted one ends in .tmp and never counts as a backup.
 const NAME = /^studio-(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(?:-(\d+))?\.db$/;
 
 export type Backup = { file: string; at: Date; n: number };
 
 /**
- * Legt ein Verzeichnis nur für den eigenen Nutzer an (0700). Ein vorhandenes mit Rechten für andere bleibt, wie es ist —
- * still umbiegen könnte eine bewusste Einrichtung brechen —, es gibt nur eine Warnung.
+ * Creates a directory for the owner only (0700). An existing one that others can access stays as it is — silently
+ * changing it could break a deliberate setup — and only gets a warning.
  */
 export function privateDir(dir: string) {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -36,13 +36,13 @@ export function privateDir(dir: string) {
 		);
 }
 
-/** Fertige Sicherungen in `dir`, neueste zuerst. */
+/** Finished backups in `dir`, newest first. */
 export function listBackups(dir: string): Backup[] {
 	let names: string[];
 	try {
 		names = readdirSync(dir);
 	} catch {
-		return []; // Verzeichnis entsteht mit der ersten Sicherung
+		return []; // the directory appears with the first backup
 	}
 	return names
 		.flatMap((file) => {
@@ -61,9 +61,9 @@ export function listBackups(dir: string): Backup[] {
 }
 
 /**
- * Konsistenter Schnappschuss von `db` nach `dir`; gibt den Pfad zurück. Erst in eine Temp-Datei, fsync, dann Rename —
- * ein abgebrochener Lauf hinterlässt höchstens eine .tmp-Datei. Zwei Sicherungen in derselben Minute bekommen `-2`, `-3`, ….
- * Wirft einen Fehler mit Ausweg; läuft nicht innerhalb einer Transaktion (Einschränkung von VACUUM).
+ * Consistent snapshot of `db` into `dir`; returns the path. Writes a temp file, fsyncs, then renames — an aborted run
+ * leaves at most a .tmp file. Two backups in the same minute get `-2`, `-3`, ….
+ * Throws an error with a way out; must not run inside a transaction (a VACUUM restriction).
  */
 export function backup(db: DatabaseSync, dir: string, now = new Date()): string {
 	const stamp = now.toISOString().replace(/\D/g, '');
@@ -74,12 +74,12 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 	const tmp = `${file}.tmp`;
 	try {
 		privateDir(dir);
-		rmSync(tmp, { force: true }); // Rest eines abgestürzten Laufs — VACUUM INTO nimmt nur eine leere Zieldatei
-		// 0600 ab dem ersten Byte: Sicherungen enthalten Passwort- und Session-Hashes, Chiffrate und den ganzen Verlauf
+		rmSync(tmp, { force: true }); // leftover of a crashed run — VACUUM INTO only accepts an empty target file
+		// 0600 from the first byte: backups hold password and session hashes, ciphertexts and the whole history
 		writeFileSync(tmp, '', { mode: 0o600, flag: 'wx' });
 		db.prepare('VACUUM INTO ?').run(tmp);
 		const fd = openSync(tmp, 'r+');
-		fsyncSync(fd); // erst auf der Platte, dann sichtbar
+		fsyncSync(fd); // on disk first, then visible
 		closeSync(fd);
 		renameSync(tmp, file);
 	} catch (err) {
@@ -95,10 +95,10 @@ export function backup(db: DatabaseSync, dir: string, now = new Date()): string 
 }
 
 /**
- * Aufbewahrung: die neueste Sicherung der letzten `daily` Tage und der letzten `weekly` Wochen (ab Montag, UTC), jeweils
- * gezählt über Tage/Wochen, die überhaupt eine Sicherung haben — lange Pausen löschen also nichts. Die neueste bleibt immer.
+ * Retention: the newest backup of each of the last `daily` days and the last `weekly` weeks (Monday-based, UTC),
+ * counted over days/weeks that have a backup at all — long pauses therefore delete nothing. The newest always stays.
  * Future-dated backups (at > now) are never deleted and take no retention slot, because they may be the only good state.
- * Gibt die gelöschten Dateinamen zurück.
+ * Returns the deleted file names.
  */
 export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date()): string[] {
 	const present = listBackups(dir).filter((b) => b.at.getTime() <= now.getTime());
@@ -107,7 +107,7 @@ export function prune(dir: string, { daily, weekly } = RETENTION, now = new Date
 	const weeks = new Set<number>();
 	for (const b of present) {
 		const day = Math.floor(b.at.getTime() / DAY);
-		const week = Math.floor((day + 3) / 7); // Tag 0 (1970-01-01) war ein Donnerstag
+		const week = Math.floor((day + 3) / 7); // day 0 (1970-01-01) was a Thursday
 		if (!days.has(day) && days.size < daily) {
 			days.add(day);
 			keep.add(b);
@@ -143,9 +143,9 @@ export function backupIfDue(db: DatabaseSync, dir: string, now = new Date()) {
 }
 
 /**
- * Beim Start und dann stündlich prüfen — so übersteht der Tagesrhythmus auch häufige Neustarts.
- * ponytail: VACUUM INTO läuft synchron im Server-Prozess und hält bei großer DB kurz alle Anfragen an — in einen Worker
- * verlegen, sobald das spürbar wird.
+ * Checks at startup and then hourly, so the daily rhythm survives frequent restarts.
+ * ponytail: VACUUM INTO runs synchronously in the server process and briefly holds up all requests on a large DB —
+ * move it into a worker once that becomes noticeable.
  */
 export function startBackups(db: DatabaseSync, dir: string) {
 	backupIfDue(db, dir);
@@ -158,7 +158,7 @@ export type BackupStatus = {
 	error: string | null;
 };
 
-/** Für den System-Check (#812 übernimmt ihn in seine Prüfungs-Registry): letzte Sicherung, Größe, Pfad, Problem mit Ausweg. */
+/** For the system check: newest backup, size, path, and a problem with its way out. */
 export function backupStatus(dir: string, now = new Date()): BackupStatus {
 	const all = listBackups(dir);
 	const recent = all.find((b) => b.at.getTime() <= now.getTime());
