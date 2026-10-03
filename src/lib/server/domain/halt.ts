@@ -15,12 +15,33 @@ function requireHuman(actor: Actor, verb: 'setzt' | 'löst') {
 	);
 }
 
+const HALT_LOCK_ATTEMPTS = 3;
+
+/**
+ * Retries `fn` while it throws SQLITE_BUSY (errcode 5): a concurrent writer can keep re-grabbing the write lock
+ * faster than one BEGIN IMMEDIATE's busy_timeout waits it out. A few bounded retries ride out that unlucky timing
+ * instead of failing for a contention window that is routinely gone a moment later.
+ */
+function retryOnLockContention<T>(attempts: number, fn: () => T): T {
+	try {
+		return fn();
+	} catch (err) {
+		const lockContention = (err as { errcode?: number }).errcode === 5;
+		if (!lockContention || attempts <= 1) throw err;
+		return retryOnLockContention(attempts - 1, fn);
+	}
+}
+
 /**
  * The kill switch: cancels every active run and keeps queued runs waiting until {@link releaseHalt}. Returns the cancelled
  * runs, whose executors the runner still has to abort. Setting the switch and picking the active runs share one write
  * transaction with the claim's halt check, so a concurrent claim either started its run before (cancelled here) or starts none.
  */
 export function haltRuns(db: DatabaseSync, actor: Actor): number[] {
+	return retryOnLockContention(HALT_LOCK_ATTEMPTS, () => haltAndCancelActive(db, actor));
+}
+
+function haltAndCancelActive(db: DatabaseSync, actor: Actor): number[] {
 	return tx(db, (emit) => {
 		requireHuman(actor, 'setzt');
 		db.prepare('INSERT OR IGNORE INTO runner_halt (id) VALUES (1)').run();
