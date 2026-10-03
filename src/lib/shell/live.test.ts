@@ -66,6 +66,7 @@ class RouteEventSource {
 }
 
 vi.stubGlobal('EventSource', RouteEventSource);
+vi.stubGlobal('window', new EventTarget());
 const tabs: { close(): void }[] = [];
 afterEach(() => tabs.splice(0).forEach((connection) => connection.close()));
 

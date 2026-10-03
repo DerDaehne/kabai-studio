@@ -27,6 +27,10 @@ type LiveUpdatesOptions = {
  * After `PERSISTENT_FAILURE_THRESHOLD` failed attempts in a row a `fetch` asks for the reason (`EventSource`
  * exposes no HTTP status): 401 → session gone, attempts stop, error toast with a link to /login; otherwise an
  * error toast "connection lost" that stays until the reconnect or until closed.
+ *
+ * A page that goes into the back/forward cache closes its connection and reconnects (with `onReload`) when it comes
+ * back: the browser would otherwise keep the frozen stream open, and a few cached pages use up the HTTP/1.1
+ * connections per origin until every request hangs.
  */
 export function connectLiveUpdates(
 	projectId: number | null,
@@ -34,7 +38,7 @@ export function connectLiveUpdates(
 ): LiveUpdatesHandle {
 	const url = projectId === null ? '/api/events' : `/api/events?project=${projectId}`;
 	const connection = new LiveConnection(url, options);
-	connection.connect();
+	connection.open();
 	return { close: () => connection.close() };
 }
 
@@ -46,13 +50,20 @@ class LiveConnection {
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private toastId: number | undefined;
 	private closed = false;
+	private suspended = false;
 
 	constructor(url: string, options: LiveUpdatesOptions) {
 		this.url = url;
 		this.options = options;
 	}
 
-	connect() {
+	open() {
+		window.addEventListener('pagehide', this.suspend);
+		window.addEventListener('pageshow', this.resume);
+		this.connect();
+	}
+
+	private connect() {
 		this.es = new EventSource(this.url);
 		this.es.onopen = () => this.opened();
 		this.es.onmessage = (ev) => this.received(ev);
@@ -61,16 +72,29 @@ class LiveConnection {
 
 	close() {
 		this.closed = true;
+		window.removeEventListener('pagehide', this.suspend);
+		window.removeEventListener('pageshow', this.resume);
 		clearTimeout(this.retryTimer);
 		this.es?.close();
 		this.hideNotice();
 	}
 
+	private readonly suspend = () => {
+		this.suspended = true;
+		clearTimeout(this.retryTimer);
+		this.es?.close();
+	};
+
+	private readonly resume = (event: PageTransitionEvent) => {
+		if (event.persisted) this.connect();
+	};
+
 	private opened() {
-		const wasReconnect = this.attempt > 0;
+		const missedEvents = this.attempt > 0 || this.suspended;
 		this.attempt = 0;
+		this.suspended = false;
 		this.hideNotice();
-		if (wasReconnect) this.options.onReload();
+		if (missedEvents) this.options.onReload();
 	}
 
 	private received(ev: MessageEvent) {

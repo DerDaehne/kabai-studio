@@ -28,6 +28,7 @@ beforeEach(() => {
 	toasts.length = 0;
 	probe = () => Promise.reject(new TypeError('Failed to fetch'));
 	vi.stubGlobal('EventSource', FakeEventSource);
+	vi.stubGlobal('window', new EventTarget());
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(() => probe())
@@ -40,6 +41,10 @@ afterEach(() => {
 });
 
 const latest = () => FakeEventSource.instances.at(-1)!;
+
+/** `persisted`: the page goes into or comes back from the back/forward cache instead of being unloaded or loaded. */
+const pageTransition = (type: 'pagehide' | 'pageshow', persisted: boolean) =>
+	window.dispatchEvent(Object.assign(new Event(type), { persisted }));
 
 /** Lets `n` connection attempts fail in a row (including the backoff wait and the status probe). */
 async function fail(n: number) {
@@ -195,5 +200,52 @@ describe('connectLiveUpdates', () => {
 			data: JSON.stringify({ type: 'ticket.updated', projectId: 1 })
 		} as MessageEvent);
 		expect(onEvent).toHaveBeenCalledWith({ type: 'ticket.updated', projectId: 1 });
+	});
+
+	describe('back/forward cache', () => {
+		it('closes the connection when the page is hidden, so a cached page holds no connection to the server', () => {
+			connectLiveUpdates(null, { onReload: vi.fn() });
+			pageTransition('pagehide', true);
+			expect(latest().closed).toBe(true);
+		});
+
+		it('reconnects and reloads when the page comes back, because events were missed meanwhile', () => {
+			const onReload = vi.fn();
+			connectLiveUpdates(null, { onReload });
+			latest().onopen?.();
+			pageTransition('pagehide', true);
+			pageTransition('pageshow', true);
+
+			expect(FakeEventSource.instances).toHaveLength(2);
+			expect(onReload).not.toHaveBeenCalled(); // only once connected, or events in between would be missed again
+			latest().onopen?.();
+			expect(onReload).toHaveBeenCalledTimes(1);
+		});
+
+		it('opens no second connection on the pageshow of the first load', () => {
+			connectLiveUpdates(null, { onReload: vi.fn() });
+			pageTransition('pageshow', false);
+			expect(FakeEventSource.instances).toHaveLength(1);
+		});
+
+		it('drops a reconnect scheduled before the page was hidden, so it comes back with one connection', async () => {
+			connectLiveUpdates(null, { onReload: vi.fn() });
+			latest().onerror?.(); // reconnect scheduled in 1 s
+			pageTransition('pagehide', true);
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(FakeEventSource.instances).toHaveLength(1);
+
+			pageTransition('pageshow', true);
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(FakeEventSource.instances).toHaveLength(2);
+		});
+
+		it('stays closed when the page comes back after close()', () => {
+			const handle = connectLiveUpdates(null, { onReload: vi.fn() });
+			handle.close();
+			pageTransition('pagehide', true);
+			pageTransition('pageshow', true);
+			expect(FakeEventSource.instances).toHaveLength(1);
+		});
 	});
 });
