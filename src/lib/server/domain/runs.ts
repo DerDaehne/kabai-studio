@@ -466,6 +466,7 @@ export function appendEvent(
 			runId: r.id,
 			seq,
 			eventType: e.type,
+			key: e.key,
 			payload: JSON.parse(payload)
 		});
 		return { seq, duplicate: false };

@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import * as board from './domain/board';
-import type { Actor } from './domain/core';
+import { DomainError, type Actor } from './domain/core';
 import { answerQuestion, requestHuman } from './domain/questions';
-import { createProfile, createRun } from './domain/runs';
+import { appendEvent, createProfile, createRun, finishRun, startRun } from './domain/runs';
 import { migrate, openDb } from './db';
-import { findTicketId, ticketDetail } from './ticket-view';
+import { startRunner } from './runner';
+import { findTicketId, runTrace, ticketDetail } from './ticket-view';
 
 const user: Actor = { kind: 'user' };
 
@@ -122,5 +123,120 @@ describe('findTicketId', () => {
 		expect(findTicketId(db, 'stu', number)).toBe(id);
 		expect(findTicketId(db, 'STU', number + 1)).toBeUndefined();
 		expect(findTicketId(db, 'NOPE', number)).toBeUndefined();
+	});
+});
+
+describe('runTrace', () => {
+	const stops: (() => void)[] = [];
+	afterEach(() => stops.splice(0).forEach((stop) => stop()));
+
+	function withRuns() {
+		const { db, projectId } = setup();
+		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const profileId = createProfile(db, user, {
+			name: 'P',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const newRun = () => createRun(db, user, { ticketId, profileId }).id;
+		const running = () => {
+			const id = newRun();
+			startRun(db, user, id);
+			return id;
+		};
+		return { db, projectId, ticketId, profileId, newRun, running };
+	}
+
+	it('is undefined before the ticket has a run, and for a run of another ticket', () => {
+		const { db, projectId, ticketId, newRun } = withRuns();
+		expect(runTrace(db, ticketId)).toBeUndefined();
+		const runId = newRun();
+		const other = board.createTicket(db, user, projectId, { title: 'Anderes' }).id;
+		expect(runTrace(db, other, runId)).toBeUndefined();
+	});
+
+	it('shows the newest run of the ticket unless a run is selected', () => {
+		const { db, ticketId, newRun } = withRuns();
+		const older = newRun();
+		const newer = newRun();
+		expect(runTrace(db, ticketId)?.id).toBe(newer);
+		expect(runTrace(db, ticketId, older)?.id).toBe(older);
+		expect(runTrace(db, ticketId, older)?.state).toBe('queued');
+	});
+
+	it('loads the events of the run in seq order with their key and payload', () => {
+		const { db, ticketId, running } = withRuns();
+		const runId = running();
+		const agent: Actor = { kind: 'agent', runId };
+		appendEvent(db, agent, runId, { type: 'log', payload: { kind: 'prompt' } });
+		appendEvent(db, agent, runId, {
+			type: 'tool_call',
+			key: 'call-1',
+			payload: { step: 1, tool: 'get_ticket', args: {} }
+		});
+		expect(runTrace(db, ticketId)?.events).toEqual([
+			{ seq: 1, type: 'log', key: null, payload: { kind: 'prompt' } },
+			{
+				seq: 2,
+				type: 'tool_call',
+				key: 'call-1',
+				payload: { step: 1, tool: 'get_ticket', args: {} }
+			}
+		]);
+	});
+
+	it('reads code and message of a failed run and the way out from the failure comment the runner wrote', async () => {
+		const { db, ticketId, newRun } = withRuns();
+		const runId = newRun();
+		const fail = async () => {
+			throw new DomainError('step_limit', 'Der Run hat aufgehört.', 'Erhöhe max_steps.');
+		};
+		stops.push(startRunner(db, { builtin: { execute: fail } }).stop);
+		while (runTrace(db, ticketId)?.state !== 'failed')
+			await new Promise((resolve) => setImmediate(resolve));
+		expect(runTrace(db, ticketId)?.failure).toEqual({
+			code: 'step_limit',
+			message: 'Der Run hat aufgehört.',
+			wayOut: 'Erhöhe max_steps.'
+		});
+		expect(runTrace(db, ticketId, runId)?.continuedBy).toBeUndefined();
+	});
+
+	it('leaves the way out empty when the failure comment is missing', () => {
+		const { db, ticketId, running } = withRuns();
+		const runId = running();
+		finishRun(db, user, runId, { state: 'failed', error: '[executor_error] boom' });
+		expect(runTrace(db, ticketId)?.failure).toEqual({
+			code: 'executor_error',
+			message: 'boom',
+			wayOut: ''
+		});
+	});
+
+	it('knows a paused run waits for the human until the answer queues the run that continues it', () => {
+		const { db, ticketId, running } = withRuns();
+		const runId = running();
+		const q = requestHuman(db, { kind: 'agent', runId }, ticketId, { question: 'Weiter so?' });
+		finishRun(db, user, runId, { state: 'paused' });
+		expect(runTrace(db, ticketId)).toMatchObject({ state: 'paused', waitsForAnswer: true });
+		expect(runTrace(db, ticketId)?.continuedBy).toBeUndefined();
+
+		answerQuestion(db, user, q.id, { text: 'Ja' });
+		const continued = runTrace(db, ticketId, runId);
+		expect(continued?.waitsForAnswer).toBe(false);
+		expect(continued?.continuedBy).toBe(runTrace(db, ticketId)?.id);
+		expect(continued?.continuedBy).not.toBe(runId);
+	});
+
+	it('does not name a cancelled follow-up run as the one that continues', () => {
+		const { db, ticketId, profileId, running } = withRuns();
+		const runId = running();
+		finishRun(db, user, runId, { state: 'paused' });
+		const resume = () => createRun(db, user, { ticketId, profileId, resumedFromRunId: runId }).id;
+		finishRun(db, user, resume(), { state: 'cancelled' });
+		expect(runTrace(db, ticketId, runId)?.continuedBy).toBeUndefined();
+		const next = resume();
+		expect(runTrace(db, ticketId, runId)?.continuedBy).toBe(next);
 	});
 });

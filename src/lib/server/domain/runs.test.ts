@@ -351,6 +351,17 @@ describe('event bus', () => {
 		]);
 		expect(events.at(-1)).toMatchObject({ tokensIn: 5, tokensOut: 2, cost: 0.01 });
 	});
+
+	it('names the key of a run event on the bus, so a live trace pairs a tool result with its call', () => {
+		const { db, running } = setup();
+		const id = running();
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		runs.appendEvent(db, system, id, { type: 'tool_result', key: 'call-1:result', payload: {} });
+		runs.appendEvent(db, system, id, { type: 'log', payload: {} });
+		off();
+		expect(events.map((e) => e.key)).toEqual(['call-1:result', undefined]);
+	});
 });
 
 describe('finishRun', () => {

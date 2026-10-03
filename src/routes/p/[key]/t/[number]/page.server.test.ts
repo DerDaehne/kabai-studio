@@ -5,7 +5,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import { createProfile, createRun } from '$lib/server/domain/runs';
 import { findTicketId, type TicketDetail } from '$lib/server/ticket-view';
+import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
+import type { RunTrace } from '$lib/trace/trace';
 import { actions, load } from './+page.server';
 
 // A real (file-backed) STUDIO_DATA_DIR, like the secrets route test: db() is a process-wide singleton.
@@ -39,8 +42,13 @@ async function post(
 }
 
 // `load`'s declared return type is the generic page-data shape $types.d.ts infers; this names the real one back.
-async function loadTicket(number: number): Promise<{ ticket: TicketDetail }> {
-	return load({ params: params(number), depends: noop } as never) as never;
+async function loadTicket(
+	number: number,
+	search = '',
+	depends: (...deps: string[]) => void = noop
+): Promise<{ ticket: TicketDetail; trace?: RunTrace }> {
+	const url = new URL(`http://localhost/p/STU/t/${number}${search}`);
+	return load({ params: params(number), url, depends } as never) as never;
 }
 
 describe('load', () => {
@@ -58,6 +66,40 @@ describe('load', () => {
 		expect(data.ticket.ref).toBe(`STU-${number}`);
 		expect(data.ticket.title).toBe('Erstes Ticket');
 		expect(data.ticket.column.name).toBe('Backlog');
+	});
+
+	it('loads the newest run of the ticket as its trace, and none before the first run', async () => {
+		const { number, id } = board.createTicket(db(), user, projectId, { title: 'Mit Runs' });
+		expect((await loadTicket(number)).trace).toBeUndefined();
+		const profileId = createProfile(db(), user, {
+			name: `P${number}`,
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const older = createRun(db(), user, { ticketId: id, profileId }).id;
+		const newer = createRun(db(), user, { ticketId: id, profileId }).id;
+		expect((await loadTicket(number)).trace?.id).toBe(newer);
+		expect((await loadTicket(number, `?run=${older}`)).trace?.id).toBe(older);
+	});
+
+	it('404s with a message for a selected run that does not belong to the ticket', async () => {
+		const { number } = board.createTicket(db(), user, projectId, { title: 'Ohne Runs' });
+		const err = await loadTicket(number, '?run=4711').catch((e: unknown) => e);
+		expect(err).toMatchObject({
+			status: 404,
+			body: { message: 'Run 4711 gehört nicht zu diesem Ticket.' }
+		});
+		expect(await loadTicket(number, '?run=abc').catch((e: unknown) => e)).toMatchObject({
+			status: 404
+		});
+	});
+
+	it('reloads with the live state, so a reconnect brings back the run events it missed', async () => {
+		const { number } = board.createTicket(db(), user, projectId, { title: 'Live' });
+		const deps: string[] = [];
+		await loadTicket(number, '', (...d) => deps.push(...d));
+		expect(deps).toContain(LIVE_DEPENDENCY);
 	});
 });
 

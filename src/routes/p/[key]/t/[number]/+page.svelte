@@ -5,8 +5,9 @@
 	import { renderDescription } from '$lib/markdown';
 	import { onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
-	import { concernsTicket } from '$lib/ticket-live';
+	import { reloadsTicket } from '$lib/ticket-live';
 	import { nextMove } from '$lib/ticket-move';
+	import RunTrace from '$lib/trace/RunTrace.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
@@ -95,10 +96,12 @@
 		})
 	);
 
-	// Agent changes (comment, task, column) reach this tab's one live connection; a matching event reloads the ticket.
+	const reloadTicket = () => void invalidate(`studio:ticket:${ticket.id}`);
+
+	// Agent changes (comment, task, column, run) reach this tab's one live connection; a matching event reloads the ticket.
 	$effect(() =>
 		onLiveEvent((event) => {
-			if (concernsTicket(event, ticket.id)) void invalidate(`studio:ticket:${ticket.id}`);
+			if (reloadsTicket(event, ticket.id)) reloadTicket();
 		})
 	);
 </script>
@@ -261,9 +264,13 @@
 		class:focused={area === 'spur'}
 	>
 		<h2 id="h-spur">Spur</h2>
-		<EmptyState title="Noch kein Run"
-			>Hier erscheinen die Schritte eines Runs, sobald die Spur-Ansicht fertig ist.</EmptyState
-		>
+		{#if data.trace}
+			{#key data.trace.id}<RunTrace trace={data.trace} reload={reloadTicket} />{/key}
+		{:else}
+			<EmptyState title="Noch kein Run"
+				>Hier erscheinen die Schritte, sobald ein Agent an diesem Ticket arbeitet.</EmptyState
+			>
+		{/if}
 	</section>
 </div>
 
@@ -440,7 +447,7 @@
 
 	@media (min-width: 720px) {
 		.areas {
-			grid-template-columns: minmax(240px, 320px) 1fr;
+			grid-template-columns: minmax(280px, 1fr) minmax(320px, 1fr);
 			grid-template-areas: 'spur auftrag';
 		}
 		.spur {

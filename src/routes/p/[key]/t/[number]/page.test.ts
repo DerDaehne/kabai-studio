@@ -150,3 +150,18 @@ it('offers a delete confirmation dialog naming the ticket, not a silent delete',
 	expect(body).toMatch(/STU-1[\s\S]*Beispiel-Ticket[\s\S]*unwiderruflich/);
 	expect(body).toContain('action="?/delete"');
 });
+
+it('shows the loaded run in the Spur area, and an empty state before the first run', () => {
+	const events = [
+		{ seq: 1, type: 'message', key: 'step:1:message', payload: { step: 1, text: 'Ich lese.' } }
+	];
+	const withRun = render(Page, {
+		props: {
+			data: { ticket: base, trace: { id: 3, state: 'running', waitsForAnswer: false, events } },
+			form: null
+		} as any
+	}).body;
+	expect(withRun).toMatch(/id="h-spur"[\s\S]*Run 3[\s\S]*Ich lese\./);
+	expect(withRun).not.toContain('Noch kein Run');
+	expect(page(base)).toContain('Noch kein Run');
+});

@@ -3,7 +3,8 @@ import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { DomainError } from '$lib/server/domain/error';
 import { db } from '$lib/server/db';
-import { findTicketId, ticketDetail } from '$lib/server/ticket-view';
+import { findTicketId, runTrace, ticketDetail } from '$lib/server/ticket-view';
+import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { Actions, PageServerLoad } from './$types';
 
 // Studio has one owner account; every action in the Run-Akte acts for the human (see CLAUDE.md "Architecture guardrails").
@@ -19,11 +20,21 @@ function requireTicketId(params: { key: string; number: string }): number {
 	return id;
 }
 
-export const load: PageServerLoad = ({ params, depends }) => {
+export const load: PageServerLoad = ({ params, url, depends }) => {
 	const id = requireTicketId(params);
-	depends(ticketDependency(id));
-	return { ticket: ticketDetail(db(), HUMAN, id) };
+	// a reconnect reloads the live state; the trace has no replay of the run events it missed, so it reloads with it
+	depends(ticketDependency(id), LIVE_DEPENDENCY);
+	return { ticket: ticketDetail(db(), HUMAN, id), trace: selectedTrace(id, url) };
 };
+
+/** The run `?run=<id>` names (what a run tab links to), otherwise the ticket's newest; none before its first run. */
+function selectedTrace(ticketId: number, url: URL) {
+	const selected = url.searchParams.get('run');
+	if (selected === null) return runTrace(db(), ticketId);
+	const trace = /^\d+$/.test(selected) ? runTrace(db(), ticketId, Number(selected)) : undefined;
+	if (!trace) error(404, `Run ${selected} gehört nicht zu diesem Ticket.`);
+	return trace;
+}
 
 /**
  * Runs a mutation; a rule violation becomes a form error with message and hint instead of a crash (errors offer

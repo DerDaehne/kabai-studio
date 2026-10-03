@@ -1,10 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
+import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
 import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
+import type { RunState } from './domain/runs';
 
 export type TicketComment = {
 	id: number;
@@ -117,4 +119,59 @@ export function findTicketId(db: DatabaseSync, key: string, number: number): num
 		)
 		.get(key.toUpperCase(), number) as { id: number } | undefined;
 	return row?.id;
+}
+
+/** The run `runId` names, or the ticket's newest run; `undefined` when the ticket has no such run. */
+export function runTrace(db: DatabaseSync, ticketId: number, runId?: number): RunTrace | undefined {
+	const run = db
+		.prepare(
+			'SELECT id, state, error FROM runs WHERE ticket_id = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY id DESC LIMIT 1'
+		)
+		.get(ticketId, runId ?? null) as
+		{ id: number; state: RunState; error: string | null } | undefined;
+	if (!run) return undefined;
+	return {
+		id: run.id,
+		state: run.state,
+		failure: run.state === 'failed' ? failureOf(db, run.id, run.error ?? '') : undefined,
+		continuedBy: continuingRun(db, run.id),
+		waitsForAnswer:
+			db.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NULL').get(run.id) !==
+			undefined,
+		events: eventsOf(db, run.id)
+	};
+}
+
+function eventsOf(db: DatabaseSync, runId: number): TraceEvent[] {
+	const rows = db
+		.prepare(
+			'SELECT seq, type, idempotency_key AS key, payload FROM run_events WHERE run_id = ? ORDER BY seq'
+		)
+		.all(runId) as (Omit<TraceEvent, 'payload'> & { payload: string })[];
+	return rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) }));
+}
+
+/** A cancelled follow-up (an answer taken back) continues nothing. */
+function continuingRun(db: DatabaseSync, runId: number): number | undefined {
+	const row = db
+		.prepare(
+			"SELECT id FROM runs WHERE resumed_from_run_id = ? AND state <> 'cancelled' ORDER BY id DESC LIMIT 1"
+		)
+		.get(runId) as { id: number } | undefined;
+	return row?.id;
+}
+
+// The runner stores `[code] message` as the error and adds the way out only to its failure comment.
+const ERROR_FORMAT = /^\[([^\]]+)\] ([\s\S]*)$/;
+const WAY_OUT = '\nAusweg: ';
+
+function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['failure'] {
+	const [, code = '', message = error] = ERROR_FORMAT.exec(error) ?? [];
+	const comment = db
+		.prepare(
+			"SELECT body FROM comments WHERE run_id = ? AND author_kind = 'system' AND instr(body, ?) > 0 ORDER BY id DESC LIMIT 1"
+		)
+		.get(runId, WAY_OUT) as { body: string } | undefined;
+	const wayOut = comment ? comment.body.slice(comment.body.indexOf(WAY_OUT) + WAY_OUT.length) : '';
+	return { code, message, wayOut };
 }
