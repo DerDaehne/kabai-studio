@@ -32,13 +32,14 @@
 </script>
 
 <!-- A click on the backdrop closes; the keyboard closes with Escape (native cancel) or the close button -->
+<!-- The close event arrives a task after the dialog closed; if it opened again in between, it stays open -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
 	bind:this={el}
 	class={variant}
 	aria-labelledby="{id}-title"
 	aria-modal="true"
-	onclose={() => (open = false)}
+	onclose={() => (open = el.open)}
 	onpointerdown={(e) => (downOnBackdrop = e.target === el)}
 	onclick={(e) => {
 		if (downOnBackdrop && e.target === el) open = false;
