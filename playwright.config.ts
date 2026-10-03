@@ -41,7 +41,7 @@ export default defineConfig({
 		}
 	],
 	webServer: {
-		command: 'node build',
+		command: 'node server.ts',
 		url: `${ORIGIN}/login`,
 		env: { PORT: String(PORT), ORIGIN, STUDIO_DATA_DIR: dataDir }
 	}

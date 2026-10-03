@@ -135,7 +135,7 @@ Deviations only with a new ADR:
 ```sh
 nix develop --command npm run check    # svelte-check, must report 0 errors
 nix develop --command npm run build    # production build into build/
-ORIGIN=http://127.0.0.1:3000 nix develop --command node build   # server on http://127.0.0.1:3000 (HOST=0.0.0.0: all interfaces)
+nix develop --command node server.ts   # server on http://127.0.0.1:3000; ORIGIN defaults for a loopback HOST, else set it explicitly
 nix develop --command npm run reset-password   # set a new owner password, ends all sessions
 nix develop --command npm run restore -- <backup-file>   # server stopped: backs up the current DB, restores the backup
 nix develop --command npm test         # vitest (src/**/*.test.ts)

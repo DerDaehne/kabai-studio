@@ -46,7 +46,7 @@ npm run dev            # dev server
 npm run check          # svelte-check / TypeScript
 npm test               # vitest
 npm run build && npm run test:browser   # key flows in headless Chromium (without Nix: npx playwright install --no-shell chromium first)
-npm run build && ORIGIN=http://127.0.0.1:3000 node build   # production build on http://127.0.0.1:3000
+npm run build && node server.ts   # production build on http://127.0.0.1:3000
 npm run reset-password # recovery: set a new owner password, ends all sessions
 npm run restore -- data/backups/studio-20260101-0300.db   # stop the server first; saves the current DB, then restores
 ```
@@ -59,7 +59,7 @@ other address are rejected.
 
 A container image is published to `ghcr.io/derdaehne/kabai-studio` on every tagged
 release (and manually via the "Container image" workflow). It runs the same server
-as `node build` above, as a non-root user, with the data directory as a volume.
+as `node server.ts` above, as a non-root user, with the data directory as a volume.
 
 Inside the image, `HOST` defaults to `0.0.0.0` — safe by itself, because the
 container's own network namespace is already the boundary; what actually controls
