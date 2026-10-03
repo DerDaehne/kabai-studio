@@ -39,8 +39,9 @@ names of people, email addresses, passwords, API keys/tokens, local paths,
 hostnames, IP addresses, hardware/setup details, or internal board content
 (ticket comments, note slugs, board columns). Ticket numbers appear only in commit
 subjects as `(#<id>)`. Personal and internal information belongs in
-`CLAUDE.local.md`. Before every commit run `npm run scan:secrets` (gitleaks +
-privacy scan against the local `.privacy-patterns`) and check the diff.
+`CLAUDE.local.md`. Before every commit run `npm run scan:secrets` (gitleaks, built-in
+board-reference check + privacy scan against the local `.privacy-patterns`) and check
+the diff.
 
 ## Code style (binding)
 
@@ -137,8 +138,17 @@ ORIGIN=http://127.0.0.1:3000 nix develop --command node build   # server on http
 nix develop --command npm run reset-password   # set a new owner password, ends all sessions
 nix develop --command npm run restore -- <backup-file>   # server stopped: backs up the current DB, restores the backup
 nix develop --command npm test         # vitest (src/**/*.test.ts)
-nix develop --command npm run scan:secrets   # gitleaks + privacy scan before committing
+nix develop --command npm run format   # Prettier (with the Svelte plugin) rewrites all files
+nix develop --command npm run format:check   # fails on unformatted files (CI)
+nix develop --command npm run lint     # ESLint: nesting > 3 fails; functions > 40 lines and complexity > 15 warn (CI)
+nix develop --command npm run scan:secrets   # before committing: gitleaks, board references, German comments/test names, privacy scan
 ```
+
+- Formatting is Prettier's job: run `npm run format` instead of formatting by hand.
+  `npm run lint` enforces the nesting limit from "Code style"; treat its warnings
+  (long or complex functions) as findings too. `scan:secrets` also runs its built-in
+  board-reference and language checks without a private pattern file, and CI runs them
+  in the gitleaks workflow.
 
 - Dependencies sparingly: standard library first (`node:crypto`, `node:sqlite`,
   `node:events`), then the platform, then a new package — with a justification in
