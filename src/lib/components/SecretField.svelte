@@ -1,32 +1,32 @@
 <!--
-	Secret-Feld: zeigt nur „gesetzt“ · Ersetzen · Löschen, nie den Wert. Ohne `name` legt es ein neues Secret an.
-	Die Seite muss die Actions `setSecret` und `deleteSecret` bereitstellen (siehe routes/settings/secrets).
-	Schlichtes Markup ohne eigenes Styling — das Design-System übernimmt das Aussehen.
+	Secret field: shows only "set" · replace · delete, never the value. Without `name` it creates a new secret.
+	The page must provide the actions `setSecret` and `deleteSecret` (see routes/settings/secrets).
+	Plain markup without styling of its own — the design system takes care of the look.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 
 	type Props = {
-		/** Name eines gespeicherten Secrets; fehlt er, legt das Feld ein neues an. */
+		/** Name of a stored secret; without it the field creates a new one. */
 		name?: string;
-		/** Letzte Änderung (UTC) — nur bei gespeicherten Secrets. */
+		/** Last change (UTC), for stored secrets only. */
 		updatedAt?: string;
-		/** Fehler der letzten Aktion, falls sie dieses Feld betraf. */
+		/** Error of the last action, if it concerned this field. */
 		error?: { code: string; message: string; hint: string };
 	};
 	let { name, updatedAt, error }: Props = $props();
 
 	const id = $props.id();
-	// Ein Fehler zu einem gespeicherten Secret öffnet dessen Eingabe (auch ohne JS nach dem Neuladen); Ersetzen/Abbrechen überschreiben
-	// das. Nur mit `name` von Bedeutung — das Formular für ein neues Secret ist immer offen.
+	// An error for a stored secret opens its input (also without JS after the reload); replace/cancel override that.
+	// Only relevant with `name` — the form for a new secret is always open.
 	let replacing = $derived(!!error);
 	const nameInvalid = $derived(
 		['secret_name_invalid', 'secret_name_is_value', 'secret_exists'].includes(error?.code ?? '')
 	);
 	let replaceButton: HTMLButtonElement | undefined = $state();
 
-	/** Schließt das Ersetzen-Formular; der Fokus ginge mit ihm verloren, darum zurück auf „Ersetzen“. */
+	/** Closes the replace form; focus would be lost with it, so it returns to the replace button. */
 	async function closeReplace() {
 		replacing = false;
 		await tick();
@@ -70,7 +70,7 @@
 			)
 				return cancel();
 			return async ({ result, update }) => {
-				await update(); // setzt den Fokus bei Erfolg zurück auf die Seite — darum erst danach schließen
+				await update(); // on success this resets the focus to the page, so close only afterwards
 				if (result.type === 'success' && name) closeReplace();
 			};
 		}}
@@ -94,7 +94,7 @@
 		{/if}
 		<label>
 			{name ? `Neuer Wert für ${name}` : 'Wert'}
-			<!-- Fokus: beim Öffnen von „Ersetzen“ und bei einem Fehler zum Wert -->
+			<!-- focus moves to the value when replace opens and on an error -->
 			<input
 				type="password"
 				name="value"

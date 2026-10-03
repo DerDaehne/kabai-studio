@@ -15,7 +15,7 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
 
-	// Übersicht aller Bausteine zum Prüfen (nicht verlinkt). ?open=dialog|panel öffnet ein Overlay direkt.
+	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
 	let dialogOpen = $state(page.url.searchParams.get('open') === 'dialog');
 	let panelOpen = $state(page.url.searchParams.get('open') === 'panel');
 	let saving = $state(false);
@@ -474,7 +474,7 @@
 
 <Dialog bind:open={dialogOpen} title="Spalte umbenennen">
 	<FormField label="Name">
-		<!-- autofocus im Dialog ist gewollt: showModal() setzt den Anfangsfokus auf das Namensfeld statt auf „Schließen" -->
+		<!-- autofocus in the dialog is intended: showModal() puts the initial focus on the name field instead of the close button -->
 		<!-- svelte-ignore a11y_autofocus -->
 		{#snippet children(a)}<input {...a} bind:value={columnName} autofocus />{/snippet}
 	</FormField>

@@ -6,7 +6,7 @@ import { db } from '$lib/server/db';
 import { resolveRef } from '$lib/server/secrets';
 import { actions, load } from './+page.server';
 
-// Eigene DB und eigener Schlüssel im Temp-Verzeichnis; db() und secretKey() lesen erst beim ersten Aufruf.
+// A DB and key of its own in a temp directory; db() and secretKey() read them only on the first call.
 const dir = mkdtempSync(join(tmpdir(), 'studio-secrets-route-'));
 process.env.STUDIO_DATA_DIR = dir;
 delete process.env.STUDIO_SECRET_KEY;
@@ -21,25 +21,25 @@ async function post(action: keyof typeof actions, fields: Record<string, string>
 	return actions[action]({ request } as never);
 }
 
-it('kein Endpunkt liefert Secret-Werte aus — weder load noch Actions, auch nicht im Fehlerfall', async () => {
+it('never returns secret values from any endpoint — neither load nor actions, not even on errors', async () => {
 	const responses = [
 		await post('setSecret', { field: '', name: 'demo', value: VALUE }),
-		await post('setSecret', { field: '', name: 'demo', value: VALUE }), // gibt es schon
-		await post('setSecret', { field: '', name: VALUE, value: VALUE }), // Key in beiden Feldern
+		await post('setSecret', { field: '', name: 'demo', value: VALUE }), // already exists
+		await post('setSecret', { field: '', name: VALUE, value: VALUE }), // key in both fields
 		await post('setSecret', {
 			field: 'demo',
 			name: 'demo',
 			value: VALUE.slice(0, 5),
 			replace: '1'
-		}), // zu kurz
+		}), // too short
 		await post('setSecret', { field: 'demo', name: 'demo', value: `${VALUE}-neu`, replace: '1' }),
 		await load({} as never)
 	];
-	expect(resolveRef(db(), 'secret:demo')).toBe(`${VALUE}-neu`); // gespeichert ist er also
+	expect(resolveRef(db(), 'secret:demo')).toBe(`${VALUE}-neu`); // so it was stored
 	responses.push(await post('deleteSecret', { field: 'demo' }), await load({} as never));
 
 	const wire = JSON.stringify(responses);
-	expect(wire).not.toContain(VALUE.slice(0, 5)); // Präfix: erfasst den vollen Wert, den ersetzten und das zu kurze Bruchstück
+	expect(wire).not.toContain(VALUE.slice(0, 5)); // a prefix covers the full value, the replaced one and the too short fragment
 	expect(
 		responses.map((r) =>
 			r && 'status' in r ? `${r.status}:${(r.data as { code: string }).code}` : 'ok'

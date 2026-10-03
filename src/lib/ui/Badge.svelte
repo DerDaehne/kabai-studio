@@ -6,7 +6,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	// Status immer Farbe + Text; der Punkt markiert Laufzeit-Zustände (running pulsiert).
+	// A status is always colour plus text; the dot marks runtime states (running pulses).
 	let { tone = 'neutral', children }: { tone?: Tone; children: Snippet } = $props();
 </script>
 

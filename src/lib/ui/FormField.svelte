@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	/** Attribute, die das Eingabeelement übernehmen muss: `{#snippet children(a)}<input {...a} />{/snippet}` */
+	/** Attributes the input element must take over: `{#snippet children(a)}<input {...a} />{/snippet}` */
 	export type FieldAttrs = { id: string; 'aria-describedby'?: string; 'aria-invalid'?: 'true' };
 </script>
 

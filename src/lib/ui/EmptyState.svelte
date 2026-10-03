@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	// Leere Ansicht = Einladung zu handeln: was fehlt (title), was zu tun ist (children), die Aktion (action).
+	// An empty view invites action: what is missing (title), what to do (children), the action itself (action).
 	let { title, children, action }: { title: string; children?: Snippet; action?: Snippet } =
 		$props();
 </script>

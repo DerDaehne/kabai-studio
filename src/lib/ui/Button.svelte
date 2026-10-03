@@ -5,7 +5,7 @@
 	type Props = HTMLButtonAttributes & {
 		variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
 		size?: 'sm' | 'md';
-		/** Läuft eine Aktion: Button bleibt fokussierbar (aria-disabled statt disabled), Klicks werden ignoriert. */
+		/** While an action runs the button stays focusable (aria-disabled instead of disabled) and ignores clicks. */
 		loading?: boolean;
 	};
 	let {

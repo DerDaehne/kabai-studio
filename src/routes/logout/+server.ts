@@ -3,7 +3,7 @@ import { SESSION_COOKIE, clearSessionCookie, deleteSession } from '$lib/server/a
 import { db } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
-// Nur POST (Formular) — SvelteKits Origin-Check schützt es gegen CSRF.
+// POST only (form), so SvelteKit's origin check protects it against CSRF.
 export const POST: RequestHandler = ({ cookies, url }) => {
 	const token = cookies.get(SESSION_COOKIE);
 	if (token) deleteSession(db(), token);

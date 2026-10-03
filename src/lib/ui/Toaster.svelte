@@ -4,9 +4,9 @@
 
 	let region: HTMLElement;
 
-	// Die Region ist ein dauerhaft offenes manuelles Popover (Top-Layer, Live-Region existiert vor der ersten Meldung).
-	// Bei jeder Änderung neu öffnen, damit sie auch über einem später geöffneten modalen Dialog liegt.
-	// ponytail: solange ein modaler Dialog offen ist, kann der Schließen-Knopf inert sein — Fehler-Toasts dann nach dem Dialog schließen.
+	// The region is a permanently open manual popover (top layer; the live region exists before the first message).
+	// It is reopened on every change so that it also lies above a modal dialog opened later.
+	// ponytail: while a modal dialog is open the close button may be inert — error toasts are then closed after the dialog.
 	$effect(() => {
 		void toasts.length;
 		if (region.matches(':popover-open')) region.hidePopover();

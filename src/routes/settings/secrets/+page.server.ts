@@ -6,8 +6,8 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = () => ({ secrets: listSecrets(db()) });
 
-// Antworten enthalten nie den Wert — auch nicht bei Fehlern oder zum Wiederbefüllen (das Feld behält ihn im Browser).
-// `field` ordnet die Antwort dem Secret-Feld zu: Name eines vorhandenen Secrets, '' für „neu“.
+// Responses never contain the value — not on errors and not for refilling (the field keeps it in the browser).
+// `field` assigns the response to a secret field: the name of an existing secret, or '' for a new one.
 export const actions: Actions = {
 	setSecret: async ({ request }) => {
 		const form = await request.formData();

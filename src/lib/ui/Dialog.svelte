@@ -3,9 +3,9 @@
 	import Icon from './Icon.svelte';
 
 	/**
-	 * Modaler Dialog auf nativem <dialog> + showModal(): Top-Layer, Hintergrund inert (Fokus bleibt im Dialog),
-	 * Escape schließt, Fokus kehrt beim Schließen zum Auslöser zurück. variant="panel" = rechts angedocktes SidePanel.
-	 * Anfangsfokus: erstes fokussierbares Element — `autofocus` an einem Feld setzt ihn gezielt.
+	 * A modal dialog on a native <dialog> with showModal(): top layer, inert background (focus stays in the dialog),
+	 * Escape closes, and focus returns to the trigger on close. variant="panel" = a side panel docked on the right.
+	 * Initial focus: the first focusable element — `autofocus` on a field sets it explicitly.
 	 */
 	let {
 		open = $bindable(false),
@@ -31,7 +31,7 @@
 	});
 </script>
 
-<!-- Klick auf den Hintergrund schließt; die Tastatur schließt über Escape (natives cancel) bzw. den Schließen-Knopf -->
+<!-- A click on the backdrop closes; the keyboard closes with Escape (native cancel) or the close button -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
 	bind:this={el}

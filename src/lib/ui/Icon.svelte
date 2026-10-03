@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	// Eigene 24er-Strichsymbole (1.6 px), bewusst wenige — neue Symbole hier ergänzen.
+	// Own 24 px line icons (1.6 px stroke), deliberately few — add new ones here.
 	const paths = {
 		x: 'M6 6l12 12M18 6 6 18',
 		projects: 'M4 4.5h4.5v15H4zM9.75 4.5h4.5v9h-4.5zM15.5 4.5H20v12h-4.5z',

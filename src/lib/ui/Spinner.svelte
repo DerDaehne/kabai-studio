@@ -1,5 +1,5 @@
 <script lang="ts">
-	// label = '' → rein dekorativ (z. B. im Button, der selbst aria-busy trägt)
+	// label = '' → purely decorative (e.g. inside a button that carries aria-busy itself)
 	let { label = 'Lädt …', size = 16 }: { label?: string; size?: number } = $props();
 </script>
 
@@ -28,7 +28,7 @@
 			transform: rotate(1turn);
 		}
 	}
-	/* Reduzierte Bewegung: langsamer drehen statt anhalten — ein stehender Ring sähe nicht nach Laden aus */
+	/* Reduced motion: spin slower instead of stopping — a still ring would not look like loading */
 	@media (prefers-reduced-motion: reduce) {
 		.spinner {
 			animation-duration: 2.4s !important;

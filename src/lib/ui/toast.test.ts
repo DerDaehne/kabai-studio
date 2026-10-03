@@ -7,7 +7,7 @@ describe('toast', () => {
 		vi.useRealTimers();
 	});
 
-	it('blendet Info/Erfolg nach 5 s aus, Fehler bleiben bis zum Schließen', () => {
+	it('hides info and success after 5 s while errors stay until closed', () => {
 		vi.useFakeTimers();
 		toast('Gespeichert', 'success');
 		const err = toast('Speichern fehlgeschlagen', 'error');
@@ -20,7 +20,7 @@ describe('toast', () => {
 		expect(toasts).toEqual([]);
 	});
 
-	it('dismiss mit unbekannter ID ist harmlos (Timer nach manuellem Schließen)', () => {
+	it('ignores dismiss with an unknown id (a timer after closing by hand)', () => {
 		vi.useFakeTimers();
 		const id = toast('Hallo');
 		dismiss(id);

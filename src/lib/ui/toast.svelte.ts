@@ -1,13 +1,13 @@
-// Toast-Warteschlange: toast('Gespeichert', 'success'). Nur im Browser aufrufen (Modulzustand ist prozessweit).
+// Toast queue: toast('Gespeichert', 'success'). Call it in the browser only (module state is process-wide).
 export type ToastTone = 'info' | 'success' | 'error';
-/** Optionaler Link als Ausweg, z. B. `{ label: 'Neu anmelden', href: '/login' }`. */
+/** Optional link as a way out, e.g. `{ label: 'Neu anmelden', href: '/login' }`. */
 export type ToastAction = { label: string; href: string };
 export type Toast = { id: number; message: string; tone: ToastTone; action?: ToastAction };
 
 export const toasts: Toast[] = $state([]);
 let nextId = 1;
 
-/** Fehler bleiben, bis sie geschlossen werden (Standard-Timeout 0); alles andere verschwindet nach 5 s. */
+/** Errors stay until closed (default timeout 0); everything else disappears after 5 s. */
 export function toast(
 	message: string,
 	tone: ToastTone = 'info',

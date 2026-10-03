@@ -5,14 +5,14 @@ import SecretField from './SecretField.svelte';
 const html = (props: Record<string, unknown>) =>
 	render(SecretField, { props }).body.replace(/<!--[\s\S]*?-->/g, '');
 
-it('gespeichertes Secret: nur „gesetzt“, Ersetzen und Löschen — kein Eingabefeld für den Wert', () => {
+it('shows a stored secret only as "gesetzt" with replace and delete, without an input for the value', () => {
 	const out = html({ name: 'demo', updatedAt: '2026-01-01 00:00:00' });
 	expect(out).toContain('<strong>demo</strong> — gesetzt');
 	expect(out).toContain('action="?/deleteSecret"');
 	expect(out).not.toContain('type="password"');
 });
 
-it('Fehler steht am betroffenen Feld (aria-describedby) mit Ursache und Ausweg — auch ohne JS nach dem Neuladen', () => {
+it('shows an error at the affected field (aria-describedby) with cause and way out, also without JS after the reload', () => {
 	const error = {
 		code: 'secret_too_short',
 		message: 'Der Wert hat nur 5 Zeichen.',
@@ -35,7 +35,7 @@ it('Fehler steht am betroffenen Feld (aria-describedby) mit Ursache und Ausweg �
 	expect(named).toMatch(/<input type="password"[^>]*aria-invalid="false"/);
 });
 
-it('„Abbrechen“ gibt es nur beim Ersetzen eines gespeicherten Secrets — beim neuen Secret hätte es keine Wirkung', () => {
+it('offers "Abbrechen" only when replacing a stored secret, where it has an effect', () => {
 	const error = { code: 'secret_too_short', message: 'Zu kurz.', hint: 'Vollständig einfügen.' };
 	expect(html({ name: 'demo', updatedAt: '2026-01-01 00:00:00', error })).toContain(
 		'>Abbrechen</button>'

@@ -1,5 +1,5 @@
-// #820: /settings lieferte 404 (kein +page.svelte). Rendert die Seite serverseitig — schlägt ohne die Datei
-// schon beim Import fehl ("Cannot find module") statt erst im Browser als 404.
+// Renders the page server-side, so a missing +page.svelte fails at import ("Cannot find module")
+// instead of only as a 404 in the browser.
 import { render } from 'svelte/server';
 import { expect, it } from 'vitest';
 import type { BackupStatus } from '$lib/server/backup';
@@ -18,17 +18,17 @@ const ok: BackupStatus = {
 const page = (backup: BackupStatus) =>
 	render(Page, { props: { data: { backup, retention } } as any }).body;
 
-it('zeigt eine Übersicht mit Secrets verlinkt und ohne Links auf nicht existierende Seiten', () => {
+it('shows an overview that links secrets and no pages that do not exist yet', () => {
 	const body = page(ok);
 	expect(body).toContain('Einstellungen');
 
 	const hrefs = [...body.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-	expect(hrefs).toEqual(['/settings/secrets']); // nur Secrets ist umgesetzt — keine toten Links auf #784/#785/#812
+	expect(hrefs).toEqual(['/settings/secrets']); // only secrets exist so far, so no dead links
 
-	expect(body).toMatch(/Secrets<\/span>\s*<span class="desc[^"]*">[^<]{10,}<\/span>/); // Erklärungssatz je Eintrag
+	expect(body).toMatch(/Secrets<\/span>\s*<span class="desc[^"]*">[^<]{10,}<\/span>/); // one explaining sentence per entry
 });
 
-it('Sicherung (#808): letzte Sicherung mit Zeit, Größe, Pfad; Hinweis auf secret.key und restore', () => {
+it('shows the newest backup with time, size and path, and points to secret.key and restore', () => {
 	const body = page(ok);
 	expect(body).toMatch(/aktuell/);
 	expect(body).toContain('2026-09-29 03:00 UTC');
@@ -39,7 +39,7 @@ it('Sicherung (#808): letzte Sicherung mit Zeit, Größe, Pfad; Hinweis auf secr
 	expect(body).toContain('npm run restore -- &lt;datei>');
 });
 
-it('Sicherung (#808): Problem sichtbar markiert, mit Ursache und Ausweg', () => {
+it('marks a backup problem visibly, with cause and way out', () => {
 	const body = page({
 		dir: '/daten/backups',
 		last: null,
