@@ -9,6 +9,7 @@ import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
 import { startRunner, type Executor, type ExecutorResult, type RunContext } from '../runner';
 import { setSecret } from '../secrets';
+import { eventStream } from '../sse';
 import { builtinExecutor, type BuiltinOptions } from './builtin';
 import { requestSettings } from './provider';
 
@@ -153,7 +154,7 @@ function setup(profile: Partial<runs.Profile> = {}) {
 			}));
 	const comments = () =>
 		db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
-	return { db, ticketId, columns, profileId, busEvents, queue, run, events, comments };
+	return { db, projectId, ticketId, columns, profileId, busEvents, queue, run, events, comments };
 }
 
 /** Starts a runner with the builtin executor; `executed` collects each run's context and result. */
@@ -178,6 +179,22 @@ function startBuiltin(
 
 const ended = (state: () => unknown) =>
 	vi.waitFor(() => expect(state()).not.toMatch(/^(queued|running)$/), { timeout: 3000 });
+
+/** The messages a browser showing the project receives over SSE. */
+function browser(projectId: number) {
+	const reader = eventStream((event) => event.projectId === projectId).getReader();
+	cleanups.push(() => void reader.cancel());
+	const decoder = new TextDecoder();
+	const messages: StudioEvent[] = [];
+	const receive = async () => {
+		for (let read = await reader.read(); !read.done; read = await reader.read()) {
+			const frame = decoder.decode(read.value);
+			if (frame.startsWith('data: ')) messages.push(JSON.parse(frame.slice('data: '.length)));
+		}
+	};
+	void receive();
+	return messages;
+}
 
 describe('builtin executor', () => {
 	it('records the prompt, then reasoning, message, tool call, tool result and step log of every step, and sums the usage in the run', async () => {
@@ -234,12 +251,21 @@ describe('builtin executor', () => {
 		});
 		expect(prompt.toolTokens).toBeGreaterThan(1000);
 		expect(reasoning).toEqual({ step: 1, text: 'The ticket needs a comment.\n', charsTotal: 28 });
-		expect(toolCall).toEqual({ step: 1, tool: 'add_comment', args: { text: 'first' } });
+		expect(toolCall).toEqual({
+			step: 1,
+			tool: 'add_comment',
+			args: { text: 'first' },
+			target: '',
+			reason: 'I will comment.',
+			reason_source: 'text',
+			next_hint: ''
+		});
 		expect(toolResult).toEqual({
 			step: 1,
 			tool: 'add_comment',
 			result: '{"comment_id":1}',
-			isError: false
+			isError: false,
+			result_summary: ''
 		});
 		expect(stepLog).toEqual({
 			kind: 'step',
@@ -638,6 +664,141 @@ describe('builtin executor', () => {
 		expect(everything).toContain('[secret:provider-key]');
 		expect(everything).not.toContain(secret);
 		expect(everything).not.toContain(secret.slice(-8));
+	});
+});
+
+describe('trace of the builtin executor', () => {
+	const tracedRun = (columns: Record<string, number>) =>
+		fakeProvider(
+			{
+				chunks: [
+					{ reasoning: 'Thinking about it.\n' },
+					{ text: `The export lacks a comment${' about the header row'.repeat(6)}.` },
+					{ text: ' Then I move the ticket.' },
+					call('call-1', 'add_comment', { text: 'Header row is missing.' })
+				]
+			},
+			{
+				chunks: [
+					{ reasoning: 'The comment is there.\nI should move it to Refine.\n' },
+					call('call-2', 'move_ticket', { column_id: columns['Refine'] })
+				]
+			},
+			{ chunks: [call('call-3', 'get_ticket', { ticket: 'STU-1' })] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
+	const traceOf = (events: { key: string | null; payload: Record<string, unknown> }[]) =>
+		Object.fromEntries(
+			events.filter((e) => e.key?.startsWith('call-')).map((e) => [e.key, e.payload])
+		);
+
+	it('records target, reason and next hint at each tool call, cutting the reason to 120 characters', async () => {
+		const { db, queue, run, events, columns } = setup();
+		startBuiltin(db, { fetch: tracedRun(columns).fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const trace = traceOf(events(runId));
+		expect(trace['call-1']).toMatchObject({
+			tool: 'add_comment',
+			target: '',
+			reason_source: 'text',
+			next_hint: 'Then I move the ticket.'
+		});
+		expect(trace['call-1'].reason).toHaveLength(120);
+		expect(trace['call-1'].reason).toMatch(/^The export lacks a comment about the header row/);
+		expect(trace['call-2']).toMatchObject({
+			reason: 'I should move it to Refine.',
+			reason_source: 'reasoning',
+			next_hint: ''
+		});
+	});
+
+	it('leaves the reason empty when the model said and thought nothing before the call', async () => {
+		const { db, queue, run, events, columns } = setup();
+		startBuiltin(db, { fetch: tracedRun(columns).fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(traceOf(events(runId))['call-3']).toEqual({
+			step: 3,
+			tool: 'get_ticket',
+			args: { ticket: 'STU-1' },
+			target: 'STU-1',
+			reason: '',
+			reason_source: '',
+			next_hint: ''
+		});
+	});
+
+	it('records a short result at each tool result', async () => {
+		const { db, queue, run, events, columns } = setup();
+		startBuiltin(db, { fetch: tracedRun(columns).fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const trace = traceOf(events(runId));
+		expect(trace['call-1:result']).toMatchObject({ result_summary: '' });
+		expect(trace['call-2:result']).toMatchObject({ result_summary: '→ Refine' });
+		expect(trace['call-2:result']).not.toHaveProperty('diff_anchor');
+	});
+
+	it('delivers the trace fields of tool calls and results to the browser over SSE', async () => {
+		const { db, projectId, queue, run, columns } = setup();
+		const messages = browser(projectId);
+		startBuiltin(db, { fetch: tracedRun(columns).fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const payloadOf = (eventType: string) =>
+			messages
+				.filter((m) => m.type === 'run.event' && m.eventType === eventType)
+				.map((m) => m.payload);
+		expect(payloadOf('tool_call')).toHaveLength(3);
+		for (const payload of payloadOf('tool_call'))
+			expect(Object.keys(payload as object)).toEqual(
+				expect.arrayContaining(['target', 'reason', 'reason_source', 'next_hint'])
+			);
+		expect(payloadOf('tool_call')[1]).toMatchObject({ reason: 'I should move it to Refine.' });
+		expect(payloadOf('tool_result')[1]).toMatchObject({ result_summary: '→ Refine' });
+	});
+
+	it('reports thinking and writing with the tokens so far and the tokens per second, at most once a second', async () => {
+		const { db, projectId, queue, run } = setup();
+		const messages = browser(projectId);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+		// the executor first takes in the deltas sent so far, then the clock moves on
+		const oneSecondLater = {
+			pause: () => sleep(20).then(() => vi.setSystemTime(Date.now() + 1100))
+		};
+		const provider = fakeProvider({
+			chunks: [
+				{ reasoning: 'First thought\n' },
+				{ reasoning: 'second\n' },
+				oneSecondLater,
+				{ reasoning: 'third\n' },
+				oneSecondLater,
+				{ text: 'Done.' }
+			]
+		});
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const phases = messages
+			.filter((m) => m.type === 'run.phase')
+			.map(({ name, tokens, tokensPerSecond, lastLine }) => ({
+				name,
+				tokens,
+				tokensPerSecond,
+				lastLine
+			}));
+		expect(phases).toEqual([
+			{ name: 'thinking', tokens: 1, lastLine: 'First thought' },
+			{ name: 'thinking', tokens: 3, tokensPerSecond: 3, lastLine: 'third' },
+			{ name: 'writing', tokens: 1 }
+		]);
 	});
 });
 

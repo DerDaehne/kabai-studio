@@ -10,6 +10,7 @@ import {
 import type { DatabaseSync } from 'node:sqlite';
 import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
 import { assemblePrompt, type AssembledPrompt } from '../agents/prompt';
+import { deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
@@ -48,7 +49,10 @@ type OpenStep = {
 	text: string;
 	textsRecorded: boolean;
 	calls: ToolCallRecord[];
+	meters: Partial<Record<Phase['name'], TokenMeter>>;
 };
+/** Tokens of one phase within a step, counted from its first delta. */
+type TokenMeter = { tokens: number; since: number };
 
 // ponytail: fixed limits; make them configurable once practice asks for it.
 const DEFAULT_MAX_STEPS = 24;
@@ -223,12 +227,17 @@ class StepLog {
 			case 'tool-result':
 				return this.#recordToolResult(
 					part.toolCallId,
-					part.toolName,
+					{ tool: part.toolName, args: part.input },
 					textOf(part.output),
 					isErrorResult(part.output)
 				);
 			case 'tool-error':
-				return this.#recordToolResult(part.toolCallId, part.toolName, errorText(part.error), true);
+				return this.#recordToolResult(
+					part.toolCallId,
+					{ tool: part.toolName, args: part.input },
+					errorText(part.error),
+					true
+				);
 			case 'finish-step':
 				return this.#finishStep(part);
 			case 'abort':
@@ -242,11 +251,17 @@ class StepLog {
 	/** Throttled to one update a second; the first one comes at once, because it ends the runner's cold start watch. */
 	#showPhase(name: Phase['name'], text: string) {
 		const now = Date.now();
+		// ponytail: one delta counts as one token, as llama.cpp, Ollama and LM Studio stream them; a server that
+		// sends several tokens per delta shows too few (then count with the step's usage or a tokenizer)
+		const meter = (this.#step.meters[name] ??= { tokens: 0, since: now });
+		meter.tokens += 1;
 		if (now - this.#lastPhaseAt < PHASE_INTERVAL_MS) return;
 		this.#lastPhaseAt = now;
 		this.#io.phase({
 			name,
 			elapsedMs: now - this.#step.startedAt,
+			tokens: meter.tokens,
+			tokensPerSecond: tokensPerSecond(meter, now),
 			lastLine: lastCompleteLine(text)
 		});
 	}
@@ -277,20 +292,23 @@ class StepLog {
 
 	#recordToolCall(part: Extract<Part, { type: 'tool-call' }>) {
 		this.#recordTexts();
+		const { number, text, reasoning } = this.#step;
+		const call = { tool: part.toolName, args: part.input };
 		this.#io.emit({
 			type: 'tool_call',
 			key: part.toolCallId,
-			payload: { step: this.#step.number, tool: part.toolName, args: part.input }
+			payload: { step: number, ...call, ...deriveTrace(text, reasoning, call) }
 		});
 	}
 
-	#recordToolResult(callId: string, tool: string, result: string, isError: boolean) {
-		this.#step.calls.push({ tool, isError });
+	#recordToolResult(callId: string, call: ToolCall, result: string, isError: boolean) {
+		this.#step.calls.push({ tool: call.tool, isError });
 		const payload = {
 			step: this.#step.number,
-			tool,
+			tool: call.tool,
 			result: mask(result).slice(0, RESULT_LIMIT),
-			isError
+			isError,
+			...summarizeResult(call, result, isError)
 		};
 		this.#io.emit({ type: 'tool_result', key: `${callId}:result`, payload });
 	}
@@ -330,8 +348,12 @@ const openStep = (number: number): OpenStep => ({
 	reasoning: '',
 	text: '',
 	textsRecorded: false,
-	calls: []
+	calls: [],
+	meters: {}
 });
+
+const tokensPerSecond = ({ tokens, since }: TokenMeter, now: number) =>
+	now > since ? Math.round((tokens * 1000) / (now - since)) : undefined;
 
 function lastCompleteLine(text: string) {
 	const completeLines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n');
