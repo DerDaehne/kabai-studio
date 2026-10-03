@@ -15,10 +15,10 @@ export const GET: RequestHandler = ({ url, cookies }) => {
 	return new Response(stream, { headers: SSE_HEADERS });
 };
 
-/** Without `project` the single owner gets the events of every project. */
+/** Without `project` the single owner gets the events of every project; events without a project reach every stream. */
 function projectFilter(url: URL): (event: StudioEvent) => boolean {
 	if (!url.searchParams.has('project')) return () => true;
 	const projectId = Number(url.searchParams.get('project'));
 	if (!Number.isInteger(projectId) || projectId <= 0) error(400, 'project ist ungültig');
-	return (event) => event.projectId === projectId;
+	return (event) => event.projectId === undefined || event.projectId === projectId;
 }

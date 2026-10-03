@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
+import { releaseHalt } from '../domain/halt';
 import { answerQuestion } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
@@ -367,6 +368,34 @@ describe('builtin executor', () => {
 		expect(provider.requests[0].signal.aborted).toBe(true);
 		expect(run(cancelled).state).toBe('cancelled');
 		expect(events(cancelled)).toEqual(recordedBeforeCancel);
+		expect(run(waiting).state).toBe('succeeded');
+	});
+
+	it('stops the provider request when the kill switch halts every run, and the next run waits for the release', async () => {
+		const { db, queue, run, events, busEvents, comments } = setup();
+		const provider = fakeProvider(
+			{ chunks: [{ reasoning: 'Let me think\n' }, 'hang'] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const halted = queue();
+		const waiting = queue();
+		await vi.waitFor(() =>
+			expect(busEvents.some((e) => e.type === 'run.phase' && e.runId === halted)).toBe(true)
+		);
+		const recordedBeforeHalt = events(halted);
+
+		expect(runner.halt()).toEqual([halted]);
+		await vi.waitFor(() => expect(provider.requests[0].signal.aborted).toBe(true));
+		expect(run(halted).state).toBe('cancelled');
+		expect(events(halted)).toEqual(recordedBeforeHalt);
+		expect(comments()).toEqual([
+			expect.objectContaining({ author_kind: 'system', run_id: halted })
+		]);
+		expect(run(waiting).state).toBe('queued');
+
+		releaseHalt(db, user);
+		await ended(() => run(waiting).state);
 		expect(run(waiting).state).toBe('succeeded');
 	});
 

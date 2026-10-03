@@ -2,10 +2,20 @@ import { EventEmitter } from 'node:events';
 import type { Actor } from './domain/core';
 
 /** A committed mutation. The domain layer publishes only after COMMIT. */
-export type StudioEvent = {
+export type StudioEvent = ProjectEvent | GlobalEvent;
+
+type ProjectEvent = {
 	type: string;
 	projectId: number;
 	ticketId?: number;
+	actor: Actor;
+	[key: string]: unknown;
+};
+
+/** Concerns every project, so it has no projectId and reaches every connection. */
+type GlobalEvent = {
+	type: 'runner.halted' | 'runner.released';
+	projectId?: undefined;
 	actor: Actor;
 	[key: string]: unknown;
 };

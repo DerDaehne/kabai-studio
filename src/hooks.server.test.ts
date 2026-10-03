@@ -319,6 +319,28 @@ describe('auth flow', () => {
 		expect(await own.read()).toEqual({ done: true, value: undefined });
 	});
 
+	it('delivers an event that concerns every project, such as the kill switch, to streams with and without a project', async () => {
+		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
+		const readers = await Promise.all(
+			['/api/events', '/api/events?project=1'].map(async (path) => {
+				const reader = ((await events(event(path, cookies))) as Response).body!.getReader();
+				await reader.read(); // ': connected'
+				return reader;
+			})
+		);
+
+		publish({ type: 'runner.halted', actor: { kind: 'user' } });
+
+		for (const reader of readers) {
+			const frame = new TextDecoder().decode((await reader.read()).value);
+			expect(JSON.parse(frame.slice('data: '.length))).toEqual({
+				type: 'runner.halted',
+				actor: { kind: 'user' }
+			});
+			await reader.cancel();
+		}
+	});
+
 	it('answers the event stream without a session with 401, with or without a project', async () => {
 		for (const path of ['/api/events', '/api/events?project=1'])
 			expect(((await guard(path)) as Response).status).toBe(401);

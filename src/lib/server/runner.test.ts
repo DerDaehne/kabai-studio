@@ -10,6 +10,7 @@ import { DomainError, type Actor } from './domain/core';
 import * as runs from './domain/runs';
 import { subscribe, type StudioEvent } from './events';
 import { answerQuestion, requestHuman } from './domain/questions';
+import { haltedSince, haltRuns, releaseHalt } from './domain/halt';
 import { LIMITS, startRunner, type Executor, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
@@ -1030,5 +1031,167 @@ describe('resuming after the human answers', () => {
 		expect(s.state(followUp)).toBe('running');
 		expect(fake.call(followUp).run).toMatchObject({ ticketId, profile: { id: s.local } });
 		expect(columnOf()).toBe(inProgress);
+	});
+});
+
+describe('kill switch', () => {
+	const agent: Actor = { kind: 'agent', runId: 1 };
+	const haltComment = (runId: number) => ({
+		author_kind: 'system',
+		run_id: runId,
+		body: `Run ${runId} wurde durch den Not-Aus gestoppt.\nAusweg: Nach dem Fortsetzen (:fortsetzen) einen neuen Run für das Ticket starten.`
+	});
+
+	it('cancels every active run at once, aborts its executor and comments on its ticket, while queued runs stay in the queue', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [local, cloud, approving, queued] = [
+			s.queue(s.local),
+			s.queue(s.cloud),
+			s.queue(s.cloud),
+			s.queue(s.local)
+		];
+		await flush();
+		runs.setRunState(s.db, system, approving, 'waiting_approval');
+		expect([local, cloud, approving, queued].map(s.state)).toEqual([
+			'running',
+			'running',
+			'waiting_approval',
+			'queued'
+		]);
+
+		expect(runner.halt()).toEqual([local, cloud, approving]);
+
+		for (const id of [local, cloud, approving]) {
+			const { run, io } = fake.call(id);
+			expect(s.row(id)).toMatchObject({ state: 'cancelled', token_hash: null });
+			expect(runs.runForToken(s.db, run.token)).toBeUndefined();
+			expect(io.signal.aborted).toBe(true);
+		}
+		expect(s.comments()).toEqual([local, cloud, approving].map(haltComment));
+		await flush();
+		expect(s.state(queued)).toBe('queued');
+		expect(haltedSince(s.db)).toEqual(expect.any(String));
+	});
+
+	it('claims nothing while halted: new, follow-up and held-back runs wait with the kill switch as their reason, and releasing starts them', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		vi.setSystemTime(new Date('2026-10-03T12:00:00.000Z'));
+		const s = setup();
+		const limits = { global: 10, pools: { local: 10, cloud: 10 } };
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor }, limits);
+		const paused = s.queue(s.local);
+		await flush();
+		fake.call(paused).done({ state: 'paused' });
+		await flush();
+
+		runner.halt();
+		const fresh = s.queue(s.cloud);
+		const followUp = runs.createRun(s.db, system, {
+			ticketId: s.ticketId,
+			profileId: s.local,
+			resumedFromRunId: paused,
+			resumeReason: 'quota'
+		}).id;
+		const heldBack = runs.createRun(s.db, system, {
+			ticketId: s.ticketId,
+			profileId: s.local,
+			notBefore: '2026-10-03T12:01:00Z'
+		}).id;
+		vi.advanceTimersByTime(60_000);
+		await flush();
+
+		const waiting = [fresh, followUp, heldBack];
+		expect(waiting.map(s.state)).toEqual(['queued', 'queued', 'queued']);
+		for (const id of waiting)
+			expect(runs.waitReason(s.db, id, limits)?.text).toBe(
+				'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen.'
+			);
+		expect(vi.getTimerCount()).toBe(0); // a held-back run that is due waits for the release, not for another timer
+
+		releaseHalt(s.db, user);
+		await flush();
+		expect(waiting.map(s.state)).toEqual(['running', 'running', 'running']);
+		expect(haltedSince(s.db)).toBeNull();
+	});
+
+	it('keeps the halt across a server restart: a runner on the reopened database file starts nothing until the human releases it', async () => {
+		const file = join(tmp, 'halt-restart.db');
+		const s = setup(openDb(file));
+		const fake = fakeExecutor();
+		const before = start(s.db, { builtin: fake.executor });
+		const cancelled = s.queue(s.local);
+		await flush();
+		before.halt();
+		const waiting = s.queue(s.local);
+		before.stop();
+		s.db.close();
+
+		const db = openDb(file);
+		migrate(db);
+		const state = (id: number) => db.prepare('SELECT state FROM runs WHERE id = ?').get(id)!.state;
+		const after = fakeExecutor();
+		start(db, { builtin: after.executor });
+		await flush();
+		expect([cancelled, waiting].map(state)).toEqual(['cancelled', 'queued']);
+		expect(after.calls).toEqual([]);
+
+		releaseHalt(db, user);
+		await flush();
+		expect(state(waiting)).toBe('running');
+		expect(after.calls.map((call) => call.run.id)).toEqual([waiting]);
+		db.close();
+	});
+
+	it('lets only the human set or release the kill switch: an agent or the system gets requires_human with a way out', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const running = s.queue(s.local);
+		await flush();
+		const refused = expect.objectContaining({
+			code: 'requires_human',
+			message: 'Den Not-Aus setzt nur der Mensch.',
+			hint: 'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet über den Not-Aus.'
+		});
+
+		for (const actor of [agent, system]) {
+			expect(() => runner.halt(actor)).toThrow(refused);
+			expect(() => haltRuns(s.db, actor)).toThrow(refused);
+		}
+		expect(s.state(running)).toBe('running');
+		expect(fake.call(running).io.signal.aborted).toBe(false);
+		expect(haltedSince(s.db)).toBeNull();
+
+		runner.halt();
+		for (const actor of [agent, system])
+			expect(() => releaseHalt(s.db, actor)).toThrow(
+				expect.objectContaining({
+					code: 'requires_human',
+					message: 'Den Not-Aus löst nur der Mensch.'
+				})
+			);
+		expect(haltedSince(s.db)).not.toBeNull();
+	});
+
+	it('starts no run that outlives a halt arriving while another process keeps claiming', async () => {
+		const file = join(tmp, 'halt-concurrent.db');
+		const { db, cloud, queue } = setup(openDb(file));
+		for (let i = 0; i < 1000; i++) queue(cloud);
+		const runner = start(db, {}, { global: 0, pools: {} }); // this runner claims nothing itself
+		const running = () =>
+			db.prepare("SELECT count(*) AS n FROM runs WHERE state = 'running'").get()!.n as number;
+
+		const claiming = claimInParallelProcesses(file, { global: 2000, pools: { cloud: 2000 } }, 1);
+		await vi.waitFor(() => expect(running()).toBeGreaterThan(20), { timeout: 10_000, interval: 2 });
+		const cancelled = runner.halt();
+		const [claimed] = await claiming;
+
+		expect(claimed.length).toBeLessThan(1000);
+		expect(new Set(claimed)).toEqual(new Set(cancelled));
+		expect(running()).toBe(0);
+		db.close();
 	});
 });

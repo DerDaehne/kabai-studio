@@ -287,6 +287,7 @@ export type WaitReason = {
 	ahead: number;
 	text: string;
 };
+type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> & { halted: 0 | 1 };
 
 /** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
 export function waitReason(
@@ -296,7 +297,7 @@ export function waitReason(
 ): WaitReason | undefined {
 	const row = db
 		.prepare(
-			`SELECT r.priority, p.pool,
+			`SELECT r.priority, p.pool, EXISTS (SELECT 1 FROM runner_halt) AS halted,
 				(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
 				(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
 					WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
@@ -304,11 +305,14 @@ export function waitReason(
 					WHERE q.state = 'queued' AND qp.pool = p.pool AND (${rank('q.priority')}, q.id) < (${rank('r.priority')}, r.id)) AS ahead
 			FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.id = ? AND r.state = 'queued'`
 		)
-		.get(runId) as Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> | undefined;
+		.get(runId) as WaitRow | undefined;
 	if (!row) return undefined;
-	const reason = { ...row, poolLimit: limits.pools[row.pool] ?? 1, globalLimit: limits.global };
-	return { ...reason, text: waitText(reason) };
+	const { halted, ...counts } = row;
+	const reason = { ...counts, poolLimit: limits.pools[row.pool] ?? 1, globalLimit: limits.global };
+	return { ...reason, text: halted ? HALTED_TEXT : waitText(reason) };
 }
+
+const HALTED_TEXT = 'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen.';
 
 function waitText(r: Omit<WaitReason, 'text'>) {
 	const causes = [
@@ -369,6 +373,7 @@ const CLAIM = `WITH active AS (
 SELECT r.id, r.ticket_id AS ticketId, t.project_id AS projectId, r.agent_profile_id AS profileId
 FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id JOIN tickets t ON t.id = r.ticket_id
 WHERE r.state = 'queued'
+	AND NOT EXISTS (SELECT 1 FROM runner_halt)
 	AND (r.not_before IS NULL OR r.not_before <= ?3)
 	AND (SELECT count(*) FROM active) < ?1
 	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), 1)
@@ -376,7 +381,7 @@ ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
 
 /**
  * Starts the most urgent queued run (oldest among equal priorities) whose pool and the global limit have room and whose not_before
- * has passed, or returns undefined. Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
+ * has passed, or returns undefined — always while the kill switch is set. Selection and start share one write transaction, so concurrent runners never claim the same run or exceed a limit.
  */
 export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = new Date()) {
 	return tx(db, (emit) => {

@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
+import { haltRuns } from './domain/halt';
 import { requestHuman } from './domain/questions';
 import {
 	appendEvent,
@@ -69,6 +70,7 @@ export const LIMITS: Limits = { global: 4, pools: { cloud: 3, local: 1 } };
 export const FRESH_RUNS_PER_CHAIN = 1;
 
 const SYSTEM: Actor = { kind: 'system' };
+const WAKING_EVENTS = new Set(['run.created', 'run.state_changed', 'runner.released']);
 const MODEL_LOADING_PHASES: Phase['name'][] = ['model_loading', 'model_downloading'];
 const MAX_LAST_LINE = 120;
 // setTimeout fires at once beyond this delay; waking early only sets the timer again
@@ -274,10 +276,21 @@ function nextNotBefore(db: DatabaseSync, now: Date) {
 	return next;
 }
 
+export type RunnerHandle = ReturnType<typeof startRunner>;
+
+let started: RunnerHandle | undefined;
+
+/** The runner this server process started; routes cancel, park and halt runs through it. */
+export function runner(): RunnerHandle {
+	if (!started) throw new Error('The runner has not been started; the init hook starts it.');
+	return started;
+}
+
 /**
  * Fails runs left active by the previous server process, then claims queued runs whenever a run is created or ends,
- * and when the earliest held-back run (`not_before`) becomes claimable.
+ * when the earliest held-back run (`not_before`) becomes claimable and when the kill switch is released.
  * Start it once per data directory: it treats every active run as orphaned, which the single-instance lock guarantees.
+ * The handle stays reachable through {@link runner}.
  */
 export function startRunner(
 	db: DatabaseSync,
@@ -285,18 +298,22 @@ export function startRunner(
 	limits = LIMITS,
 	coldStart: ColdStartLimits = COLD_START_LIMITS
 ) {
-	const runner = new Runner(db, executors, limits, coldStart);
+	const instance = new Runner(db, executors, limits, coldStart);
 	failOrphanedRuns(db);
-	runner.start();
-	return {
+	instance.start();
+	const handle = {
 		/** Cancels a queued, running or waiting run; throws `invalid_run_transition` once the run has ended. */
-		cancel: (runId: number, actor: Actor = { kind: 'user' }) => runner.cancel(runId, actor),
+		cancel: (runId: number, actor: Actor = { kind: 'user' }) => instance.cancel(runId, actor),
 		/** Asks a running run to end cleanly after its current step; false when no executor of this runner works on it. */
 		park: (runId: number, reason: ResumeReason, notBefore?: string) =>
-			runner.park(runId, reason, notBefore),
+			instance.park(runId, reason, notBefore),
+		/** The kill switch: cancels every active run and returns them; queued runs wait until `releaseHalt`. Human only. */
+		halt: (actor: Actor = { kind: 'user' }) => instance.halt(actor),
 		/** Stops claiming; executors already running finish on their own. */
-		stop: () => runner.stop()
+		stop: () => instance.stop()
 	};
+	started = handle;
+	return handle;
 }
 
 class Runner {
@@ -324,7 +341,7 @@ class Runner {
 
 	start() {
 		this.unsubscribe = subscribe((event) => {
-			if (event.type === 'run.created' || event.type === 'run.state_changed') this.wake();
+			if (WAKING_EVENTS.has(event.type)) this.wake();
 		});
 		this.claimQueuedRuns();
 	}
@@ -332,6 +349,12 @@ class Runner {
 	cancel(runId: number, actor: Actor) {
 		finishRun(this.db, actor, runId, { state: 'cancelled' }); // revokes the token before the executor sees the signal
 		this.active.get(runId)?.cancel.abort();
+	}
+
+	halt(actor: Actor) {
+		const cancelled = haltRuns(this.db, actor); // revokes the tokens before the executors see the signal
+		for (const runId of cancelled) this.active.get(runId)?.cancel.abort();
+		return cancelled;
 	}
 
 	park(runId: number, reason: ResumeReason, notBefore?: string) {
