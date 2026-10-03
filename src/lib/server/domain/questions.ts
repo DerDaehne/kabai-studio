@@ -199,6 +199,7 @@ function continuationOf(db: DatabaseSync, q: QuestionRow): Continuation {
 		profileId: number | null;
 		columnId: number | null;
 	};
+	// ponytail: an answer that beats the asking run's own pause continues nothing; queue the follow-up on pause if that race shows up.
 	if (run.state !== 'paused')
 		return { kind: 'none', reason: `Run ${run.id} ist „${run.state}“, nicht pausiert` };
 	if (run.profileId === null)
