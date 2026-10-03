@@ -65,6 +65,34 @@ describe('UndoStack', () => {
 		expect(new UndoStack().undo(3)).toEqual([]);
 	});
 
+	it('takes back one particular action, as the undo button on its own notice does, and keeps the newer ones', () => {
+		const { rows, columns, stack, remove, move } = board();
+		remove('STU-2');
+		move('STU-1', 'Review');
+		const [removed, moved] = stack.done;
+
+		stack.revert(removed);
+		expect(rows).toEqual(['STU-1', 'STU-2', 'STU-3']);
+		expect(columns['STU-1']).toBe('Review');
+		expect(stack.done).toEqual([moved]);
+		expect(stack.undone).toEqual([removed]);
+
+		stack.revert(removed);
+		expect(rows).toEqual(['STU-1', 'STU-2', 'STU-3']);
+	});
+
+	it('reverting the newest action is the same as u', () => {
+		const viaRevert = board();
+		const viaUndo = board();
+		for (const { move } of [viaRevert, viaUndo]) move('STU-1', 'Review');
+		viaRevert.stack.revert(viaRevert.stack.done[0]);
+		viaUndo.stack.undo();
+		expect(viaRevert.columns).toEqual(viaUndo.columns);
+		expect(viaRevert.stack.undone.map((a) => a.label)).toEqual(
+			viaUndo.stack.undone.map((a) => a.label)
+		);
+	});
+
 	it('takes back everything there is when the count is larger', () => {
 		const { rows, stack, remove } = board();
 		remove('STU-1');

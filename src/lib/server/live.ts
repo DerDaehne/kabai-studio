@@ -25,7 +25,7 @@ export const projectRef = ({ id, key, name }: ProjectRow): ProjectRef => ({
 });
 
 // Only the newest question of a ticket can still be answered meaningfully; collectAnswer reads no other.
-const OPEN_QUESTION = `q.answer IS NULL AND q.id = (SELECT max(id) FROM questions WHERE ticket_id = q.ticket_id)`;
+export const OPEN_QUESTION = `q.answer IS NULL AND q.id = (SELECT max(id) FROM questions WHERE ticket_id = q.ticket_id)`;
 
 const ACTIVE_RUNS = `
 	WITH candidates AS (

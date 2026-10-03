@@ -126,6 +126,7 @@ input[type='radio'] {
 	font: inherit;
 	font-weight: 550;
 	white-space: nowrap;
+	text-decoration: none;
 	cursor: pointer;
 	transition:
 		background-color var(--dur-fast) var(--ease-out),

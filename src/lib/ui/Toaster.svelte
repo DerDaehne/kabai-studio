@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from './Icon.svelte';
-	import { dismiss, toasts } from './toast.svelte';
+	import { dismiss, runAction, toasts } from './toast.svelte';
 
 	let region: HTMLElement;
 
@@ -21,8 +21,11 @@
 				<span class="bar" aria-hidden="true"></span>
 				<p>
 					{#if t.tone === 'error'}<span class="visually-hidden">Fehler: </span>{/if}{t.message}
-					{#if t.action}<a href={t.action.href}>{t.action.label}</a>{/if}
+					{#if t.action && 'href' in t.action}<a href={t.action.href}>{t.action.label}</a>{/if}
 				</p>
+				{#if t.action && 'run' in t.action}
+					<button class="btn btn-sm" onclick={() => runAction(t)}>{t.action.label}</button>
+				{/if}
 				<button
 					class="btn btn-ghost btn-icon btn-sm"
 					aria-label="Meldung schließen"
@@ -52,7 +55,9 @@
 	}
 	.toast {
 		display: grid;
-		grid-template-columns: 3px 1fr auto;
+		grid-template-columns: 3px minmax(0, 1fr);
+		grid-auto-columns: auto;
+		grid-auto-flow: column;
 		align-items: start;
 		gap: var(--space-3);
 		padding: var(--space-2) var(--space-1) var(--space-2) var(--space-2);

@@ -177,8 +177,13 @@ function validAnswer(q: QuestionRow, answer: Answer): Answer {
  * Sets or replaces the human's answer. If it answers a paused run, the ticket returns to that run's column and a follow-up
  * run continues it once the undo window has passed; until that run starts, the human can change or retract the answer.
  */
-export function answerQuestion(db: DatabaseSync, actor: Actor, questionId: number, answer: Answer) {
-	tx(db, (emit) => {
+export function answerQuestion(
+	db: DatabaseSync,
+	actor: Actor,
+	questionId: number,
+	answer: Answer
+): { resumesRun: boolean } {
+	return tx(db, (emit) => {
 		const q = questionOpenForHuman(db, actor, questionId);
 		const stored = validAnswer(q, answer);
 		const continuation = continuationOf(db, q);
@@ -194,6 +199,7 @@ export function answerQuestion(db: DatabaseSync, actor: Actor, questionId: numbe
 			questionId: q.id
 		});
 		continueAfterAnswer(db, emit, actor, q, continuation);
+		return { resumesRun: continuation.kind !== 'none' };
 	});
 }
 

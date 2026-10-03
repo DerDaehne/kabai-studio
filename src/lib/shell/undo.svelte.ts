@@ -23,6 +23,14 @@ export class UndoStack {
 		return reverted;
 	}
 
+	/** Reverts one particular action wherever it is on the stack, e.g. from the undo button on its own notice. */
+	revert(action: Undoable): void {
+		if (!this.done.includes(action)) return;
+		action.revert();
+		this.done = this.done.filter((done) => done !== action);
+		this.undone = [...this.undone, action];
+	}
+
 	/** Performs the last `count` reverted actions again, in their original order, and returns them. */
 	redo(count = 1): Undoable[] {
 		const repeated = newestFirst(this.undone, count);

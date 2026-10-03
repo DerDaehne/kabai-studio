@@ -1,5 +1,7 @@
+import { render } from 'svelte/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dismiss, toast, toasts } from './toast.svelte';
+import Toaster from './Toaster.svelte';
+import { dismiss, runAction, toast, toasts } from './toast.svelte';
 
 describe('toast', () => {
 	afterEach(() => {
@@ -18,6 +20,21 @@ describe('toast', () => {
 
 		dismiss(err);
 		expect(toasts).toEqual([]);
+	});
+
+	it('offers an action as a button that closes the notice and runs it, e.g. taking an answer back', () => {
+		const run = vi.fn();
+		const id = toast('Antwort gesendet', 'success', 10_000, { label: 'Rückgängig', run });
+		expect(render(Toaster).body).toMatch(/<button[^>]*>\s*Rückgängig\s*<\/button>/);
+
+		runAction(toasts.find((t) => t.id === id)!);
+		expect(run).toHaveBeenCalledOnce();
+		expect(toasts).toEqual([]);
+	});
+
+	it('keeps a link as the way out of a notice', () => {
+		toast('Sitzung abgelaufen', 'error', 0, { label: 'Neu anmelden', href: '/login' });
+		expect(render(Toaster).body).toMatch(/<a href="\/login">Neu anmelden<\/a>/);
 	});
 
 	it('ignores dismiss with an unknown id (a timer after closing by hand)', () => {

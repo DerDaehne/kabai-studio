@@ -1,7 +1,7 @@
 // Toast queue: toast('Gespeichert', 'success'). Call it in the browser only (module state is process-wide).
 export type ToastTone = 'info' | 'success' | 'error';
-/** Optional link as a way out, e.g. `{ label: 'Neu anmelden', href: '/login' }`. */
-export type ToastAction = { label: string; href: string };
+/** A way out as a link (`{ label: 'Neu anmelden', href: '/login' }`) or a button that runs something (`Rückgängig`). */
+export type ToastAction = { label: string; href: string } | { label: string; run: () => void };
 export type Toast = { id: number; message: string; tone: ToastTone; action?: ToastAction };
 
 export const toasts: Toast[] = $state([]);
@@ -23,4 +23,10 @@ export function toast(
 export function dismiss(id: number): void {
 	const i = toasts.findIndex((t) => t.id === id);
 	if (i !== -1) toasts.splice(i, 1);
+}
+
+/** The notice has done its job once its action runs. */
+export function runAction({ id, action }: Toast): void {
+	dismiss(id);
+	if (action && 'run' in action) action.run();
 }
