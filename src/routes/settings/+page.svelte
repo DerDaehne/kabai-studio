@@ -10,6 +10,14 @@
 <h1>Einstellungen</h1>
 <ul class="sections">
 	<li>
+		<a href="/settings/profiles">
+			<span class="label">Agent-Profile</span>
+			<span class="desc"
+				>Mit welchem Modell Agents arbeiten: lokal oder online, vorbelegt aus dem Modell-Katalog.</span
+			>
+		</a>
+	</li>
+	<li>
 		<a href="/settings/secrets">
 			<span class="label">Secrets</span>
 			<span class="desc"

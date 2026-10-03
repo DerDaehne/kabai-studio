@@ -55,7 +55,7 @@ type OpenStep = {
 type TokenMeter = { tokens: number; since: number };
 
 // ponytail: fixed limits; make them configurable once practice asks for it.
-const DEFAULT_MAX_STEPS = 24;
+export const DEFAULT_MAX_STEPS = 24;
 const REASONING_LIMIT = 20_000;
 const RESULT_LIMIT = 8_000;
 const PHASE_INTERVAL_MS = 1000;

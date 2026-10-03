@@ -18,14 +18,18 @@ const ok: BackupStatus = {
 const page = (backup: BackupStatus) =>
 	render(Page, { props: { data: { backup, retention } } as any }).body;
 
-it('shows an overview that links secrets and no pages that do not exist yet', () => {
+it('shows an overview that links agent profiles and secrets and no pages that do not exist yet', () => {
 	const body = page(ok);
 	expect(body).toContain('Einstellungen');
 
 	const hrefs = [...body.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-	expect(hrefs).toEqual(['/settings/secrets']); // only secrets exist so far, so no dead links
+	expect(hrefs).toEqual(['/settings/profiles', '/settings/secrets']); // no dead links
 
-	expect(body).toMatch(/Secrets<\/span>\s*<span class="desc[^"]*">[^<]{10,}<\/span>/); // one explaining sentence per entry
+	for (const label of ['Agent-Profile', 'Secrets'])
+		// one explaining sentence per entry
+		expect(body).toMatch(
+			new RegExp(`${label}<\/span>\\s*<span class="desc[^"]*">[^<]{10,}<\/span>`)
+		);
 });
 
 it('shows the newest backup with time, size and path, and points to secret.key and restore', () => {
