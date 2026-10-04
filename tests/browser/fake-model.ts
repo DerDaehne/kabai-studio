@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -56,9 +57,11 @@ function streamOf(reply: Exclude<ScriptedReply, 'hang'>) {
 	];
 }
 
+// A fresh id per call: studio records run events by tool-call id, so two calls in one run (even from different
+// scripted replies) must never collide the way a fixed id would.
 const toolCall = ({ name, args }: { name: string; args: object }) => ({
 	index: 0,
-	id: 'call-1',
+	id: randomUUID(),
 	type: 'function',
 	function: { name, arguments: JSON.stringify(args) }
 });
