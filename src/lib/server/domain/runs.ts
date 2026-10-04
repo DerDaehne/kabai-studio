@@ -232,6 +232,20 @@ export function freshRunsInChain(db: DatabaseSync, runId: number): number {
 	return fresh;
 }
 
+/** The first run of the chain of resumes that ends with this run; a run that continues none is its own. */
+export function chainRootOf(db: DatabaseSync, runId: number): number {
+	const { id } = db
+		.prepare(
+			`WITH RECURSIVE chain (id, previous) AS (
+				SELECT id, resumed_from_run_id FROM runs WHERE id = ?
+				UNION ALL
+				SELECT r.id, r.resumed_from_run_id FROM runs r JOIN chain c ON r.id = c.previous)
+			SELECT id FROM chain WHERE previous IS NULL`
+		)
+		.get(runId) as { id: number };
+	return id;
+}
+
 // ponytail: derived once at creation; recompute at claim time if successors finishing first turns out to matter in practice.
 function derivePriority(
 	db: DatabaseSync,

@@ -1071,14 +1071,28 @@ describe('idempotency_key', () => {
 		expect(count(db, 'tasks')).toBe(2);
 	});
 
-	it('binds a key to its run, so the resumed run may use it again; the keys go with the ticket', async () => {
+	it('binds a key to the chain of runs that continue each other, so a continuation repeating a write gets the first result; the keys go with the ticket', async () => {
 		const { db, call, startRun, ticket } = setup();
 		const own = ticket();
 		const first = startRun(own);
-		await call(first.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+		const written = await call(first.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
 		runs.finishRun(db, system, first.runId, { state: 'paused' });
-		const resumed = startRun(own, first.runId);
-		await call(resumed.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
+		const second = startRun(own, first.runId);
+		runs.finishRun(db, system, second.runId, { state: 'paused' });
+		const third = startRun(own, second.runId);
+
+		expect(await call(third.token, 'add_comment', { text: 'A', idempotency_key: 'k' })).toEqual(
+			written
+		);
+		expect(
+			(await call(third.token, 'add_comment', { text: 'B', idempotency_key: 'k' })).body
+		).toMatchObject({
+			error: 'idempotency_key_reused',
+			message: expect.stringContaining('einem Run, den er fortsetzt')
+		});
+		expect(count(db, 'comments')).toBe(1);
+		const unrelated = startRun(own);
+		await call(unrelated.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
 		expect(count(db, 'comments')).toBe(2);
 
 		board.deleteTicket(db, user, own);
