@@ -33,34 +33,34 @@ export type LiveEvent = { type: string; projectId?: number; [key: string]: unkno
 export const LIVE_DEPENDENCY = 'studio:live';
 
 let navigating = false;
-let pendingInvalidate = false;
+const pendingInvalidations = new Set<string>();
 
 /**
  * Call once, during the root layout's initialization (`beforeNavigate`/`afterNavigate` require that, like `onMount`).
  * Gates every `invalidateLive()` call against the current client navigation: SvelteKit's own `invalidate()` would
  * otherwise win the navigation-token race against a `goto()` in flight and silently cancel it. A reload that arrives
- * mid-navigation is deferred and replayed exactly once, right after the navigation lands.
+ * mid-navigation is deferred and replayed exactly once, right after the navigation lands. A navigation that unloads
+ * the page (a full page load, an external link, the back/forward cache) never reaches `afterNavigate` in this page
+ * instance, so it never starts the gate in the first place.
  */
 export function gateLiveInvalidation() {
-	beforeNavigate(() => {
-		navigating = true;
+	beforeNavigate(({ willUnload }) => {
+		if (!willUnload) navigating = true;
 	});
 	afterNavigate(() => {
 		navigating = false;
-		if (pendingInvalidate) {
-			pendingInvalidate = false;
-			void invalidate(LIVE_DEPENDENCY);
-		}
+		for (const dependency of pendingInvalidations) void invalidate(dependency);
+		pendingInvalidations.clear();
 	});
 }
 
-/** The one place that reloads the live dependency; see `gateLiveInvalidation` for why it is gated. */
-export function invalidateLive(): Promise<void> {
+/** The one place that reloads a dependency fed by live events; see `gateLiveInvalidation` for why it is gated. */
+export function invalidateLive(dependency: string = LIVE_DEPENDENCY): Promise<void> {
 	if (navigating) {
-		pendingInvalidate = true;
+		pendingInvalidations.add(dependency);
 		return Promise.resolve();
 	}
-	return invalidate(LIVE_DEPENDENCY);
+	return invalidate(dependency);
 }
 
 const STATE_CHANGES = new Set([

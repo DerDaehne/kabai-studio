@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto, invalidate } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -7,7 +7,7 @@
 	import NoProject from '$lib/components/NoProject.svelte';
 	import { failureOf, postAction } from '$lib/form-action';
 	import { focusSummary } from '$lib/shell/focus';
-	import { onLiveEvent } from '$lib/shell/live.svelte';
+	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys, type KeyHandlers } from '$lib/shell/router.svelte';
 	import { shell, type ProjectRef } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
@@ -69,7 +69,7 @@
 	const [send, receive] = crossfade({ duration: glide, easing: easing.inOut });
 
 	const href = (row: BoardTicket) => `/p/${row.project.code}/t/${row.number}`;
-	const reload = () => invalidate(BOARD_DEPENDENCY);
+	const reload = () => invalidateLive(BOARD_DEPENDENCY);
 
 	async function focusRow(id: number | undefined) {
 		await tick();
