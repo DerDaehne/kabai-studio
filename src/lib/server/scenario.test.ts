@@ -206,6 +206,48 @@ describe('runScenario run-state checks', () => {
 	}, 20_000);
 });
 
+describe('runScenario with a resumed run', () => {
+	it('the run that continues after the scripted answer gets the conversation of the run that asked', async () => {
+		const model = await startFakeModel();
+		model.reply(
+			{ call: { name: 'add_comment', args: { text: 'Looked at the export.' } } },
+			{
+				call: {
+					name: 'request_human',
+					args: { question: 'Which format?', options: [{ label: 'CSV' }, { label: 'JSON' }] }
+				}
+			},
+			{ text: 'Exporting CSV.' }
+		);
+		const dataRoot = mkdtempSync(join(tmpdir(), 'probe-data-'));
+		const outDir = mkdtempSync(join(tmpdir(), 'probe-out-'));
+		try {
+			const file = scenarioFile({
+				baseUrl: model.baseUrl,
+				model: 'fake',
+				tickets: [{ title: 'asks first', requestHumanAnswer: { option: 1 }, expect: {} }]
+			});
+			const [result] = await runScenario(file, outDir, dataRoot);
+			expect(result.runState).toBe('succeeded');
+			const resumed = model.requests[2].messages as { role: string; content: string }[];
+			expect(resumed.map((message) => message.role)).toEqual([
+				'system',
+				'assistant',
+				'tool',
+				'assistant',
+				'tool',
+				'user'
+			]);
+			expect(JSON.stringify(resumed)).toContain('Looked at the export.');
+			expect(resumed.at(-1)!.content).toContain('Answer: 1. CSV');
+		} finally {
+			await model.close();
+			rmSync(dataRoot, { recursive: true, force: true });
+			rmSync(outDir, { recursive: true, force: true });
+		}
+	}, 30_000);
+});
+
 describe('executionClaim negation and inflection', () => {
 	it('an agent that says it did NOT compile or run the code is not flagged as an execution claim', async () => {
 		const model = await startFakeModel();

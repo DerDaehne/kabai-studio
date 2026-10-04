@@ -13,18 +13,27 @@ export type FakeModel = {
 	baseUrl: string;
 	/** Queues replies; each chat completion request takes the next one. */
 	reply(...replies: ScriptedReply[]): void;
+	/** The bodies of the chat completion requests so far, in order. */
+	requests: Record<string, unknown>[];
 	close(): Promise<void>;
 };
 
 /** A local OpenAI-compatible model server that streams scripted replies instead of asking a real provider. */
 export async function startFakeModel(): Promise<FakeModel> {
 	const replies: ScriptedReply[] = [];
-	const server = createServer((request, response) => answer(request, response, replies.shift()));
+	const requests: Record<string, unknown>[] = [];
+	const server = createServer(async (request, response) => {
+		const reply = replies.shift(); // taken on arrival, so concurrent requests get the replies in the order they came
+		const body = await bodyOf(request);
+		if (request.url?.endsWith('/chat/completions')) requests.push(JSON.parse(body));
+		answer(request, response, reply);
+	});
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	const { port } = server.address() as AddressInfo;
 	return {
 		baseUrl: `http://127.0.0.1:${port}/v1`,
 		reply: (...next) => void replies.push(...next),
+		requests,
 		close: () => {
 			server.closeAllConnections(); // the studio's HTTP client keeps its connection alive
 			return new Promise((resolve) => server.close(() => resolve()));
@@ -32,8 +41,13 @@ export async function startFakeModel(): Promise<FakeModel> {
 	};
 }
 
+async function bodyOf(request: IncomingMessage): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of request) chunks.push(chunk as Buffer);
+	return Buffer.concat(chunks).toString('utf8');
+}
+
 function answer(request: IncomingMessage, response: ServerResponse, reply?: ScriptedReply) {
-	request.resume();
 	if (!request.url?.endsWith('/chat/completions') || !reply) {
 		const message = `The fake model has no scripted reply for ${request.method} ${request.url}.`;
 		response.writeHead(500, { 'Content-Type': 'application/json' });
