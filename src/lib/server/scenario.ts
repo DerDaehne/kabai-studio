@@ -211,7 +211,7 @@ const requestHumanAskedOf = (db: DatabaseSync, ticketId: number): boolean =>
 
 const hasCodeBlock = (text: string): boolean => text.includes('```');
 
-/** The check from #921's report of a hallucinated "compiled and ran" comment: a claim needs a matching tool call. */
+/** A comment claiming a compile, run or test needs a matching tool call in the same run, or it counts as a hallucination. */
 function executionClaim(comments: string[], tools: string[]): string | undefined {
 	const claim = comments.find((comment) => EXECUTION_CLAIM_WORDS.test(comment));
 	if (!claim) return undefined;
