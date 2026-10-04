@@ -85,3 +85,15 @@ export async function queueRun(db: DatabaseSync, page: Page, ticketId: number, m
 	createRun(db, HUMAN, { ticketId, profileId: profile.id });
 	expect((await page.request.delete('/api/halt')).ok()).toBe(true);
 }
+
+/** What a user could scroll sideways: the page itself, or a scroll container whose content is wider than its box. */
+export function sidewaysScrollers(page: Page): Promise<string[]> {
+	return page.evaluate(() => {
+		const root = document.documentElement;
+		const scrolls = (element: Element) =>
+			element === root || /auto|scroll/.test(getComputedStyle(element).overflowX);
+		return [root, ...document.body.querySelectorAll('*')]
+			.filter((element) => element.scrollWidth > element.clientWidth && scrolls(element))
+			.map((element) => [element.tagName.toLowerCase(), ...element.classList].join('.'));
+	});
+}

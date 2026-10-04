@@ -610,6 +610,8 @@
 		font-size: var(--text-sm);
 	}
 	.keys {
+		/* contains the hidden key names of Kbd (position: absolute), so the clipped keys cannot widen the page */
+		position: relative;
 		display: flex;
 		gap: var(--space-3);
 		flex: 1;

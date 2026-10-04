@@ -72,6 +72,23 @@ const columnPositions = (db: DatabaseSync, projectId: number) =>
 		).map((c) => [c.id, c.position])
 	);
 
+/** Every column the actor can move the ticket to, with its board position and what still blocks the move. */
+export function ticketMoves(
+	db: DatabaseSync,
+	actor: Actor,
+	ticketId: number,
+	projectId: number
+): TicketMove[] {
+	const positions = columnPositions(db, projectId);
+	return board.allowedMoves(db, ticketId, actor).map((m) => ({
+		columnId: m.columnId,
+		name: m.name,
+		kind: m.kind,
+		position: positions.get(m.columnId)!,
+		blockers: m.blockers
+	}));
+}
+
 function commentsOf(db: DatabaseSync, ticketId: number): TicketComment[] {
 	return db
 		.prepare(
@@ -90,7 +107,6 @@ export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): 
 	const t = board.ticket(db, ticketId);
 	const extra = ticketExtra(db, t);
 	const ctx: ToolContext = { actor, projectId: t.project_id, ticketId: t.id };
-	const positions = columnPositions(db, t.project_id);
 	return {
 		id: t.id,
 		ref: t.ref,
@@ -102,13 +118,7 @@ export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): 
 		tasks: tasksOf(db, t.id),
 		comments: commentsOf(db, t.id),
 		relations: relationsOf(db, ctx, t.id),
-		moves: board.allowedMoves(db, t.id, actor).map((m) => ({
-			columnId: m.columnId,
-			name: m.name,
-			kind: m.kind,
-			position: positions.get(m.columnId)!,
-			blockers: m.blockers
-		})),
+		moves: ticketMoves(db, actor, t.id, t.project_id),
 		openQuestion: latestOpenQuestion(db, t.id)
 	};
 }

@@ -1,7 +1,7 @@
-import { fail } from '@sveltejs/kit';
 import type { DatabaseSync } from 'node:sqlite';
 import { db } from '$lib/server/db';
-import { DomainError, type Actor } from '$lib/server/domain/core';
+import type { Actor } from '$lib/server/domain/core';
+import { attempt } from '$lib/server/domain-failure';
 import {
 	ANSWER_UNDO_WINDOW_MS,
 	answerQuestion,
@@ -61,16 +61,6 @@ export const load: PageServerLoad = ({ depends }) => {
 function answerFrom(form: FormData): Answer {
 	const text = form.get('text');
 	return text === null ? { option: Number(form.get('option')) } : { text: String(text) };
-}
-
-/** A domain error goes back to the page as one sentence with its way out. */
-function attempt<T>(change: () => T) {
-	try {
-		return change() ?? {};
-	} catch (err) {
-		if (!(err instanceof DomainError)) throw err;
-		return fail(err.code === 'not_found' ? 404 : 409, { message: `${err.message} ${err.hint}` });
-	}
 }
 
 export const actions: Actions = {

@@ -1,8 +1,7 @@
 <script lang="ts">
-	import type { ActionResult } from '@sveltejs/kit';
-	import { deserialize } from '$app/forms';
 	import { goto, invalidate } from '$app/navigation';
 	import { tick } from 'svelte';
+	import { failureOf, postAction } from '$lib/form-action';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { focusSummary } from '$lib/shell/focus';
 	import { LIVE_DEPENDENCY, openQuestionsLabel } from '$lib/shell/live.svelte';
@@ -54,26 +53,8 @@
 	const askedLabel = (iso: string) =>
 		new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
 
-	async function post(
-		action: 'answer' | 'retract',
-		fields: Record<string, string>
-	): Promise<ActionResult> {
-		const body = new FormData();
-		for (const [name, value] of Object.entries(fields)) body.set(name, value);
-		try {
-			const headers = { 'x-sveltekit-action': 'true' };
-			const response = await fetch(`/takt?/${action}`, { method: 'POST', body, headers });
-			return deserialize(await response.text());
-		} catch (error) {
-			return { type: 'error', error };
-		}
-	}
-
-	function failureOf(result: ActionResult): string | undefined {
-		if (result.type === 'success') return undefined;
-		if (result.type === 'failure') return String(result.data?.message);
-		return 'Das hat nicht geklappt. Lade die Seite neu und versuch es noch einmal.';
-	}
+	const post = (action: 'answer' | 'retract', fields: Record<string, string>) =>
+		postAction(`/takt?/${action}`, fields);
 
 	const fieldsOf = (given: Answer): Record<string, string> =>
 		'text' in given ? { text: given.text } : { option: String(given.option) };

@@ -1,4 +1,4 @@
-// Renders the views a fresh instance opens on; their data comes from the root layout's live state.
+// Renders the views a fresh instance opens on: no tickets yet, the rest comes from the root layout's live state.
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import type { LiveState } from '$lib/shell/live.svelte';
@@ -14,7 +14,9 @@ const live = (projects: LiveState['projects']): LiveState => ({
 });
 const studio = { id: 1, code: 'STU', name: 'Studio', palette: 1 as const };
 const html = (view: unknown, data: object) =>
-	render(view as never, { props: { data: { user: { name: 'owner' }, ...data } } as never }).body;
+	render(view as never, {
+		props: { data: { user: { name: 'owner' }, tickets: [], roles: {}, ...data } } as never
+	}).body;
 const text = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 describe.each([

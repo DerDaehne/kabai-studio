@@ -7,7 +7,7 @@ import { migrate, openDb } from './server/db';
 import { subscribe, type StudioEvent } from './server/events';
 import * as runs from './server/domain/runs';
 import { startRunner, type Executor } from './server/runner';
-import { concernsTicket, reloadsTicket } from './ticket-live';
+import { concernsTicket, reloadsBoard, reloadsTicket } from './ticket-live';
 
 const user: Actor = { kind: 'user' };
 
@@ -77,4 +77,54 @@ it('reloads the ticket for its run starting and ending, but leaves its run event
 	]);
 	expect(events.every((e) => !reloadsTicket(e, b))).toBe(true);
 	expect(events.filter((e) => e.type === 'run.phase' || e.type === 'run.event')).toHaveLength(2);
+});
+
+it('reloads the board for every change it shows: tickets created, renamed, moved and deleted, tasks, comments and relations', () => {
+	const { db, a, b, refineId } = setup();
+	const events: StudioEvent[] = [];
+	const off = subscribe((e) => events.push(e));
+
+	const projectId = board.ticket(db, a).project_id;
+	const c = board.createTicket(db, user, projectId, { title: 'C' }).id;
+	board.updateTicket(db, user, c, { title: 'C renamed' });
+	board.moveTicket(db, user, c, refineId);
+	const taskId = board.addTask(db, user, c, 'Kriterium').id;
+	board.completeTask(db, user, taskId);
+	board.addComment(db, user, c, 'Kommentar');
+	board.linkRelation(db, user, a, b, 'parent_of');
+	board.deleteTicket(db, user, c);
+	off();
+
+	expect(events.map((e) => [e.type, reloadsBoard(e)])).toEqual([
+		['ticket.created', true],
+		['ticket.updated', true],
+		['ticket.moved', true],
+		['task.added', true],
+		['task.completed', true],
+		['comment.added', true],
+		['relation.linked', true],
+		['ticket.deleted', true]
+	]);
+});
+
+it('reloads the board when a run starts and ends, but not for each run event and phase it streams', async () => {
+	const { db } = setup();
+	const events: StudioEvent[] = [];
+	const off = subscribe((e) => events.push(e));
+	const work: Executor['execute'] = async (_run, io) => {
+		io.phase({ name: 'thinking', elapsedMs: 0 });
+		io.emit({ type: 'message', payload: { step: 1, text: 'Ich lese das Ticket.' } });
+	};
+	stops.push(startRunner(db, { builtin: { execute: work } }).stop);
+	while (!events.some((e) => e.type === 'run.state_changed' && e.to === 'succeeded'))
+		await new Promise((resolve) => setImmediate(resolve));
+	off();
+
+	const reloads = events.map((e) => [e.type, reloadsBoard(e)]);
+	expect(reloads).toContainEqual(['run.phase', false]);
+	expect(reloads).toContainEqual(['run.event', false]);
+	expect(reloads.filter(([type]) => type === 'run.state_changed')).toEqual([
+		['run.state_changed', true],
+		['run.state_changed', true]
+	]);
 });
