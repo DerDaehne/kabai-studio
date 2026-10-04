@@ -208,6 +208,29 @@ describe('base prompt', () => {
 		}
 	);
 
+	it.each(['full', 'compact'] as const)(
+		'the %s variant says the agent can only act on the board and forbids claiming that anything ran',
+		(variant) => {
+			const base = BASE_PROMPT[variant];
+			expect(base).toContain('Your tools act only on this board');
+			expect(base).toContain('no file, shell or execution tool');
+			expect(base).toContain('nothing is compiled, run or tested');
+			expect(base).toContain(
+				'Deliver code as a fenced block in a comment, marked "Unverified: not compiled, run or tested."'
+			);
+			expect(base).toMatch(/never claim that something was compiled, run or tested/i);
+		}
+	);
+
+	it('the full variant names every studio MCP tool the agent has', async () => {
+		const w = world();
+		const { tools } = (await asRunOf(w.db, w.parser, 'tools/list')) as {
+			tools: { name: string }[];
+		};
+		expect(tools.length).toBeGreaterThan(0);
+		for (const { name } of tools) expect(BASE_PROMPT.full).toContain(`\`${name}\``);
+	});
+
 	it('the handoff template names its sections in order and stays within 25 lines', () => {
 		const sections = ['Summary', 'Changes/Commits', 'Verification', 'Decisions', 'Open', 'Next'];
 		const at = sections.map((section) => HANDOFF_TEMPLATE.indexOf(section));
@@ -229,6 +252,18 @@ describe('base prompt', () => {
 			'in repository artifacts only (STU-1) in the commit subject'
 		);
 		expect(assemble(w).user).not.toContain('commit subject');
+	});
+});
+
+describe('assignment', () => {
+	it('names the ticket and its column, points to the result and the stop of its role, and keeps refining in the Refine column', () => {
+		const { user } = assemble(world());
+		expect(user.slice(user.indexOf('## Assignment'))).toBe(
+			'## Assignment\n' +
+				'Work STU-1 in the column "In Arbeit": do what your role for this column says, deliver the result it names and stop where it says. ' +
+				'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. ' +
+				'The internal context above is current: start with the work, not with `get_ticket`.'
+		);
 	});
 });
 

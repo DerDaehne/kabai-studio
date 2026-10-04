@@ -203,7 +203,6 @@ function variantOf(profile: PromptRun['profile']): PromptVariant {
 }
 
 function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Block[] {
-	const assignment = `## Assignment\nWork ${context.ref} as your role says. The internal context above is current: start with the work, not with \`get_ticket\`.`;
 	return [
 		ticketBlock(context, cut, publicRepository),
 		block('tasks', tasksText(context.tasks)),
@@ -212,8 +211,17 @@ function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Bloc
 		block('allowed_moves', movesText(context.moves)),
 		notesBlock(context.notes, cut),
 		previousStateBlock(context.previous),
-		block('assignment', assignment)
+		block('assignment', assignmentText(context))
 	];
+}
+
+function assignmentText(context: Context): string {
+	return [
+		'## Assignment',
+		`Work ${context.ref} in the column "${context.column}": do what your role for this column says, deliver the result it names and stop where it says. ` +
+			'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. ' +
+			'The internal context above is current: start with the work, not with `get_ticket`.'
+	].join('\n');
 }
 
 function ticketBlock(context: Context, cut: Cut, publicRepository: boolean): Block {
