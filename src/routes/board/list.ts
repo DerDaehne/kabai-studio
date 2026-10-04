@@ -88,11 +88,15 @@ export function groupJump(
 
 const RUN_STATES: Record<LiveRun['state'], { rank: number; tone: Tone; verb: string }> = {
 	waiting: { rank: 0, tone: 'waiting', verb: 'hält' },
-	running: { rank: 1, tone: 'running', verb: 'arbeitet' },
-	queued: { rank: 2, tone: 'neutral', verb: 'in der Queue' }
+	paused: { rank: 1, tone: 'paused', verb: 'angehalten' },
+	running: { rank: 2, tone: 'running', verb: 'arbeitet' },
+	queued: { rank: 3, tone: 'neutral', verb: 'in der Queue' }
 };
 
-/** The run that matters most for a row: one holding for the human before one at work before one in the queue. */
+/**
+ * The run that matters most for a row: one holding for the human, then one the human halted, then one at work, then one
+ * in the queue.
+ */
 export function runStatus(ref: string, runs: LiveRun[]): { tone: Tone; text: string } | undefined {
 	const [run] = runs
 		.filter((candidate) => candidate.ticket === ref)

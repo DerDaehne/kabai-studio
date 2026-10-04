@@ -122,6 +122,15 @@ describe('the run status of a row', () => {
 		expect(runStatus('STU-1', runs)).toEqual({ tone: 'waiting', text: 'hält · agent-3 (lokal)' });
 	});
 
+	it('shows a run the human halted as „angehalten“, after one that holds for the human and before one at work', () => {
+		const runs = [run(1, 'STU-1', 'running'), run(2, 'STU-1', 'paused')];
+		expect(runStatus('STU-1', runs)).toEqual({
+			tone: 'paused',
+			text: 'angehalten · agent-2 (lokal)'
+		});
+		expect(runStatus('STU-1', [...runs, run(3, 'STU-1', 'waiting')])?.tone).toBe('waiting');
+	});
+
 	it('shows nothing for a ticket without an active run', () => {
 		expect(runStatus('STU-2', [run(1, 'STU-1', 'running')])).toBeUndefined();
 	});

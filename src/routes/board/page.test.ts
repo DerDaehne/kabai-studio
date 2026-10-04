@@ -64,7 +64,7 @@ const live = (
 	projects,
 	runs,
 	openQuestions: 0,
-	halted: false,
+	halt: null,
 	activeRuns: 0
 });
 const html = (data: Partial<BoardPage> & { live: LiveState }) =>
