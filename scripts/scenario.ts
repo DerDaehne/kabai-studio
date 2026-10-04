@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 
 async function main(): Promise<void> {
 	const server = await createServer({
-		server: { middlewareMode: true, watch: null },
+		server: { middlewareMode: true, watch: null, ws: false },
 		appType: 'custom',
 		logLevel: 'warn'
 	});

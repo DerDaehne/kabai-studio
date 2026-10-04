@@ -2,9 +2,9 @@
 // (no build, no HTTP server — the builtin executor already reaches the studio MCP tools in-process, and the
 // runner wakes on the in-memory event bus) against a real OpenAI-compatible model, then reports per ticket
 // whether the agent did what its starting column expects.
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as board from './domain/board';
@@ -18,7 +18,12 @@ import { startRunner, type RunnerHandle } from './runner';
 const USER: Actor = { kind: 'user' };
 const POLL_INTERVAL_MS = 500;
 const DEFAULT_MAX_WAIT_MS = 15 * 60_000;
-const EXECUTION_CLAIM_WORDS = /\b(compiled|ran|executed|tested|ausgeführt|getestet|kompiliert)\b/i;
+// Exact English words (as before) plus the two German participles whose inflected forms ("kompilierte",
+// "getesteten") the plain words missed; "run"/"running" stays out because studio's own domain language calls
+// an agent run exactly that, unrelated to code execution.
+const EXECUTION_CLAIM_WORDS =
+	/\b(kompilier\w*|ausgeführt\w*|getestet\w*|compiled|executed|tested|ran)\b/gi;
+const NEGATION_WORDS = /\b(nicht|kein\w*|nie\w*|not|never|cannot|can't)\b/i;
 // ponytail: the MVP ships no execution tool at all, so this set stays empty and every claim fails; fill it in
 // once a tool like that exists, so a call to it clears the claim again.
 const EXECUTION_TOOLS = new Set<string>();
@@ -50,6 +55,8 @@ export type TicketResult = {
 	title: string;
 	startColumn: string;
 	endColumn: string;
+	/** The ticket's newest run when it settled: 'timed_out' if the harness had to cancel it. */
+	runState: string;
 	steps: number;
 	tools: string[];
 	tokensIn: number;
@@ -79,14 +86,15 @@ export function modelConfig(scenario: Scenario): { baseUrl: string; model: strin
 	);
 }
 
-/** Reads `migrations/*.sql` straight from disk instead of relying on `migrate()`'s own `import.meta.glob` default. */
-function loadMigrations(): Record<string, string> {
-	const dir = fileURLToPath(new URL('../../../migrations', import.meta.url));
-	return Object.fromEntries(
-		readdirSync(dir)
-			.filter((name) => name.endsWith('.sql'))
-			.map((name) => [name, readFileSync(join(dir, name), 'utf8')])
-	);
+/** The report and JSONL files carry model output, tool arguments and comments — never into the public repo. */
+function refuseOutputInsideRepo(outDir: string): void {
+	const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+	const rel = relative(repoRoot, resolve(outDir));
+	const inside = rel === '' || (!rel.startsWith('..' + sep) && rel !== '..' && !isAbsolute(rel));
+	if (inside)
+		throw new Error(
+			`Ausgabeordner „${outDir}“ liegt im Repository. Wähle einen Ordner außerhalb, z. B. $(mktemp -d).`
+		);
 }
 
 export type Instance = {
@@ -99,7 +107,7 @@ export type Instance = {
 export function startInstance(dataDir: string, baseUrl: string, model: string): Instance {
 	mkdirSync(dataDir, { recursive: true });
 	const db = openDb(join(dataDir, 'studio.db'));
-	migrate(db, loadMigrations());
+	migrate(db);
 	const { id: projectId } = board.createProject(db, USER, { key: 'SCN', name: 'Scenario' });
 	const { id: profileId } = createProfile(db, USER, {
 		name: 'scenario',
@@ -112,10 +120,12 @@ export function startInstance(dataDir: string, baseUrl: string, model: string): 
 	return { db, projectId, profileId, runner };
 }
 
-export function stopInstance(instance: Instance, dataDir: string): void {
-	instance.runner.stop();
-	instance.db.close();
-	rmSync(dataDir, { recursive: true, force: true });
+function stopInstance(instance: Instance | undefined, dataDir: string | undefined): void {
+	if (instance) {
+		instance.runner.stop();
+		instance.db.close();
+	}
+	if (dataDir) rmSync(dataDir, { recursive: true, force: true });
 }
 
 function columnId(db: DatabaseSync, projectId: number, name: string): number {
@@ -126,7 +136,7 @@ function columnId(db: DatabaseSync, projectId: number, name: string): number {
 	return row.id;
 }
 
-type RunRow = { id: number; state: string };
+type RunRow = { id: number; state: string; error: string | null };
 type StoredEvent = {
 	seq: number;
 	type: string;
@@ -136,7 +146,7 @@ type StoredEvent = {
 
 function runsOfTicket(db: DatabaseSync, ticketId: number): RunRow[] {
 	return db
-		.prepare('SELECT id, state FROM runs WHERE ticket_id = ? ORDER BY id')
+		.prepare('SELECT id, state, error FROM runs WHERE ticket_id = ? ORDER BY id')
 		.all(ticketId) as RunRow[];
 }
 
@@ -151,7 +161,7 @@ function eventsOfRun(db: DatabaseSync, runId: number): StoredEvent[] {
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled']);
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
 /**
  * One poll of a ticket's newest run: 'settled' once nothing more will happen (including a pause with no scripted
@@ -173,20 +183,24 @@ function pollTicket(
 	return 'answered';
 }
 
+/** Waits for the ticket's run to settle; past `maxWaitMs` it cancels the still-active run and returns true. */
 async function waitForOutcome(
-	db: DatabaseSync,
+	instance: Instance,
 	ticketId: number,
 	answer: Answer | undefined,
 	maxWaitMs: number
-): Promise<void> {
+): Promise<boolean> {
 	const deadline = Date.now() + maxWaitMs;
 	let answered = false;
 	while (Date.now() < deadline) {
-		const outcome = pollTicket(db, ticketId, answer, answered);
-		if (outcome === 'settled') return;
+		const outcome = pollTicket(instance.db, ticketId, answer, answered);
+		if (outcome === 'settled') return false;
 		answered ||= outcome === 'answered';
 		await sleep(POLL_INTERVAL_MS);
 	}
+	const active = runsOfTicket(instance.db, ticketId).at(-1);
+	if (active && !TERMINAL_STATES.has(active.state)) instance.runner.cancel(active.id);
+	return true;
 }
 
 const toolCallsOf = (events: StoredEvent[]): string[] =>
@@ -211,12 +225,25 @@ const requestHumanAskedOf = (db: DatabaseSync, ticketId: number): boolean =>
 
 const hasCodeBlock = (text: string): boolean => text.includes('```');
 
+const sentencesOf = (text: string): string[] =>
+	text.split(/(?<=[.!?])\s+|\n+/).filter((sentence) => sentence.trim().length > 0);
+
+/** The first claim-word match in `sentence` not preceded there by a negation, or undefined if none qualifies. */
+function unnegatedClaimIn(sentence: string): string | undefined {
+	for (const match of sentence.matchAll(EXECUTION_CLAIM_WORDS))
+		if (!NEGATION_WORDS.test(sentence.slice(0, match.index))) return sentence.trim();
+	return undefined;
+}
+
 /** A comment claiming a compile, run or test needs a matching tool call in the same run, or it counts as a hallucination. */
 function executionClaim(comments: string[], tools: string[]): string | undefined {
-	const claim = comments.find((comment) => EXECUTION_CLAIM_WORDS.test(comment));
-	if (!claim) return undefined;
 	if (tools.some((tool) => EXECUTION_TOOLS.has(tool))) return undefined;
-	return `Kommentar behauptet eine Ausführung ohne passenden Werkzeugaufruf: „${claim.slice(0, 80)}“`;
+	for (const sentence of comments.flatMap(sentencesOf)) {
+		const claim = unnegatedClaimIn(sentence);
+		if (claim)
+			return `Kommentar behauptet eine Ausführung ohne passenden Werkzeugaufruf: „${claim.slice(0, 80)}“`;
+	}
+	return undefined;
 }
 
 type Actual = {
@@ -255,10 +282,7 @@ function otherReasons(expect: ScenarioExpectations, actual: Actual): string[] {
 	return reasons;
 }
 
-function evaluate(
-	expect: ScenarioExpectations,
-	actual: Actual
-): { ok: boolean; reasons: string[] } {
+function expectationReasons(expect: ScenarioExpectations, actual: Actual): string[] {
 	const reasons = [
 		...endColumnReasons(expect, actual),
 		...requiredToolReasons(expect, actual),
@@ -267,7 +291,17 @@ function evaluate(
 	];
 	const claim = executionClaim(actual.comments, actual.tools);
 	if (claim) reasons.push(claim);
-	return { ok: reasons.length === 0, reasons };
+	return reasons;
+}
+
+/** Independent of what the scenario asked for: a run that timed out, failed or was cancelled is never "ok". */
+function runStateReasons(runs: RunRow[], timedOut: boolean, maxWaitMs: number): string[] {
+	if (timedOut)
+		return [`Zeitgrenze von ${Math.round(maxWaitMs / 1000)} s überschritten, Run abgebrochen`];
+	const last = runs.at(-1);
+	if (last?.state === 'failed') return [`Run fehlgeschlagen: ${last.error ?? 'kein Fehlertext'}`];
+	if (last?.state === 'cancelled') return ['Run abgebrochen'];
+	return [];
 }
 
 function writeRunJsonl(runId: number, events: StoredEvent[], outDir: string): void {
@@ -295,7 +329,9 @@ function buildResult(
 	runs: RunRow[],
 	eventsByRun: StoredEvent[][],
 	startColumn: string,
-	startedAt: number
+	startedAt: number,
+	timedOut: boolean,
+	maxWaitMs: number
 ): TicketResult {
 	const events = eventsByRun.flat();
 	const actual: Actual = {
@@ -305,18 +341,22 @@ function buildResult(
 		comments: commentsOf(db, ticketId),
 		requestHumanAsked: requestHumanAskedOf(db, ticketId)
 	};
-	const { ok, reasons } = evaluate(spec.expect, actual);
+	const reasons = [
+		...runStateReasons(runs, timedOut, maxWaitMs),
+		...expectationReasons(spec.expect, actual)
+	];
 	const usage = usageOf(db, runs);
 	return {
 		title: spec.title,
 		startColumn,
 		endColumn: actual.endColumn,
+		runState: timedOut ? 'timed_out' : (runs.at(-1)?.state ?? 'none'),
 		steps: actual.steps,
 		tools: actual.tools,
 		tokensIn: usage.in,
 		tokensOut: usage.out,
 		durationMs: Date.now() - startedAt,
-		ok,
+		ok: reasons.length === 0,
 		reasons
 	};
 }
@@ -336,19 +376,29 @@ async function runTicket(
 	});
 	const startColumn = board.ticket(instance.db, ticketId).column_name;
 	createRun(instance.db, USER, { ticketId, profileId: instance.profileId });
-	await waitForOutcome(instance.db, ticketId, spec.requestHumanAnswer, maxWaitMs);
+	const timedOut = await waitForOutcome(instance, ticketId, spec.requestHumanAnswer, maxWaitMs);
 	const runs = runsOfTicket(instance.db, ticketId);
 	const eventsByRun = runs.map((run) => eventsOfRun(instance.db, run.id));
 	runs.forEach((run, i) => writeRunJsonl(run.id, eventsByRun[i], outDir));
-	return buildResult(instance.db, spec, ticketId, runs, eventsByRun, startColumn, startedAt);
+	return buildResult(
+		instance.db,
+		spec,
+		ticketId,
+		runs,
+		eventsByRun,
+		startColumn,
+		startedAt,
+		timedOut,
+		maxWaitMs
+	);
 }
 
 function reportLine(result: TicketResult): string {
 	const status = result.ok ? 'ok' : `nicht ok (${result.reasons.join('; ')})`;
 	return (
-		`${result.title}: ${result.startColumn} → ${result.endColumn}, ${result.steps} Schritte, ` +
-		`Werkzeuge [${result.tools.join(', ')}], ${result.tokensIn}/${result.tokensOut} Tokens, ` +
-		`${Math.round(result.durationMs / 1000)} s — ${status}`
+		`${result.title}: ${result.startColumn} → ${result.endColumn} [${result.runState}], ` +
+		`${result.steps} Schritte, Werkzeuge [${result.tools.join(', ')}], ` +
+		`${result.tokensIn}/${result.tokensOut} Tokens, ${Math.round(result.durationMs / 1000)} s — ${status}`
 	);
 }
 
@@ -366,17 +416,28 @@ export async function runScenario(
 ): Promise<TicketResult[]> {
 	const scenario = loadScenario(scenarioPath);
 	const { baseUrl, model } = modelConfig(scenario);
+	refuseOutputInsideRepo(outDir);
 	const maxWaitMs = scenario.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
-	const dataDir = mkdtempSync(join(dataDirBase, 'studio-scenario-'));
-	mkdirSync(outDir, { recursive: true });
-	const instance = startInstance(dataDir, baseUrl, model);
+	let instance: Instance | undefined;
+	let dataDir: string | undefined;
+	const onSignal = () => {
+		stopInstance(instance, dataDir);
+		process.exit(130);
+	};
+	process.once('SIGINT', onSignal);
+	process.once('SIGTERM', onSignal);
 	try {
+		mkdirSync(outDir, { recursive: true });
+		dataDir = mkdtempSync(join(dataDirBase, 'studio-scenario-'));
+		instance = startInstance(dataDir, baseUrl, model);
 		const results: TicketResult[] = [];
 		for (const spec of scenario.tickets)
 			results.push(await runTicket(instance, spec, maxWaitMs, outDir));
 		writeReport(results, outDir);
 		return results;
 	} finally {
+		process.removeListener('SIGINT', onSignal);
+		process.removeListener('SIGTERM', onSignal);
 		stopInstance(instance, dataDir);
 	}
 }
