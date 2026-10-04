@@ -16,7 +16,7 @@
 		? 'Die Adresse ist falsch oder die Ansicht ist noch nicht gebaut.'
 		: (page.error?.message ?? 'Unbekannter Fehler.')}
 	{#snippet action()}
-		<a class="btn" href="/">Zu den Projekten</a>
+		<a class="btn" href="/">Zum Stellwerk</a>
 		{#if onTicket}<a class="btn" href="/board">Zum Board</a>{/if}
 	{/snippet}
 </EmptyState>
