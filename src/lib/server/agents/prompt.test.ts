@@ -391,6 +391,45 @@ describe('budget', () => {
 	});
 });
 
+describe('output nothing can produce', () => {
+	// Board agents have no execution tool, so a prompt asking for test or command output gets invented output back.
+	const ASKS_FOR_EXECUTION_OUTPUT: RegExp[] = [
+		/verification output/i,
+		/real output/i,
+		/commands? you ran/i,
+		/failing test/i,
+		/test-first/i,
+		/\b(compile|execute|run) (it|the code|your code|the tests?)\b/i
+	];
+
+	/** Every default role reaches the model through the prompt of a ticket in its column, in both variants. */
+	function promptsOfEveryDefaultRole() {
+		const w = world();
+		const projectId = board.createProject(w.db, user, { key: 'DEF', name: 'Defaults' }).id;
+		const columns = w.db
+			.prepare("SELECT id, name FROM columns WHERE project_id = ? AND role_prompt <> ''")
+			.all(projectId) as { id: number; name: string }[];
+		return columns.flatMap(({ id, name }) => {
+			const ticketId = board.createTicket(w.db, user, projectId, {
+				title: `Ticket in ${name}`,
+				column_id: id
+			}).id;
+			return [cloud, local].map((profile) => assemblePrompt(w.db, { ticketId, profile }));
+		});
+	}
+
+	it('is asked for by no part of any prompt: base prompts, handoff template, default roles or assignment', () => {
+		const prompts = promptsOfEveryDefaultRole();
+		expect(prompts).toHaveLength(16);
+		expect(prompts.every((prompt) => prompt.system.includes('## Role:'))).toBe(true);
+		const texts = [BASE_PROMPT.full, BASE_PROMPT.compact, HANDOFF_TEMPLATE].concat(
+			prompts.map((prompt) => `${prompt.system}\n${prompt.user}`)
+		);
+		for (const text of texts)
+			for (const pattern of ASKS_FOR_EXECUTION_OUTPUT) expect(text).not.toMatch(pattern);
+	});
+});
+
 describe('variant and size', () => {
 	it('keeps the compact base prompt within 500 and the full one within 1,200 tokens (characters / 4)', () => {
 		expect(Math.ceil(BASE_PROMPT.compact.length / 4)).toBeLessThanOrEqual(500);

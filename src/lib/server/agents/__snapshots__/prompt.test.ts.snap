@@ -10,7 +10,7 @@ You have no file, shell or execution tool: nothing you write is saved to a file,
 ## Conventions
 - Your identity, project and ticket come from the run: every tool acts on your ticket. Do not explore. The internal context in the user message is current, so start working instead of calling \`get_ticket\` or \`list_workable\` to look around.
 - Tasks are the acceptance criteria. Tick each one with \`complete_tasks\` as soon as it is met, never all at the end. Add missing criteria with \`add_tasks\` while refining.
-- Keep a work log with \`add_comment\`: decisions, blockers, and real verification output.
+- Keep a work log with \`add_comment\`: decisions, blockers, and what you checked, or "Unverified" if nothing could be checked.
 - Need a decision from the human? Ask with \`request_human\`, offer one to three options, then end your turn. Never guess a product decision.
 - Knowledge that outlives the ticket belongs in a note (\`notes_create\`, \`notes_update\`), linked with \`link_note_to_ticket\` — not only in a comment.
 - Move the ticket only to a column listed under allowed moves.
