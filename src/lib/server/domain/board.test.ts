@@ -220,21 +220,57 @@ describe('createProject / createTicket', () => {
 				).map((r) => [r.name, r.rolePrompt])
 			) as Record<string, string>;
 
+		const COLUMNS_WITH_A_ROLE = [
+			'Backlog',
+			'Refine',
+			'Ready',
+			'In Arbeit',
+			'Review',
+			'Abnahme',
+			'Human Intervention',
+			'Human Answered'
+		];
+
 		it('gives every column a non-empty English role prompt, except Done', () => {
 			const { db, projectId } = setup();
 			const prompts = rolePrompts(db, projectId);
-			for (const name of [
-				'Backlog',
-				'Refine',
-				'Ready',
-				'In Arbeit',
-				'Review',
-				'Abnahme',
-				'Human Intervention',
-				'Human Answered'
-			])
-				expect(prompts[name].trim()).not.toBe('');
+			for (const name of COLUMNS_WITH_A_ROLE) expect(prompts[name].trim()).not.toBe('');
 			expect(prompts.Done.trim()).toBe('');
+		});
+
+		it.each(COLUMNS_WITH_A_ROLE)(
+			'the %s role says what to do, what to deliver and when to stop, in that order',
+			(name) => {
+				const { db, projectId } = setup();
+				const prompt = rolePrompts(db, projectId)[name];
+				expect(prompt).toMatchSnapshot();
+				const parts = ['Do: ', 'Deliver: ', 'Stop: '].map((label) => prompt.indexOf(label));
+				expect(parts.every((at) => at >= 0)).toBe(true);
+				expect(parts).toEqual([...parts].sort((a, b) => a - b));
+			}
+		);
+
+		it('lets Refine propose scope and criteria itself and ask the human only for a genuine product decision', () => {
+			const { db, projectId } = setup();
+			const refine = rolePrompts(db, projectId).Refine;
+			expect(refine).toContain('propose the scope');
+			expect(refine).toContain('yourself');
+			expect(refine).toContain('Ask the human only for a genuine product decision');
+		});
+
+		it('keeps Ready from refining: it picks the ticket up and moves it on', () => {
+			const { db, projectId } = setup();
+			expect(rolePrompts(db, projectId).Ready).toContain('do not refine');
+		});
+
+		it('has In Arbeit carry out the task and deliver the result as an unverified comment, without demanding a test it cannot run', () => {
+			const { db, projectId } = setup();
+			const inProgress = rolePrompts(db, projectId)['In Arbeit'];
+			expect(inProgress).toContain('carry out the task');
+			expect(inProgress).toContain('fenced block');
+			expect(inProgress).toContain('"Unverified: not compiled, run or tested."');
+			expect(inProgress).toContain('tick each task the result fulfils');
+			expect(inProgress).not.toMatch(/failing test/i);
 		});
 
 		// Role prompts reach agents of every project, so they stay generic: no ticket or comment numbers, note slugs,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { latestMigration, migrate, openDb } from './db';
+import * as board from './domain/board';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -441,6 +442,62 @@ describe('migrate', () => {
 			expect(db.prepare('SELECT run_id FROM comments').all()).toEqual([{ run_id: null }]);
 			expect(db.prepare('SELECT count(*) AS n FROM run_events').get()).toEqual({ n: 0 });
 		});
+	});
+
+	it('014 gives default role prompts nobody edited the current texts and keeps every edited one', () => {
+		const PREVIOUS_DEFAULTS: Record<string, string> = {
+			Backlog:
+				'Capture new work with enough detail that someone else could size it. Move it along once it is ready for scope and acceptance criteria to be worked out.',
+			Refine:
+				'Make the scope, the effort and the acceptance criteria explicit before moving a ticket on. Leave a title-only ticket for someone else to flesh out instead of advancing it as is.',
+			Ready:
+				'Pick up a ticket only once every blocker is finished. If the description no longer matches reality, send it back for refinement with a comment explaining why.',
+			'In Arbeit':
+				'For a bug, reproduce it with a failing test before you fix it. A probe someone used to demonstrate a finding becomes a permanent regression test. Move the ticket on once every acceptance criterion is met.',
+			Review:
+				'Check the work against its acceptance criteria, not your own taste. Leave findings as a comment and send it back, or approve it and move it on.',
+			Abnahme:
+				'Finished work waits here for a human to accept it in a batch. Do not act on a ticket sitting in this column.',
+			Done: '',
+			'Human Intervention':
+				'A question is open and blocks this ticket. Read it in the comments and wait for an answer instead of resuming work.',
+			'Human Answered':
+				'An open question now has an answer. Read it in the comments, then move the ticket back into work.'
+		};
+		const EDITED: Record<string, string> = {
+			Refine: 'Refine with the team conventions: effort in story points.',
+			Review: `${PREVIOUS_DEFAULTS.Review} `
+		};
+		const bundled = import.meta.glob<string>('/migrations/*.sql', {
+			query: '?raw',
+			import: 'default',
+			eager: true
+		});
+		const db = openDb(':memory:');
+		migrate(
+			db,
+			Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/014'))
+		);
+		const old = board.createProject(db, { kind: 'user' }, { key: 'OLD', name: 'Old' }).id;
+		const setRole = db.prepare(
+			'UPDATE columns SET role_prompt = ? WHERE project_id = ? AND name = ?'
+		);
+		for (const [name, text] of Object.entries({ ...PREVIOUS_DEFAULTS, ...EDITED }))
+			setRole.run(text, old, name);
+
+		expect(migrate(db)).toEqual(['014_default_role_prompts.sql']);
+
+		const current = board.createProject(db, { kind: 'user' }, { key: 'NEW', name: 'New' }).id;
+		const rolePrompts = (projectId: number) =>
+			Object.fromEntries(
+				db
+					.prepare('SELECT name, role_prompt FROM columns WHERE project_id = ?')
+					.all(projectId)
+					.map((r) => [r.name, r.role_prompt])
+			);
+		expect(rolePrompts(old)).toEqual({ ...rolePrompts(current), ...EDITED });
+		expect(rolePrompts(old).Backlog).not.toBe(PREVIOUS_DEFAULTS.Backlog);
+		expect(migrate(db)).toEqual([]);
 	});
 });
 

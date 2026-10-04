@@ -97,7 +97,7 @@ describe('the board load', () => {
 
 	it('names the role prompt of every column', async () => {
 		const { data } = await loaded();
-		expect(data.roles[columnId(studio, 'Backlog')]).toMatch(/^Capture new work/);
+		expect(data.roles[columnId(studio, 'Backlog')]).toMatch(/^Do: sort new work in/);
 		expect(data.roles[columnId(shop, 'Done')]).toBe('');
 	});
 
@@ -191,10 +191,8 @@ describe('the board view', () => {
 	it('shows a group per column with its name, how a run starts there and its role', async () => {
 		const { data } = await loaded();
 		const markup = text(html({ ...data, live: live() }));
-		expect(markup).toMatch(
-			/Ready \d+ Start per :run · Pick up a ticket only once every blocker is finished/
-		);
-		expect(markup).toMatch(/Abnahme \d+ Start per :run · Finished work waits here/);
+		expect(markup).toMatch(/Ready \d+ Start per :run · Do: pick the ticket up; do not refine it/);
+		expect(markup).toMatch(/Abnahme \d+ Start per :run · Do: nothing; finished work waits here/);
 	});
 
 	it('shows each ticket with project code and number, title, task progress, epic and project', async () => {

@@ -46,7 +46,7 @@ describe('the project page', () => {
 			'Human Intervention',
 			'Human Answered'
 		]);
-		expect(columns[0].role).toMatch(/^Capture new work/);
+		expect(columns[0].role).toMatch(/^Do: sort new work in/);
 	});
 
 	it('404s with a message for a key no project has', () => {
@@ -62,7 +62,7 @@ describe('the project page', () => {
 		const markup = html(loaded('STU'));
 		expect(markup).toMatch(/<h1[^>]*>.*Studio<\/h1>/s);
 		expect(text(markup)).toContain('STU');
-		expect(text(markup)).toContain('Backlog Capture new work');
+		expect(text(markup)).toContain('Backlog Do: sort new work in');
 		expect(markup).toMatch(/<label [^>]*>Titel<\/label>/);
 		expect(markup).toMatch(/<button [^>]*type="submit"[^>]*>\s*Ticket anlegen<\/button>/);
 		expect(markup).toMatch(/<a [^>]*href="\/projects"/);
