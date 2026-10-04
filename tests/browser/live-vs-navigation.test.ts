@@ -203,3 +203,47 @@ test('a live event still reloads the ticket after its own form submit aborted a 
 	await moveTicketLive(page, db, ticket.id, 'Refine');
 	await reloaded;
 });
+
+test('a live event does not abort a newer navigation that superseded the one the gate started on', async ({
+	page,
+	seedTicket,
+	db
+}) => {
+	const ticket = seedTicket('Elsewhere while a newer navigation supersedes the first');
+	await open(page, '/');
+
+	let releaseTakt = () => {};
+	const taktHeld = new Promise<void>((resolve) => (releaseTakt = resolve));
+	await page.route('**/takt/__data.json*', async (route) => {
+		await taktHeld;
+		await route.continue();
+	});
+	let releaseBoard = () => {};
+	const boardHeld = new Promise<void>((resolve) => (releaseBoard = resolve));
+	await page.route('**/board/__data.json*', async (route) => {
+		await boardHeld;
+		await route.continue();
+	});
+
+	const taktRequested = page.waitForRequest(
+		(request) => pathOf(request.url()) === '/takt/__data.json'
+	);
+	await page.keyboard.press('g');
+	await page.keyboard.press('t');
+	await taktRequested;
+
+	// SvelteKit runs no beforeNavigate for this second keypress: g b supersedes the still-pending g t navigation.
+	const boardRequested = page.waitForRequest(
+		(request) => pathOf(request.url()) === '/board/__data.json'
+	);
+	await page.keyboard.press('g');
+	await page.keyboard.press('b');
+	await boardRequested;
+
+	releaseTakt();
+	await page.waitForTimeout(300); // time for the superseded navigation's rejection to be handled
+	await moveTicketLive(page, db, ticket.id, 'Refine');
+	await page.waitForTimeout(300); // time for the event to reach the page before the held load resolves
+	releaseBoard();
+	await expect(page).toHaveURL('/board', { timeout: 5000 });
+});
