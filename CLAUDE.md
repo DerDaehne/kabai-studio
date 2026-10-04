@@ -140,6 +140,7 @@ nix develop --command npm run reset-password   # set a new owner password, ends 
 nix develop --command npm run restore -- <backup-file>   # server stopped: backs up the current DB, restores the backup
 nix develop --command npm test         # vitest (src/**/*.test.ts)
 nix develop --command npm run test:browser   # Playwright (tests/browser/*.test.ts) against build/ — run npm run build first (CI)
+nix develop --command npm run scenario -- scenarios/columns.json <output-dir>   # headless run against a real OpenAI-compatible model; needs STUDIO_SCENARIO_BASE_URL + STUDIO_SCENARIO_MODEL, not run in CI (its fake-model self-test in npm test is)
 nix develop --command npm run format   # Prettier (with the Svelte plugin) rewrites all files
 nix develop --command npm run format:check   # fails on unformatted files (CI)
 nix develop --command npm run lint     # ESLint: nesting > 3 fails; functions > 40 lines and complexity > 15 warn (CI)

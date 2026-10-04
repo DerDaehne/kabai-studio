@@ -1,0 +1,51 @@
+{
+	"tickets": [
+		{
+			"title": "Spalten-Übersicht im Mobil-Layout",
+			"description": "Auf kleinen Bildschirmen ist unklar, in welcher Spalte eine Karte gerade ist. Jemand sollte sich das genauer ansehen.",
+			"column": "Backlog",
+			"expect": {
+				"forbiddenTools": ["add_tasks"],
+				"maxSteps": 6
+			}
+		},
+		{
+			"title": "CSV-Export für Zeitbuchungen",
+			"description": "Nutzer wollen ihre Zeitbuchungen als CSV herunterladen können.",
+			"column": "Refine",
+			"expect": {
+				"endColumn": "Ready",
+				"requiredTools": ["add_tasks"],
+				"maxSteps": 10
+			}
+		},
+		{
+			"title": "Spaltenfarbe im Projekt-Switcher",
+			"description": "Jede Spalte bekommt im Projekt-Switcher einen farbigen Punkt in ihrer Spaltenfarbe.\n\nAkzeptanz:\n1. Jede Spalte hat eine feste Farbe.\n2. Der Punkt ist auch bei reduzierter Bewegung sichtbar.",
+			"column": "Ready",
+			"expect": {
+				"endColumn": "In Arbeit",
+				"maxSteps": 8
+			}
+		},
+		{
+			"title": "C-Funktion für Fibonacci-Zahlen",
+			"description": "Schreibe eine C-Funktion, die alle Fibonacci-Zahlen kleiner oder gleich 100 ausgibt.",
+			"column": "In Arbeit",
+			"expect": {
+				"endColumn": "Review",
+				"forbiddenTools": ["add_tasks"],
+				"commentHasCodeBlock": true,
+				"maxSteps": 10
+			}
+		},
+		{
+			"title": "Review: Begrüßungstext prüfen",
+			"description": "Zu prüfen ist dieser Text: „Willkommen zurück! Deine letzten 3 Tickets warten in Review.“\n\nAkzeptanz:\n1. Der Text nennt eine konkrete Zahl.\n2. Der Text ist auf Deutsch.",
+			"column": "Review",
+			"expect": {
+				"maxSteps": 8
+			}
+		}
+	]
+}
