@@ -1,6 +1,5 @@
-import { invalidate } from '$app/navigation';
 import { toast } from '$lib/ui/toast.svelte';
-import { LIVE_DEPENDENCY, type HaltKind } from './live.svelte';
+import { invalidateLive, type HaltKind } from './live.svelte';
 
 /** How the server refuses a run it cannot pause or resume. */
 type Refusal = { code: string; message: string; hint: string };
@@ -29,7 +28,7 @@ async function call<T>(method: 'POST' | 'DELETE', path: string, failure: string)
 /** Without waiting for the event, which a broken connection would lose. */
 async function done(message: string) {
 	toast(message, 'success');
-	await invalidate(LIVE_DEPENDENCY);
+	await invalidateLive();
 }
 
 export async function stopAll() {

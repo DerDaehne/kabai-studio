@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
-	import { goto, invalidate, onNavigate, pushState } from '$app/navigation';
+	import { goto, onNavigate, pushState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
@@ -22,9 +22,10 @@
 	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
+		gateLiveInvalidation,
 		haltLabel,
+		invalidateLive,
 		live,
-		LIVE_DEPENDENCY,
 		openQuestionsLabel,
 		pauseQuestion,
 		showLive,
@@ -238,6 +239,7 @@
 	// a narrow head dock fits only one chip, and a second one would hide whether an agent waits
 	const groupAgents = $derived(shell.agents.length >= (compact.current ? 2 : 3));
 
+	gateLiveInvalidation();
 	onNavigate(transitionPage);
 
 	const openQuestionsOf = (view: View) => (view.context === 'takt' ? live.openQuestions : 0);
@@ -254,7 +256,7 @@
 	});
 	$effect(() => {
 		if (!signedIn) return;
-		const connection = connectLive(() => void invalidate(LIVE_DEPENDENCY));
+		const connection = connectLive(() => void invalidateLive());
 		return () => connection.close();
 	});
 </script>

@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { goto, invalidate } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { failureOf, postAction } from '$lib/form-action';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { focusSummary } from '$lib/shell/focus';
-	import { LIVE_DEPENDENCY, openQuestionsLabel } from '$lib/shell/live.svelte';
+	import { invalidateLive, openQuestionsLabel } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
@@ -87,7 +87,7 @@
 		mirrored = true;
 		order = restored(queue, question.id);
 		answered.delete(question.id);
-		await invalidate(LIVE_DEPENDENCY);
+		await invalidateLive();
 	}
 
 	/** One entry on the shared undo stack, so u, Ctrl+r and the notice's button all take the same way. */
