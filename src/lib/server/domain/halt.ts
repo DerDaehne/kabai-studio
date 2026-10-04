@@ -37,6 +37,8 @@ const requireHumanToResume = (actor: Actor) =>
 export const awaitsResume = (alias: string) =>
 	`${alias}.state = 'paused' AND ${alias}.halted = 1 AND NOT EXISTS (SELECT 1 FROM runs c WHERE c.resumed_from_run_id = ${alias}.id)`;
 
+const AWAITING_RESUME = `SELECT id FROM runs r WHERE ${awaitsResume('r')} ORDER BY id`;
+
 const HALT_LOCK_ATTEMPTS = 3;
 
 /**
@@ -119,7 +121,12 @@ export function pauseRun(db: DatabaseSync, actor: Actor, runId: number) {
 		requireHumanToPause(actor);
 		const run = db.prepare('SELECT state FROM runs WHERE id = ?').get(runId) as
 			{ state: RunState } | undefined;
-		if (!run) throw new DomainError('not_found', `Run ${runId} gibt es nicht.`, RESUME_WAY_OUT);
+		if (!run)
+			throw new DomainError(
+				'not_found',
+				`Run ${runId} gibt es nicht.`,
+				'Die Nummer steht im Run-Reiter der Run-Akte.'
+			);
 		if (run.state !== 'running' && run.state !== 'waiting_approval')
 			throw new DomainError(
 				'run_not_active',
@@ -187,11 +194,7 @@ function haltedRun(db: DatabaseSync, runId: number): HaltedRun {
 export function resumeAll(db: DatabaseSync, actor: Actor): number[] {
 	return tx(db, () => {
 		requireHumanToResume(actor);
-		const halted = db
-			.prepare(`SELECT id FROM runs r WHERE ${awaitsResume('r')} ORDER BY id`)
-			.all() as {
-			id: number;
-		}[];
+		const halted = db.prepare(AWAITING_RESUME).all() as { id: number }[];
 		const resumed = halted.map((run) => resumeRun(db, actor, run.id).id);
 		releaseHalt(db, actor);
 		return resumed;
