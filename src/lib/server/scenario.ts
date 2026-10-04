@@ -18,9 +18,8 @@ import { startRunner, type RunnerHandle } from './runner';
 const USER: Actor = { kind: 'user' };
 const POLL_INTERVAL_MS = 500;
 const DEFAULT_MAX_WAIT_MS = 15 * 60_000;
-// Exact English words (as before) plus the two German participles whose inflected forms ("kompilierte",
-// "getesteten") the plain words missed; "run"/"running" stays out because studio's own domain language calls
-// an agent run exactly that, unrelated to code execution.
+// Stems catch inflected German forms ("kompilierte"); "run"/"running" stays out because studio calls an
+// agent run exactly that.
 const EXECUTION_CLAIM_WORDS =
 	/\b(kompilier\w*|ausgeführt\w*|getestet\w*|compiled|executed|tested|ran)\b/gi;
 const NEGATION_WORDS = /\b(nicht|kein\w*|nie\w*|not|never|cannot|can't)\b/i;

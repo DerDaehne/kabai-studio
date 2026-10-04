@@ -158,6 +158,33 @@ describe('runScenario run-state checks', () => {
 		}
 	}, 20_000);
 
+	it('a timed-out run is cancelled, so the next ticket of the scenario still gets its run', async () => {
+		const model = await startFakeModel();
+		model.reply('hang', { text: 'done' });
+		const dir = mkdtempSync(join(tmpdir(), 'probe-'));
+		const file = join(dir, 'scenario.json');
+		writeFileSync(
+			file,
+			JSON.stringify({
+				baseUrl: model.baseUrl,
+				model: 'fake',
+				maxWaitMs: 1500,
+				tickets: [
+					{ title: 'hangs', expect: {} },
+					{ title: 'next', expect: {} }
+				]
+			})
+		);
+		try {
+			const [hung, next] = await runScenario(file, join(dir, 'out'), dir);
+			expect(hung.reasons[0]).toContain('Zeitgrenze');
+			expect(next.runState).toBe('succeeded');
+		} finally {
+			await model.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 20_000);
+
 	it('a ticket whose run fails is not reported as ok', async () => {
 		const model = await startFakeModel(); // no scripted reply: the first request gets a 500 from the fake server
 		const dataRoot = mkdtempSync(join(tmpdir(), 'probe-data-'));
