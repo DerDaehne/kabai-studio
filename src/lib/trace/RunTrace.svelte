@@ -10,8 +10,14 @@
 		paused: { tone: 'paused', label: 'pausiert' },
 		succeeded: { tone: 'succeeded', label: 'fertig' },
 		failed: { tone: 'failed', label: 'fehlgeschlagen' },
-		cancelled: { tone: 'neutral', label: 'gestoppt' }
+		cancelled: { tone: 'neutral', label: 'abgebrochen' }
 	};
+
+	const HALTED: { tone: Tone; label: string } = { tone: 'paused', label: 'angehalten' };
+
+	/** A run the human paused (`:anhalten`) reads „angehalten“; any other run reads as its state in {@link RUN_STATES}. */
+	export const runStateOf = (state: RunTraceState, halted: boolean) =>
+		halted ? HALTED : RUN_STATES[state];
 </script>
 
 <script lang="ts">
@@ -36,7 +42,7 @@
 	let events = $derived(trace.events);
 	let phase = $state<Phase>();
 	const view = $derived(buildTrace(events));
-	const runState = $derived(RUN_STATES[trace.state]);
+	const runState = $derived(runStateOf(trace.state, trace.halted));
 
 	$effect(() =>
 		onLiveEvent((event) => {
@@ -106,6 +112,8 @@
 	<p><a href="?run={trace.continuedBy}">setzt fort in Run {trace.continuedBy}</a></p>
 {:else if trace.state === 'paused' && trace.waitsForAnswer}
 	<p><a href="/takt">wartet auf deine Antwort → Takt</a></p>
+{:else if trace.state === 'paused' && trace.halted}
+	<p>angehalten — :fortsetzen setzt ihn fort</p>
 {/if}
 
 <style>

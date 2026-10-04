@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
-import { haltRuns } from './domain/halt';
+import { haltRuns, pauseRun, pauseRuns, releaseHalt, resumeRun } from './domain/halt';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
 import { liveState, projectRef } from './live';
@@ -101,7 +101,7 @@ describe('liveState', () => {
 		expect(state.openQuestions).toBe(1);
 	});
 
-	it('counts the runs the kill switch would cancel, in archived projects too, and tells whether it is set', () => {
+	it('counts the runs the kill switch would cancel, in archived projects too, and tells whether a stop is set', () => {
 		const s = setup();
 		const local = s.profile('qwen', 'local');
 		const stu = s.project('STU', 'Studio');
@@ -111,9 +111,30 @@ describe('liveState', () => {
 		const archived = s.project('OLD', 'Alt');
 		s.running(s.ticket(archived), local);
 		s.db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archived);
-		expect(liveState(s.db)).toMatchObject({ halted: false, activeRuns: 2 });
+		expect(liveState(s.db)).toMatchObject({ halt: null, activeRuns: 2 });
 
 		haltRuns(s.db, user);
-		expect(liveState(s.db)).toMatchObject({ halted: true, activeRuns: 0 });
+		expect(liveState(s.db)).toMatchObject({ halt: 'stop', activeRuns: 0 });
+	});
+
+	it('shows a run the human paused until it is resumed, without an agent at work, and tells whether a pause is set', () => {
+		const s = setup();
+		const local = s.profile('qwen', 'local');
+		const stu = s.project('STU', 'Studio');
+		const [halted, resumed] = [s.running(s.ticket(stu), local), s.running(s.ticket(stu), local)];
+		pauseRun(s.db, user, halted);
+		pauseRun(s.db, user, resumed);
+		const continuation = resumeRun(s.db, user, resumed).id;
+
+		expect(liveState(s.db).runs.map((r) => [r.id, r.state])).toEqual([
+			[halted, 'paused'],
+			[continuation, 'queued']
+		]);
+		expect(liveState(s.db).halt).toBeNull();
+
+		pauseRuns(s.db, user);
+		expect(liveState(s.db).halt).toBe('pause');
+		releaseHalt(s.db, user);
+		expect(liveState(s.db).halt).toBeNull();
 	});
 });

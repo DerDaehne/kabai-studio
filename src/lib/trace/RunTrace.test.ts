@@ -7,7 +7,13 @@ import RunTrace from './RunTrace.svelte';
 import { buildTrace, type RunTrace as Trace } from './trace';
 import TraceStep from './TraceStep.svelte';
 
-const base: Trace = { id: 7, state: 'running', waitsForAnswer: false, events: RUN_EVENTS };
+const base: Trace = {
+	id: 7,
+	state: 'running',
+	waitsForAnswer: false,
+	halted: false,
+	events: RUN_EVENTS
+};
 const html = (trace: Partial<Trace> = {}) =>
 	render(RunTrace, { props: { trace: { ...base, ...trace }, reload: () => {} } }).body;
 const text = (body: string) =>
@@ -155,8 +161,24 @@ describe('end of a run', () => {
 		expect(text(continued)).toContain('Übergabe');
 	});
 
-	it('says „gestoppt“ for a cancelled run', () => {
-		expect(html({ state: 'cancelled' })).toMatch(/data-tone="neutral">(<!--[^>]*-->|\s)*gestoppt/);
+	it('says „abgebrochen“ for a cancelled run', () => {
+		expect(html({ state: 'cancelled' })).toMatch(
+			/data-tone="neutral">(<!--[^>]*-->|\s)*abgebrochen/
+		);
+	});
+
+	it('says „angehalten“ for a run the human paused, with :fortsetzen as the way out until it is resumed', () => {
+		const halted = html({ state: 'paused', halted: true });
+		expect(halted).toMatch(
+			/data-tone="paused">(<!--[^>]*-->|\s)*(<span[^>]*><\/span>(<!--[^>]*-->|\s)*)?angehalten/
+		);
+		expect(text(halted)).toContain('angehalten — :fortsetzen setzt ihn fort');
+		const resumed = html({ state: 'paused', halted: true, continuedBy: 9 });
+		expect(text(resumed)).not.toContain(':fortsetzen setzt');
+		expect(resumed).toMatch(/<a href="\?run=9"[^>]*>setzt fort in Run 9<\/a>/);
+		expect(html({ state: 'paused' })).toMatch(
+			/data-tone="paused">(<!--[^>]*-->|\s)*(<span[^>]*><\/span>(<!--[^>]*-->|\s)*)?pausiert/
+		);
 	});
 
 	it('says so when a run has no steps yet', () => {

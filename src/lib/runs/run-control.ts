@@ -14,7 +14,11 @@ export type RunTab = {
 	/** USD; 0 for a local model. */
 	cost: number;
 	resumedFrom: number | null;
-	resumeReason: 'context_budget' | 'recovery' | 'quota' | null;
+	resumeReason: 'context_budget' | 'recovery' | 'quota' | 'halt' | null;
+	/** The human paused it (`:anhalten`); it reads „angehalten“. */
+	halted: boolean;
+	/** Halted and not resumed yet: `:fortsetzen` continues it. */
+	resumable: boolean;
 	/** Only while queued: why the run does not start yet. */
 	waitText?: string;
 };
@@ -27,7 +31,8 @@ export type RunStart = { profiles: StartProfile[]; preselected?: number };
 const ORIGINS: Record<NonNullable<RunTab['resumeReason']>, string> = {
 	context_budget: 'frischer Run nach Kontextgrenze',
 	recovery: 'frischer Run nach Stillstand oder Längenlimit',
-	quota: 'Fortsetzung nach Kontingent-Pause'
+	quota: 'Fortsetzung nach Kontingent-Pause',
+	halt: 'Fortsetzung nach Anhalten'
 };
 
 /** Why a continuation run exists; a continuation without a reason is the one the human's answer queued. */
@@ -56,11 +61,41 @@ export const usageText = (tab: Pick<RunTab, 'tokensIn' | 'tokensOut' | 'cost'>) 
 
 const ACTIVE = new Set<RunTraceState>(['queued', 'running', 'waiting_approval']);
 export const isStoppable = (tab: RunTab) => ACTIVE.has(tab.state);
+export const isPausable = (tab: RunTab) =>
+	tab.state === 'running' || tab.state === 'waiting_approval';
 
-/** The run `x` stops: the selected one while it is active, else the newest active one (tabs are newest first). */
-export function stopTarget(tabs: RunTab[], selected?: number): RunTab | undefined {
+/** The selected run if `fits` it, else the newest run that fits (tabs are newest first). */
+function targetOf(tabs: RunTab[], selected: number | undefined, fits: (tab: RunTab) => boolean) {
 	const chosen = tabs.find((tab) => tab.id === selected);
-	return chosen && isStoppable(chosen) ? chosen : tabs.find(isStoppable);
+	return chosen && fits(chosen) ? chosen : tabs.find(fits);
+}
+
+/** The run `x` cancels: the selected one while it is active, else the newest active one. */
+export const stopTarget = (tabs: RunTab[], selected?: number): RunTab | undefined =>
+	targetOf(tabs, selected, isStoppable);
+
+/**
+ * The Run-Akte's `:anhalten` (always for this ticket's run, even while none works, so it never halts every run from
+ * here) and, while one of its runs is halted, its `:fortsetzen`.
+ */
+export function haltCommands(
+	tabs: RunTab[],
+	selected: number | undefined,
+	act: { pause: (tab: RunTab | undefined) => void; resume: (tab: RunTab) => void }
+): Suggestion[] {
+	const pausable = targetOf(tabs, selected, isPausable);
+	const resumable = targetOf(tabs, selected, (tab) => tab.resumable);
+	const pause: Suggestion = {
+		id: 'pause',
+		label: ':anhalten',
+		detail: pausable
+			? `Run ${pausable.id} anhalten, andere Runs laufen weiter`
+			: 'In diesem Ticket läuft kein Run',
+		run: () => act.pause(pausable)
+	};
+	if (!resumable) return [pause];
+	const resume = { id: 'resume', label: ':fortsetzen', detail: `Run ${resumable.id} fortsetzen` };
+	return [pause, { ...resume, run: () => act.resume(resumable) }];
 }
 
 /**

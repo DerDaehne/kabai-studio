@@ -9,7 +9,7 @@ const live = (projects: LiveState['projects']): LiveState => ({
 	projects,
 	runs: [],
 	openQuestions: 0,
-	halted: false,
+	halt: null,
 	activeRuns: 0
 });
 const studio = { id: 1, code: 'STU', name: 'Studio', palette: 1 as const };

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import { DomainError, type Actor } from '../domain/core';
+import { pauseRun, resumeRun } from '../domain/halt';
 import * as notes from '../domain/notes';
 import { answerQuestion, requestHuman, retractAnswer } from '../domain/questions';
 import * as runs from '../domain/runs';
@@ -585,6 +586,16 @@ describe('previous state', () => {
 		expect(previousState(prompt)).toMatchSnapshot();
 		expect(previousState(prompt)).not.toContain('Search once');
 		expect(prompt.blocks.map((b) => b.name).slice(-2)).toEqual(['previous_state', 'assignment']);
+	});
+
+	it('tells a run that resumes a run the human halted why it paused; the halt dropped the unfinished step, so there is no handoff', () => {
+		const w = world();
+		const halted = runsOf(w).started();
+		pauseRun(w.db, user, halted);
+		const block = previousState(assembleRun(w, resumeRun(w.db, user, halted).id));
+		expect(block).toBe(
+			`## Previous state — continuation 1\nThis run continues run ${halted}, which paused because the human halted it. Go on from its state instead of starting over.`
+		);
 	});
 
 	it('is left out for a run that continues no other run and for the preview without a run', () => {

@@ -16,6 +16,8 @@ const tab = (overrides: Partial<RunTab>): RunTab => ({
 	cost: 0,
 	resumedFrom: null,
 	resumeReason: null,
+	halted: false,
+	resumable: false,
 	...overrides
 });
 
@@ -84,6 +86,9 @@ it('names where a continuation run comes from and links its predecessor', () => 
 	expect(text(tabs[0])).toContain('frischer Run nach Stillstand oder Längenlimit · aus Run 4');
 	expect(tabs[0]).toMatch(/<a href="\?run=4"[^>]*>aus Run 4<\/a>/);
 	expect(text(tabs[1])).toContain('Fortsetzung nach deiner Antwort · aus Run 3');
+	expect(text(html({ runs: [tab({ id: 6, resumedFrom: 5, resumeReason: 'halt' })] }))).toContain(
+		'Fortsetzung nach Anhalten · aus Run 5'
+	);
 	expect(text(tabs[2])).not.toContain('aus Run');
 });
 
@@ -102,7 +107,7 @@ it('says why a queued run waits', () => {
 	expect(text(body)).toContain('wartet auf Start');
 });
 
-it('stops only after a confirmation: an active run offers „Stoppen“, but no stop form outside the dialog', () => {
+it('cancels only after a confirmation: an active run offers „Abbrechen“, but no cancel form outside the dialog', () => {
 	const runs = [
 		tab({ id: 3, state: 'running', finishedAt: null }),
 		tab({ id: 2, state: 'waiting_approval', finishedAt: null }),
@@ -110,11 +115,30 @@ it('stops only after a confirmation: an active run offers „Stoppen“, but no 
 	];
 	const body = html({ runs, selected: 3 });
 	const tabs = body.split('<li').slice(1);
-	expect(text(tabs[0])).toContain('Stoppen (x)');
-	expect(text(tabs[1])).toContain('Stoppen');
+	expect(text(tabs[0])).toContain('Abbrechen (x)');
+	expect(text(tabs[1])).toContain('Abbrechen');
 	expect(text(tabs[1])).not.toContain('(x)');
-	expect(text(tabs[2])).not.toContain('Stoppen');
+	expect(text(tabs[2])).not.toContain('Abbrechen');
 	expect(body).not.toContain('?/stop');
+});
+
+it('offers „Anhalten“ for a working run and „Fortsetzen“ for a halted one until it is resumed, which reads „angehalten“', () => {
+	const runs = [
+		tab({ id: 5, state: 'running', finishedAt: null }),
+		tab({ id: 4, state: 'queued', startedAt: null, finishedAt: null }),
+		tab({ id: 3, state: 'paused', halted: true, resumable: true }),
+		tab({ id: 2, state: 'paused', halted: true, resumable: false }),
+		tab({ id: 1, state: 'paused' })
+	];
+	const tabs = html({ runs }).split('<li').slice(1).map(text);
+	expect(tabs[0]).toContain('Anhalten');
+	expect(tabs[1]).not.toContain('Anhalten');
+	expect(tabs[2]).toContain('Run 3 angehalten');
+	expect(tabs[2]).toContain('Fortsetzen');
+	expect(tabs[3]).toContain('Run 2 angehalten');
+	expect(tabs[3]).not.toContain('Fortsetzen');
+	expect(tabs[4]).toContain('Run 1 pausiert');
+	for (const shown of [tabs[0], tabs[1], tabs[4]]) expect(shown).not.toContain('Fortsetzen');
 });
 
 it('shows message and hint of a refused start at the start form', () => {

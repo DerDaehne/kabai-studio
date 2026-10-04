@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as board from './domain/board';
 import { DomainError, type Actor } from './domain/core';
+import { pauseRun, resumeRun } from './domain/halt';
 import { answerQuestion, requestHuman } from './domain/questions';
 import {
 	appendEvent,
@@ -236,6 +237,23 @@ describe('runTrace', () => {
 		expect(continued?.continuedBy).not.toBe(runId);
 	});
 
+	it('knows a run the human halted, also after it was resumed, and a paused run that waits for an answer is not one', () => {
+		const { db, ticketId, running } = withRuns();
+		const halted = running();
+		pauseRun(db, user, halted);
+		expect(runTrace(db, ticketId)).toMatchObject({ state: 'paused', halted: true });
+		const continuation = resumeRun(db, user, halted).id;
+		expect(runTrace(db, ticketId, halted)).toMatchObject({
+			halted: true,
+			continuedBy: continuation
+		});
+
+		const asking = running();
+		requestHuman(db, { kind: 'agent', runId: asking }, ticketId, { question: 'Weiter so?' });
+		finishRun(db, user, asking, { state: 'paused' });
+		expect(runTrace(db, ticketId, asking)).toMatchObject({ halted: false, waitsForAnswer: true });
+	});
+
 	it('does not name a cancelled follow-up run as the one that continues', () => {
 		const { db, ticketId, profileId, running } = withRuns();
 		const runId = running();
@@ -285,7 +303,9 @@ describe('runTabs', () => {
 			tokensOut: 80,
 			cost: 0.5,
 			resumedFrom: null,
-			resumeReason: null
+			resumeReason: null,
+			halted: false,
+			resumable: false
 		});
 		expect(tabs[1].startedAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
 		expect(tabs[1].finishedAt).toMatch(/Z$/);
@@ -317,6 +337,27 @@ describe('runTabs', () => {
 			resumedFrom: first,
 			resumeReason: 'context_budget'
 		});
+	});
+
+	it('marks a run the human halted, and offers to resume it only until it is resumed', () => {
+		const { db, ticketId, profileId } = withProfile();
+		const halted = createRun(db, user, { ticketId, profileId }).id;
+		startRun(db, user, halted);
+		pauseRun(db, user, halted);
+		expect(runTabs(db, ticketId)[0]).toMatchObject({ id: halted, halted: true, resumable: true });
+
+		const continuation = resumeRun(db, user, halted).id;
+		expect(
+			runTabs(db, ticketId).map(({ id, halted, resumable, resumeReason }) => [
+				id,
+				halted,
+				resumable,
+				resumeReason
+			])
+		).toEqual([
+			[continuation, false, false, 'halt'],
+			[halted, true, false, null]
+		]);
 	});
 
 	it('keeps a run whose profile was deleted, without a profile name', () => {

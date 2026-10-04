@@ -1,14 +1,15 @@
-// The kill switch route against a real DB file and the runner the server started, as the init hook starts it.
+// The halt routes against a real DB file and the runner the server started, as the init hook starts it.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, afterEach, expect, it } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { haltedSince } from '$lib/server/domain/halt';
 import * as runs from '$lib/server/domain/runs';
 import { startRunner, type Executor } from '$lib/server/runner';
+import { POST as pauseAll } from '../pause/+server';
 import { DELETE, POST } from './+server';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-halt-'));
@@ -21,31 +22,59 @@ const untilAborted: Executor = {
 		new Promise((_done, fail) => io.signal.addEventListener('abort', () => fail(io.signal.reason)))
 };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+const stops: (() => void)[] = [];
+afterEach(() => stops.splice(0).forEach((stop) => stop()));
 
-it('halts every run on POST and lets the queue go on DELETE, through the runner the server started', async () => {
-	const runner = startRunner(db(), { builtin: untilAborted });
-	const projectId = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
+const projectId = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
+let profiles = 0;
+
+/** A started runner and two runs of a fresh profile in a pool of its own: the first runs, the second waits. */
+async function runningAndWaiting() {
+	stops.push(startRunner(db(), { builtin: untilAborted }).stop);
 	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
+	profiles += 1;
 	const profileId = runs.createProfile(db(), user, {
-		name: 'qwen',
+		name: `qwen ${profiles}`,
 		executor: 'builtin',
 		provider: 'openai-compatible',
-		model: 'm'
+		model: 'm',
+		pool: `pool-${profiles}`
 	}).id;
 	const [running, waiting] = [1, 2].map(
 		() => runs.createRun(db(), user, { ticketId, profileId }).id
 	);
-	const state = (id: number) => db().prepare('SELECT state FROM runs WHERE id = ?').get(id)!.state;
 	await flush();
+	return { running, waiting };
+}
+
+const state = (id: number) => db().prepare('SELECT state FROM runs WHERE id = ?').get(id)!.state;
+const continuationOf = (id: number) =>
+	db().prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?').get(id)?.id as number;
+
+it('stops every run on POST and lets the queue go on DELETE, through the runner the server started', async () => {
+	const { running, waiting } = await runningAndWaiting();
 
 	const halted = await POST({} as never);
 	expect(await halted.json()).toEqual({ cancelled: 1 });
 	expect([running, waiting].map(state)).toEqual(['cancelled', 'queued']);
 
 	const released = await DELETE({} as never);
-	expect(released.status).toBe(204);
+	expect(await released.json()).toEqual({ resumed: 0, released: 'stop' });
 	await flush();
 	expect(state(waiting)).toBe('running');
 	expect(haltedSince(db())).toBeNull();
-	runner.stop();
+});
+
+it('pauses every run on POST /api/pause, and DELETE resumes it ahead of the waiting run and lifts the pause', async () => {
+	const { running, waiting } = await runningAndWaiting();
+
+	const paused = await pauseAll({} as never);
+	expect(await paused.json()).toEqual({ paused: 1 });
+	expect([running, waiting].map(state)).toEqual(['paused', 'queued']);
+
+	const released = await DELETE({} as never);
+	expect(await released.json()).toEqual({ resumed: 1, released: 'pause' });
+	await flush();
+	expect([continuationOf(running), waiting].map(state)).toEqual(['running', 'queued']);
+	expect(haltedSince(db())).toBeNull();
 });

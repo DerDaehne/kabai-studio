@@ -3,6 +3,7 @@ import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
+import { awaitsResume } from './domain/halt';
 import type { Actor } from './domain/core';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
@@ -137,10 +138,10 @@ export function findTicketId(db: DatabaseSync, key: string, number: number): num
 export function runTrace(db: DatabaseSync, ticketId: number, runId?: number): RunTrace | undefined {
 	const run = db
 		.prepare(
-			'SELECT id, state, error FROM runs WHERE ticket_id = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY id DESC LIMIT 1'
+			'SELECT id, state, error, halted FROM runs WHERE ticket_id = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY id DESC LIMIT 1'
 		)
 		.get(ticketId, runId ?? null) as
-		{ id: number; state: RunState; error: string | null } | undefined;
+		{ id: number; state: RunState; error: string | null; halted: 0 | 1 } | undefined;
 	if (!run) return undefined;
 	return {
 		id: run.id,
@@ -150,6 +151,7 @@ export function runTrace(db: DatabaseSync, ticketId: number, runId?: number): Ru
 		waitsForAnswer:
 			db.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NULL').get(run.id) !==
 			undefined,
+		halted: run.halted === 1,
 		events: eventsOf(db, run.id)
 	};
 }
@@ -190,20 +192,26 @@ function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['fa
 
 const iso = (column: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${column})`;
 
+type RunTabRow = Omit<RunTab, 'halted' | 'resumable'> & { halted: 0 | 1; resumable: 0 | 1 };
+
 /** The runs of a ticket, newest first, as the run tabs show them; a queued one says why it waits. */
 export function runTabs(db: DatabaseSync, ticketId: number): RunTab[] {
-	const tabs = db
+	const rows = db
 		.prepare(
 			`SELECT r.id, r.state, p.name AS profile, ${iso('r.started_at')} AS startedAt,
 				${iso('r.finished_at')} AS finishedAt, r.tokens_in AS tokensIn, r.tokens_out AS tokensOut, r.cost,
-				r.resumed_from_run_id AS resumedFrom, r.resume_reason AS resumeReason
+				r.resumed_from_run_id AS resumedFrom, r.resume_reason AS resumeReason, r.halted,
+				${awaitsResume('r')} AS resumable
 			FROM runs r LEFT JOIN agent_profiles p ON p.id = r.agent_profile_id
 			WHERE r.ticket_id = ? ORDER BY r.id DESC`
 		)
-		.all(ticketId) as RunTab[];
-	return tabs.map((tab) =>
-		tab.state === 'queued' ? { ...tab, waitText: waitReason(db, tab.id, LIMITS)?.text } : tab
-	);
+		.all(ticketId) as RunTabRow[];
+	return rows.map((row) => {
+		const tab = { ...row, halted: row.halted === 1, resumable: row.resumable === 1 };
+		return tab.state === 'queued'
+			? { ...tab, waitText: waitReason(db, tab.id, LIMITS)?.text }
+			: tab;
+	});
 }
 
 /** The profiles to start a run with; preselected is the one the newest run of the project used, else the first. */

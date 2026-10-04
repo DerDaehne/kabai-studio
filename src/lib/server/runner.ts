@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
-import { haltRuns } from './domain/halt';
+import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
 import { requestHuman } from './domain/questions';
 import {
 	appendEvent,
@@ -39,7 +39,7 @@ export type Phase = {
 	lastLine?: string;
 };
 /** `io.park.reason`: why the run should end cleanly and, as ISO 8601 time, when its follow-up run may start at the earliest. */
-export type ParkReason = { reason: ResumeReason; notBefore?: string };
+export type ParkReason = { reason: Exclude<ResumeReason, 'halt'>; notBefore?: string };
 /** Continues a paused run in a new run; `handoffSeq` is the event holding the handoff of the paused run. */
 export type Resume = ParkReason & { handoffSeq: number };
 export type ExecutorResult =
@@ -47,7 +47,7 @@ export type ExecutorResult =
 	| { state: 'paused'; usage?: Usage; resume?: Resume }
 	| void;
 export type ExecutorIo = {
-	/** Fires on cancel: the run is already `cancelled` by then and `emit` throws `run_not_active`. */
+	/** Fires when the run is cancelled or paused by the human: it has already ended by then and `emit` throws `run_not_active`. */
 	signal: AbortSignal;
 	/** Fires when the run should end after its current step: resolve `paused` with a `resume` built from `park.reason`. */
 	park: AbortSignal;
@@ -305,10 +305,17 @@ export function startRunner(
 		/** Cancels a queued, running or waiting run; throws `invalid_run_transition` once the run has ended. */
 		cancel: (runId: number, actor: Actor = { kind: 'user' }) => instance.cancel(runId, actor),
 		/** Asks a running run to end cleanly after its current step; false when no executor of this runner works on it. */
-		park: (runId: number, reason: ResumeReason, notBefore?: string) =>
+		park: (runId: number, reason: ParkReason['reason'], notBefore?: string) =>
 			instance.park(runId, reason, notBefore),
-		/** The kill switch: cancels every active run and returns them; queued runs wait until `releaseHalt`. Human only. */
-		halt: (actor: Actor = { kind: 'user' }) => instance.halt(actor),
+		/** The kill switch (`:stop`): cancels every active run and returns them; queued runs wait until `resumeAll`. Human only. */
+		halt: (actor: Actor = { kind: 'user' }) => instance.abortAfter(haltRuns(db, actor)),
+		/** Pauses one running run at once, to be resumed by the human; other runs go on. Human only. */
+		pause: (runId: number, actor: Actor = { kind: 'user' }) => {
+			pauseRun(db, actor, runId);
+			instance.abortAfter([runId]);
+		},
+		/** Pauses every active run and returns them; queued runs wait until `resumeAll`. Human only. */
+		pauseAll: (actor: Actor = { kind: 'user' }) => instance.abortAfter(pauseRuns(db, actor)),
 		/** Stops claiming; executors already running finish on their own. */
 		stop: () => instance.stop()
 	};
@@ -351,13 +358,13 @@ class Runner {
 		this.active.get(runId)?.cancel.abort();
 	}
 
-	halt(actor: Actor) {
-		const cancelled = haltRuns(this.db, actor); // revokes the tokens before the executors see the signal
-		for (const runId of cancelled) this.active.get(runId)?.cancel.abort();
-		return cancelled;
+	/** Aborts the executors of runs that have already ended, so their tokens are revoked before they see the signal. */
+	abortAfter(endedRuns: number[]) {
+		for (const runId of endedRuns) this.active.get(runId)?.cancel.abort();
+		return endedRuns;
 	}
 
-	park(runId: number, reason: ResumeReason, notBefore?: string) {
+	park(runId: number, reason: ParkReason['reason'], notBefore?: string) {
 		const park = this.active.get(runId)?.park;
 		park?.abort({ reason, notBefore } satisfies ParkReason);
 		return park !== undefined;

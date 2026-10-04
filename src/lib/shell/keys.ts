@@ -45,7 +45,7 @@ const keymapTable = {
 	comment: { group: 'Bearbeiten', keys: [['a']], label: 'Kommentar' },
 	add: { group: 'Bearbeiten', keys: [['o'], ['O']], label: 'neu darunter/darüber' },
 	remove: { group: 'Bearbeiten', keys: [['d', 'd']], label: 'löschen' },
-	stopRun: { group: 'Bearbeiten', keys: [['x']], label: 'Run stoppen' },
+	stopRun: { group: 'Bearbeiten', keys: [['x']], label: 'Run abbrechen' },
 	confirm: { group: 'Bearbeiten', keys: [['y']], label: 'bestätigen' },
 	shiftColumn: {
 		group: 'Bearbeiten',

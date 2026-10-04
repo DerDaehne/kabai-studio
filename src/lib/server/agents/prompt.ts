@@ -309,7 +309,8 @@ function notesBlock(notes: LinkedNote[], cut: Cut): Block {
 const PAUSE_REASONS: Record<ResumeReason, string> = {
 	context_budget: 'its context was nearly full',
 	recovery: 'it got stuck',
-	quota: 'the usage limit was near'
+	quota: 'the usage limit was near',
+	halt: 'the human halted it'
 };
 
 /** Only the last run of a chain leaves its state; the runs before it count as continuations. */

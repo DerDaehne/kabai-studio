@@ -97,7 +97,7 @@ describe('state transitions', () => {
 		);
 		runs.setRunState(db, system, id, 'waiting_approval');
 		expect(caught(() => runs.finishRun(db, system, id, { state: 'succeeded' })).message).toContain(
-			'Erlaubt: running (setRunState), failed (finishRun), cancelled (finishRun).'
+			'Erlaubt: running (setRunState), paused (finishRun), failed (finishRun), cancelled (finishRun).'
 		);
 
 		runs.finishRun(db, user, id, { state: 'cancelled' });

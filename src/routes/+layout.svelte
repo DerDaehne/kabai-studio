@@ -11,20 +11,24 @@
 		commands,
 		focusCommands,
 		focusTarget,
+		resumeCommands,
+		resumeTarget,
 		withViewCommands,
 		type Suggestion
 	} from '$lib/shell/commands';
+	import { pauseAll, resumeAll, resumeRun, stopAll } from '$lib/shell/halt';
 	import { focusKeys, projectForLetter } from '$lib/shell/focus';
 	import KeyOverview from '$lib/shell/KeyOverview.svelte';
 	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
 		haltLabel,
-		haltQuestion,
 		live,
 		LIVE_DEPENDENCY,
 		openQuestionsLabel,
-		showLive
+		pauseQuestion,
+		showLive,
+		stopQuestion
 	} from '$lib/shell/live.svelte';
 	import {
 		bindKeys,
@@ -70,8 +74,13 @@
 		commandFocused ? 'commandline' : (currentView?.context ?? (onTicketPage ? 'ticket' : 'page'))
 	);
 	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
+	const haltedRuns = $derived(live.runs.filter((run) => run.state === 'paused'));
 	const sources = $derived({
-		commands: [...withViewCommands(shell.viewCommands, commands), ...focusCommands(live.projects)],
+		commands: [
+			...withViewCommands(shell.viewCommands, commands),
+			...focusCommands(live.projects),
+			...resumeCommands(haltedRuns, commandValue)
+		],
 		view: shell.viewItems,
 		tickets: shell.tickets
 	});
@@ -168,47 +177,60 @@
 		await closeOverlay();
 		commandInput?.blur();
 		const focusCommand = focusTarget(suggestion, live.projects);
+		const resume = resumeTarget(suggestion);
 		if (suggestion.run) suggestion.run();
 		else if (suggestion.href) await goto(suggestion.href);
 		else if (focusCommand !== undefined) shell.focus = focusCommand;
 		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
 		else if (suggestion.id.startsWith('single-keys'))
 			setSingleKeys(suggestion.id === 'single-keys-on');
-		else if (suggestion.id === 'halt') haltOpen = true;
-		else if (suggestion.id === 'release') await release();
+		else if (suggestion.id === 'stop' || suggestion.id === 'pause') confirming = suggestion.id;
+		else if (suggestion.id === 'resume') askWhichRun();
+		else if (resume === 'all') await resumeAll();
+		else if (resume !== undefined) await resumeRun(resume);
 		else if (suggestion.id === 'run')
 			toast(':run startet einen Run in der Run-Akte eines Tickets — öffne zuerst das Ticket.');
 	}
 
-	let haltOpen = $state(false);
-
-	/** Calls the kill switch route; on failure a toast offers the way out and nothing comes back. */
-	async function switchHalt(method: 'POST' | 'DELETE', failure: string) {
-		const response = await fetch('/api/halt', { method }).catch(() => undefined);
-		if (response?.ok) return response;
-		toast(`${failure} Verbindung prüfen und erneut versuchen.`, 'error');
+	/** Outside the Run-Akte `:fortsetzen` alone does not say which run; the command line then offers the halted ones. */
+	function askWhichRun() {
+		toast(
+			haltedRuns.length
+				? 'Welchen Run? :fortsetzen N setzt einen angehaltenen fort, :fortsetzen all alle.'
+				: 'Gerade ist kein Run angehalten; :fortsetzen all löst einen Halt.'
+		);
+		openCommandLine(':fortsetzen ');
 	}
 
-	async function halt() {
-		haltOpen = false;
-		const response = await switchHalt('POST', 'Anhalten ging nicht.');
-		if (!response) return;
-		const { cancelled } = (await response.json()) as { cancelled: number };
-		toast(`Angehalten: ${cancelled} ${cancelled === 1 ? 'Run' : 'Runs'} abgebrochen.`, 'success');
-		await invalidate(LIVE_DEPENDENCY); // without waiting for the event, which a broken connection would lose
+	const CONFIRMATIONS = {
+		stop: {
+			title: 'Alle Agents stoppen?',
+			question: stopQuestion,
+			action: 'Stoppen (y)',
+			run: stopAll
+		},
+		pause: {
+			title: 'Alle Agents anhalten?',
+			question: pauseQuestion,
+			action: 'Anhalten (y)',
+			run: pauseAll
+		}
+	};
+	/** The global `:stop` or `:anhalten` waiting for its confirmation. */
+	let confirming = $state<keyof typeof CONFIRMATIONS>();
+	const confirmation = $derived(confirming && CONFIRMATIONS[confirming]);
+
+	async function confirm() {
+		const run = confirmation?.run;
+		confirming = undefined;
+		await run?.();
 	}
 
-	async function release() {
-		if (!(await switchHalt('DELETE', 'Fortsetzen ging nicht.'))) return;
-		toast('Not-Aus gelöst: wartende Runs starten wieder.', 'success');
-		await invalidate(LIVE_DEPENDENCY);
-	}
-
-	// The router stays out of open dialogs, so the halt confirmation takes its y itself — with Alt when single keys are off.
+	// The router stays out of open dialogs, so the confirmation takes its y itself — with Alt when single keys are off.
 	function onWindowKey(event: KeyboardEvent) {
-		if (haltOpen && readKey(event) === 'y') {
+		if (confirming && readKey(event) === 'y') {
 			event.preventDefault();
-			void halt();
+			void confirm();
 		} else handleKey(event);
 	}
 
@@ -294,11 +316,11 @@
 					</button>
 				</span>
 			{/if}
-			{#if live.halted}
+			{#if live.halt}
 				<div class="chip halted">
-					<Icon name="pause" size={14} />
-					<span role="status">{haltLabel(live.runs)}</span>
-					<Button size="sm" onclick={release}>Fortsetzen</Button>
+					<Icon name={live.halt === 'stop' ? 'stop' : 'pause'} size={14} />
+					<span role="status">{haltLabel(live.halt, live.runs)}</span>
+					<Button size="sm" onclick={resumeAll}>Fortsetzen</Button>
 				</div>
 			{/if}
 			<ul class="agents" aria-label="Agents">
@@ -393,11 +415,14 @@
 		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
 	</Dialog>
 	<KeyOverview bind:open={keysOpen} />
-	<Dialog bind:open={haltOpen} title="Alle Agents anhalten?">
-		<p>{haltQuestion(live.activeRuns)}</p>
+	<Dialog
+		bind:open={() => confirming !== undefined, (open) => !open && (confirming = undefined)}
+		title={confirmation?.title ?? ''}
+	>
+		<p>{confirmation?.question(live.activeRuns)}</p>
 		{#snippet footer()}
-			<Button onclick={() => (haltOpen = false)}>Abbrechen</Button>
-			<Button variant="danger" onclick={halt}>Anhalten (y)</Button>
+			<Button onclick={() => (confirming = undefined)}>Weiterlaufen lassen</Button>
+			<Button variant="danger" onclick={confirm}>{confirmation?.action}</Button>
 		{/snippet}
 	</Dialog>
 {/if}

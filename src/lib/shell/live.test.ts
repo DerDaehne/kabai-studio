@@ -6,7 +6,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { createOwner, createSession } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
-import { haltRuns, releaseHalt } from '$lib/server/domain/halt';
+import { haltRuns, pauseRuns, releaseHalt, resumeAll } from '$lib/server/domain/halt';
 import type { Actor } from '$lib/server/domain/core';
 import * as questions from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
@@ -177,7 +177,7 @@ it('serves every view from the one connection of its tab: views subscribe with o
 	]);
 });
 
-it('shows the halt with the number of waiting runs in every open tab and drops it on release, without a page reload', async () => {
+it('shows the stop with the number of waiting runs in every open tab and drops it on release, without a page reload', async () => {
 	const open = [await openTab(), await openTab()];
 	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
 	runs.createRun(db(), system, { ticketId, profileId });
@@ -190,23 +190,53 @@ it('shows the halt with the number of waiting runs in every open tab and drops i
 
 	haltRuns(db(), user); // no run is active, so only the halt event itself can reach the tabs
 	for (const tab of open) {
-		await vi.waitFor(() => expect(tab.live.halted).toBe(true));
-		expect(tab.haltLabel(tab.live.runs)).toBe(`Angehalten · ${queued} wartend`);
+		await vi.waitFor(() => expect(tab.live.halt).toBe('stop'));
+		expect(tab.haltLabel('stop', tab.live.runs)).toBe(`Gestoppt · ${queued} wartend`);
 	}
 
 	releaseHalt(db(), user);
-	for (const tab of open) await vi.waitFor(() => expect(tab.live.halted).toBe(false));
+	for (const tab of open) await vi.waitFor(() => expect(tab.live.halt).toBeNull());
 });
 
-it('names the runs a halt cancels in its confirmation, and how the waiting ones go on', async () => {
-	const { haltQuestion } = await import('./live.svelte');
-	expect(haltQuestion(0)).toBe(
-		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+it('shows a pause with the number of paused runs and no agent at work in every open tab, and drops it once all resume, without a page reload', async () => {
+	const open = [await openTab(), await openTab()];
+	const { runId } = startRun();
+	for (const tab of open)
+		await vi.waitFor(() => expect(tab.shell.agents).toEqual([chip(runId, 'running')]));
+
+	pauseRuns(db(), user);
+	for (const tab of open) {
+		await vi.waitFor(() => expect(tab.live.halt).toBe('pause'));
+		expect(tab.haltLabel('pause', tab.live.runs)).toBe('Angehalten · 1 pausiert');
+		expect(tab.shell.agents).toEqual([]);
+	}
+
+	resumeAll(db(), user);
+	for (const tab of open) {
+		await vi.waitFor(() => expect(tab.live.halt).toBeNull());
+		expect(tab.live.runs.filter((run) => run.state === 'paused')).toEqual([]);
+	}
+});
+
+it('names the runs a stop cancels in its confirmation, and how the waiting ones go on', async () => {
+	const { stopQuestion } = await import('./live.svelte');
+	expect(stopQuestion(0)).toBe(
+		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
 	);
-	expect(haltQuestion(1)).toBe(
-		'1 Run läuft und wird sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+	expect(stopQuestion(1)).toBe(
+		'1 Run läuft und wird sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
 	);
-	expect(haltQuestion(3)).toBe(
-		'3 Runs laufen und werden sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).'
+	expect(stopQuestion(3)).toBe(
+		'3 Runs laufen und werden sofort abgebrochen. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
+	);
+});
+
+it('names the runs a pause halts in its confirmation, what they lose and how everything goes on', async () => {
+	const { pauseQuestion } = await import('./live.svelte');
+	expect(pauseQuestion(0)).toBe(
+		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
+	);
+	expect(pauseQuestion(2)).toBe(
+		'2 Runs laufen und werden sofort angehalten. Der angefangene Schritt wird verworfen, :fortsetzen all setzt die Arbeit fort. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
 	);
 });

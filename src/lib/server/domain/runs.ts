@@ -28,8 +28,11 @@ export type Intervention = {
 	hint: string;
 	stepTokens?: number;
 };
-/** Why a paused run continues in a new run; `quota` is a clean stop before a usage limit, the others are fresh runs after getting stuck. */
-export type ResumeReason = 'context_budget' | 'recovery' | 'quota';
+/**
+ * Why a paused run continues in a new run: `quota` is a clean stop before a usage limit, `halt` the human resuming a run
+ * they paused, the others are fresh runs after getting stuck.
+ */
+export type ResumeReason = 'context_budget' | 'recovery' | 'quota' | 'halt';
 /** Usage adds up: report it per step with the event (visible live, survives crashes) or in total with finishRun. Cost in USD. */
 export type Usage = { tokensIn?: number; tokensOut?: number; cost?: number };
 
@@ -67,7 +70,7 @@ type Run = { id: number; ticket_id: number; project_id: number; state: RunState 
 const NEXT: Record<RunState, RunState[]> = {
 	queued: ['running', 'cancelled'],
 	running: ['waiting_approval', 'paused', 'succeeded', 'failed', 'cancelled'],
-	waiting_approval: ['running', 'failed', 'cancelled'],
+	waiting_approval: ['running', 'paused', 'failed', 'cancelled'],
 	paused: [],
 	succeeded: [],
 	failed: [],
@@ -287,7 +290,9 @@ export type WaitReason = {
 	ahead: number;
 	text: string;
 };
-type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> & { halted: 0 | 1 };
+type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> & {
+	halt: 'stop' | 'pause' | null;
+};
 
 /** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
 export function waitReason(
@@ -297,7 +302,7 @@ export function waitReason(
 ): WaitReason | undefined {
 	const row = db
 		.prepare(
-			`SELECT r.priority, p.pool, EXISTS (SELECT 1 FROM runner_halt) AS halted,
+			`SELECT r.priority, p.pool, (SELECT kind FROM runner_halt) AS halt,
 				(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
 				(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
 					WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
@@ -307,12 +312,15 @@ export function waitReason(
 		)
 		.get(runId) as WaitRow | undefined;
 	if (!row) return undefined;
-	const { halted, ...counts } = row;
+	const { halt, ...counts } = row;
 	const reason = { ...counts, poolLimit: limits.pools[row.pool] ?? 1, globalLimit: limits.global };
-	return { ...reason, text: halted ? HALTED_TEXT : waitText(reason) };
+	return { ...reason, text: halt ? HALTED_TEXT[halt] : waitText(reason) };
 }
 
-const HALTED_TEXT = 'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen.';
+const HALTED_TEXT = {
+	stop: 'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen all.',
+	pause: 'wartet: alle Runs angehalten — Fortsetzen mit :fortsetzen all.'
+};
 
 function waitText(r: Omit<WaitReason, 'text'>) {
 	const causes = [

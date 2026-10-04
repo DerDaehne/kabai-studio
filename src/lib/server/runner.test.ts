@@ -10,8 +10,17 @@ import { DomainError, type Actor } from './domain/core';
 import * as runs from './domain/runs';
 import { subscribe, type StudioEvent } from './events';
 import { answerQuestion, requestHuman } from './domain/questions';
-import { haltedSince, haltRuns, releaseHalt } from './domain/halt';
-import { LIMITS, startRunner, type Executor, type RunContext } from './runner';
+import {
+	haltedSince,
+	haltKind,
+	haltRuns,
+	pauseRun,
+	pauseRuns,
+	releaseHalt,
+	resumeAll,
+	resumeRun
+} from './domain/halt';
+import { LIMITS, startRunner, type Executor, type Resume, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
@@ -825,7 +834,7 @@ describe('parking and resuming a run', () => {
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
 		s.queue(s.local);
-		const pauseLatest = async (resume: { reason: runs.ResumeReason; handoffSeq: number }) => {
+		const pauseLatest = async (resume: Resume) => {
 			fake.call(lastRunId(s)).done({ state: 'paused', resume });
 			await flush();
 		};
@@ -1034,12 +1043,12 @@ describe('resuming after the human answers', () => {
 	});
 });
 
-describe('kill switch', () => {
+describe('stop (kill switch)', () => {
 	const agent: Actor = { kind: 'agent', runId: 1 };
 	const haltComment = (runId: number) => ({
 		author_kind: 'system',
 		run_id: runId,
-		body: `Run ${runId} wurde durch den Not-Aus gestoppt.\nAusweg: Nach dem Fortsetzen (:fortsetzen) einen neuen Run für das Ticket starten.`
+		body: `Run ${runId} wurde durch den Not-Aus (:stop) abgebrochen.\nAusweg: Nach dem Fortsetzen (:fortsetzen all) einen neuen Run für das Ticket starten (:run).`
 	});
 
 	it('cancels every active run at once, aborts its executor and comments on its ticket, while queued runs stay in the queue', async () => {
@@ -1073,6 +1082,7 @@ describe('kill switch', () => {
 		await flush();
 		expect(s.state(queued)).toBe('queued');
 		expect(haltedSince(s.db)).toEqual(expect.any(String));
+		expect(haltKind(s.db)).toBe('stop');
 	});
 
 	it('claims nothing while halted: new, follow-up and held-back runs wait with the kill switch as their reason, and releasing starts them', async () => {
@@ -1107,7 +1117,7 @@ describe('kill switch', () => {
 		expect(waiting.map(s.state)).toEqual(['queued', 'queued', 'queued']);
 		for (const id of waiting)
 			expect(runs.waitReason(s.db, id, limits)?.text).toBe(
-				'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen.'
+				'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen all.'
 			);
 		expect(vi.getTimerCount()).toBe(0); // a held-back run that is due waits for the release, not for another timer
 
@@ -1193,5 +1203,277 @@ describe('kill switch', () => {
 		expect(new Set(claimed)).toEqual(new Set(cancelled));
 		expect(running()).toBe(0);
 		db.close();
+	});
+});
+
+describe('pause (:anhalten) and resume (:fortsetzen)', () => {
+	const agent: Actor = { kind: 'agent', runId: 1 };
+	const continuationsOf = (s: ReturnType<typeof setup>, runId: number) =>
+		s.db.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?').all(runId);
+	const resumeWayOut = ':fortsetzen zeigt die angehaltenen Runs; :fortsetzen all setzt alle fort.';
+
+	it('pauses only the run the human halts in its Run-Akte: it ends paused and halted, its executor stops, other runs keep running and the queue goes on', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const otherTicket = board.createTicket(s.db, user, s.projectId, { title: 'Other' }).id;
+		const [halted, other, waiting] = [
+			s.queue(s.local),
+			s.queue(s.cloud, otherTicket),
+			s.queue(s.local)
+		];
+		await flush();
+		const { run, io } = fake.call(halted);
+
+		runner.pause(halted);
+
+		expect(s.row(halted)).toMatchObject({ state: 'paused', halted: 1, token_hash: null });
+		expect(runs.runForToken(s.db, run.token)).toBeUndefined();
+		expect(io.signal.aborted).toBe(true);
+		await flush();
+		expect([halted, other, waiting].map(s.state)).toEqual(['paused', 'running', 'running']);
+		expect(fake.call(other).io.signal.aborted).toBe(false);
+		expect(haltedSince(s.db)).toBeNull();
+		expect(continuationsOf(s, halted)).toEqual([]); // nothing continues it before the human resumes it
+		expect(s.comments()).toEqual([]);
+	});
+
+	it('refuses to pause a run that is not working, and names the way out', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [finished, busy] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		fake.call(finished).done();
+		await flush();
+		const waiting = s.queue(s.local);
+		await flush();
+		expect([finished, busy, waiting].map(s.state)).toEqual(['succeeded', 'running', 'queued']);
+
+		expect(() => runner.pause(finished)).toThrow(
+			expect.objectContaining({
+				code: 'run_not_active',
+				message: `Run ${finished} ist „succeeded“ — anhalten lässt sich nur ein laufender Run.`,
+				hint: 'Er hat schon geendet; einen neuen Run startet :run in der Run-Akte.'
+			})
+		);
+		expect(() => pauseRun(s.db, user, waiting)).toThrow(
+			expect.objectContaining({
+				code: 'run_not_active',
+				message: `Run ${waiting} ist „queued“ — anhalten lässt sich nur ein laufender Run.`,
+				hint: 'Er hat noch nichts getan: brich ihn ab (x), wenn er nicht starten soll.'
+			})
+		);
+		expect(() => pauseRun(s.db, user, 999)).toThrow(
+			expect.objectContaining({ code: 'not_found', message: 'Run 999 gibt es nicht.' })
+		);
+		expect(s.state(waiting)).toBe('queued');
+	});
+
+	it('pauses every active run when halted outside a Run-Akte, and the queue holds', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [local, cloud, approving, queued] = [
+			s.queue(s.local),
+			s.queue(s.cloud),
+			s.queue(s.cloud),
+			s.queue(s.local)
+		];
+		await flush();
+		runs.setRunState(s.db, system, approving, 'waiting_approval');
+
+		expect(runner.pauseAll()).toEqual([local, cloud, approving]);
+
+		for (const id of [local, cloud, approving]) {
+			expect(s.row(id)).toMatchObject({ state: 'paused', halted: 1, token_hash: null });
+			expect(fake.call(id).io.signal.aborted).toBe(true);
+		}
+		const fresh = s.queue(s.cloud);
+		await flush();
+		expect([queued, fresh].map(s.state)).toEqual(['queued', 'queued']);
+		expect(haltKind(s.db)).toBe('pause');
+		expect(runs.waitReason(s.db, queued, LIMITS)?.text).toBe(
+			'wartet: alle Runs angehalten — Fortsetzen mit :fortsetzen all.'
+		);
+		expect(s.comments()).toEqual([]);
+	});
+
+	it('names the kind of halt: pausing keeps a stop a stop, and stopping turns a pause into a stop', async () => {
+		const s = setup();
+		start(s.db, { builtin: fakeExecutor().executor });
+
+		pauseRuns(s.db, user);
+		const pausedAt = haltedSince(s.db);
+		haltRuns(s.db, user);
+		expect([haltKind(s.db), haltedSince(s.db)]).toEqual(['stop', pausedAt]);
+		pauseRuns(s.db, user);
+		expect(haltKind(s.db)).toBe('stop');
+		releaseHalt(s.db, user);
+		expect(haltKind(s.db)).toBeNull();
+	});
+
+	it('resumes a halted run in a continuation run with resume reason halt and the human priority, claimed before older queued work', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const halted = s.queue(s.local);
+		await flush();
+		runner.pause(halted);
+		const [busy, older] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+
+		const { id: continuation } = resumeRun(s.db, user, halted);
+
+		expect(s.row(continuation)).toMatchObject({
+			state: 'queued',
+			trigger: 'resume',
+			priority: 'human',
+			resumed_from_run_id: halted,
+			resume_reason: 'halt',
+			agent_profile_id: s.local,
+			halted: 0
+		});
+		fake.call(busy).done();
+		await flush();
+		expect([continuation, older].map(s.state)).toEqual(['running', 'queued']);
+		expect(fake.call(continuation).run).toMatchObject({
+			ticketId: s.ticketId,
+			profile: { id: s.local }
+		});
+		expect(() => resumeRun(s.db, user, halted)).toThrow(
+			expect.objectContaining({
+				code: 'already_resumed',
+				message: `Run ${halted} setzt schon in Run ${continuation} fort.`,
+				hint: resumeWayOut
+			})
+		);
+	});
+
+	it('refuses to resume a run that is unknown or was not halted, names the way out and queues nothing', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
+		const [running, asking, done] = [s.queue(s.local), s.queue(s.local), s.queue(s.local)];
+		await flush();
+		fake.call(asking).done({ state: 'paused' });
+		fake.call(done).done();
+		await flush();
+		const before = s.db.prepare('SELECT count(*) AS n FROM runs').get();
+
+		expect(() => resumeRun(s.db, user, 999)).toThrow(
+			expect.objectContaining({
+				code: 'not_found',
+				message: 'Run 999 gibt es nicht.',
+				hint: resumeWayOut
+			})
+		);
+		for (const [id, state] of [
+			[running, 'running'],
+			[asking, 'paused'],
+			[done, 'succeeded']
+		] as const)
+			expect(() => resumeRun(s.db, user, id)).toThrow(
+				expect.objectContaining({
+					code: 'run_not_halted',
+					message: `Run ${id} ist nicht angehalten („${state}“) — fortsetzen lässt sich nur ein Run, den :anhalten pausiert hat.`,
+					hint: resumeWayOut
+				})
+			);
+		expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual(before);
+	});
+
+	it('never resumes a run the stop cancelled: only a new run continues its ticket', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const stopped = s.queue(s.local);
+		await flush();
+		runner.halt();
+
+		expect(() => resumeRun(s.db, user, stopped)).toThrow(
+			expect.objectContaining({
+				code: 'run_not_halted',
+				message: `Run ${stopped} ist nicht angehalten („cancelled“) — fortsetzen lässt sich nur ein Run, den :anhalten pausiert hat.`,
+				hint: 'Ein abgebrochener Run lässt sich nicht fortsetzen; einen neuen startet :run in der Run-Akte.'
+			})
+		);
+		expect(resumeAll(s.db, user)).toEqual([]);
+		expect(continuationsOf(s, stopped)).toEqual([]);
+		expect(() =>
+			runs.createRun(s.db, user, {
+				ticketId: s.ticketId,
+				profileId: s.local,
+				resumedFromRunId: stopped
+			})
+		).toThrow(expect.objectContaining({ code: 'invalid_resume' }));
+		expect(s.state(stopped)).toBe('cancelled');
+	});
+
+	it('resumes every halted run and lifts the halt with :fortsetzen all, whether the halt was a pause or a stop', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor }, { global: 10, pools: { local: 10 } });
+		const [first, second] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		runner.pauseAll();
+		const queued = s.queue(s.local);
+
+		const afterPause = resumeAll(s.db, user);
+		await flush();
+
+		expect(afterPause).toHaveLength(2);
+		expect(afterPause.map((id) => s.row(id))).toMatchObject(
+			[first, second].map((halted) => ({
+				state: 'running',
+				resumed_from_run_id: halted,
+				resume_reason: 'halt',
+				priority: 'human'
+			}))
+		);
+		expect(s.state(queued)).toBe('running');
+		expect(haltKind(s.db)).toBeNull();
+
+		const pausedAlone = afterPause[0];
+		runner.pause(pausedAlone);
+		runner.halt();
+		const waiting = s.queue(s.local);
+		const afterStop = resumeAll(s.db, user);
+		await flush();
+
+		expect(afterStop.map((id) => s.row(id).resumed_from_run_id)).toEqual([pausedAlone]);
+		expect(continuationsOf(s, afterPause[1])).toEqual([]); // cancelled by the stop
+		expect([waiting, ...afterStop].map(s.state)).toEqual(['running', 'running']);
+		expect(haltKind(s.db)).toBeNull();
+	});
+
+	it('lets only the human pause or resume runs: an agent or the system gets requires_human with a way out', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [running, halted] = [s.queue(s.local), s.queue(s.cloud)];
+		await flush();
+		runner.pause(halted);
+		const refused = (message: string) =>
+			expect.objectContaining({
+				code: 'requires_human',
+				message,
+				hint: 'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet, ob Runs anhalten.'
+			});
+
+		for (const actor of [agent, system]) {
+			expect(() => runner.pause(running, actor)).toThrow(refused('Runs hält nur der Mensch an.'));
+			expect(() => runner.pauseAll(actor)).toThrow(refused('Runs hält nur der Mensch an.'));
+			expect(() => resumeRun(s.db, actor, halted)).toThrow(
+				refused('Angehaltene Runs setzt nur der Mensch fort.')
+			);
+			expect(() => resumeAll(s.db, actor)).toThrow(
+				refused('Angehaltene Runs setzt nur der Mensch fort.')
+			);
+		}
+		expect(s.state(running)).toBe('running');
+		expect(fake.call(running).io.signal.aborted).toBe(false);
+		expect(haltedSince(s.db)).toBeNull();
+		expect(continuationsOf(s, halted)).toEqual([]);
 	});
 });

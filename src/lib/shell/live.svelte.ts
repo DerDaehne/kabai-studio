@@ -8,16 +8,19 @@ export type LiveRun = {
 	project: ProjectRef;
 	/** e.g. `STU-12` */
 	ticket: string;
-	/** `waiting`: holds for the human, on an approval or an open question. */
-	state: 'queued' | 'running' | 'waiting';
+	/** `waiting`: holds for the human, on an approval or an open question; `paused`: the human halted it, `:fortsetzen` resumes it. */
+	state: 'queued' | 'running' | 'waiting' | 'paused';
 };
+
+/** `stop` cancelled the active runs, `pause` paused them; either holds the queue until `:fortsetzen all`. */
+export type HaltKind = 'stop' | 'pause';
 
 export type LiveState = {
 	projects: ProjectRef[];
 	runs: LiveRun[];
 	openQuestions: number;
-	/** The kill switch is set: no run starts until the human releases it. */
-	halted: boolean;
+	/** While set, no run starts until the human resumes all (`:fortsetzen all`). */
+	halt: HaltKind | null;
 	/** Running or waiting for an approval, in every project: what the kill switch would cancel. */
 	activeRuns: number;
 };
@@ -48,7 +51,7 @@ export const live: LiveState = $state({
 	projects: [],
 	runs: [],
 	openQuestions: 0,
-	halted: false,
+	halt: null,
 	activeRuns: 0
 });
 
@@ -59,38 +62,41 @@ export function showLive(state: LiveState) {
 	shell.agents = agentChips(state.runs);
 }
 
-/** One chip per run an agent works on or holds in; a queued run has no agent at work yet. */
+/** One chip per run an agent works on or holds in; a queued or halted run has no agent at work. */
 export const agentChips = (runs: LiveRun[]): AgentChip[] =>
-	runs.flatMap((run) =>
-		run.state === 'queued'
-			? []
-			: [
-					{
-						id: run.id,
-						name: run.profile,
-						location: run.location,
-						project: run.project,
-						state: run.state
-					}
-				]
+	runs.flatMap(({ id, profile, location, project, state }) =>
+		state === 'running' || state === 'waiting'
+			? [{ id, name: profile, location, project, state }]
+			: []
 	);
 
 export const openQuestionsLabel = (count: number) =>
 	`${count} offene ${count === 1 ? 'Frage' : 'Fragen'}`;
 
-/** The head dock's signal while the kill switch is set. */
-export const haltLabel = (runs: LiveRun[]) =>
-	`Angehalten · ${runs.filter((run) => run.state === 'queued').length} wartend`;
+const countOf = (runs: LiveRun[], state: LiveRun['state']) =>
+	runs.filter((run) => run.state === state).length;
 
-function activeRunsText(count: number) {
+/** The head dock's signal while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
+export const haltLabel = (halt: HaltKind, runs: LiveRun[]) =>
+	halt === 'stop'
+		? `Gestoppt · ${countOf(runs, 'queued')} wartend`
+		: `Angehalten · ${countOf(runs, 'paused')} pausiert`;
+
+const QUEUE_WAITS = 'Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).';
+
+function activeRunsText(count: number, what: string) {
 	if (count === 0) return 'Gerade läuft kein Run.';
-	if (count === 1) return '1 Run läuft und wird sofort abgebrochen.';
-	return `${count} Runs laufen und werden sofort abgebrochen.`;
+	if (count === 1) return `1 Run läuft und wird sofort ${what}.`;
+	return `${count} Runs laufen und werden sofort ${what}.`;
 }
 
-/** The confirmation before halting: what gets cancelled and how the queue goes on. */
-export const haltQuestion = (activeRuns: number) =>
-	`${activeRunsText(activeRuns)} Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen).`;
+/** The confirmation before `:stop`: what gets cancelled and how the queue goes on. */
+export const stopQuestion = (activeRuns: number) =>
+	`${activeRunsText(activeRuns, 'abgebrochen')} ${QUEUE_WAITS}`;
+
+/** The confirmation before a global `:anhalten`: what gets paused, what is lost and how everything goes on. */
+export const pauseQuestion = (activeRuns: number) =>
+	`${activeRunsText(activeRuns, 'angehalten')}${activeRuns ? ' Der angefangene Schritt wird verworfen, :fortsetzen all setzt die Arbeit fort.' : ''} ${QUEUE_WAITS}`;
 
 /** Lets a view follow the events of all projects over the tab's one connection; returns the unsubscribe function. */
 export function onLiveEvent(listener: (event: LiveEvent) => void): () => void {

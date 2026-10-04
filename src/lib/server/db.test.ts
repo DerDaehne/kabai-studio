@@ -317,6 +317,131 @@ describe('migrate', () => {
 		expect(db.prepare('SELECT count(*) AS n FROM run_events').get()).toEqual({ n: 0 });
 		expect(migrate(db)).toEqual([]);
 	});
+
+	describe('013 on a database with runs in every state and every resume reason', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', {
+			query: '?raw',
+			import: 'default',
+			eager: true
+		});
+		const token = (n: number) => String(n).repeat(64);
+
+		/** The state before 013: runs of every state and resume reason, each referenced from every table that can. */
+		function dbBefore013() {
+			const db = openDb(':memory:');
+			migrate(
+				db,
+				Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/013'))
+			);
+			db.exec(`
+				INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+				INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'In Arbeit');
+				INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Old');
+				INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'p', 'builtin', 'openai-compatible', 'm');
+				INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger, state, token_hash, worktree_path, branch,
+						resumed_from_run_id, tokens_in, tokens_out, cost, error, created_at, started_at, finished_at, priority,
+						resume_reason, not_before) VALUES
+					(1, 100, 10, 1, 'manual', 'paused', NULL, '/w/1', 'ticket/1', NULL, 10, 2, 0.5, NULL,
+						'2026-10-01 10:00:00', '2026-10-01 10:00:01', '2026-10-01 10:05:00', 'human', NULL, NULL),
+					(2, 100, 10, 1, 'resume', 'paused', NULL, NULL, NULL, 1, 0, 0, 0, NULL,
+						'2026-10-01 10:05:00', '2026-10-01 10:06:00', '2026-10-01 10:07:00', 'normal', 'context_budget', NULL),
+					(3, 100, 10, 1, 'resume', 'failed', NULL, NULL, NULL, 2, 0, 0, 0, '[step_limit] zu viele Schritte',
+						'2026-10-01 10:07:00', '2026-10-01 10:08:00', '2026-10-01 10:09:00', 'review', 'recovery', NULL),
+					(4, 100, 10, 1, 'resume', 'queued', NULL, NULL, NULL, 2, 0, 0, 0, NULL,
+						'2026-10-01 10:07:00', NULL, NULL, 'blocker', 'quota', '2026-10-02T15:00:00.000Z'),
+					(5, 100, 10, NULL, 'on_enter', 'running', '${token(5)}', NULL, NULL, NULL, 0, 0, 0, NULL,
+						'2026-10-01 11:00:00', '2026-10-01 11:00:01', NULL, 'normal', NULL, NULL),
+					(6, 100, NULL, 1, 'manual', 'waiting_approval', '${token(6)}', NULL, NULL, NULL, 0, 0, 0, NULL,
+						'2026-10-01 11:00:00', '2026-10-01 11:00:01', NULL, 'normal', NULL, NULL),
+					(7, 100, 10, 1, 'manual', 'succeeded', NULL, NULL, NULL, NULL, 5, 5, 0, NULL,
+						'2026-10-01 12:00:00', '2026-10-01 12:00:01', '2026-10-01 12:01:00', 'normal', NULL, NULL),
+					(8, 100, 10, 1, 'manual', 'cancelled', NULL, NULL, NULL, NULL, 0, 0, 0, NULL,
+						'2026-10-01 12:00:00', NULL, '2026-10-01 12:00:30', 'normal', NULL, NULL);
+				INSERT INTO run_events (run_id, seq, type, payload, idempotency_key, created_at) VALUES
+					(1, 1, 'message', '{"text":"Stand"}', 'handoff', '2026-10-01 10:04:59'),
+					(5, 1, 'intervention', '{"kind":"stagnation","attempt":1,"max":2}', NULL, '2026-10-01 11:00:02');
+				INSERT INTO comments (id, ticket_id, author_kind, author, body, run_id) VALUES (1, 100, 'system', 'system (Run 3)', 'fehlgeschlagen', 3);
+				INSERT INTO questions (id, ticket_id, run_id, question) VALUES (1, 100, 1, 'Wie weiter?');
+				INSERT INTO idempotent_calls (run_id, key, request_hash, result) VALUES (5, 'k1', 'h', '{}');
+				INSERT INTO runner_halt (id, halted_at) VALUES (1, '2026-10-01 13:00:00');
+			`);
+			return db;
+		}
+
+		const everyRow = (db: ReturnType<typeof openDb>) => ({
+			runs: db.prepare('SELECT * FROM runs ORDER BY id').all(),
+			runEvents: db.prepare('SELECT * FROM run_events ORDER BY run_id, seq').all(),
+			comments: db.prepare('SELECT * FROM comments ORDER BY id').all(),
+			questions: db.prepare('SELECT * FROM questions ORDER BY id').all(),
+			idempotentCalls: db.prepare('SELECT * FROM idempotent_calls').all()
+		});
+
+		it('keeps every run with all its columns and every row that references a run', () => {
+			const db = dbBefore013();
+			const before = everyRow(db);
+
+			expect(migrate(db)[0]).toBe('013_halt_kind.sql');
+
+			const after = everyRow(db);
+			expect(after.runs).toEqual(before.runs.map((run) => ({ ...run, halted: 0 })));
+			expect({ ...after, runs: before.runs }).toEqual(before);
+			expect(before.runs).toHaveLength(8);
+			expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+			expect(
+				db
+					.prepare(
+						"SELECT name FROM sqlite_master WHERE tbl_name = 'runs' AND type = 'index' AND sql IS NOT NULL"
+					)
+					.all()
+			).toEqual([{ name: 'runs_by_ticket' }]);
+			expect(migrate(db)).toEqual([]);
+		});
+
+		it('turns the halt that was set into a stop and accepts only stop and pause', () => {
+			const db = dbBefore013();
+			migrate(db);
+
+			expect(db.prepare('SELECT id, halted_at, kind FROM runner_halt').all()).toEqual([
+				{ id: 1, halted_at: '2026-10-01 13:00:00', kind: 'stop' }
+			]);
+			db.exec("UPDATE runner_halt SET kind = 'pause'");
+			expect(() => db.exec("UPDATE runner_halt SET kind = 'nap'")).toThrow(/CHECK/);
+		});
+
+		it('accepts the resume reason halt and marks only a paused run as halted, with every other rule of runs still enforced', () => {
+			const db = dbBefore013();
+			migrate(db);
+
+			db.exec("UPDATE runs SET resume_reason = 'halt' WHERE id = 4");
+			expect(() => db.exec("UPDATE runs SET resume_reason = 'boredom' WHERE id = 4")).toThrow(
+				/CHECK/
+			);
+			db.exec('UPDATE runs SET halted = 1 WHERE id = 1');
+			expect(() => db.exec('UPDATE runs SET halted = 1 WHERE id = 7')).toThrow(/CHECK/);
+			expect(() => db.exec('UPDATE runs SET halted = 2 WHERE id = 2')).toThrow(/CHECK/);
+			expect(() => db.exec("UPDATE runs SET state = 'failed' WHERE id = 7")).toThrow(/CHECK/);
+			expect(() => db.exec("UPDATE runs SET not_before = 'soon' WHERE id = 4")).toThrow(/CHECK/);
+			expect(() => db.exec("UPDATE runs SET priority = 'urgent' WHERE id = 4")).toThrow(/CHECK/);
+			expect(() => db.exec(`UPDATE runs SET token_hash = '${token(5)}' WHERE id = 6`)).toThrow(
+				/UNIQUE/
+			);
+			expect(() =>
+				db.exec("INSERT INTO run_events (run_id, seq, type) VALUES (99, 1, 'log')")
+			).toThrow(/FOREIGN KEY/);
+
+			db.exec('DELETE FROM runs WHERE id = 2');
+			expect(db.prepare('SELECT resumed_from_run_id FROM runs WHERE id IN (3, 4)').all()).toEqual([
+				{ resumed_from_run_id: null },
+				{ resumed_from_run_id: null }
+			]);
+			db.exec('DELETE FROM runs WHERE id = 5');
+			expect(db.prepare('SELECT count(*) AS n FROM idempotent_calls').get()).toEqual({ n: 0 });
+			db.exec('DELETE FROM runs WHERE id IN (1, 3)');
+			expect(db.prepare('SELECT run_id FROM questions').all()).toEqual([{ run_id: null }]);
+			expect(db.prepare('SELECT run_id FROM comments').all()).toEqual([{ run_id: null }]);
+			expect(db.prepare('SELECT count(*) AS n FROM run_events').get()).toEqual({ n: 0 });
+		});
+	});
 });
 
 describe('migrate with foreign keys', () => {

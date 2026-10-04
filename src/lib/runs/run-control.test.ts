@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	durationText,
+	haltCommands,
 	originText,
 	runCommands,
 	stopTarget,
@@ -19,6 +20,8 @@ const tab = (overrides: Partial<RunTab> = {}): RunTab => ({
 	cost: 0,
 	resumedFrom: null,
 	resumeReason: null,
+	halted: false,
+	resumable: false,
 	...overrides
 });
 
@@ -26,6 +29,9 @@ describe('originText', () => {
 	it('names why a continuation run exists, and nothing for a run the human started', () => {
 		expect(originText(tab())).toBeUndefined();
 		expect(originText(tab({ resumedFrom: 3 }))).toBe('Fortsetzung nach deiner Antwort');
+		expect(originText(tab({ resumedFrom: 3, resumeReason: 'halt' }))).toBe(
+			'Fortsetzung nach Anhalten'
+		);
 		expect(originText(tab({ resumedFrom: 3, resumeReason: 'context_budget' }))).toBe(
 			'frischer Run nach Kontextgrenze'
 		);
@@ -84,6 +90,48 @@ describe('stopTarget', () => {
 	it('treats a run waiting for approval as active and an ended one as not', () => {
 		expect(stopTarget([tab({ id: 4, state: 'waiting_approval' })], 4)?.id).toBe(4);
 		expect(stopTarget([tab({ state: 'paused' }), tab({ state: 'cancelled' })], 1)).toBeUndefined();
+	});
+});
+
+describe('haltCommands', () => {
+	const halted = (id: number) => tab({ id, state: 'paused', halted: true, resumable: true });
+
+	it('pauses the selected running run with :anhalten, else the newest one, and offers :fortsetzen only for a halted run', () => {
+		const act = { pause: vi.fn(), resume: vi.fn() };
+		const tabs = [tab({ id: 9, state: 'running' }), tab({ id: 8, state: 'waiting_approval' })];
+
+		expect(haltCommands(tabs, 8, act).map((c) => [c.id, c.label, c.detail])).toEqual([
+			['pause', ':anhalten', 'Run 8 anhalten, andere Runs laufen weiter']
+		]);
+		haltCommands(tabs, 3, act)[0].run?.();
+		expect(act.pause).toHaveBeenCalledWith(tabs[0]);
+	});
+
+	it('resumes the selected halted run with :fortsetzen, else the newest one, but never one already resumed', () => {
+		const act = { pause: vi.fn(), resume: vi.fn() };
+		const tabs = [
+			tab({ id: 9, state: 'paused', halted: true, resumable: false }),
+			halted(8),
+			halted(7)
+		];
+
+		const [, resume] = haltCommands(tabs, 9, act);
+		expect([resume.id, resume.label, resume.detail]).toEqual([
+			'resume',
+			':fortsetzen',
+			'Run 8 fortsetzen'
+		]);
+		resume.run?.();
+		haltCommands(tabs, 7, act)[1].run?.();
+		expect(act.resume.mock.calls).toEqual([[tabs[1]], [tabs[2]]]);
+	});
+
+	it('keeps :anhalten in the Run-Akte while no run of the ticket works, so it never halts every run from here', () => {
+		const act = { pause: vi.fn(), resume: vi.fn() };
+		const [pause] = haltCommands([tab({ state: 'queued' }), tab()], undefined, act);
+		expect([pause.id, pause.detail]).toEqual(['pause', 'In diesem Ticket läuft kein Run']);
+		pause.run?.();
+		expect(act.pause).toHaveBeenCalledWith(undefined);
 	});
 });
 

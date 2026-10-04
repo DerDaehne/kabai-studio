@@ -23,8 +23,15 @@ export type SuggestionSources = {
 export const commands: Suggestion[] = [
 	{ id: 'run', label: ':run', detail: 'Ticket als Run starten' },
 	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
-	{ id: 'halt', label: ':anhalten', detail: 'Not-Aus: alle Agent-Runs sofort anhalten' },
-	{ id: 'release', label: ':fortsetzen', detail: 'Nach dem Not-Aus: wartende Runs starten wieder' },
+	{ id: 'stop', label: ':stop', detail: 'Not-Aus: alle Agent-Runs sofort abbrechen' },
+	// only `:fortsetzen all` may match the query "fortsetzen all", or ↵ on it would run another command first
+	{ id: 'pause', label: ':anhalten', detail: 'Alle Agent-Runs pausieren' },
+	{ id: 'resume', label: ':fortsetzen', detail: 'Einen angehaltenen Run weiterlaufen lassen' },
+	{
+		id: 'resume-all',
+		label: ':fortsetzen all',
+		detail: 'Alle angehaltenen Runs fortsetzen, Not-Aus lösen'
+	},
 	{
 		id: 'projects',
 		label: ':projekte',
@@ -73,6 +80,42 @@ export function focusTarget(
 ): ProjectRef | null | undefined {
 	if (suggestion.id === 'fokus-aus') return null;
 	return projects.find((project) => focusCommandId(project.id) === suggestion.id);
+}
+
+const resumeCommandId = (runId: number) => `resume-${runId}`;
+const RESUME_COMMAND_ID = /^resume-(\d+)$/;
+const TYPED_RESUME = /^:\s*fortsetzen\s+(\d+)$/;
+
+/**
+ * One `:fortsetzen N` per halted run, and one for a number typed in `value` that is none of them, so the server can say why
+ * it cannot resume that run.
+ */
+export function resumeCommands(
+	halted: { id: number; ticket: string }[],
+	value: string
+): Suggestion[] {
+	const listed = halted.map((run) => ({
+		id: resumeCommandId(run.id),
+		label: `:fortsetzen ${run.id}`,
+		detail: `Run ${run.id} · ${run.ticket} fortsetzen`
+	}));
+	const typed = TYPED_RESUME.exec(value.trim())?.[1];
+	if (typed === undefined || halted.some((run) => String(run.id) === typed)) return listed;
+	return [
+		...listed,
+		{
+			id: resumeCommandId(Number(typed)),
+			label: `:fortsetzen ${typed}`,
+			detail: `Run ${typed} fortsetzen`
+		}
+	];
+}
+
+/** What executing `suggestion` resumes: every halted run, one run, or `undefined` when it resumes nothing. */
+export function resumeTarget(suggestion: Suggestion): number | 'all' | undefined {
+	if (suggestion.id === 'resume-all') return 'all';
+	const runId = RESUME_COMMAND_ID.exec(suggestion.id)?.[1];
+	return runId === undefined ? undefined : Number(runId);
 }
 
 export function parseInput(value: string): { mode: CommandMode | null; query: string } {

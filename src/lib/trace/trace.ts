@@ -19,6 +19,8 @@ export type RunTrace = {
 	continuedBy?: number;
 	/** Whether this run holds on a question the human has not answered yet. */
 	waitsForAnswer: boolean;
+	/** The human paused it (`:anhalten`). */
+	halted: boolean;
 	events: TraceEvent[];
 };
 

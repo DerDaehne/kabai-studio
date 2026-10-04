@@ -99,11 +99,13 @@ it('tells user, agent and system comments apart with a distinct icon plus text, 
 	expect(body).toContain('Bitte prüfen.');
 
 	// one <svg><path> per comment's author icon, each aria-hidden; the three must differ from each other
-	const icons = [...body.matchAll(/<svg[^>]*aria-hidden="true"[^>]*><path d="([^"]+)">/g)].map(
-		(m) => m[1]
-	);
-	expect(icons.length).toBeGreaterThanOrEqual(3);
-	expect(new Set(icons.slice(0, 3)).size).toBe(3); // user, agent, system each get a different glyph
+	const icons = [
+		...body.matchAll(
+			/<span class="author[^"]*"><svg[^>]*aria-hidden="true"[^>]*><path d="([^"]+)">/g
+		)
+	].map((m) => m[1]);
+	expect(icons).toHaveLength(3);
+	expect(new Set(icons).size).toBe(3); // user, agent, system each get a different glyph
 });
 
 it('groups relations under a German label and marks a still-blocking predecessor', () => {

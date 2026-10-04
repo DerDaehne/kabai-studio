@@ -1,16 +1,20 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { pauseRun, resumeRun } from '$lib/shell/halt';
 	import { bindKeys, readKey } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
-	import { RUN_STATES } from '$lib/trace/RunTrace.svelte';
+	import { runStateOf } from '$lib/trace/RunTrace.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
+	import { toast } from '$lib/ui/toast.svelte';
 	import {
 		durationText,
+		haltCommands,
+		isPausable,
 		isStoppable,
 		originText,
 		runCommands,
@@ -33,8 +37,10 @@
 	let profileId = $derived(start.preselected);
 	let startForm: HTMLFormElement | undefined = $state();
 	let stopForm: HTMLFormElement | undefined = $state();
-	/** The run the open confirmation would stop. */
+	/** The run the open confirmation would cancel. */
 	let stopping = $state<RunTab>();
+	/** The run the open confirmation would pause. */
+	let pausing = $state<RunTab>();
 	const target = $derived(stopTarget(runs, selected));
 
 	async function startWith(id: number) {
@@ -43,17 +49,35 @@
 		startForm?.requestSubmit();
 	}
 
+	function askToPause(tab: RunTab | undefined) {
+		if (tab) pausing = tab;
+		else
+			toast(
+				'In diesem Ticket läuft gerade kein Run, den :anhalten pausieren könnte. Alle Runs hält :anhalten außerhalb der Run-Akte an.'
+			);
+	}
+
+	async function confirmPause() {
+		const tab = pausing;
+		pausing = undefined;
+		if (tab) await pauseRun(tab.id);
+	}
+
 	$effect(() => {
-		shell.viewCommands = runCommands(start.profiles, profileId, startWith);
+		shell.viewCommands = [
+			...runCommands(start.profiles, profileId, startWith),
+			...haltCommands(runs, selected, { pause: askToPause, resume: (tab) => resumeRun(tab.id) })
+		];
 		return () => (shell.viewCommands = []);
 	});
 	$effect(() => bindKeys({ stopRun: target ? () => (stopping = target) : undefined }));
 
-	// The router stays out of open dialogs, so the stop confirmation takes its y itself — with Alt when single keys are off.
+	// The router stays out of open dialogs, so each confirmation takes its y itself — with Alt when single keys are off.
 	function confirmWithY(event: KeyboardEvent) {
-		if (!stopping || readKey(event) !== 'y') return;
+		if ((!stopping && !pausing) || readKey(event) !== 'y') return;
 		event.preventDefault();
-		stopForm?.requestSubmit();
+		if (stopping) stopForm?.requestSubmit();
+		else void confirmPause();
 	}
 
 	let now = $state(Date.now());
@@ -101,7 +125,7 @@
 		<nav aria-label="Runs dieses Tickets">
 			<ol class="tabs">
 				{#each runs as tab (tab.id)}
-					{@const state = RUN_STATES[tab.state]}
+					{@const state = runStateOf(tab.state, tab.halted)}
 					{@const origin = originText(tab)}
 					<li class:selected={tab.id === selected}>
 						<a
@@ -119,10 +143,21 @@
 							</p>
 						{/if}
 						{#if tab.waitText}<p class="wait" role="status">{tab.waitText}</p>{/if}
-						{#if isStoppable(tab)}
-							<Button size="sm" variant="ghost" onclick={() => (stopping = tab)}>
-								Stoppen{tab === target ? ' (x)' : ''}
-							</Button>
+						{#if isStoppable(tab) || tab.resumable}
+							<div class="actions">
+								{#if tab.resumable}
+									<Button size="sm" onclick={() => resumeRun(tab.id)}>Fortsetzen</Button>
+								{/if}
+								{#if isPausable(tab)}
+									<Button size="sm" variant="ghost" onclick={() => (pausing = tab)}>Anhalten</Button
+									>
+								{/if}
+								{#if isStoppable(tab)}
+									<Button size="sm" variant="ghost" onclick={() => (stopping = tab)}>
+										Abbrechen{tab === target ? ' (x)' : ''}
+									</Button>
+								{/if}
+							</div>
 						{/if}
 					</li>
 				{/each}
@@ -133,12 +168,12 @@
 
 <Dialog
 	bind:open={() => stopping !== undefined, (open) => !open && (stopping = undefined)}
-	title="Run {stopping?.id} stoppen?"
+	title="Run {stopping?.id} abbrechen?"
 >
 	{#if stopping}
 		<p>
 			Der Agent bricht sofort ab. Das lässt sich nicht rückgängig machen — für einen neuen Versuch
-			startest du einen neuen Run.
+			startest du einen neuen Run. Pausieren, um später weiterzumachen: Anhalten.
 		</p>
 		<form
 			class="confirm"
@@ -153,11 +188,26 @@
 		>
 			<input type="hidden" name="runId" value={stopping.id} />
 			{@render formError('stop')}
-			<Button type="button" variant="ghost" onclick={() => (stopping = undefined)}>Abbrechen</Button
+			<Button type="button" variant="ghost" onclick={() => (stopping = undefined)}
+				>Weiterlaufen lassen</Button
 			>
-			<Button type="submit" variant="danger">Stoppen (y)</Button>
+			<Button type="submit" variant="danger">Abbrechen (y)</Button>
 		</form>
 	{/if}
+</Dialog>
+
+<Dialog
+	bind:open={() => pausing !== undefined, (open) => !open && (pausing = undefined)}
+	title="Run {pausing?.id} anhalten?"
+>
+	<p>
+		Der Agent hält sofort an, sein angefangener Schritt wird verworfen. :fortsetzen setzt ihn fort;
+		andere Runs laufen weiter.
+	</p>
+	{#snippet footer()}
+		<Button variant="ghost" onclick={() => (pausing = undefined)}>Weiterlaufen lassen</Button>
+		<Button variant="primary" onclick={confirmPause}>Anhalten (y)</Button>
+	{/snippet}
 </Dialog>
 
 <style>
@@ -211,6 +261,11 @@
 	}
 	.facts {
 		color: var(--text-muted);
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-1);
 	}
 	.confirm {
 		display: flex;

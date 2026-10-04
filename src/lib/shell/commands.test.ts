@@ -5,6 +5,8 @@ import {
 	focusTarget,
 	matchesWordStart,
 	parseInput,
+	resumeCommands,
+	resumeTarget,
 	suggest,
 	suggestionsFor,
 	withViewCommands,
@@ -117,11 +119,56 @@ describe('suggestionsFor', () => {
 	});
 });
 
-describe('kill switch commands', () => {
-	it('offers :anhalten and :fortsetzen by name and both by "Not-Aus"', () => {
+describe('stop, pause and resume commands', () => {
+	const halted = [
+		{ id: 7, ticket: 'STU-3' },
+		{ id: 12, ticket: 'WEB-1' }
+	];
+	const withHalted = (typed: string) => ({
+		...sources,
+		commands: [...commands, ...resumeCommands(halted, typed)]
+	});
+
+	it('offers :stop by name and by "Not-Aus", together with the :fortsetzen all that lifts it', () => {
+		expect(labels(suggest(':', 'stop', sources))).toEqual([':stop']);
+		expect(labels(suggest(':', 'not-aus', sources))).toEqual([':stop', ':fortsetzen all']);
+	});
+
+	it('offers :anhalten by name and :fortsetzen first among its forms, so ↵ never resumes everything by surprise', () => {
 		expect(labels(suggest(':', 'anh', sources))).toEqual([':anhalten']);
-		expect(labels(suggest(':', 'fort', sources))).toEqual([':fortsetzen']);
-		expect(labels(suggest(':', 'not-aus', sources))).toEqual([':anhalten', ':fortsetzen']);
+		expect(labels(suggest(':', 'fort', withHalted(':fort')))).toEqual([
+			':fortsetzen',
+			':fortsetzen all',
+			':fortsetzen 7',
+			':fortsetzen 12'
+		]);
+		expect(labels(suggest(':', 'fortsetzen all', withHalted(':fortsetzen all')))).toEqual([
+			':fortsetzen all'
+		]);
+	});
+
+	it('suggests one :fortsetzen N per halted run with its ticket, and the typed number of any other run', () => {
+		expect(resumeCommands(halted, ':fort')).toEqual([
+			{ id: 'resume-7', label: ':fortsetzen 7', detail: 'Run 7 · STU-3 fortsetzen' },
+			{ id: 'resume-12', label: ':fortsetzen 12', detail: 'Run 12 · WEB-1 fortsetzen' }
+		]);
+		expect(labels(suggest(':', 'fortsetzen 12', withHalted(':fortsetzen 12')))).toEqual([
+			':fortsetzen 12'
+		]);
+		expect(labels(suggest(':', 'fortsetzen 99', withHalted(':fortsetzen 99')))).toEqual([
+			':fortsetzen 99'
+		]);
+		expect(resumeCommands([], ' :fortsetzen  99 ')).toEqual([
+			{ id: 'resume-99', label: ':fortsetzen 99', detail: 'Run 99 fortsetzen' }
+		]);
+	});
+
+	it('resolves :fortsetzen all and :fortsetzen N to what they resume, and every other suggestion to undefined', () => {
+		const all = commands.find((command) => command.label === ':fortsetzen all')!;
+		expect(resumeTarget(all)).toBe('all');
+		expect(resumeTarget(resumeCommands(halted, '')[1])).toBe(12);
+		for (const id of ['resume', 'pause', 'stop', 'run'])
+			expect(resumeTarget(commands.find((command) => command.id === id)!)).toBeUndefined();
 	});
 });
 
