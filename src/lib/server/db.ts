@@ -55,7 +55,8 @@ export function lockDataDir(dir = dataDir()): boolean {
 
 /**
  * Applies pending migrations in name order, each in its own transaction (so migration files contain no BEGIN/COMMIT),
- * and returns their names. Safe across processes: each transaction re-checks schema_migrations under the write lock.
+ * and returns their names. Foreign keys are off while a migration runs (ON DELETE actions do not fire) and are checked
+ * before its COMMIT. Safe across processes: each transaction re-checks schema_migrations under the write lock.
  * `beforeUpgrade` runs once before upgrading a non-empty DB; if it throws, nothing is applied.
  */
 export function migrate(
@@ -98,21 +99,52 @@ function isApplied(db: DatabaseSync, name: string): boolean {
 	return !!db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(name);
 }
 
-/** Applies one migration in its own write transaction; false if another process applied it first. */
+/**
+ * Applies one migration with foreign keys off, so that rebuilding a table (create new, copy, drop old, rename new) does
+ * not cascade into the rows referencing it; false if another process applied it first.
+ */
 function applyMigration(db: DatabaseSync, name: string, sql: string): boolean {
+	// Outside the transaction on purpose: SQLite ignores PRAGMA foreign_keys while a transaction is open.
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		return applyInTransaction(db, name, sql);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/** Runs the migration in its own write transaction and commits only if it leaves no dangling reference behind. */
+function applyInTransaction(db: DatabaseSync, name: string, sql: string): boolean {
 	db.exec('BEGIN IMMEDIATE');
 	try {
 		const runsHere = !isApplied(db, name);
 		if (runsHere) {
 			db.exec(sql);
+			assertNoDanglingReferences(db, name);
 			db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(name);
 		}
 		db.exec('COMMIT');
 		return runsHere;
 	} catch (err) {
 		if (db.isTransaction) db.exec('ROLLBACK'); // some errors already end the transaction themselves
+		if (err instanceof DomainError) throw err;
 		throw new Error(`Migration ${name} fehlgeschlagen`, { cause: err });
 	}
+}
+
+type ForeignKeyViolation = { table: string; rowid: number; parent: string };
+
+function assertNoDanglingReferences(db: DatabaseSync, name: string): void {
+	const violations = db.prepare('PRAGMA foreign_key_check').all() as ForeignKeyViolation[];
+	if (!violations.length) return;
+	const { table, rowid, parent } = violations[0];
+	throw new DomainError(
+		'migration_foreign_key_violation',
+		`Migration ${name} hinterlässt Verweise ins Leere (${violations.length}), zuerst ${table} Zeile ${rowid} → ${parent}. ` +
+			'Die Migration wurde vollständig zurückgerollt.',
+		'Die Sicherung von vor dem Update aus backups/ im Datenverzeichnis mit restore zurückspielen und die vorherige ' +
+			'Studio-Version starten, oder eine Version mit korrigierter Migration installieren.'
+	);
 }
 
 let conn: DatabaseSync | undefined;

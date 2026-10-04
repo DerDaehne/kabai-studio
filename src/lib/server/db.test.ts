@@ -319,6 +319,111 @@ describe('migrate', () => {
 	});
 });
 
+describe('migrate with foreign keys', () => {
+	const shipped = import.meta.glob<string>('/migrations/*.sql', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	});
+	const foreignKeys = (db: ReturnType<typeof openDb>) =>
+		db.prepare('PRAGMA foreign_keys').get()?.foreign_keys;
+
+	function dbWithLinkedNotes() {
+		const db = openDb(':memory:');
+		migrate(db);
+		db.exec(`
+			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
+			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Ticket');
+			INSERT INTO notes (id, slug, title) VALUES (1, 'note-a', 'A'), (2, 'note-b', 'B');
+			INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);
+			INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (2, 1, 'references');
+			INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'documents');
+		`);
+		return db;
+	}
+
+	// The documented SQLite procedure for a change ALTER TABLE cannot do (here: a new CHECK value).
+	const rebuildNotes = `
+		CREATE TABLE notes_new (
+			id INTEGER PRIMARY KEY,
+			slug TEXT NOT NULL UNIQUE,
+			title TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'adr', 'hub', 'method')),
+			status TEXT,
+			body TEXT NOT NULL DEFAULT '',
+			tags TEXT NOT NULL DEFAULT '[]',
+			archived INTEGER NOT NULL DEFAULT 0,
+			verified_at TEXT,
+			verified_by_run_id INTEGER,
+			version INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		) STRICT;
+		INSERT INTO notes_new SELECT * FROM notes;
+		DROP TABLE notes;
+		ALTER TABLE notes_new RENAME TO notes;
+	`;
+
+	it('rebuilds a table that other tables reference without deleting the rows that reference it', () => {
+		const db = dbWithLinkedNotes();
+		const referencingRows = () => ({
+			links: db.prepare('SELECT * FROM note_links').all(),
+			projects: db.prepare('SELECT * FROM note_projects').all(),
+			tickets: db.prepare('SELECT * FROM note_tickets').all()
+		});
+		const before = referencingRows();
+
+		expect(migrate(db, { ...shipped, '/migrations/999_rebuild_notes.sql': rebuildNotes })).toEqual([
+			'999_rebuild_notes.sql'
+		]);
+
+		expect(referencingRows()).toEqual(before);
+		expect(before.links).toHaveLength(1);
+		// the references now point at the rebuilt table and are enforced again
+		expect(() =>
+			db.exec(
+				"INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (2, 999, 'references')"
+			)
+		).toThrow(/FOREIGN KEY/);
+	});
+
+	it('rolls back a migration that leaves a dangling reference and names the migration, table and row', () => {
+		const db = dbWithLinkedNotes();
+		// relies on ON DELETE CASCADE, which does not fire while a migration runs
+		const orphaning = {
+			...shipped,
+			'/migrations/999_drop_note.sql': 'DELETE FROM notes WHERE id = 2'
+		};
+
+		expect(() => migrate(db, orphaning)).toThrowError(
+			expect.objectContaining({
+				code: 'migration_foreign_key_violation',
+				message: expect.stringMatching(/999_drop_note\.sql.*note_links Zeile 1 .*notes/),
+				hint: expect.stringContaining('backups/')
+			})
+		);
+		expect(names(db)).not.toContain('999_drop_note.sql');
+		expect(db.prepare('SELECT id FROM notes ORDER BY id').all()).toEqual([{ id: 1 }, { id: 2 }]);
+		expect(db.prepare('SELECT count(*) AS n FROM note_links').get()).toEqual({ n: 1 });
+		expect(db.isTransaction).toBe(false);
+		expect(foreignKeys(db)).toBe(1);
+	});
+
+	it('turns foreign keys back on after each migration, whether it succeeded or failed', () => {
+		const db = openDb(':memory:');
+		const ok = { '/m/001_ok.sql': 'CREATE TABLE a (id INTEGER PRIMARY KEY)' };
+
+		migrate(db, ok);
+		expect(foreignKeys(db)).toBe(1);
+
+		expect(() => migrate(db, { ...ok, '/m/002_bad.sql': 'SELEKT kaputt' })).toThrow(
+			'Migration 002_bad.sql fehlgeschlagen'
+		);
+		expect(foreignKeys(db)).toBe(1);
+	});
+});
+
 describe('core schema', () => {
 	const db = openDb(':memory:');
 	migrate(db);
