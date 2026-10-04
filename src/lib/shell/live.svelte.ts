@@ -1,5 +1,8 @@
 import { afterNavigate, beforeNavigate, invalidate } from '$app/navigation';
+import { navigating as currentNavigation } from '$app/state';
 import { connectLiveUpdates, type LiveUpdatesHandle } from '$lib/live-updates';
+import { onMount } from 'svelte';
+import { on } from 'svelte/events';
 import { announceSignal, shell, type AgentChip, type ProjectRef } from './shell.svelte';
 
 export type LiveRun = {
@@ -35,23 +38,32 @@ export const LIVE_DEPENDENCY = 'studio:live';
 let navigating = false;
 const pendingInvalidations = new Set<string>();
 
+function replayPending() {
+	navigating = false;
+	for (const dependency of pendingInvalidations) void invalidate(dependency);
+	pendingInvalidations.clear();
+}
+
 /**
- * Call once, during the root layout's initialization (`beforeNavigate`/`afterNavigate` require that, like `onMount`).
- * Gates every `invalidateLive()` call against the current client navigation: SvelteKit's own `invalidate()` would
- * otherwise win the navigation-token race against a `goto()` in flight and silently cancel it. A reload that arrives
- * mid-navigation is deferred and replayed exactly once, right after the navigation lands. A navigation that unloads
- * the page (a full page load, an external link, the back/forward cache) never reaches `afterNavigate` in this page
- * instance, so it never starts the gate in the first place.
+ * Call once, during the root layout's initialization. Gates `invalidateLive()` against the current client
+ * navigation, deferring a reload and replaying it exactly once the navigation settles. SvelteKit's own
+ * `invalidate()` swaps the navigation token and would otherwise win the race against a `goto()` in flight,
+ * silently cancelling it.
  */
 export function gateLiveInvalidation() {
-	beforeNavigate(({ willUnload }) => {
-		if (!willUnload) navigating = true;
+	beforeNavigate(({ willUnload, complete }) => {
+		if (willUnload) return;
+		navigating = true;
+		// An unrelated invalidation (e.g. a use:enhance action's invalidateAll()) can also win that race and abort
+		// this navigation without ever reaching afterNavigate; release once nothing newer has taken its place.
+		complete.catch(() => {
+			if (!currentNavigation.complete || currentNavigation.complete === complete) replayPending();
+		});
 	});
-	afterNavigate(() => {
-		navigating = false;
-		for (const dependency of pendingInvalidations) void invalidate(dependency);
-		pendingInvalidations.clear();
-	});
+	afterNavigate(replayPending);
+	// A navigation that falls back to a full page load (a failed data request, a new deploy) never reaches
+	// afterNavigate either; pageshow with persisted fires once the frozen page returns from the bfcache.
+	onMount(() => on(window, 'pageshow', (event) => event.persisted && replayPending()));
 }
 
 /** The one place that reloads a dependency fed by live events; see `gateLiveInvalidation` for why it is gated. */
