@@ -1,3 +1,4 @@
+import type { ModelMessage, ToolCallPart, ToolResultPart } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
 import { contextBudget } from '../../agents/model-catalog';
 import * as board from '../domain/board';
@@ -29,6 +30,8 @@ export type PromptOptions = {
 	publicRepository?: boolean;
 	/** An instruction for this one run; it joins the profile's extra prompt in the override block. */
 	override?: string;
+	/** The run gets the conversation of the run it continues as turns before this prompt, which then leaves out that run's handoff. */
+	history?: boolean;
 };
 export type PromptBlock = { name: string; chars: number; truncated: boolean };
 /** `estimate` is in tokens, counted as characters / 4. */
@@ -78,6 +81,7 @@ type PreviousState = {
 	runId: number;
 	continuation: number;
 	reason: ResumeReason | null;
+	history: boolean;
 	handoff?: Handoff;
 	answer?: HumanAnswer;
 	intervention?: Intervention;
@@ -111,13 +115,13 @@ export function assemblePrompt(
 ): AssembledPrompt {
 	const context = {
 		...readContext(db, run.ticketId),
-		previous: run.id === undefined ? undefined : previousStateOf(db, run.id)
+		previous: run.id === undefined ? undefined : previousStateOf(db, run.id, opts.history ?? false)
 	};
 	const system = systemBlocks(context, run.profile, opts.override);
 	const candidates = CUTS.map((cut) =>
 		joined(system, userBlocks(context, cut, opts.publicRepository ?? false))
 	);
-	const budget = Math.floor(PROMPT_SHARE_OF_CONTEXT * contextBudget(run.profile));
+	const budget = promptBudget(run.profile);
 	const fitting = candidates.find((prompt) => prompt.estimate <= budget);
 	if (fitting) return { ...fitting, showsHumanAnswer: context.previous?.answer !== undefined };
 	throw new DomainError(
@@ -126,6 +130,10 @@ export function assemblePrompt(
 		'Notes vom Ticket abhängen, das Ticket kleiner schneiden oder ein Modell mit mehr Kontext wählen.'
 	);
 }
+
+/** In tokens: the share of the model's context that the prompt, together with a resumed conversation, may take. */
+export const promptBudget = (profile: PromptRun['profile']) =>
+	Math.floor(PROMPT_SHARE_OF_CONTEXT * contextBudget(profile));
 
 function readContext(db: DatabaseSync, ticketId: number): Context {
 	const t = board.ticket(db, ticketId);
@@ -322,7 +330,11 @@ const PAUSE_REASONS: Record<ResumeReason, string> = {
 };
 
 /** Only the last run of a chain leaves its state; the runs before it count as continuations. */
-function previousStateOf(db: DatabaseSync, runId: number): PreviousState | undefined {
+function previousStateOf(
+	db: DatabaseSync,
+	runId: number,
+	history: boolean
+): PreviousState | undefined {
 	const run = db
 		.prepare(
 			'SELECT resumed_from_run_id AS previous, resume_reason AS reason FROM runs WHERE id = ?'
@@ -337,6 +349,7 @@ function previousStateOf(db: DatabaseSync, runId: number): PreviousState | undef
 		runId: run.previous,
 		continuation: continuationOf(db, runId),
 		reason: run.reason,
+		history,
 		handoff: payloadOf(
 			`SELECT payload FROM run_events WHERE run_id = ? AND type = 'message' AND idempotency_key = 'handoff'`
 		),
@@ -420,8 +433,100 @@ function interventionSection(intervention: Intervention | undefined): string {
 	].join('\n');
 }
 
-function handoffSection({ runId, handoff }: PreviousState): string {
+function handoffSection({ runId, history, handoff }: PreviousState): string {
+	if (history)
+		return [
+			`### Conversation of run ${runId}`,
+			'The turns before this message are its work up to its last completed step.'
+		].join('\n');
 	if (!handoff?.text) return '';
 	const origin = handoff.generated ? ' (generated from its events: the model wrote none)' : '';
 	return [`### Handoff of run ${runId}${origin}`, handoff.text].join('\n');
 }
+
+/** Fresh runs start from the handoff on purpose: replaying the conversation that filled the context or got stuck would undo that. */
+const FRESH_RUN_REASONS: ReadonlySet<ResumeReason | null> = new Set(['context_budget', 'recovery']);
+
+/** A run event as the builtin executor records it; which payload fields are set depends on the type. */
+type StepEvent = {
+	type: string;
+	key: string;
+	payload: {
+		step?: number;
+		text?: string;
+		tool: string;
+		args?: unknown;
+		result: string;
+		isError: boolean;
+	};
+};
+
+/**
+ * The conversation of the run this one continues, up to its last completed step: its messages, and its tool calls paired
+ * with their results; reasoning stays out. Undefined if there is none, if it exceeds `budget` tokens, or for a fresh run.
+ */
+export function resumeHistoryOf(
+	db: DatabaseSync,
+	runId: number,
+	budget: number
+): ModelMessage[] | undefined {
+	const run = db
+		.prepare(
+			'SELECT resumed_from_run_id AS previous, resume_reason AS reason FROM runs WHERE id = ?'
+		)
+		.get(runId) as { previous: number | null; reason: ResumeReason | null } | undefined;
+	if (!run?.previous || FRESH_RUN_REASONS.has(run.reason)) return undefined;
+	const turns = mask(completedSteps(db, run.previous).flatMap(turnsOf));
+	const tokens = Math.ceil(JSON.stringify(turns).length / CHARS_PER_TOKEN);
+	return turns.length > 0 && tokens <= budget ? turns : undefined;
+}
+
+/** The events of each step that ended with its step log; a halted run's unfinished last step has none, nor have events outside a step. */
+function completedSteps(db: DatabaseSync, runId: number): StepEvent[][] {
+	const rows = db
+		.prepare(
+			'SELECT type, idempotency_key AS key, payload FROM run_events WHERE run_id = ? ORDER BY seq'
+		)
+		.all(runId) as { type: string; key: string; payload: string }[];
+	const events = rows
+		.map((row): StepEvent => ({ ...row, payload: JSON.parse(row.payload) }))
+		.filter((e) => e.payload.step !== undefined);
+	const steps = [...Map.groupBy(events, (e) => e.payload.step).values()];
+	return steps.filter((step) => step.some((e) => e.type === 'log'));
+}
+
+/** A provider refuses a tool call without its result, so a call is replayed only with the result of its call id. */
+function turnsOf(step: StepEvent[]): ModelMessage[] {
+	const results = new Map(
+		step.filter((e) => e.type === 'tool_result').map((e) => [e.key, e.payload])
+	);
+	const answered = step.filter((e) => e.type === 'tool_call' && results.has(`${e.key}:result`));
+	const text = step.find((e) => e.type === 'message')?.payload.text;
+	const content = [
+		...(text ? [{ type: 'text' as const, text }] : []),
+		...answered.map(toolCallPart)
+	];
+	if (!content.length) return [];
+	const toolResults = answered.map((call) =>
+		toolResultPart(call.key, results.get(`${call.key}:result`)!)
+	);
+	const assistant: ModelMessage = { role: 'assistant', content };
+	return toolResults.length ? [assistant, { role: 'tool', content: toolResults }] : [assistant];
+}
+
+const toolCallPart = ({ key, payload }: StepEvent): ToolCallPart => ({
+	type: 'tool-call',
+	toolCallId: key,
+	toolName: payload.tool,
+	input: payload.args
+});
+
+const toolResultPart = (
+	callId: string,
+	{ tool, result, isError }: StepEvent['payload']
+): ToolResultPart => ({
+	type: 'tool-result',
+	toolCallId: callId,
+	toolName: tool,
+	output: { type: isError ? 'error-text' : 'text', value: result }
+});

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
-import { releaseHalt } from '../domain/halt';
+import { releaseHalt, resumeRun } from '../domain/halt';
 import { answerQuestion } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
@@ -600,10 +600,87 @@ describe('builtin executor', () => {
 
 		expect(provider.requests[1].body.messages).toMatchObject([
 			{ role: 'system' },
+			{ role: 'assistant', tool_calls: [{ function: { name: 'request_human' } }] },
+			{ role: 'tool', tool_call_id: 'call-1' },
 			{ role: 'user', content: expect.stringContaining('Answer: 2. Only id and title') }
 		]);
 		expect(collectedWhenSent).toEqual([undefined, null]);
 		expect(collectedAt()).not.toBeNull();
+	});
+
+	it('gives the run that resumes a halted run its conversation as turns before the prompt, without reasoning or the unfinished step', async () => {
+		const { db, queue, run } = setup();
+		const provider = fakeProvider(
+			{
+				chunks: [
+					{ reasoning: 'A comment comes first.\n' },
+					{ text: 'I will comment.' },
+					call('call-1', 'add_comment', { text: 'first' })
+				]
+			},
+			{
+				chunks: [{ text: 'Now the second' }, call('call-2', 'add_comment', { text: 'x' }), 'hang']
+			},
+			{ chunks: [{ text: 'Done.' }] }
+		);
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const halted = queue();
+		await vi.waitFor(() => expect(provider.requests).toHaveLength(2));
+		runner.pause(halted);
+		const resumed = resumeRun(db, user, halted).id;
+		await ended(() => run(resumed).state);
+
+		const messages = provider.requests[2].body.messages as { role: string; content: string }[];
+		expect(messages).toEqual([
+			{ role: 'system', content: expect.any(String) },
+			{
+				role: 'assistant',
+				content: 'I will comment.',
+				tool_calls: [
+					{
+						id: 'call-1',
+						type: 'function',
+						function: { name: 'add_comment', arguments: '{"text":"first"}' }
+					}
+				]
+			},
+			{ role: 'tool', tool_call_id: 'call-1', content: '{"comment_id":1}' },
+			{ role: 'user', content: expect.stringContaining(`### Conversation of run ${halted}`) }
+		]);
+		expect(JSON.stringify(messages)).not.toMatch(/A comment comes first|Now the second|call-2/);
+		expect(messages[3].content).not.toContain('### Handoff');
+		expect(run(resumed).state).toBe('succeeded');
+	});
+
+	it('falls back to the handoff when the conversation does not fit the prompt budget', async () => {
+		const { db, queue, run } = setup();
+		let park = () => {};
+		const provider = fakeProvider(
+			{
+				chunks: [
+					{ text: 'Commenting now.' },
+					{ pause: () => park() },
+					call('call-1', 'no_such_tool', { text: 'x'.repeat(60_000) })
+				]
+			},
+			{ chunks: [{ text: 'Done.' }] }
+		);
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const parked = queue();
+		park = () => runner.park(parked, 'quota');
+		await ended(() => run(parked).state);
+		const resumed = db.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?').get(parked) as {
+			id: number;
+		};
+		await ended(() => run(resumed.id).state);
+
+		expect(provider.requests[1].body.messages).toEqual([
+			{ role: 'system', content: expect.any(String) },
+			{
+				role: 'user',
+				content: expect.stringContaining(`### Handoff of run ${parked}\nCommenting now.`)
+			}
+		]);
 	});
 
 	it('keeps working when asking the human fails', async () => {

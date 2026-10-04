@@ -3,13 +3,19 @@ import {
 	streamText,
 	type FinishReason,
 	type LanguageModel,
+	type ModelMessage,
 	type StopCondition,
 	type TextStreamPart,
 	type ToolSet
 } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
 import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
-import { assemblePrompt, type AssembledPrompt } from '../agents/prompt';
+import {
+	assemblePrompt,
+	promptBudget,
+	resumeHistoryOf,
+	type AssembledPrompt
+} from '../agents/prompt';
 import { deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
@@ -68,7 +74,7 @@ export function builtinExecutor(
 	const endpoint = mcpEndpoint(db);
 	return {
 		async execute(run, io) {
-			const prompt = assemblePrompt(db, run);
+			const prompt = promptOf(db, run);
 			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
 			const model = modelFor(
 				db,
@@ -95,9 +101,21 @@ export function builtinExecutor(
 	};
 }
 
+/**
+ * A run that continues another gets that run's conversation as turns before its prompt when both fit the prompt budget;
+ * otherwise the prompt carries that run's handoff.
+ */
+function promptOf(db: DatabaseSync, run: RunContext): RunPrompt {
+	const withHistory = assemblePrompt(db, run, { history: true });
+	const history = resumeHistoryOf(db, run.id, promptBudget(run.profile) - withHistory.estimate);
+	if (!history) return { ...assemblePrompt(db, run), history: [] };
+	return { ...withHistory, history };
+}
+
+type RunPrompt = AssembledPrompt & { history: ModelMessage[] };
 type Loop = {
 	model: LanguageModel;
-	prompt: AssembledPrompt;
+	prompt: RunPrompt;
 	tools: ToolSet;
 	run: RunContext;
 	io: ExecutorIo;
@@ -109,7 +127,7 @@ async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): 
 	const result = streamText({
 		model,
 		instructions: prompt.system,
-		messages: [{ role: 'user', content: prompt.user }],
+		messages: [...prompt.history, { role: 'user', content: prompt.user }],
 		tools,
 		...requestSettings(run.profile),
 		abortSignal: io.signal,

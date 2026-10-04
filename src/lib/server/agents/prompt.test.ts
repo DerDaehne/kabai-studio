@@ -8,11 +8,12 @@ import { pauseRun, resumeRun } from '../domain/halt';
 import * as notes from '../domain/notes';
 import { answerQuestion, requestHuman, retractAnswer } from '../domain/questions';
 import * as runs from '../domain/runs';
+import type { ResumeReason } from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
 import { setSecret } from '../secrets';
 import { BASE_PROMPT, HANDOFF_TEMPLATE } from './base-prompt';
-import { assemblePrompt, type AssembledPrompt, type PromptRun } from './prompt';
+import { assemblePrompt, resumeHistoryOf, type AssembledPrompt, type PromptRun } from './prompt';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
@@ -726,5 +727,244 @@ describe('previous state', () => {
 		expect(events).toEqual([]);
 		expect(prompt.showsHumanAnswer).toBe(true);
 		expect(() => retractAnswer(w.db, user, question)).not.toThrow();
+	});
+});
+
+describe('resume history', () => {
+	const PLENTY = 100_000;
+	type StoredEvent = Parameters<typeof runs.appendEvent>[3];
+	const message = (step: number, text: string): StoredEvent => ({
+		type: 'message',
+		key: `step:${step}:message`,
+		payload: { step, text }
+	});
+	const reasoning = (step: number, text: string): StoredEvent => ({
+		type: 'reasoning',
+		key: `step:${step}:reasoning`,
+		payload: { step, text, charsTotal: text.length }
+	});
+	const toolCall = (step: number, id: string, tool: string, args: object): StoredEvent => ({
+		type: 'tool_call',
+		key: id,
+		payload: { step, tool, args, target: '', reason: '', reason_source: '', next_hint: '' }
+	});
+	const toolResult = (step: number, id: string, tool: string, result: string, isError = false) =>
+		({
+			type: 'tool_result',
+			key: `${id}:result`,
+			payload: { step, tool, result, isError, result_summary: '' }
+		}) satisfies StoredEvent;
+	const stepEnd = (step: number): StoredEvent => ({
+		type: 'log',
+		key: `step:${step}`,
+		payload: { kind: 'step', step, finishReason: 'tool-calls', ms: 1 }
+	});
+
+	/** A run of STU-1 that records `events`, then pauses and is continued for `reason` (null: after the human's answer). */
+	function continuation(events: StoredEvent[], reason: ResumeReason | null = 'halt') {
+		const w = world();
+		const profileId = runs.createProfile(w.db, user, {
+			name: 'resuming',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const previous = runs.createRun(w.db, user, { ticketId: w.parser, profileId }).id;
+		runs.startRun(w.db, system, previous);
+		for (const e of events) runs.appendEvent(w.db, { kind: 'agent', runId: previous }, previous, e);
+		runs.finishRun(w.db, system, previous, { state: 'paused' });
+		const resumed = runs.createRun(w.db, user, {
+			ticketId: w.parser,
+			profileId,
+			resumedFromRunId: previous,
+			resumeReason: reason ?? undefined
+		}).id;
+		return { w, previous, resumed };
+	}
+
+	const commentStep = [
+		message(1, 'I will comment.'),
+		toolCall(1, 'call-1', 'add_comment', { text: 'first' }),
+		toolResult(1, 'call-1', 'add_comment', '{"comment_id":1}'),
+		stepEnd(1)
+	];
+	const commentTurns = [
+		{
+			role: 'assistant',
+			content: [
+				{ type: 'text', text: 'I will comment.' },
+				{
+					type: 'tool-call',
+					toolCallId: 'call-1',
+					toolName: 'add_comment',
+					input: { text: 'first' }
+				}
+			]
+		},
+		{
+			role: 'tool',
+			content: [
+				{
+					type: 'tool-result',
+					toolCallId: 'call-1',
+					toolName: 'add_comment',
+					output: { type: 'text', value: '{"comment_id":1}' }
+				}
+			]
+		}
+	];
+
+	it('gives a run that continues another its messages, tool calls with their arguments and tool results as turns', () => {
+		const { w, resumed } = continuation([
+			{ type: 'log', payload: { kind: 'prompt', estimate: 900, toolTokens: 1200, blocks: [] } },
+			...commentStep,
+			toolCall(2, 'call-2', 'move_ticket', { column_id: 99 }),
+			toolResult(2, 'call-2', 'move_ticket', 'Spalte 99 gibt es nicht.', true),
+			stepEnd(2),
+			message(3, 'Stopped: the column is missing.'),
+			stepEnd(3),
+			{ type: 'message', key: 'handoff', payload: { text: 'Stopped: the column is missing.' } }
+		]);
+		expect(resumeHistoryOf(w.db, resumed, PLENTY)).toEqual([
+			...commentTurns,
+			{
+				role: 'assistant',
+				content: [
+					{
+						type: 'tool-call',
+						toolCallId: 'call-2',
+						toolName: 'move_ticket',
+						input: { column_id: 99 }
+					}
+				]
+			},
+			{
+				role: 'tool',
+				content: [
+					{
+						type: 'tool-result',
+						toolCallId: 'call-2',
+						toolName: 'move_ticket',
+						output: { type: 'error-text', value: 'Spalte 99 gibt es nicht.' }
+					}
+				]
+			},
+			{ role: 'assistant', content: [{ type: 'text', text: 'Stopped: the column is missing.' }] }
+		]);
+	});
+
+	it('leaves the handoff out of the prompt of a run that gets the conversation, and says where it is', () => {
+		const { w, previous, resumed } = continuation([
+			...commentStep,
+			{ type: 'message', key: 'handoff', payload: { text: 'Commented, next: the tests.' } }
+		]);
+		const prompt = assemblePrompt(
+			w.db,
+			{ id: resumed, ticketId: w.parser, profile: cloud },
+			{ history: true }
+		);
+		expect(previousState(prompt)).toBe(
+			[
+				'## Previous state — continuation 1',
+				`This run continues run ${previous}, which paused because the human halted it. Go on from its state instead of starting over.`,
+				'',
+				`### Conversation of run ${previous}`,
+				'The turns before this message are its work up to its last completed step.'
+			].join('\n')
+		);
+		expect(previousState(assembleRun(w, resumed))).toContain('Commented, next: the tests.');
+	});
+
+	it('leaves out the reasoning of every step', () => {
+		const { w, resumed } = continuation([
+			reasoning(1, 'Let me think about the parser.'),
+			...commentStep
+		]);
+		const history = resumeHistoryOf(w.db, resumed, PLENTY);
+		expect(history).toEqual(commentTurns);
+		expect(JSON.stringify(history)).not.toContain('Let me think');
+	});
+
+	it('replays only completed steps: the unfinished last step is left out with its text, calls and results', () => {
+		const { w, resumed } = continuation([
+			...commentStep,
+			message(2, 'Commenting again.'),
+			toolCall(2, 'call-2', 'add_comment', { text: 'second' }),
+			toolResult(2, 'call-2', 'add_comment', '{"comment_id":2}'),
+			toolCall(2, 'call-3', 'add_comment', { text: 'third' })
+		]);
+		expect(resumeHistoryOf(w.db, resumed, PLENTY)).toEqual(commentTurns);
+	});
+
+	it('pairs every tool call with its result by call id, in the order of the calls, and drops a call without a result', () => {
+		const { w, resumed } = continuation([
+			toolCall(1, 'call-a', 'get_ticket', {}),
+			toolCall(1, 'call-b', 'notes_search', { query: 'config' }),
+			toolCall(1, 'call-c', 'add_comment', { text: 'never answered' }),
+			toolResult(1, 'call-b', 'notes_search', 'search result'),
+			toolResult(1, 'call-a', 'get_ticket', 'ticket result'),
+			stepEnd(1)
+		]);
+		const [assistant, tool] = resumeHistoryOf(w.db, resumed, PLENTY)!;
+		expect(assistant.content).toMatchObject([
+			{ type: 'tool-call', toolCallId: 'call-a' },
+			{ type: 'tool-call', toolCallId: 'call-b' }
+		]);
+		expect(tool.content).toMatchObject([
+			{ toolCallId: 'call-a', toolName: 'get_ticket', output: { value: 'ticket result' } },
+			{ toolCallId: 'call-b', toolName: 'notes_search', output: { value: 'search result' } }
+		]);
+	});
+
+	it('is undefined when the turns exceed the budget, so the run gets the handoff instead', () => {
+		const { w, resumed } = continuation(commentStep);
+		const tokens = Math.ceil(JSON.stringify(commentTurns).length / 4);
+		expect(resumeHistoryOf(w.db, resumed, tokens)).toEqual(commentTurns);
+		expect(resumeHistoryOf(w.db, resumed, tokens - 1)).toBeUndefined();
+	});
+
+	it('masks a secret that became known after the run recorded it', () => {
+		const secret = 'sk-test-history-secret-4711';
+		const { w, resumed } = continuation([
+			message(1, `The key is ${secret}.`),
+			toolCall(1, 'call-1', 'add_comment', { text: secret }),
+			toolResult(1, 'call-1', 'add_comment', `stored ${secret}`),
+			stepEnd(1)
+		]);
+		setSecret(w.db, 'probe', secret, false, randomBytes(32));
+		const history = JSON.stringify(resumeHistoryOf(w.db, resumed, PLENTY));
+		expect(history).not.toContain(secret);
+		expect(history.match(/\[secret:probe\]/g)).toHaveLength(3);
+	});
+
+	it('is given after a halt, a quota pause and an answer, but not to a fresh run after the context filled up or the run got stuck', () => {
+		const historyFor = (reason: ResumeReason | null) => {
+			const { w, resumed } = continuation(commentStep, reason);
+			return resumeHistoryOf(w.db, resumed, PLENTY);
+		};
+		expect([historyFor('halt'), historyFor('quota'), historyFor(null)]).toEqual([
+			commentTurns,
+			commentTurns,
+			commentTurns
+		]);
+		expect([historyFor('context_budget'), historyFor('recovery')]).toEqual([undefined, undefined]);
+	});
+
+	it('is undefined for a run that continues no other run and for a run before any completed step', () => {
+		const w = world();
+		const first = runsOf(w).started();
+		expect(resumeHistoryOf(w.db, first, PLENTY)).toBeUndefined();
+		const { w: unfinished, resumed } = continuation([message(1, 'Starting.')]);
+		expect(resumeHistoryOf(unfinished.db, resumed, PLENTY)).toBeUndefined();
+	});
+
+	it('continues a halted run with its conversation: the halt dropped only the unfinished step', () => {
+		const w = world();
+		const halted = runsOf(w).started();
+		for (const e of [...commentStep, message(2, 'Half a thought')])
+			runs.appendEvent(w.db, { kind: 'agent', runId: halted }, halted, e);
+		pauseRun(w.db, user, halted);
+		const resumed = resumeRun(w.db, user, halted).id;
+		expect(resumeHistoryOf(w.db, resumed, PLENTY)).toEqual(commentTurns);
 	});
 });
