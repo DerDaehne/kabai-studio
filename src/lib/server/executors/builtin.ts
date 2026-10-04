@@ -79,7 +79,12 @@ export function builtinExecutor(
 			try {
 				io.emit({
 					type: 'log',
-					payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens: studio.toolTokens }
+					payload: {
+						kind: 'prompt',
+						estimate: prompt.estimate,
+						toolTokens: studio.toolTokens,
+						blocks: prompt.blocks
+					}
 				});
 				const log = await runSteps({ model, prompt, tools: studio.tools, run, io, inactivityMs });
 				return endOfRun(db, run, io, log);

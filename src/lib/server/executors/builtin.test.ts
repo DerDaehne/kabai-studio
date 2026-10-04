@@ -248,7 +248,8 @@ describe('builtin executor', () => {
 		expect(prompt).toEqual({
 			kind: 'prompt',
 			estimate: expect.any(Number),
-			toolTokens: expect.any(Number)
+			toolTokens: expect.any(Number),
+			blocks: expect.any(Array)
 		});
 		expect(prompt.toolTokens).toBeGreaterThan(1000);
 		expect(reasoning).toEqual({ step: 1, text: 'The ticket needs a comment.\n', charsTotal: 28 });
