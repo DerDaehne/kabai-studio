@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { migrate, openDb } from './db';
+import { latestMigration, migrate, openDb } from './db';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -740,5 +740,24 @@ describe('notes schema', () => {
 		expect(hits('FtsTitelWort')).toEqual([]);
 		expect(rawHits('FtsTitelWort')).toEqual([]);
 		expect(rawHits('FtsBodyWortGeaendert')).toEqual([]);
+	});
+});
+
+describe('latestMigration', () => {
+	it('names the most recently applied migration, for /api/health', () => {
+		const db = openDb(join(tmp, 'latest-migration.db'));
+		migrate(db, {
+			'/m/001_a.sql': 'CREATE TABLE a (id INTEGER)',
+			'/m/002_b.sql': 'CREATE TABLE b (id INTEGER)'
+		});
+		expect(latestMigration(db)).toBe('002_b.sql');
+	});
+
+	it('is null on a database with no migrations applied yet', () => {
+		const db = openDb(join(tmp, 'no-migrations.db'));
+		db.exec(
+			'CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP) STRICT'
+		);
+		expect(latestMigration(db)).toBeNull();
 	});
 });

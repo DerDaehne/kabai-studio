@@ -99,6 +99,13 @@ function isApplied(db: DatabaseSync, name: string): boolean {
 	return !!db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(name);
 }
 
+/** Name of the most recently applied migration, for /api/health — a schema identifier, never a row count. */
+export function latestMigration(db: DatabaseSync): string | null {
+	const row = db.prepare('SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1').get() as
+		{ name: string } | undefined;
+	return row?.name ?? null;
+}
+
 /**
  * Applies one migration with foreign keys off, so that rebuilding a table (create new, copy, drop old, rename new) does
  * not cascade into the rows referencing it; false if another process applied it first.

@@ -1,6 +1,7 @@
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { resolveVersion } from './src/lib/version.ts';
 
 export default defineConfig({
 	plugins: [
@@ -12,5 +13,10 @@ export default defineConfig({
 			},
 			adapter: adapter()
 		})
-	]
+	],
+	// Evaluated once per `vite build`/`vite dev` start — see src/lib/version.ts for the precedence.
+	define: {
+		__STUDIO_VERSION__: JSON.stringify(resolveVersion()),
+		__STUDIO_BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10))
+	}
 });

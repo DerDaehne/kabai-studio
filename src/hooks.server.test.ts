@@ -121,6 +121,12 @@ describe('auth flow', () => {
 		expect(foreign.status).toBe(403);
 	});
 
+	it('lets /api/health through without a session, but no other /api/* path', async () => {
+		expect(((await guard('/api/health')) as Response).status).toBe(200); // resolve() ran, the guard did not short-circuit it
+		expect(((await guard('/api/health/other')) as Response).status).toBe(401);
+		expect(((await guard('/api/tickets')) as Response).status).toBe(401);
+	});
+
 	it('rejects a wrong setup token on /setup', async () => {
 		const res = await setup({ token: 'falsch', name: 'owner', password: PW, confirm: PW });
 		expect(isActionFailure(res) && res.status).toBe(403);

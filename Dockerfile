@@ -4,6 +4,11 @@
 FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 AS build
 # node 24.21.0 (>=24.18.1 fixes CVE-2026-58041 in node:sqlite, see package.json "engines")
 WORKDIR /app
+# Baked into build/ by vite.config.ts's `define` (src/lib/version.ts); set by container-image.yml to the pushed
+# tag without its "v" prefix, or sha-<short> for an untagged build. Without it, the build would fall back to
+# `git describe`, but .git is not in this build context.
+ARG STUDIO_VERSION
+ENV STUDIO_VERSION=$STUDIO_VERSION
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
@@ -33,8 +38,8 @@ ENV HOST=0.0.0.0
 VOLUME ["/data"]
 EXPOSE 3000
 
-# /login is public and answers even before an owner exists (redirects to /setup) — no token needed.
+# /api/health is public and answers once the database has opened — no session needed (see hooks.server.ts).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-	CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT || 3000}/login`).then((r) => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"]
+	CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/health`).then((r) => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"]
 
 CMD ["node", "server.ts"]

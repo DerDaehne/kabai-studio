@@ -70,6 +70,8 @@ export const init: ServerInit = async () => {
 const PUBLIC = new Set(['/login', '/setup']);
 /** Agents have no session: the MCP endpoint checks the run's bearer token on every request itself. */
 const RUN_TOKEN_PATH = '/mcp';
+/** Liveness probe for external monitoring and the container HEALTHCHECK; reports no board data, so no session is required. */
+const HEALTH_PATH = '/api/health';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -82,7 +84,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const token = event.cookies.get(SESSION_COOKIE);
 	const hasSession = !!token && restoreSession(event, token);
 	const path = event.url.pathname;
-	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH) return resolve(event);
+	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH || path === HEALTH_PATH)
+		return resolve(event);
 	if (path === '/api' || path.startsWith('/api/')) return unauthorizedApiResponse(event, !!token);
 	redirect(303, hasOwner(db()) ? '/login' : '/setup');
 };

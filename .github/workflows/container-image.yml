@@ -37,11 +37,14 @@ jobs:
         id: tags
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}" # image names must be lowercase; the account name isn't
-          tags="$image:sha-${GITHUB_SHA:0:7},$image:latest"
+          version="sha-${GITHUB_SHA:0:7}"
+          tags="$image:$version,$image:latest"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            tags="$image:${GITHUB_REF#refs/tags/v},$tags"
+            version="${GITHUB_REF#refs/tags/v}"
+            tags="$image:$version,$tags"
           fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
@@ -49,5 +52,6 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: STUDIO_VERSION=${{ steps.tags.outputs.version }}
           provenance: true
           sbom: true

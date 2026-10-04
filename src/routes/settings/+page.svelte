@@ -59,6 +59,11 @@
 	</p>
 </section>
 
+<p class="version">
+	Version <code>{data.version}</code> · Build <code>{data.buildDate}</code>
+	{#if data.prerelease}<Badge tone="accent">Vorabversion</Badge>{/if}
+</p>
+
 <style>
 	.sections {
 		display: grid;
@@ -115,6 +120,14 @@
 		color: var(--status-failed);
 	}
 	.hint {
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+	}
+	.version {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		margin-top: var(--space-4);
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 	}
