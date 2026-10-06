@@ -129,7 +129,7 @@ type Loop = {
 };
 
 async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): Promise<StepLog> {
-	const log = new StepLog(io, inactivityMs);
+	const log = new StepLog(io, inactivityMs, run.profile.api_key_ref !== null);
 	const result = streamText({
 		model,
 		instructions: prompt.system,
@@ -220,12 +220,14 @@ class StepLog {
 	lastMessage = '';
 	readonly #io: ExecutorIo;
 	readonly #inactivityMs: number;
+	readonly #withKey: boolean;
 	#step: OpenStep = openStep(1);
 	#lastPhaseAt = -Infinity;
 
-	constructor(io: ExecutorIo, inactivityMs: number) {
+	constructor(io: ExecutorIo, inactivityMs: number, withKey: boolean) {
 		this.#io = io;
 		this.#inactivityMs = inactivityMs;
+		this.#withKey = withKey;
 	}
 
 	succeeded(tool: string) {
@@ -273,7 +275,7 @@ class StepLog {
 				if (this.#io.signal.aborted) return; // cancelled; otherwise only the inactivity timeout aborts the stream
 				throw inactiveProvider(this.#inactivityMs);
 			case 'error':
-				throw providerError(part.error);
+				throw providerError(part.error, this.#withKey);
 		}
 	}
 
@@ -404,11 +406,15 @@ function textOf(output: unknown): string {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-function providerError(error: unknown) {
+function providerError(error: unknown, withKey: boolean) {
 	if (APICallError.isInstance(error)) {
 		const code = classifyProviderFailure(error.statusCode);
 		if (code)
-			return new DomainError(code, mask(classifiedMessage(code, error)), providerErrorHint(code));
+			return new DomainError(
+				code,
+				mask(classifiedMessage(code, error)),
+				providerErrorHint(code, { withKey })
+			);
 	}
 	return new DomainError(
 		'provider_error',

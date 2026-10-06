@@ -57,7 +57,7 @@ async function readModels(response: Response, withKey: boolean): Promise<ModelLi
 	if ((response.status === 401 || response.status === 403) && withKey)
 		return failure(
 			`Der Endpunkt lehnt den API-Key ab (${status}).`,
-			'Verweis prüfen oder das Secret unter Einstellungen → Secrets ersetzen.'
+			providerErrorHint('provider_auth', { withKey: true })
 		);
 	if (response.status === 401 || response.status === 403)
 		return failure(

@@ -769,7 +769,7 @@ describe('builtin executor', () => {
 			error: expect.stringContaining('[provider_auth]')
 		});
 		expect(comments().at(-1)!.body).toContain(
-			'Ausweg: Key als Secret speichern und als secret:<name> eintragen.'
+			'Ausweg: Verweis prüfen oder das Secret unter Einstellungen → Secrets ersetzen.'
 		);
 		const everything = JSON.stringify([events(runId), busEvents, run(runId), comments()]);
 		expect(everything).toContain('[secret:provider-key]');
@@ -1008,6 +1008,21 @@ async function silentServer() {
 }
 
 describe('local provider failures against an openai-compatible endpoint', () => {
+	it('tells a profile whose key the server rejects to fix that key, in the words of the profile page', async () => {
+		vi.stubEnv('STUDIO_SECRET_KEY', randomBytes(32).toString('base64')); // so that the test writes no key file
+		const { db, queue, run, comments } = setup({ api_key_ref: 'secret:rejected-key' });
+		setSecret(db, 'rejected-key', 'sk-test-rejected-key-0001');
+		const provider = fakeProvider({ status: 401, error: 'Incorrect API key provided' });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).error).toMatch(/^\[provider_auth\]/);
+		expect(comments().at(-1)!.body).toContain(
+			'Verweis prüfen oder das Secret unter Einstellungen → Secrets ersetzen.'
+		);
+	});
+
 	it('names the network cause of an unreachable endpoint, so a refused port and an unknown host read differently', async () => {
 		const { db, queue, run } = setup();
 		startBuiltin(db, {
