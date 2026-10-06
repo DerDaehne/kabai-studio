@@ -3,7 +3,7 @@ import { MODEL_LIST_PATH } from '../agents/model-catalog';
 import { BASE_URL_EXAMPLE } from '../agents/profile-defaults';
 import { DomainError } from './domain/core';
 import { checkKeyRef } from './domain/runs';
-import { providerErrorHint } from './provider-error';
+import { classifyProviderFailure, providerErrorHint } from './provider-error';
 import { resolveRef } from './secrets';
 
 export const MODEL_LIST_TIMEOUT_MS = 5000;
@@ -54,12 +54,13 @@ function authorization(db: DatabaseSync, apiKeyRef: string | null): Record<strin
 
 async function readModels(response: Response, withKey: boolean): Promise<ModelList> {
 	const status = `HTTP ${response.status}`;
-	if ((response.status === 401 || response.status === 403) && withKey)
+	const code = classifyProviderFailure(response.status);
+	if (code === 'provider_auth' && withKey)
 		return failure(
 			`Der Endpunkt lehnt den API-Key ab (${status}).`,
 			providerErrorHint('provider_auth', { withKey: true })
 		);
-	if (response.status === 401 || response.status === 403)
+	if (code === 'provider_auth')
 		return failure(
 			`Der Endpunkt verlangt einen API-Key (${status}).`,
 			providerErrorHint('provider_auth')

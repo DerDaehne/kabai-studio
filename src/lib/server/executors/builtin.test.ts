@@ -1023,6 +1023,16 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 		);
 	});
 
+	it('fails with provider_auth when the server forbids the request (403)', async () => {
+		const { db, queue, run } = setup();
+		const provider = fakeProvider({ status: 403, error: 'Forbidden' });
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).error).toMatch(/^\[provider_auth\]/);
+	});
+
 	it('names the network cause of an unreachable endpoint, so a refused port and an unknown host read differently', async () => {
 		const { db, queue, run } = setup();
 		startBuiltin(db, {
