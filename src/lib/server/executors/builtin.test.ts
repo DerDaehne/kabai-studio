@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
@@ -986,5 +987,86 @@ describe('request settings', () => {
 			maxOutputTokens: undefined,
 			providerOptions: { studio: {} }
 		});
+	});
+});
+
+/** Rejects like Node's fetch (undici) when the request fails below HTTP. */
+const networkFailure = (code: string, message: string) =>
+	Object.assign(new TypeError('fetch failed'), {
+		cause: Object.assign(new Error(message), { code })
+	});
+
+/** A model server that accepts the connection but never answers, like llama-swap while it loads a model. */
+async function silentServer() {
+	const server = createServer(() => {});
+	await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
+	cleanups.push(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	return `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+}
+
+describe('local provider failures against an openai-compatible endpoint', () => {
+	it('names the network cause of an unreachable endpoint, so a refused port and an unknown host read differently', async () => {
+		const { db, queue, run } = setup();
+		startBuiltin(db, {
+			fetch: async () => {
+				throw networkFailure('ENOTFOUND', 'getaddrinfo ENOTFOUND model.test');
+			}
+		});
+		const runId = queue();
+		await vi.waitFor(() => expect(run(runId).state).toBe('failed'), { timeout: 10_000 });
+
+		expect(run(runId).error).toContain('ENOTFOUND');
+	});
+
+	it.each([
+		['UND_ERR_HEADERS_TIMEOUT', 'Headers Timeout Error'],
+		['UND_ERR_SOCKET', 'other side closed']
+	])(
+		'does not call a server unreachable that accepted the connection (%s)',
+		async (code, message) => {
+			const { db, queue, run } = setup();
+			let attempts = 0;
+			const { runner } = startBuiltin(db, {
+				fetch: async () => {
+					attempts += 1;
+					throw networkFailure(code, message);
+				}
+			});
+			const runId = queue();
+			await vi.waitFor(
+				() =>
+					expect(attempts > 1 || !/^(queued|running)$/.test(String(run(runId).state))).toBe(true),
+				{ timeout: 5000 }
+			);
+
+			expect(String(run(runId).error)).not.toContain('provider_unreachable');
+			runner.cancel(runId);
+		}
+	);
+
+	it('ends a run cancelled during a pending request as cancelled, without a provider error', async () => {
+		const { db, queue, run, comments } = setup({ base_url: await silentServer() });
+		const { runner } = startBuiltin(db, { fetch: globalThis.fetch });
+		const runId = queue();
+		await vi.waitFor(() => expect(run(runId).state).toBe('running'));
+		await new Promise((settle) => setTimeout(settle, 200));
+
+		runner.cancel(runId);
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('cancelled');
+		expect(JSON.stringify(comments())).not.toMatch(/provider_/);
+	});
+
+	it('still fails a model that never answers with model_loading_timeout, not provider_unreachable', async () => {
+		const { db, queue, run } = setup({ base_url: await silentServer() });
+		startBuiltin(db, { fetch: globalThis.fetch }, { hintAfterMs: 50, failAfterMs: 300 });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).error).toMatch(/^\[model_loading_timeout\]/);
 	});
 });

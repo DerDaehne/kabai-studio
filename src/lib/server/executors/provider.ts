@@ -52,20 +52,35 @@ export function modelFor(
 	}).chatModel(profile.model);
 }
 
+// undici throws the same TypeError('fetch failed') for a slow or silent server, TLS failures and an unknown scheme
+// as for a connection that never comes through — only these codes mean the connect phase itself failed.
+const CONNECT_ERROR_CODES = new Set([
+	'ECONNREFUSED',
+	'ENOTFOUND',
+	'EAI_AGAIN',
+	'EHOSTUNREACH',
+	'ENETUNREACH',
+	'UND_ERR_CONNECT_TIMEOUT'
+]);
+
 /**
- * A connection that never comes through (server down, wrong port) fails the request at once instead of through the
- * AI SDK's own retry backoff: waiting a few more seconds never helps, the way out is starting the model server.
+ * A connection that never comes through (server down, wrong port, DNS failure) fails the request at once instead of
+ * through the AI SDK's own retry backoff: waiting a few more seconds never helps, the way out is starting the model
+ * server. Everything else (a server that accepted the connection but stays silent while loading a model, a dropped
+ * socket, TLS) is rethrown unchanged, so a slow cold start still gets the AI SDK's own retry and the runner's
+ * cold-start handling instead of a premature "unreachable".
  */
 function failFastOnConnectionError(fetch: typeof globalThis.fetch): typeof globalThis.fetch {
 	return async (input, init) => {
 		try {
 			return await fetch(input, init);
 		} catch (err) {
-			if (!(err instanceof TypeError)) throw err;
-			// no `cause` here: the AI SDK's own retry wrapper walks the cause chain for a retryable network
-			// error code (e.g. ECONNREFUSED) and overrides isRetryable to true once it finds one
+			const cause = err instanceof TypeError && err.cause instanceof Error ? err.cause : null;
+			if (!cause || !('code' in cause) || !CONNECT_ERROR_CODES.has(String(cause.code))) throw err;
+			// no `cause` chain here: the AI SDK's own retry wrapper walks it for a retryable network error
+			// code and overrides isRetryable to true once it finds one; the message carries the detail instead
 			throw new APICallError({
-				message: err.message,
+				message: cause.message,
 				url: String(input),
 				requestBodyValues: {},
 				isRetryable: false

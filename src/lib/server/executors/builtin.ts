@@ -419,7 +419,7 @@ function providerError(error: unknown) {
 
 function classifiedMessage(code: ProviderErrorCode, error: APICallError): string {
 	if (code === 'provider_unreachable')
-		return `Endpunkt ${new URL(error.url).origin} nicht erreichbar.`;
+		return `Endpunkt ${new URL(error.url).origin} nicht erreichbar: ${errorText(error)}.`;
 	if (code === 'model_unknown')
 		return `Der Modell-Server kennt das Modell nicht: ${errorText(error)}`;
 	return `Der Modell-Server verlangt oder verweigert den API-Key (HTTP ${error.statusCode}).`;
