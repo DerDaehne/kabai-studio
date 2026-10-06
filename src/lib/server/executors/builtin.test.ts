@@ -804,6 +804,7 @@ describe('builtin executor', () => {
 
 	it('fails with model_unknown and a way out, masking a key the server echoes into its 404 body', async () => {
 		const secret = 'sk-test-model-unknown-0001';
+		vi.stubEnv('STUDIO_SECRET_KEY', randomBytes(32).toString('base64')); // so that the test writes no key file
 		const { db, queue, run, comments } = setup({ api_key_ref: 'secret:model-unknown-key' });
 		setSecret(db, 'model-unknown-key', secret);
 		const provider = fakeProvider({
