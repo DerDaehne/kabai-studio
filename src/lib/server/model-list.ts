@@ -1,8 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { MODEL_LIST_PATH } from '../agents/model-catalog';
-import { BASE_URL_EXAMPLE, DEFAULT_PORTS } from '../agents/profile-defaults';
+import { BASE_URL_EXAMPLE } from '../agents/profile-defaults';
 import { DomainError } from './domain/core';
 import { checkKeyRef } from './domain/runs';
+import { providerErrorHint } from './provider-error';
 import { resolveRef } from './secrets';
 
 export const MODEL_LIST_TIMEOUT_MS = 5000;
@@ -61,7 +62,7 @@ async function readModels(response: Response, withKey: boolean): Promise<ModelLi
 	if (response.status === 401 || response.status === 403)
 		return failure(
 			`Der Endpunkt verlangt einen API-Key (${status}).`,
-			'Key als Secret speichern und als secret:<name> eintragen.'
+			providerErrorHint('provider_auth')
 		);
 	if (!response.ok) return failure(`Der Endpunkt antwortet mit ${status}.`, CHECK_ADDRESS);
 	const ids = modelIds(await response.text());
@@ -93,6 +94,6 @@ function requestFailure(err: unknown, url: URL, timeoutMs: number): ModelList {
 		);
 	return failure(
 		`Endpunkt ${url.origin} nicht erreichbar.`,
-		`Modell-Server starten oder Adresse und Port prüfen (${DEFAULT_PORTS}).`
+		providerErrorHint('provider_unreachable')
 	);
 }

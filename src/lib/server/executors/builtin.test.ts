@@ -765,12 +765,61 @@ describe('builtin executor', () => {
 		expect(provider.requests[0].headers.get('authorization')).toBe(`Bearer ${secret}`);
 		expect(run(runId)).toMatchObject({
 			state: 'failed',
-			error: expect.stringContaining('[provider_error]')
+			error: expect.stringContaining('[provider_auth]')
 		});
+		expect(comments().at(-1)!.body).toContain(
+			'Ausweg: Key als Secret speichern und als secret:<name> eintragen.'
+		);
 		const everything = JSON.stringify([events(runId), busEvents, run(runId), comments()]);
 		expect(everything).toContain('[secret:provider-key]');
 		expect(everything).not.toContain(secret);
 		expect(everything).not.toContain(secret.slice(-8));
+	});
+
+	it('fails with provider_unreachable at once, without retrying, when the model server refuses the connection', async () => {
+		const { db, queue, run, comments } = setup();
+		let attempts = 0;
+		const refused = async () => {
+			attempts += 1;
+			throw Object.assign(new TypeError('fetch failed'), {
+				cause: Object.assign(new Error('connect ECONNREFUSED 192.0.2.1:8090'), {
+					code: 'ECONNREFUSED'
+				})
+			});
+		};
+		startBuiltin(db, { fetch: refused });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(attempts).toBe(1); // a retry would mean the AI SDK's own backoff (2 s, 4 s) ran instead of failing at once
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[provider_unreachable\] .*nicht erreichbar/)
+		});
+		expect(comments().at(-1)!.body).toContain(
+			'Ausweg: Modell-Server starten oder Adresse und Port prüfen'
+		);
+	});
+
+	it('fails with model_unknown and a way out, masking a key the server echoes into its 404 body', async () => {
+		const secret = 'sk-test-model-unknown-0001';
+		const { db, queue, run, comments } = setup({ api_key_ref: 'secret:model-unknown-key' });
+		setSecret(db, 'model-unknown-key', secret);
+		const provider = fakeProvider({
+			status: 404,
+			error: `model "ornith-1.5-35b" not found for key ${secret}`
+		});
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[model_unknown\] .*ornith-1\.5-35b/)
+		});
+		expect(run(runId).error).not.toContain(secret);
+		expect(comments().at(-1)!.body).toContain('Ausweg: Modell im Profil wählen, Modelle laden.');
+		expect(comments().at(-1)!.body).not.toContain(secret);
 	});
 });
 

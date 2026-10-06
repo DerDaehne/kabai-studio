@@ -1,4 +1,5 @@
 import {
+	APICallError,
 	isStepCount,
 	streamText,
 	type FinishReason,
@@ -21,6 +22,11 @@ import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
 import { mcpEndpoint, tasksOf } from '../mcp';
+import {
+	classifyProviderFailure,
+	providerErrorHint,
+	type ProviderErrorCode
+} from '../provider-error';
 import type {
 	Executor,
 	ExecutorIo,
@@ -399,11 +405,24 @@ function textOf(output: unknown): string {
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function providerError(error: unknown) {
+	if (APICallError.isInstance(error)) {
+		const code = classifyProviderFailure(error.statusCode);
+		if (code)
+			return new DomainError(code, mask(classifiedMessage(code, error)), providerErrorHint(code));
+	}
 	return new DomainError(
 		'provider_error',
 		mask(`Der Modell-Server hat mit einem Fehler geantwortet: ${errorText(error)}`),
 		'Prüfe im Agent-Profil base_url, model und api_key_ref und im Log des Modell-Servers die Ursache, dann starte einen neuen Run.'
 	);
+}
+
+function classifiedMessage(code: ProviderErrorCode, error: APICallError): string {
+	if (code === 'provider_unreachable')
+		return `Endpunkt ${new URL(error.url).origin} nicht erreichbar.`;
+	if (code === 'model_unknown')
+		return `Der Modell-Server kennt das Modell nicht: ${errorText(error)}`;
+	return `Der Modell-Server verlangt oder verweigert den API-Key (HTTP ${error.statusCode}).`;
 }
 
 function inactiveProvider(inactivityMs: number) {

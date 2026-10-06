@@ -72,7 +72,9 @@ describe('loading the model list of an OpenAI-compatible endpoint', () => {
 
 	it('names a missing or rejected key (401) and an unresolvable reference in one line with a way out', async () => {
 		const withoutKey = await listModels(db, { baseUrl: `${base}/ok/v1`, apiKeyRef: null });
-		expect(expectOneLineWithWayOut(withoutKey)).toContain('verlangt einen API-Key (HTTP 401)');
+		const withoutKeyError = expectOneLineWithWayOut(withoutKey);
+		expect(withoutKeyError).toContain('verlangt einen API-Key (HTTP 401)');
+		expect(withoutKeyError).toContain('Key als Secret speichern und als secret:<name> eintragen.');
 		const wrongKey = await listModels(db, {
 			baseUrl: `${base}/ok/v1`,
 			apiKeyRef: 'secret:other-key'
@@ -87,7 +89,9 @@ describe('loading the model list of an OpenAI-compatible endpoint', () => {
 
 	it('names an unreachable endpoint in one line with a way out', async () => {
 		const result = await listModels(db, { baseUrl: unreachable, apiKeyRef: null });
-		expect(expectOneLineWithWayOut(result)).toContain('nicht erreichbar');
+		const error = expectOneLineWithWayOut(result);
+		expect(error).toContain('nicht erreichbar');
+		expect(error).toContain('Modell-Server starten oder Adresse und Port prüfen');
 	});
 
 	it('gives up after the time limit with one line and a way out', async () => {

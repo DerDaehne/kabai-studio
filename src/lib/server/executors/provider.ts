@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { LanguageModel } from 'ai';
+import { APICallError, type LanguageModel } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
 import {
 	matchModel,
@@ -48,8 +48,30 @@ export function modelFor(
 		baseURL: profile.base_url,
 		apiKey,
 		includeUsage: true,
-		fetch
+		fetch: failFastOnConnectionError(fetch)
 	}).chatModel(profile.model);
+}
+
+/**
+ * A connection that never comes through (server down, wrong port) fails the request at once instead of through the
+ * AI SDK's own retry backoff: waiting a few more seconds never helps, the way out is starting the model server.
+ */
+function failFastOnConnectionError(fetch: typeof globalThis.fetch): typeof globalThis.fetch {
+	return async (input, init) => {
+		try {
+			return await fetch(input, init);
+		} catch (err) {
+			if (!(err instanceof TypeError)) throw err;
+			// no `cause` here: the AI SDK's own retry wrapper walks the cause chain for a retryable network
+			// error code (e.g. ECONNREFUSED) and overrides isRetryable to true once it finds one
+			throw new APICallError({
+				message: err.message,
+				url: String(input),
+				requestBodyValues: {},
+				isRetryable: false
+			});
+		}
+	};
 }
 
 /**
