@@ -3,8 +3,8 @@ import { invalidateLive, type HaltKind } from './live.svelte';
 
 /** How the server refuses a run it cannot pause or resume. */
 type Refusal = { code: string; message: string; hint: string };
-/** A halted run `:fortsetzen all` could not resume, e.g. because its profile is gone; `resumed` names those it did. */
-type SkippedResume = { runId: number; code: string; message: string; hint: string };
+/** A halted run `:fortsetzen all` could not resume, e.g. because its profile is gone. */
+type SkippedResume = Refusal & { runId: number };
 
 const runs = (count: number) => (count === 1 ? 'Run' : 'Runs');
 
@@ -64,7 +64,7 @@ export async function resumeRun(runId: number) {
 
 /**
  * `:fortsetzen all` and the head dock's „Fortsetzen“: every halted run resumes and the halt is lifted; a run that
- * could not resume is named with its way out instead of silently vanishing from the count.
+ * could not resume is named with its way out, so the human knows exactly which run still needs attention.
  */
 export async function resumeAll() {
 	const answer = await call<{

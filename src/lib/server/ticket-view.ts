@@ -3,12 +3,11 @@ import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
-import { awaitsResume } from './domain/halt';
 import type { Actor } from './domain/core';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
 import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
-import { listProfiles, waitReason, type RunState } from './domain/runs';
+import { awaitsResume, listProfiles, waitReason, type RunState } from './domain/runs';
 import { LIMITS } from './runner';
 
 export type TicketComment = {

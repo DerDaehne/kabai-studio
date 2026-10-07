@@ -81,9 +81,9 @@ const via = (from: RunState, to: RunState) =>
 	NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState';
 
 /**
- * SQL condition: the run `alias` was paused by the human and nothing continues it yet. Lives here, not in
- * domain/halt.ts, because it describes plain run state and `deleteProfile` needs it without importing halt.ts back
- * (halt.ts already imports from here, so the reverse import would cycle); halt.ts re-exports it unchanged.
+ * SQL condition: the run `alias` was paused by the human and nothing continues it yet. Lives here rather than in
+ * domain/halt.ts because `deleteProfile` needs it without importing halt.ts back (halt.ts already imports from
+ * here, so the reverse import would cycle).
  */
 export const awaitsResume = (alias: string) =>
 	`${alias}.state = 'paused' AND ${alias}.halted = 1 AND NOT EXISTS (SELECT 1 FROM runs c WHERE c.resumed_from_run_id = ${alias}.id)`;
@@ -661,7 +661,10 @@ export function updateProfile(db: DatabaseSync, actor: Actor, id: number, patch:
 	});
 }
 
-/** Deletes a profile while no active run uses it; ended runs keep their history (agent_profile_id becomes NULL). */
+/**
+ * Deletes a profile while no active run uses it and none is still paused and awaiting resume; ended runs keep
+ * their history (agent_profile_id becomes NULL).
+ */
 export function deleteProfile(db: DatabaseSync, actor: Actor, id: number) {
 	tx(db, () => {
 		requireNotAgent(actor);

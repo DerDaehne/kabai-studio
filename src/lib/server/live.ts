@@ -2,8 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { LiveRun, LiveState } from '$lib/shell/live.svelte';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
-import { awaitsResume, haltKind } from './domain/halt';
-import type { RunState } from './domain/runs';
+import { haltKind } from './domain/halt';
+import { awaitsResume, type RunState } from './domain/runs';
 
 type ProjectRow = { id: number; key: string; name: string };
 type RunRow = ProjectRow & {

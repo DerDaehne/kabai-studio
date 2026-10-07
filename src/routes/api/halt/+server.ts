@@ -14,8 +14,8 @@ export const POST: RequestHandler = () => json({ cancelled: runner().halt(OWNER)
 
 /**
  * `:fortsetzen all`: resumes every run the human paused and lifts the halt, naming the kind it lifted and any run it
- * had to skip. A refusal that is not per-run (e.g. a future caller without human rights) comes back as 400 instead
- * of a 500, like `api/runs/[id]/[action]` already does.
+ * had to skip. A DomainError that is not per-run (e.g. a future caller without human rights) comes back as 400, so a
+ * refusal is never indistinguishable from a server crash.
  */
 export const DELETE: RequestHandler = () => {
 	const released = haltKind(db());

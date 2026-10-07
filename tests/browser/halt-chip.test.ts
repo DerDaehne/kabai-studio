@@ -18,10 +18,14 @@ const chipOf = (view: Page) =>
 	view.getByText(/^(Gestoppt · \d+ wartend|Angehalten · \d+ pausiert)$/);
 const agentsOf = (view: Page) => view.getByRole('list', { name: 'Agents' });
 
-/** Expects exactly one toast with `text`, then closes it, so a later toast with the same text counts on its own. */
-async function expectToast(page: Page, text: string) {
+/**
+ * Expects exactly one toast with `text`, then closes it, so a later toast with the same text counts on its own.
+ * Pass `tone` to also check the toast stays an error until closed (no auto-dismiss) rather than a success toast.
+ */
+async function expectToast(page: Page, text: string, tone?: 'success' | 'error') {
 	const shown = page.locator('.toast', { hasText: text });
 	await expect(shown).toHaveCount(1);
+	if (tone) await expect(shown).toHaveAttribute('data-tone', tone);
 	await shown.getByRole('button', { name: 'Meldung schließen' }).click();
 	await expect(shown).toHaveCount(0);
 }
@@ -117,7 +121,8 @@ test(':fortsetzen all reports a halted run whose profile is gone instead of leav
 
 	await expectToast(
 		page,
-		`0 Runs setzen fort. Run ${halted} übersprungen: Das Agent-Profil von Run ${halted} gibt es nicht mehr. Ausweg: Starte in der Run-Akte einen neuen Run mit einem anderen Profil (:run).`
+		`0 Runs setzen fort. Run ${halted} übersprungen: Das Agent-Profil von Run ${halted} gibt es nicht mehr. Ausweg: Starte in der Run-Akte einen neuen Run mit einem anderen Profil (:run).`,
+		'error'
 	);
 });
 

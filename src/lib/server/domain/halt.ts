@@ -3,10 +3,6 @@ import { addComment } from './board';
 import { DomainError, tx, type Actor } from './core';
 import { awaitsResume, createRun, finishRun, prioritizeRun, type RunState } from './runs';
 
-// Re-exported so existing importers (live.ts, ticket-view.ts) keep working unchanged: the condition itself moved to
-// runs.ts, since deleteProfile needs it there without an import cycle back to this module.
-export { awaitsResume };
-
 /** `stop` cancelled the active runs, `pause` paused them so they can be resumed; both hold the queue. */
 export type HaltKind = 'stop' | 'pause';
 
