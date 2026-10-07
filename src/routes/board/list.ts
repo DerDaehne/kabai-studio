@@ -1,4 +1,4 @@
-import type { LiveRun } from '$lib/shell/live.svelte';
+import { RUN_STATE_LABELS, type LiveRun } from '$lib/shell/live.svelte';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { Tone } from '$lib/ui/Badge.svelte';
 
@@ -86,22 +86,15 @@ export function groupJump(
 	return target;
 }
 
-const RUN_STATES: Record<LiveRun['state'], { rank: number; tone: Tone; verb: string }> = {
-	waiting: { rank: 0, tone: 'waiting', verb: 'hält' },
-	paused: { rank: 1, tone: 'paused', verb: 'angehalten' },
-	running: { rank: 2, tone: 'running', verb: 'arbeitet' },
-	queued: { rank: 3, tone: 'neutral', verb: 'in der Queue' }
-};
+// Most urgent to least: one holding for the human, then one the human halted, then one at work, then one in the queue.
+const RANK: Record<LiveRun['state'], number> = { waiting: 0, paused: 1, running: 2, queued: 3 };
 
-/**
- * The run that matters most for a row: one holding for the human, then one the human halted, then one at work, then one
- * in the queue.
- */
+/** The run that matters most for a row, picked by {@link RANK}; its label comes from the shared RUN_STATE_LABELS. */
 export function runStatus(ref: string, runs: LiveRun[]): { tone: Tone; text: string } | undefined {
 	const [run] = runs
 		.filter((candidate) => candidate.ticket === ref)
-		.sort((a, b) => RUN_STATES[a.state].rank - RUN_STATES[b.state].rank);
+		.sort((a, b) => RANK[a.state] - RANK[b.state]);
 	if (!run) return undefined;
-	const { tone, verb } = RUN_STATES[run.state];
-	return { tone, text: `${verb} · ${run.profile} (${run.location})` };
+	const { tone, label } = RUN_STATE_LABELS[run.state];
+	return { tone, text: `${label} · ${run.profile} (${run.location})` };
 }

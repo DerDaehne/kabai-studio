@@ -1,9 +1,8 @@
 <script lang="ts">
 	import NoProject from '$lib/components/NoProject.svelte';
-	import type { LiveRun } from '$lib/shell/live.svelte';
-	import { openQuestionsLabel } from '$lib/shell/live.svelte';
+	import { openQuestionsLabel, RUN_STATE_LABELS, type LiveRun } from '$lib/shell/live.svelte';
 	import { RUN_STATES as FINISHED_STATES } from '$lib/trace/RunTrace.svelte';
-	import Badge, { type Tone } from '$lib/ui/Badge.svelte';
+	import Badge from '$lib/ui/Badge.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import type { PageProps } from './$types';
@@ -15,20 +14,14 @@
 	const openQuestions = $derived(data.live?.openQuestions ?? 0);
 	const finishedRuns = $derived(data.finishedRuns ?? []);
 
-	// Same word choice as the board's row status, for the same reason: "waiting" covers both an approval and a
-	// question asked of the human, so neither reads as more specific than it is.
-	const ACTIVE_STATES: Record<LiveRun['state'], { tone: Tone; label: string }> = {
-		queued: { tone: 'neutral', label: 'in der Queue' },
-		running: { tone: 'running', label: 'läuft' },
-		waiting: { tone: 'waiting', label: 'hält' },
-		paused: { tone: 'paused', label: 'angehalten' }
-	};
-
+	// `?run=` pins the Run-Akte to this run: without it, a ticket with a newer run (a retry, a follow-up) would
+	// open that one instead, not the run this row is actually about.
 	// LiveRun.ticket is a ready-made "KEY-N" string; the project key never contains a hyphen (DB constraint), so the
 	// part after it is always the ticket number.
-	const activeHref = (run: LiveRun) => `/p/${run.project.code}/t/${run.ticket.split('-').at(-1)}`;
+	const activeHref = (run: LiveRun) =>
+		`/p/${run.project.code}/t/${run.ticket.split('-').at(-1)}?run=${run.id}`;
 	const finishedHref = (run: (typeof finishedRuns)[number]) =>
-		`/p/${run.project.code}/t/${run.number}`;
+		`/p/${run.project.code}/t/${run.number}?run=${run.id}`;
 </script>
 
 <h1>Stellwerk</h1>
@@ -45,7 +38,9 @@
 						<ProjectTag code={run.project.code} palette={run.project.palette} />
 						<a href={activeHref(run)}>{run.ticket}</a>
 						<span class="meta">{run.profile}</span>
-						<Badge tone={ACTIVE_STATES[run.state].tone}>{ACTIVE_STATES[run.state].label}</Badge>
+						<Badge tone={RUN_STATE_LABELS[run.state].tone}
+							>{RUN_STATE_LABELS[run.state].label}</Badge
+						>
 					</li>
 				{/each}
 			</ul>

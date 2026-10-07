@@ -1,6 +1,7 @@
 import { afterNavigate, beforeNavigate, invalidate } from '$app/navigation';
 import { navigating as currentNavigation } from '$app/state';
 import { connectLiveUpdates, type LiveUpdatesHandle } from '$lib/live-updates';
+import type { Tone } from '$lib/ui/Badge.svelte';
 import { onMount } from 'svelte';
 import { on } from 'svelte/events';
 import { announceSignal, shell, type AgentChip, type ProjectRef } from './shell.svelte';
@@ -14,6 +15,15 @@ export type LiveRun = {
 	ticket: string;
 	/** `waiting`: holds for the human, on an approval or an open question; `paused`: the human halted it, `:fortsetzen` resumes it. */
 	state: 'queued' | 'running' | 'waiting' | 'paused';
+};
+
+/** How a run's state reads wherever a list of runs names it: the badge tone and the German word, shared so the
+ *  same run never reads differently in two places (the head dock, the board, the Stellwerk). */
+export const RUN_STATE_LABELS: Record<LiveRun['state'], { tone: Tone; label: string }> = {
+	queued: { tone: 'neutral', label: 'in der Queue' },
+	running: { tone: 'running', label: 'arbeitet' },
+	waiting: { tone: 'waiting', label: 'hält' },
+	paused: { tone: 'paused', label: 'angehalten' }
 };
 
 /** `stop` cancelled the active runs, `pause` paused them; either holds the queue until `:fortsetzen all`. */

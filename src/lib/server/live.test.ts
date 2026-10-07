@@ -208,4 +208,20 @@ describe('recentFinishedRuns', () => {
 		expect(list.some((r) => r.id === oldest)).toBe(false); // pushed out: only the 5 newest survive the cap
 		expect(list.some((r) => r.id === archivedRun)).toBe(false);
 	});
+
+	it('orders by the time a run finished, so an older run that finished last comes first', () => {
+		const s = setup();
+		const stu = s.project('STU', 'Studio');
+		const local = s.profile('qwen', 'local');
+		const finishedAt = (id: number, at: string) =>
+			s.db.prepare('UPDATE runs SET finished_at = ? WHERE id = ?').run(at, id);
+		const startedFirst = s.running(s.ticket(stu), local);
+		const startedSecond = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, startedSecond, { state: 'succeeded' });
+		runs.finishRun(s.db, user, startedFirst, { state: 'failed', error: 'late failure' });
+		finishedAt(startedSecond, '2026-10-07 10:00:01');
+		finishedAt(startedFirst, '2026-10-07 10:05:00');
+
+		expect(recentFinishedRuns(s.db).map((r) => r.id)).toEqual([startedFirst, startedSecond]);
+	});
 });
