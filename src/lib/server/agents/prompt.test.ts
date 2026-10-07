@@ -782,6 +782,36 @@ describe('resume history', () => {
 		return { w, previous, resumed };
 	}
 
+	/**
+	 * A chain of runs on one ticket, each recording its own `events` and then pausing; each hop after the first resumes
+	 * the one before it for `reason` (undefined: the first run has none). Returns the run ids, oldest first.
+	 */
+	function chainOf(hops: { events: StoredEvent[]; reason?: ResumeReason | null }[]) {
+		const w = world();
+		const profileId = runs.createProfile(w.db, user, {
+			name: 'chain',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const ids: number[] = [];
+		let previous: number | undefined;
+		for (const hop of hops) {
+			const id = runs.createRun(w.db, user, {
+				ticketId: w.parser,
+				profileId,
+				resumedFromRunId: previous,
+				resumeReason: previous === undefined ? undefined : (hop.reason ?? undefined)
+			}).id;
+			runs.startRun(w.db, system, id);
+			for (const e of hop.events) runs.appendEvent(w.db, { kind: 'agent', runId: id }, id, e);
+			runs.finishRun(w.db, system, id, { state: 'paused' });
+			ids.push(id);
+			previous = id;
+		}
+		return { w, ids };
+	}
+
 	const commentStep = [
 		message(1, 'I will comment.'),
 		toolCall(1, 'call-1', 'add_comment', { text: 'first' }),
@@ -809,6 +839,39 @@ describe('resume history', () => {
 					toolCallId: 'call-1',
 					toolName: 'add_comment',
 					output: { type: 'text', value: '{"comment_id":1}' }
+				}
+			]
+		}
+	];
+
+	/** A second run's single completed step, distinct from `commentStep`, for chain tests spanning more than one run. */
+	const secondStep = [
+		message(1, 'Second run here.'),
+		toolCall(1, 'call-2', 'move_ticket', { column_id: 5 }),
+		toolResult(1, 'call-2', 'move_ticket', '{"moved":true}'),
+		stepEnd(1)
+	];
+	const secondTurns = [
+		{
+			role: 'assistant',
+			content: [
+				{ type: 'text', text: 'Second run here.' },
+				{
+					type: 'tool-call',
+					toolCallId: 'call-2',
+					toolName: 'move_ticket',
+					input: { column_id: 5 }
+				}
+			]
+		},
+		{
+			role: 'tool',
+			content: [
+				{
+					type: 'tool-result',
+					toolCallId: 'call-2',
+					toolName: 'move_ticket',
+					output: { type: 'text', value: '{"moved":true}' }
 				}
 			]
 		}
@@ -869,7 +932,7 @@ describe('resume history', () => {
 				`This run continues run ${previous}, which paused because the human halted it. Go on from its state instead of starting over.`,
 				'',
 				`### Conversation of run ${previous}`,
-				'The turns before this message are its work up to its last completed step.'
+				`The turns before this message are the work of run ${previous} and the runs it continues, up to the last completed step.`
 			].join('\n')
 		);
 		expect(previousState(assembleRun(w, resumed))).toContain('Commented, next: the tests.');
@@ -966,5 +1029,105 @@ describe('resume history', () => {
 		pauseRun(w.db, user, halted);
 		const resumed = resumeRun(w.db, user, halted).id;
 		expect(resumeHistoryOf(w.db, resumed, PLENTY)).toEqual(commentTurns);
+	});
+
+	it('gives the third run of a chain with two resumes the completed steps of the first two, in order', () => {
+		const secret = 'sk-test-chain-secret-0007';
+		const { w, ids } = chainOf([
+			{ events: [...commentStep, message(2, `Noted ${secret}.`), stepEnd(2)] },
+			{ events: secondStep, reason: null },
+			{ events: [], reason: 'halt' }
+		]);
+		setSecret(w.db, 'probe', secret, false, randomBytes(32));
+		expect(resumeHistoryOf(w.db, ids[2], PLENTY)).toEqual([
+			...commentTurns,
+			{ role: 'assistant', content: [{ type: 'text', text: 'Noted [secret:probe].' }] },
+			...secondTurns
+		]);
+	});
+
+	it('stops collecting at a fresh run in the chain: its own steps still count, its predecessor’s do not', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: 'context_budget' },
+			{ events: [], reason: 'halt' }
+		]);
+		expect(resumeHistoryOf(w.db, ids[2], PLENTY)).toEqual(secondTurns);
+	});
+
+	it('drops the oldest run first when the budget is tight, and falls back to the handoff if even the direct predecessor alone does not fit', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: null },
+			{ events: [], reason: 'halt' }
+		]);
+		const tokensForSecondOnly = Math.ceil(JSON.stringify(secondTurns).length / 4);
+		expect(resumeHistoryOf(w.db, ids[2], tokensForSecondOnly)).toEqual(secondTurns);
+		expect(resumeHistoryOf(w.db, ids[2], tokensForSecondOnly - 1)).toBeUndefined();
+	});
+
+	it('still refuses history to a fresh run itself, even as the last of a longer chain', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: null },
+			{ events: [], reason: 'context_budget' }
+		]);
+		expect(resumeHistoryOf(w.db, ids[2], PLENTY)).toBeUndefined();
+	});
+
+	const thirdStep = [message(1, 'Third run here.'), stepEnd(1)];
+	const thirdTurns = [{ role: 'assistant', content: [{ type: 'text', text: 'Third run here.' }] }];
+
+	it('walks back past halt and quota resumes to the first run of a chain of four', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: 'halt' },
+			{ events: thirdStep, reason: 'quota' },
+			{ events: [], reason: 'halt' }
+		]);
+		expect(resumeHistoryOf(w.db, ids[3], PLENTY)).toEqual([
+			...commentTurns,
+			...secondTurns,
+			...thirdTurns
+		]);
+	});
+
+	it('keeps the steps of a fresh run deeper in the chain and stops behind it', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: 'recovery' },
+			{ events: thirdStep, reason: 'halt' },
+			{ events: [], reason: 'halt' }
+		]);
+		expect(resumeHistoryOf(w.db, ids[3], PLENTY)).toEqual([...secondTurns, ...thirdTurns]);
+	});
+
+	it('keeps every run while the whole chain fits the budget exactly, and drops the oldest at one token less', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: null },
+			{ events: [], reason: 'halt' }
+		]);
+		const all = [...commentTurns, ...secondTurns];
+		const tokens = Math.ceil(JSON.stringify(all).length / 4);
+		expect(resumeHistoryOf(w.db, ids[2], tokens)).toEqual(all);
+		expect(resumeHistoryOf(w.db, ids[2], tokens - 1)).toEqual(secondTurns);
+	});
+
+	it('does not present the turns of several runs as the work of the direct predecessor alone', () => {
+		const { w, ids } = chainOf([
+			{ events: commentStep },
+			{ events: secondStep, reason: null },
+			{ events: [], reason: 'halt' }
+		]);
+		expect(resumeHistoryOf(w.db, ids[2], PLENTY)).toEqual([...commentTurns, ...secondTurns]);
+		const prompt = assemblePrompt(
+			w.db,
+			{ id: ids[2], ticketId: w.parser, profile: cloud },
+			{ history: true }
+		);
+		expect(previousState(prompt)).toContain(
+			`The turns before this message are the work of run ${ids[1]} and the runs it continues, up to the last completed step.`
+		);
 	});
 });

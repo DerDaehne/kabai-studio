@@ -335,11 +335,7 @@ function previousStateOf(
 	runId: number,
 	history: boolean
 ): PreviousState | undefined {
-	const run = db
-		.prepare(
-			'SELECT resumed_from_run_id AS previous, resume_reason AS reason FROM runs WHERE id = ?'
-		)
-		.get(runId) as { previous: number | null; reason: ResumeReason | null } | undefined;
+	const run = resumeInfoOf(db, runId);
 	if (!run?.previous) return undefined;
 	const payloadOf = (sql: string) => {
 		const row = db.prepare(sql).get(run.previous) as { payload: string } | undefined;
@@ -437,7 +433,7 @@ function handoffSection({ runId, history, handoff }: PreviousState): string {
 	if (history)
 		return [
 			`### Conversation of run ${runId}`,
-			'The turns before this message are its work up to its last completed step.'
+			`The turns before this message are the work of run ${runId} and the runs it continues, up to the last completed step.`
 		].join('\n');
 	if (!handoff?.text) return '';
 	const origin = handoff.generated ? ' (generated from its events: the model wrote none)' : '';
@@ -462,23 +458,55 @@ type StepEvent = {
 };
 
 /**
- * The conversation of the run this one continues, up to its last completed step: its messages, and its tool calls paired
- * with their results; reasoning stays out. Undefined if there is none, if it exceeds `budget` tokens, or for a fresh run.
+ * The conversation of the run this one continues, as far back across the chain of resumes as fits `budget`: its messages,
+ * and its tool calls paired with their results, oldest run first; reasoning stays out. Too large for the budget drops the
+ * oldest run's steps first, one run at a time. Undefined if there is none, if even the direct predecessor's own steps
+ * alone exceed `budget`, or if this run is itself a fresh run.
  */
 export function resumeHistoryOf(
 	db: DatabaseSync,
 	runId: number,
 	budget: number
 ): ModelMessage[] | undefined {
-	const run = db
+	const run = resumeInfoOf(db, runId);
+	if (!run?.previous || FRESH_RUN_REASONS.has(run.reason)) return undefined;
+	const segments = segmentsSince(db, run.previous);
+	// ponytail: recomputes turns per dropped segment, O(chain length squared); precompute each segment's turns and size
+	// once and sum from the end instead, if chains grow long enough for this to show up.
+	for (let drop = 0; drop < segments.length; drop++) {
+		const turns = mask(segments.slice(drop).flat().flatMap(turnsOf));
+		const tokens = Math.ceil(JSON.stringify(turns).length / CHARS_PER_TOKEN);
+		if (turns.length > 0 && tokens <= budget) return turns;
+	}
+	return undefined;
+}
+
+function resumeInfoOf(
+	db: DatabaseSync,
+	runId: number
+): { previous: number | null; reason: ResumeReason | null } | undefined {
+	return db
 		.prepare(
 			'SELECT resumed_from_run_id AS previous, resume_reason AS reason FROM runs WHERE id = ?'
 		)
 		.get(runId) as { previous: number | null; reason: ResumeReason | null } | undefined;
-	if (!run?.previous || FRESH_RUN_REASONS.has(run.reason)) return undefined;
-	const turns = mask(completedSteps(db, run.previous).flatMap(turnsOf));
-	const tokens = Math.ceil(JSON.stringify(turns).length / CHARS_PER_TOKEN);
-	return turns.length > 0 && tokens <= budget ? turns : undefined;
+}
+
+/**
+ * Each visited ancestor's completed steps, oldest run first. A fresh run (`context_budget`/`recovery`) still contributes
+ * its own steps — it really worked, that belongs to the visible trace — but the walk stops there: its own predecessor's
+ * conversation never reached it either, so there is nothing consistent left to hand further down the chain.
+ */
+function segmentsSince(db: DatabaseSync, runId: number): StepEvent[][][] {
+	const segments: StepEvent[][][] = [];
+	let current: number | undefined = runId;
+	while (current !== undefined) {
+		segments.unshift(completedSteps(db, current));
+		const info = resumeInfoOf(db, current);
+		current =
+			info && !FRESH_RUN_REASONS.has(info.reason) ? (info.previous ?? undefined) : undefined;
+	}
+	return segments;
 }
 
 /** The events of each step that ended with its step log; a halted run's unfinished last step has none, nor have events outside a step. */
