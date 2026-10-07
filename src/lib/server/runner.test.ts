@@ -91,9 +91,9 @@ function start(...args: Parameters<typeof startRunner>) {
 }
 
 /**
- * Alternates `claimRun` across `connections` until none of them can claim anything. Exclusivity and claim order come
- * from SQLite serializing writers (domain/core.ts `tx`), not from real concurrency, so alternating turns in one
- * process proves the same invariant a real multi-process race would.
+ * Alternates `claimRun` across `connections`, one commit at a time, until none of them can claim anything. Proves
+ * that a claim is visible to the next connection at once and that order and limits hold across connections — not
+ * that two overlapping claims are safe, since turns never overlap (see the interleaved probes below for that).
  */
 function claimRoundRobin(
 	connections: ReturnType<typeof openDb>[],
@@ -106,6 +106,46 @@ function claimRoundRobin(
 		claimedBy[turn].push(claimed.id);
 	}
 }
+
+/** A second connection that never waits for the write lock: a claim it cannot take right now just does not happen. */
+function rivalClaimer(file: string, limits: runs.Limits) {
+	const rival = openDb(file);
+	rival.exec('PRAGMA busy_timeout = 0');
+	const claimed: number[] = [];
+	const tryClaim = () => {
+		try {
+			const run = runs.claimRun(rival, system, limits);
+			if (run) claimed.push(run.id);
+		} catch (err) {
+			if ((err as { errcode?: number }).errcode !== 5) throw err;
+		}
+	};
+	return { claimed, tryClaim };
+}
+
+/** `db`, but `between` runs before every statement it prepares or executes — a rival at every possible point. */
+function interleaved(
+	db: ReturnType<typeof openDb>,
+	between: () => void
+): ReturnType<typeof openDb> {
+	return new Proxy(db, {
+		get(target, prop) {
+			const value = Reflect.get(target, prop);
+			if (typeof value !== 'function') return value;
+			if (prop !== 'exec' && prop !== 'prepare') return value.bind(target);
+			return (sql: string) => {
+				between();
+				return value.call(target, sql);
+			};
+		}
+	});
+}
+
+const runningIds = (db: ReturnType<typeof openDb>) =>
+	db
+		.prepare("SELECT id FROM runs WHERE state = 'running' ORDER BY id")
+		.all()
+		.map((r) => r.id as number);
 
 describe('claimRun', () => {
 	it('gives a queued run to exactly one of two connections, and a waiting run keeps its pool slot', () => {
@@ -149,6 +189,20 @@ describe('claimRun', () => {
 		expect(runningIn('cloud')).toHaveLength(171);
 		expect(claimed).toEqual([...runningIn('local'), ...runningIn('cloud')].sort((a, b) => a - b));
 		expect(claimedBy.every((ids) => ids.length > 0)).toBe(true);
+	});
+
+	it('claims every run exactly once, whichever statement of the claim another connection claims between', () => {
+		const file = join(tmp, 'claim-interleaved.db');
+		const { db, cloud, queue } = setup(openDb(file));
+		for (let i = 0; i < 50; i++) queue(cloud);
+		const limits = { global: 1000, pools: { cloud: 1000 } };
+		const rival = rivalClaimer(file, limits);
+
+		const ours = runs.claimRun(interleaved(db, rival.tryClaim), system, limits);
+
+		const claimed = [ours!.id, ...rival.claimed];
+		expect(new Set(claimed).size).toBe(claimed.length);
+		expect(runningIds(db)).toEqual([...claimed].sort((a, b) => a - b));
 	});
 });
 
@@ -1153,30 +1207,36 @@ describe('stop (kill switch)', () => {
 		expect(haltedSince(s.db)).not.toBeNull();
 	});
 
-	it('starts no run that outlives a halt arriving while a claim loop keeps claiming', () => {
+	it('starts no run that outlives a halt arriving once a claim loop has already claimed many runs', () => {
 		const { db, cloud, queue } = setup();
-		const total = 1000;
-		for (let i = 0; i < total; i++) queue(cloud);
+		for (let i = 0; i < 1000; i++) queue(cloud);
 		const running = () =>
 			db.prepare("SELECT count(*) AS n FROM runs WHERE state = 'running'").get()!.n as number;
 
-		// Claiming and halting share one write transaction (domain/core.ts tx), so SQLite's write serialization already
-		// orders every claim before or after the halt — no real race is needed to prove no run outlives it.
 		const limits = { global: 2000, pools: { cloud: 2000 } };
-		const claimed: number[] = [];
-		for (let i = 0; i < 30; i++) {
-			const run = runs.claimRun(db, system, limits);
-			if (!run) break;
-			claimed.push(run.id);
-		}
-		expect(running()).toBe(claimed.length); // sanity: the loop above did start this many runs
+		const claimed = Array.from({ length: 30 }, () => runs.claimRun(db, system, limits)!.id);
+		expect(running()).toBe(claimed.length);
 
 		const cancelled = haltRuns(db, user);
 
-		expect(runs.claimRun(db, system, limits)).toBeUndefined(); // the halt is visible to the very next claim
-		expect(claimed.length).toBeLessThan(total);
+		expect(runs.claimRun(db, system, limits)).toBeUndefined();
 		expect(new Set(claimed)).toEqual(new Set(cancelled));
 		expect(running()).toBe(0);
+	});
+
+	it('starts no run that outlives a halt, whichever statement of the halt a claim lands between', () => {
+		const file = join(tmp, 'halt-interleaved.db');
+		const { db, cloud, queue } = setup(openDb(file));
+		for (let i = 0; i < 50; i++) queue(cloud);
+		const limits = { global: 1000, pools: { cloud: 1000 } };
+		const rival = rivalClaimer(file, limits);
+		rival.tryClaim(); // one run already running before the halt starts, like the loop above
+
+		const cancelled = haltRuns(interleaved(db, rival.tryClaim), user);
+
+		expect(runningIds(db)).toEqual([]);
+		expect(new Set(rival.claimed)).toEqual(new Set(cancelled));
+		expect(runs.claimRun(db, system, limits)).toBeUndefined();
 	});
 });
 
