@@ -51,7 +51,8 @@ test('the stop chip appears after :stop at every width and disappears with a toa
 	await open(wide, '/');
 
 	await queueRun(db, page, ticket.id, fakeModel);
-	await expect(page.getByText(/^Fake model/)).toBeVisible();
+	// Scoped to the dock: the Stellwerk's own "Aktive Runs" list names the same profile a second time.
+	await expect(agentsOf(page)).toContainText('Fake model');
 
 	await confirmCommand(page, 'stop', 'Alle Agents stoppen?');
 

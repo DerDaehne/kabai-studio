@@ -88,3 +88,49 @@ function displayState({ state, asking, halted }: RunRow): LiveRun['state'] {
 	if (state === 'running' && !asking) return 'running';
 	return 'waiting';
 }
+
+export type FinishedRunState = 'succeeded' | 'failed' | 'cancelled';
+
+export type FinishedRun = {
+	id: number;
+	project: ProjectRef;
+	/** e.g. `STU-12` */
+	ticket: string;
+	number: number;
+	state: FinishedRunState;
+	/** The first line of the stored error; only set for a failed run. */
+	summary: string | null;
+};
+
+type FinishedRunRow = ProjectRow & {
+	runId: number;
+	state: FinishedRunState;
+	number: number;
+	error: string | null;
+};
+
+// 'paused' ends a run too (it can still resume), so it stays out: it belongs with the active runs above, not here.
+const FINISHED_RUNS = `
+	SELECT r.id AS runId, r.state, r.error, p.id, p.key, p.name, t.number
+	FROM runs r
+	JOIN tickets t ON t.id = r.ticket_id
+	JOIN projects p ON p.id = t.project_id
+	WHERE p.archived = 0 AND r.state IN ('succeeded', 'failed', 'cancelled')
+	ORDER BY r.finished_at DESC, r.id DESC -- finished_at has second resolution; id breaks a tie within the same second
+	LIMIT 5`;
+
+/** The last 5 runs that ended for good, across every project, newest first. */
+export function recentFinishedRuns(db: DatabaseSync): FinishedRun[] {
+	return (db.prepare(FINISHED_RUNS).all() as FinishedRunRow[]).map(finishedRun);
+}
+
+function finishedRun(row: FinishedRunRow): FinishedRun {
+	return {
+		id: row.runId,
+		project: projectRef(row),
+		ticket: `${row.key}-${row.number}`,
+		number: row.number,
+		state: row.state,
+		summary: row.state === 'failed' ? (row.error ?? '').split('\n')[0] : null
+	};
+}

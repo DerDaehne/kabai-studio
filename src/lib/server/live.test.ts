@@ -5,7 +5,7 @@ import type { Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns, releaseHalt, resumeRun } from './domain/halt';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
-import { liveState, projectRef } from './live';
+import { liveState, projectRef, recentFinishedRuns } from './live';
 
 const user: Actor = { kind: 'user' };
 
@@ -136,5 +136,76 @@ describe('liveState', () => {
 		expect(liveState(s.db).halt).toBe('pause');
 		releaseHalt(s.db, user);
 		expect(liveState(s.db).halt).toBeNull();
+	});
+});
+
+describe('recentFinishedRuns', () => {
+	it('lists succeeded, failed and cancelled runs across projects, newest first, but not a paused one', () => {
+		const s = setup();
+		const stu = s.project('STU', 'Studio');
+		const web = s.project('WEB', 'Webseite');
+		const local = s.profile('qwen', 'local');
+		const succeeded = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, succeeded, { state: 'succeeded' });
+		const failedTicket = s.ticket(web);
+		const failed = s.running(failedTicket, local);
+		runs.finishRun(s.db, user, failed, { state: 'failed', error: 'Timeout talking to the model' });
+		const cancelled = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, cancelled, { state: 'cancelled' });
+		const paused = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, paused, { state: 'paused' });
+
+		const list = recentFinishedRuns(s.db);
+		expect(list.map((r) => r.id)).toEqual([cancelled, failed, succeeded]);
+		expect(list.map((r) => r.state)).toEqual(['cancelled', 'failed', 'succeeded']);
+		const failedNumber = (
+			s.db.prepare('SELECT number FROM tickets WHERE id = ?').get(failedTicket) as {
+				number: number;
+			}
+		).number;
+		expect(list[1]).toMatchObject({
+			project: { code: 'WEB', name: 'Webseite' },
+			ticket: `WEB-${failedNumber}`,
+			number: failedNumber
+		});
+	});
+
+	it('shows a one-line summary only for a failed run, taking just the first line of the error', () => {
+		const s = setup();
+		const stu = s.project('STU', 'Studio');
+		const local = s.profile('qwen', 'local');
+		const succeeded = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, succeeded, { state: 'succeeded' });
+		const failed = s.running(s.ticket(stu), local);
+		runs.finishRun(s.db, user, failed, {
+			state: 'failed',
+			error: 'Connection reset\nretrying was no use'
+		});
+
+		const list = recentFinishedRuns(s.db);
+		expect(list.find((r) => r.id === failed)?.summary).toBe('Connection reset');
+		expect(list.find((r) => r.id === succeeded)?.summary).toBeNull();
+	});
+
+	it('caps the list at the 5 newest and drops a finished run from an archived project', () => {
+		const s = setup();
+		const stu = s.project('STU', 'Studio');
+		const local = s.profile('qwen', 'local');
+		const finish = () => {
+			const id = s.running(s.ticket(stu), local);
+			runs.finishRun(s.db, user, id, { state: 'succeeded' });
+			return id;
+		};
+		const oldest = finish();
+		const newest = Array.from({ length: 5 }, finish);
+		const archived = s.project('OLD', 'Alt');
+		const archivedRun = s.running(s.ticket(archived), local);
+		runs.finishRun(s.db, user, archivedRun, { state: 'succeeded' });
+		s.db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archived);
+
+		const list = recentFinishedRuns(s.db);
+		expect(list.map((r) => r.id)).toEqual([...newest].reverse());
+		expect(list.some((r) => r.id === oldest)).toBe(false); // pushed out: only the 5 newest survive the cap
+		expect(list.some((r) => r.id === archivedRun)).toBe(false);
 	});
 });
