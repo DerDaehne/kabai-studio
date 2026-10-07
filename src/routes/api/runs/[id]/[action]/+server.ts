@@ -1,7 +1,7 @@
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { attemptJson } from '$lib/server/domain-failure';
 import type { Actor } from '$lib/server/domain/core';
-import { DomainError } from '$lib/server/domain/error';
 import { resumeRun } from '$lib/server/domain/halt';
 import { runner } from '$lib/server/runner';
 import type { RequestHandler } from './$types';
@@ -24,10 +24,5 @@ const ACTIONS: Record<string, (runId: number) => object> = {
 export const POST: RequestHandler = ({ params }) => {
 	const action = ACTIONS[params.action];
 	if (!action || !/^\d+$/.test(params.id)) error(404, 'Diese Aktion gibt es nicht.');
-	try {
-		return json(action(Number(params.id)));
-	} catch (err) {
-		if (!(err instanceof DomainError)) throw err;
-		return json({ code: err.code, message: err.message, hint: err.hint }, { status: 400 });
-	}
+	return attemptJson(() => action(Number(params.id)));
 };

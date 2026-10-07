@@ -1,6 +1,5 @@
-import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { DomainError } from '$lib/server/domain/core';
+import { domainFail } from '$lib/server/domain-failure';
 import { deleteSecret, listSecrets, setSecret } from '$lib/server/secrets';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -20,9 +19,7 @@ export const actions: Actions = {
 				form.get('replace') === '1'
 			);
 		} catch (err) {
-			if (err instanceof DomainError)
-				return fail(400, { field, code: err.code, message: err.message, hint: err.hint });
-			throw err;
+			return domainFail(err, (e) => ({ field, code: e.code, message: e.message, hint: e.hint }));
 		}
 		return { field };
 	},

@@ -14,6 +14,11 @@ export class DomainError extends Error {
 	}
 }
 
+/** Narrows to `DomainError` — for a `catch` that only swallows a rule violation, not every error. */
+export function isDomainError(err: unknown): err is DomainError {
+	return err instanceof DomainError;
+}
+
 /** One stderr-ready line: `[code] message hint` for a DomainError, or just the message otherwise. */
 export function formatError(err: unknown): string {
 	if (err instanceof DomainError) return `[${err.code}] ${err.message} ${err.hint}`;

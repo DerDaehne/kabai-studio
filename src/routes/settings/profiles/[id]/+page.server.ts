@@ -8,7 +8,8 @@ import {
 	type ProviderId
 } from '$lib/agents/profile-defaults';
 import { db } from '$lib/server/db';
-import { DomainError } from '$lib/server/domain/core';
+import { domainFail } from '$lib/server/domain-failure';
+import { isDomainError } from '$lib/server/domain/error';
 import { createProfile, getProfile, updateProfile, type Profile } from '$lib/server/domain/runs';
 import { DEFAULT_MAX_STEPS } from '$lib/server/executors/builtin';
 import { listModels } from '$lib/server/model-list';
@@ -44,8 +45,10 @@ export const actions: Actions = {
 			if (stored) updateProfile(db(), USER, stored.id, input);
 			else createProfile(db(), USER, input);
 		} catch (err) {
-			if (!(err instanceof DomainError)) throw err;
-			return fail(400, { field: FIELD_OF[err.code] ?? '', message: wayOut(err.message, err.hint) });
+			return domainFail(err, (e) => ({
+				field: FIELD_OF[e.code] ?? '',
+				message: wayOut(e.message, e.hint)
+			}));
 		}
 		redirect(303, '/settings/profiles');
 	},
@@ -63,8 +66,9 @@ export const actions: Actions = {
 		try {
 			setSecret(db(), name, String(form.get('value') ?? ''));
 		} catch (err) {
-			if (!(err instanceof DomainError)) throw err;
-			return fail(400, { secretError: { code: err.code, message: err.message, hint: err.hint } });
+			return domainFail(err, (e) => ({
+				secretError: { code: e.code, message: e.message, hint: e.hint }
+			}));
 		}
 		return { savedSecret: name };
 	}
@@ -77,7 +81,7 @@ function storedProfile(id: string) {
 		const profile = getProfile(db(), Number(id));
 		if (profile.executor === 'builtin') return profile;
 	} catch (err) {
-		if (!(err instanceof DomainError)) throw err;
+		if (!isDomainError(err)) throw err;
 	}
 	error(
 		404,

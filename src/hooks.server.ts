@@ -1,9 +1,11 @@
 import { dev } from '$app/environment';
+import { randomBytes } from 'node:crypto';
 import {
 	json,
 	redirect,
 	text,
 	type Handle,
+	type HandleServerError,
 	type RequestEvent,
 	type ServerInit
 } from '@sveltejs/kit';
@@ -88,6 +90,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 		return resolve(event);
 	if (path === '/api' || path.startsWith('/api/')) return unauthorizedApiResponse(event, !!token);
 	redirect(303, hasOwner(db()) ? '/login' : '/setup');
+};
+
+/**
+ * Only unexpected errors reach this (not the `error()` helper, whose message is already user-facing):
+ * logged with a short ID so the report in the log can be matched to the one the error page shows.
+ */
+export const handleError: HandleServerError = ({ error, event }) => {
+	const id = randomBytes(4).toString('hex');
+	console.error(`kabai studio: unerwarteter Fehler ${id} auf ${event.url.pathname}`, error);
+	return { message: 'Unerwarteter Fehler.', id };
 };
 
 /**

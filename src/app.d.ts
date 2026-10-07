@@ -7,7 +7,10 @@ declare global {
 	const __STUDIO_BUILD_DATE__: string;
 
 	namespace App {
-		// interface Error {}
+		interface Error {
+			/** Set only for an unexpected error (see `handleError` in hooks.server.ts) — matches the logged line. */
+			id?: string;
+		}
 		interface Locals {
 			user?: import('$lib/server/auth').User;
 		}

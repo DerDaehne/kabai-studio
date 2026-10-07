@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 vi.mock('$app/state', () => ({
 	page: {
 		status: 404,
-		error: null as { message: string } | null,
+		error: null as { message: string; id?: string } | null,
 		route: { id: null as string | null }
 	}
 }));
@@ -52,4 +52,24 @@ it('shows the plain error message for a non-404 error on a matched route', () =>
 		route: { id: '/p/[key]/t/[number]' }
 	});
 	expect(html()).toContain('Kaputt.');
+});
+
+it('shows the handleError id next to the message for an unexpected error, so it can be matched to the log', () => {
+	Object.assign(page, {
+		status: 500,
+		error: { message: 'Unerwarteter Fehler.', id: 'ab12cd34' },
+		route: { id: '/p/[key]/t/[number]' }
+	});
+	const body = html();
+	expect(body).toContain('Unerwarteter Fehler.');
+	expect(body).toContain('ab12cd34');
+});
+
+it('shows no error id for an expected error raised via the error() helper', () => {
+	Object.assign(page, {
+		status: 404,
+		error: { message: 'Ticket STU-999 gibt es nicht.' },
+		route: { id: '/p/[key]/t/[number]' }
+	});
+	expect(html()).not.toContain('Fehler-ID');
 });

@@ -18,7 +18,7 @@ import { db } from '$lib/server/db';
 import * as dbModule from '$lib/server/db';
 import { DomainError } from '$lib/server/domain/error';
 import { listenerCount, publish } from '$lib/server/events';
-import { handle, init } from './hooks.server';
+import { handle, handleError, init } from './hooks.server';
 import { actions as loginActions } from './routes/login/+page.server';
 import { GET as events } from './routes/api/events/+server';
 import { POST as logout } from './routes/logout/+server';
@@ -440,6 +440,38 @@ describe('default bind address', () => {
 		} finally {
 			if (before === undefined) delete process.env.HOST;
 			else process.env.HOST = before;
+		}
+	});
+});
+
+describe('handleError', () => {
+	it('logs an unexpected error with a short id and returns the same id for the error page', () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const cause = new Error('etwas Unerwartetes');
+			const result = handleError({
+				error: cause,
+				event: { url: new URL('http://localhost/board') }
+			} as never);
+			expect(result).toMatchObject({ message: 'Unerwarteter Fehler.' });
+			const id = (result as { id: string }).id;
+			expect(id).toMatch(/^[0-9a-f]{8}$/);
+			expect(error).toHaveBeenCalledWith(expect.stringContaining(id), cause);
+			expect(error).toHaveBeenCalledWith(expect.stringContaining('/board'), cause);
+		} finally {
+			error.mockRestore();
+		}
+	});
+
+	it('gives two unexpected errors different ids, so one log line cannot be mistaken for another', () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const event = { url: new URL('http://localhost/board') };
+			const first = handleError({ error: new Error('a'), event } as never) as { id: string };
+			const second = handleError({ error: new Error('b'), event } as never) as { id: string };
+			expect(first.id).not.toBe(second.id);
+		} finally {
+			error.mockRestore();
 		}
 	});
 });

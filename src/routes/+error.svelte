@@ -15,6 +15,7 @@
 	{missing && !routeMatched
 		? 'Die Adresse ist falsch oder die Ansicht ist noch nicht gebaut.'
 		: (page.error?.message ?? 'Unbekannter Fehler.')}
+	{#if page.error?.id}(Fehler-ID: {page.error.id}){/if}
 	{#snippet action()}
 		<a class="btn" href="/">Zum Stellwerk</a>
 		{#if onTicket}<a class="btn" href="/board">Zum Board</a>{/if}

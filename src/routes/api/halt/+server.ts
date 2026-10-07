@@ -1,7 +1,6 @@
-import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { attemptJson } from '$lib/server/domain-failure';
 import type { Actor } from '$lib/server/domain/core';
-import { DomainError } from '$lib/server/domain/error';
 import { haltKind, resumeAll } from '$lib/server/domain/halt';
 import { runner } from '$lib/server/runner';
 import type { RequestHandler } from './$types';
@@ -10,7 +9,8 @@ import type { RequestHandler } from './$types';
 const OWNER: Actor = { kind: 'user' };
 
 /** `:stop`, the kill switch: cancels every active run and keeps the queue waiting until DELETE. */
-export const POST: RequestHandler = () => json({ cancelled: runner().halt(OWNER).length });
+export const POST: RequestHandler = () =>
+	attemptJson(() => ({ cancelled: runner().halt(OWNER).length }));
 
 /**
  * `:fortsetzen all`: resumes every run the human paused and lifts the halt, naming the kind it lifted and any run it
@@ -19,11 +19,8 @@ export const POST: RequestHandler = () => json({ cancelled: runner().halt(OWNER)
  */
 export const DELETE: RequestHandler = () => {
 	const released = haltKind(db());
-	try {
+	return attemptJson(() => {
 		const { resumed, skipped } = resumeAll(db(), OWNER);
-		return json({ resumed: resumed.length, released, skipped });
-	} catch (err) {
-		if (!(err instanceof DomainError)) throw err;
-		return json({ code: err.code, message: err.message, hint: err.hint }, { status: 400 });
-	}
+		return { resumed: resumed.length, released, skipped };
+	});
 };

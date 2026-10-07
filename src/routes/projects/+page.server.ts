@@ -1,7 +1,8 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { domainFail } from '$lib/server/domain-failure';
 import { createProject } from '$lib/server/domain/board';
-import { DomainError, type Actor } from '$lib/server/domain/core';
+import type { Actor } from '$lib/server/domain/core';
 import { OPEN_QUESTION, projectRef } from '$lib/server/live';
 import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
@@ -55,9 +56,12 @@ export const actions: Actions = {
 		try {
 			createProject(db(), HUMAN, { key, name });
 		} catch (err) {
-			if (!(err instanceof DomainError)) throw err;
-			const message = `${err.message} Ausweg: ${err.hint}`;
-			return fail(400, { field: FIELD_OF[err.code] ?? 'name', message, name, key });
+			return domainFail(err, (e) => ({
+				field: FIELD_OF[e.code] ?? 'name',
+				message: `${e.message} Ausweg: ${e.hint}`,
+				name,
+				key
+			}));
 		}
 		redirect(303, `/p/${key}`);
 	}

@@ -103,3 +103,41 @@ it('maps a DomainError that resumeAll itself did not turn into a skipped run to 
 		resumeAll.mockRestore();
 	}
 });
+
+it('maps a DomainError from POST /api/halt (the kill switch) to 400 with code, message and hint, instead of a 500', async () => {
+	const refusal = new DomainError('requires_human', 'Den Not-Aus setzt nur der Mensch.', 'x');
+	const haltRuns = vi.spyOn(halt, 'haltRuns').mockImplementationOnce(() => {
+		throw refusal;
+	});
+
+	try {
+		const response = await POST({} as never);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			code: 'requires_human',
+			message: 'Den Not-Aus setzt nur der Mensch.',
+			hint: 'x'
+		});
+	} finally {
+		haltRuns.mockRestore();
+	}
+});
+
+it('maps a DomainError from POST /api/pause to 400 with code, message and hint, instead of a 500', async () => {
+	const refusal = new DomainError('requires_human', 'Runs hält nur der Mensch an.', 'x');
+	const pauseRuns = vi.spyOn(halt, 'pauseRuns').mockImplementationOnce(() => {
+		throw refusal;
+	});
+
+	try {
+		const response = await pauseAll({} as never);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			code: 'requires_human',
+			message: 'Runs hält nur der Mensch an.',
+			hint: 'x'
+		});
+	} finally {
+		pauseRuns.mockRestore();
+	}
+});

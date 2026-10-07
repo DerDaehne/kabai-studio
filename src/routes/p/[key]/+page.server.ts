@@ -1,7 +1,8 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { domainFail } from '$lib/server/domain-failure';
 import { createTicket } from '$lib/server/domain/board';
-import { DomainError, type Actor } from '$lib/server/domain/core';
+import type { Actor } from '$lib/server/domain/core';
 import { projectRef } from '$lib/server/live';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { Actions, PageServerLoad } from './$types';
@@ -36,8 +37,7 @@ export const actions: Actions = {
 		try {
 			number = createTicket(db(), HUMAN, project.id, { title }).number;
 		} catch (err) {
-			if (!(err instanceof DomainError)) throw err;
-			return fail(400, { title, message: `${err.message} Ausweg: ${err.hint}` });
+			return domainFail(err, (e) => ({ title, message: `${e.message} Ausweg: ${e.hint}` }));
 		}
 		redirect(303, `/p/${project.key}/t/${number}`);
 	}

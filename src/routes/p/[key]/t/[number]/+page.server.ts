@@ -1,7 +1,7 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+import { domainFail } from '$lib/server/domain-failure';
 import * as board from '$lib/server/domain/board';
 import { tx, type Actor } from '$lib/server/domain/core';
-import { DomainError } from '$lib/server/domain/error';
 import { db } from '$lib/server/db';
 import { createRun, prioritizeRun } from '$lib/server/domain/runs';
 import { runner } from '$lib/server/runner';
@@ -63,9 +63,7 @@ function mutate(action: string, fn: () => void) {
 	try {
 		fn();
 	} catch (err) {
-		if (err instanceof DomainError)
-			return fail(400, { action, code: err.code, message: err.message, hint: err.hint });
-		throw err;
+		return domainFail(err, (e) => ({ action, code: e.code, message: e.message, hint: e.hint }));
 	}
 }
 
