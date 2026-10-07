@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { recoveryHint } from '../agents/loop-guard';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
@@ -28,7 +29,7 @@ type Reply =
 	| {
 			chunks: Chunk[];
 			finish?: 'stop' | 'tool_calls' | 'length';
-			usage?: [input: number, output: number];
+			usage?: [input: number, output: number, reasoning?: number];
 	  }
 	| { status: number; error: string };
 type ProviderRequest = { body: Record<string, unknown>; headers: Headers; signal: AbortSignal };
@@ -65,14 +66,16 @@ async function* stream(reply: Extract<Reply, { chunks: Chunk[] }>, signal: Abort
 	}
 	const calls = reply.chunks.some((chunk) => typeof chunk === 'object' && 'call' in chunk);
 	yield delta({}, reply.finish ?? (calls ? 'tool_calls' : 'stop'));
-	const [input, output] = reply.usage ?? [100, 10];
+	const [input, output, reasoning] = reply.usage ?? [100, 10];
+	const details =
+		reasoning === undefined ? {} : { completion_tokens_details: { reasoning_tokens: reasoning } };
 	yield sse({
 		id: 'chatcmpl-1',
 		object: 'chat.completion.chunk',
 		created: 0,
 		model: 'm',
 		choices: [],
-		usage: { prompt_tokens: input, completion_tokens: output }
+		usage: { prompt_tokens: input, completion_tokens: output, ...details }
 	});
 	yield encoder.encode('data: [DONE]\n\n');
 }
@@ -957,6 +960,285 @@ describe('trace of the builtin executor', () => {
 			{ name: 'thinking', tokens: 3, tokensPerSecond: 3, lastLine: 'third' },
 			{ name: 'writing', tokens: 1 }
 		]);
+	});
+});
+
+describe('loop guard of the builtin executor', () => {
+	const interventions = (events: ReturnType<typeof setup>['events'], runId: number) =>
+		events(runId)
+			.filter((e) => e.type === 'intervention')
+			.map((e) => e.payload);
+	const lastMessage = (request: ProviderRequest) =>
+		(request.body.messages as { role: string; content: string }[]).at(-1);
+	const cutOff = (): Reply => ({
+		chunks: [{ reasoning: 'Let me reconsider.\n' }],
+		finish: 'length'
+	});
+	const atBudget = (i: number): Reply => ({
+		chunks: [call(`call-${i}`, 'notes_search', { query: `export ${i}` })],
+		usage: [100, 12_100, 12_000]
+	});
+	const freshRunOf = (db: ReturnType<typeof setup>['db'], runId: number) =>
+		db.prepare('SELECT id, resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId) as {
+			id: number;
+			resume_reason: string;
+		};
+
+	it('answers a step at the output limit with a hint as the next user message and keeps the conversation', async () => {
+		const { db, queue, run, events } = setup();
+		const provider = fakeProvider(
+			{
+				chunks: [
+					{ reasoning: 'Let me reconsider.\n' },
+					{ reasoning: 'Hmm.\n' },
+					{ text: 'So the plan' }
+				],
+				finish: 'length'
+			},
+			{ chunks: [call('call-1', 'add_comment', { text: 'Plan done.' })] },
+			{ chunks: [{ text: 'Done.' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const hint = recoveryHint('length_stop');
+		expect(interventions(events, runId)).toEqual([
+			{
+				kind: 'length_stop',
+				attempt: 1,
+				max: 2,
+				reason: 'Step 1 hit the output limit before it finished.',
+				hint,
+				stepTokens: 2
+			}
+		]);
+		expect(provider.requests[1].body.messages).toMatchObject([
+			{ role: 'system' },
+			{ role: 'user', content: expect.stringContaining('Refine the export') },
+			{ role: 'assistant', content: 'So the plan' },
+			{ role: 'user', content: hint }
+		]);
+		expect(provider.requests[2].body.messages).toMatchObject([
+			{ role: 'system' },
+			{ role: 'user' },
+			{ role: 'assistant', content: 'So the plan' },
+			{ role: 'user', content: hint },
+			{ role: 'assistant', tool_calls: [{ id: 'call-1' }] },
+			{ role: 'tool', tool_call_id: 'call-1' }
+		]);
+		expect(run(runId).state).toBe('succeeded');
+	});
+
+	it('never lets a run at the output limit succeed: after two hints it hands off to a fresh run that learns what got it stuck', async () => {
+		const { db, queue, run, events } = setup();
+		const provider = fakeProvider(cutOff(), cutOff(), cutOff(), { chunks: [{ text: 'Done.' }] });
+		const { executed } = startBuiltin(db, { fetch: provider.fetch });
+		const stuck = queue();
+		await ended(() => run(stuck).state);
+		const fresh = freshRunOf(db, stuck);
+		await ended(() => run(fresh.id).state);
+
+		const hint = recoveryHint('length_stop');
+		const stop = (step: number) => `Step ${step} hit the output limit before it finished.`;
+		const handedOff = `${stop(3)} The run ends with a handoff.`;
+		expect(interventions(events, stuck)).toEqual([
+			{ kind: 'length_stop', attempt: 1, max: 2, reason: stop(1), hint, stepTokens: 1 },
+			{ kind: 'length_stop', attempt: 2, max: 2, reason: stop(2), hint, stepTokens: 1 },
+			{ kind: 'length_stop', attempt: 1, max: 1, reason: handedOff, hint, stepTokens: 1 }
+		]);
+		expect(provider.requests.slice(1, 3).map(lastMessage)).toEqual([
+			{ role: 'user', content: hint },
+			{ role: 'user', content: hint }
+		]);
+		const handoff = events(stuck).find((e) => e.key === 'handoff')!;
+		expect(run(stuck).state).toBe('paused');
+		expect(executed[0].result).toEqual({
+			state: 'paused',
+			resume: { reason: 'recovery', handoffSeq: handoff.seq }
+		});
+		expect(fresh.resume_reason).toBe('recovery');
+		expect(lastMessage(provider.requests[3])!.content).toContain(
+			`### What got the previous run stuck — do not try it again\n${handedOff}\n${hint}`
+		);
+		expect(run(fresh.id).state).toBe('succeeded');
+	});
+
+	it('asks the human once the fresh run gets stuck as well', async () => {
+		const { db, queue, run, events, ticketId } = setup();
+		const provider = fakeProvider(...Array.from({ length: 6 }, cutOff));
+		startBuiltin(db, { fetch: provider.fetch });
+		const stuck = queue();
+		await ended(() => run(stuck).state);
+		const fresh = freshRunOf(db, stuck);
+		await ended(() => run(fresh.id).state);
+
+		expect(run(fresh.id).state).toBe('paused');
+		expect(interventions(events, fresh.id).at(-1)).toMatchObject({ attempt: 2, max: 1 });
+		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(2);
+		expect(board.ticket(db, ticketId).column_name).toBe('Human Intervention');
+	});
+
+	it('hands off at once when the step limit leaves no step for a hint', async () => {
+		const { db, queue, run, events } = setup({ max_steps: 1 });
+		const provider = fakeProvider(cutOff(), { chunks: [{ text: 'Done.' }] });
+		startBuiltin(db, { fetch: provider.fetch });
+		const stuck = queue();
+		await ended(() => run(stuck).state);
+		await ended(() => run(freshRunOf(db, stuck).id).state);
+
+		expect(run(stuck).state).toBe('paused');
+		expect(interventions(events, stuck)).toMatchObject([{ attempt: 1, max: 1 }]);
+		expect(provider.requests).toHaveLength(2);
+	});
+
+	it('gives a hint after three failed calls on the same target, such as a move the board rejects, and counts anew after it', async () => {
+		const { db, queue, run, events } = setup();
+		const rejected = (id: string): Reply => ({
+			chunks: [call(id, 'move_ticket', { column_id: 99999 })]
+		});
+		const provider = fakeProvider(
+			rejected('call-1'),
+			rejected('call-2'),
+			rejected('call-3'),
+			rejected('call-4'),
+			{ chunks: [{ text: 'I will ask instead.' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const hint = recoveryHint('failing_calls');
+		expect(interventions(events, runId)).toEqual([
+			{
+				kind: 'stagnation',
+				attempt: 1,
+				max: 2,
+				reason: '3 failed calls in a row on "move_ticket".',
+				hint
+			}
+		]);
+		expect(provider.requests[3].body.messages).toMatchObject([
+			{ role: 'system' },
+			{ role: 'user' },
+			...['call-1', 'call-2', 'call-3'].flatMap((id) => [
+				{ role: 'assistant', tool_calls: [{ id }] },
+				{ role: 'tool', tool_call_id: id }
+			]),
+			{ role: 'user', content: hint }
+		]);
+		expect(provider.requests).toHaveLength(5);
+		expect(run(runId).state).toBe('succeeded');
+	});
+
+	it('counts a successful change of a note as progress, while six reads of the same note in a row get a hint', async () => {
+		const { db, queue, run, events } = setup();
+		const note = { slug: 'export-format' };
+		const reads = (from: number, count: number): Reply[] =>
+			Array.from({ length: count }, (_, i) => ({
+				chunks: [call(`read-${from + i}`, 'notes_get', note)]
+			}));
+		const provider = fakeProvider(
+			{
+				chunks: [call('create', 'notes_create', { ...note, title: 'Export format', body: 'CSV' })]
+			},
+			...reads(1, 3),
+			{
+				chunks: [
+					call('update', 'notes_update', { ...note, expected_version: 1, body: 'CSV, header' })
+				]
+			},
+			...reads(4, 6),
+			{ chunks: [{ text: 'Done.' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(events(runId).find((e) => e.key === 'update:result')!.payload.isError).toBe(false);
+		expect(interventions(events, runId)).toEqual([
+			expect.objectContaining({
+				kind: 'stagnation',
+				reason: '6 calls in a row on "export-format" without progress.',
+				hint: recoveryHint('no_progress')
+			})
+		]);
+		expect(provider.requests).toHaveLength(12);
+		expect(lastMessage(provider.requests[11])).toEqual({
+			role: 'user',
+			content: recoveryHint('no_progress')
+		});
+	});
+
+	it("gives a hint after three steps that thought up to the model's reasoning budget from the catalog", async () => {
+		const { db, queue, run, events } = setup();
+		const provider = fakeProvider(atBudget(1), atBudget(2), atBudget(3), {
+			chunks: [{ text: 'Done.' }]
+		});
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(interventions(events, runId)).toEqual([
+			{
+				kind: 'stagnation',
+				attempt: 1,
+				max: 2,
+				reason:
+					'3 steps in a row ended at the reasoning budget of 12288 tokens or the output limit.',
+				hint: recoveryHint('reasoning_budget'),
+				stepTokens: 12_000
+			}
+		]);
+	});
+
+	it('leaves a run alone that ends its last step on its own, even after steps at the reasoning budget', async () => {
+		const { db, queue, run, events } = setup();
+		const provider = fakeProvider(atBudget(1), atBudget(2), {
+			chunks: [{ text: 'Done.' }],
+			usage: [100, 12_100, 12_000]
+		});
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(interventions(events, runId)).toEqual([]);
+	});
+
+	it('leaves a run that asks the human to the human, even in a step that would get a hint', async () => {
+		const { db, queue, run, events } = setup();
+		const question = { question: 'Which columns go into the export?' };
+		const provider = fakeProvider(atBudget(1), atBudget(2), {
+			chunks: [call('call-3', 'request_human', question)],
+			usage: [100, 12_100, 12_000]
+		});
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('paused');
+		expect(interventions(events, runId)).toEqual([]);
+		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
+	});
+
+	it('lets parking win over a hint when the run is parked in a step that would get one', async () => {
+		const { db, queue, run, events } = setup();
+		let park = () => {};
+		const provider = fakeProvider(atBudget(1), atBudget(2), {
+			chunks: [{ pause: () => park() }, call('call-3', 'notes_search', { query: 'export 3' })],
+			usage: [100, 12_100, 12_000]
+		});
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		park = () => runner.park(runId, 'quota', '2099-01-01T00:00:00Z');
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('paused');
+		expect(interventions(events, runId)).toEqual([]);
+		expect(
+			db.prepare('SELECT resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId)
+		).toEqual({ resume_reason: 'quota' });
 	});
 });
 

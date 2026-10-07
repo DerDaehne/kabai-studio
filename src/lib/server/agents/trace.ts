@@ -28,12 +28,15 @@ export function deriveTrace(stepText: string, reasoning: string, call: ToolCall)
 		(sentence) => sentence !== reason && PLAN_MARKER.test(sentence)
 	);
 	return {
-		target: short(targetOf(call.args)),
+		target: callTarget(call),
 		reason: short(reason ?? ''),
 		reason_source: source,
 		next_hint: short(nextHint ?? '')
 	};
 }
+
+/** What a call works on: a file, command, note, ticket or query, as the trace shows it; empty when it names none. */
+export const callTarget = (call: ToolCall): string => short(targetOf(call.args));
 
 /** A short result for the trace, and for a change to a file the lines it changed. */
 export function summarizeResult(call: ToolCall, result: string, isError: boolean): ResultTrace {

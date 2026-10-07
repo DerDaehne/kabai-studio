@@ -1,26 +1,34 @@
 import {
 	APICallError,
-	isStepCount,
 	streamText,
-	type FinishReason,
 	type LanguageModel,
 	type ModelMessage,
+	type StepResult,
 	type StopCondition,
 	type TextStreamPart,
 	type ToolSet
 } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
-import { INACTIVITY_LIMIT_MS } from '../../agents/model-catalog';
+import { INACTIVITY_LIMIT_MS, reasoningBudget } from '../../agents/model-catalog';
+import {
+	detectStagnation,
+	RECOVERY,
+	recoveryHint,
+	type CallRecord,
+	type Stall,
+	type StepRecord
+} from '../agents/loop-guard';
 import {
 	assemblePrompt,
 	promptBudget,
 	resumeHistoryOf,
 	type AssembledPrompt
 } from '../agents/prompt';
-import { deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
+import { callTarget, deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
+import { freshRunsInChain, type Intervention } from '../domain/runs';
 import { mcpEndpoint, tasksOf } from '../mcp';
 import {
 	classifyProviderFailure,
@@ -44,15 +52,6 @@ export type BuiltinOptions = {
 	fetch?: typeof globalThis.fetch;
 	inactivityMs?: number;
 };
-/** What one step did, for deciding how the run ends and for spotting a stuck run. */
-export type StepRecord = {
-	step: number;
-	finishReason: FinishReason;
-	inputTokens?: number;
-	reasoningTokens?: number;
-	calls: ToolCallRecord[];
-};
-type ToolCallRecord = { tool: string; isError: boolean };
 type Part = TextStreamPart<ToolSet>;
 type OpenStep = {
 	number: number;
@@ -60,7 +59,6 @@ type OpenStep = {
 	reasoning: string;
 	text: string;
 	textsRecorded: boolean;
-	calls: ToolCallRecord[];
 	meters: Partial<Record<Phase['name'], TokenMeter>>;
 };
 /** Tokens of one phase within a step, counted from its first delta. */
@@ -71,6 +69,8 @@ export const DEFAULT_MAX_STEPS = 24;
 const REASONING_LIMIT = 20_000;
 const RESULT_LIMIT = 8_000;
 const PHASE_INTERVAL_MS = 1000;
+// ponytail: the studio tools that only read; a read tool missing here counts as progress and only makes the guard more lenient
+const READING_TOOLS = new Set(['get_ticket', 'list_workable', 'notes_search', 'notes_get']);
 
 /** Works a run in a tool loop on an OpenAI-compatible model server, with the studio MCP tools of the run. */
 export function builtinExecutor(
@@ -128,12 +128,46 @@ type Loop = {
 	inactivityMs: number;
 };
 
-async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): Promise<StepLog> {
-	const log = new StepLog(io, inactivityMs, run.profile.api_key_ref !== null);
+/**
+ * Works the tool loop in attempts: a stuck run gets a hint as the next user message and goes on with its conversation.
+ * Once the hints are used up or no step is left, the stall stays on the log and the run hands off to a fresh run.
+ */
+async function runSteps(loop: Loop): Promise<StepLog> {
+	const { prompt, run, io } = loop;
+	const log = new StepLog(io, loop.inactivityMs, run.profile.api_key_ref !== null);
+	const limits = { reasoningBudget: reasoningBudget(run.profile) };
+	let hintedAt = 0;
+	const stall = () => detectStagnation(log.records.slice(hintedAt), limits);
+	let messages: ModelMessage[] = [...prompt.history, { role: 'user', content: prompt.user }];
+	for (let attempt = 1; ; attempt++) {
+		const responseMessages = await streamSteps(loop, log, messages, () => stall() !== undefined);
+		const stuck = endedStuck(log, io) ? stall() : undefined;
+		if (!stuck) return log;
+		if (attempt > RECOVERY.hintsPerRun || log.records.length >= maxSteps(run)) {
+			log.stall = stuck;
+			return log;
+		}
+		io.emit({
+			type: 'intervention',
+			payload: interventionOf(stuck, attempt, RECOVERY.hintsPerRun)
+		});
+		hintedAt = log.records.length;
+		const hint: ModelMessage = { role: 'user', content: recoveryHint(stuck.cause) };
+		messages = [...messages, ...(await responseMessages()), hint];
+	}
+}
+
+/** One attempt: the AI SDK's tool loop until a step ends without a tool call or a stop condition holds. */
+async function streamSteps(
+	{ model, prompt, tools, run, io, inactivityMs }: Loop,
+	log: StepLog,
+	messages: ModelMessage[],
+	stuck: () => boolean
+): Promise<() => PromiseLike<ModelMessage[]>> {
 	const result = streamText({
 		model,
 		instructions: prompt.system,
-		messages: [...prompt.history, { role: 'user', content: prompt.user }],
+		messages,
 		tools,
 		...requestSettings(run.profile),
 		abortSignal: io.signal,
@@ -141,12 +175,39 @@ async function runSteps({ model, prompt, tools, run, io, inactivityMs }: Loop): 
 		// step that never starts to answer is not caught (add firstChunkMs from the second step on), and the timer keeps running
 		// while a tool executes, so a tool slower than the limit ends as provider_inactive (pause it between tool call and result)
 		timeout: { chunkMs: inactivityMs },
-		stopWhen: [isStepCount(maxSteps(run)), askedHuman, () => io.park.aborted],
+		stopWhen: [() => log.records.length >= maxSteps(run), askedHuman, () => io.park.aborted, stuck],
+		onChunk: ({ chunk }) => log.countChunk(chunk),
+		onStepFinish: (step) => log.recordStep(step),
 		onError: () => {} // errors arrive as stream parts and end the run there
 	});
 	for await (const part of result.fullStream) log.record(part);
-	return log;
+	return () => result.responseMessages; // read only when needed: after a cancel it rejects
 }
+
+/** Only a run ended by the step limit or the guard, or by a step at the output limit, can be stuck; one that ended its last step on its own is done. */
+function endedStuck(log: StepLog, io: ExecutorIo): boolean {
+	if (io.signal.aborted || io.park.aborted || log.succeeded('request_human')) return false;
+	return log.endedWithToolCalls() || log.records.at(-1)?.finishReason === 'length';
+}
+
+const interventionOf = (stall: Stall, attempt: number, max: number, reason = stall.reason) =>
+	({
+		kind: stall.kind,
+		attempt,
+		max,
+		reason,
+		hint: recoveryHint(stall.cause),
+		stepTokens: stall.stepTokens
+	}) satisfies Intervention;
+
+/** Counts on the chain's fresh runs; beyond their maximum the runner asks the human instead of starting one. */
+const freshRunIntervention = (db: DatabaseSync, run: RunContext, stall: Stall) =>
+	interventionOf(
+		stall,
+		freshRunsInChain(db, run.id) + 1,
+		RECOVERY.freshRunsPerChain,
+		`${stall.reason} The run ends with a handoff.`
+	);
 
 const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS;
 const isErrorResult = (output: unknown) =>
@@ -172,6 +233,8 @@ function afterFirstRequest(
 
 function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
 	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
+	if (log.stall)
+		io.emit({ type: 'intervention', payload: freshRunIntervention(db, run, log.stall) });
 	const handoff = log.lastMessage
 		? { text: log.lastMessage }
 		: { text: generatedHandoff(db, run, log), generated: true };
@@ -180,6 +243,7 @@ function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLo
 	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
 	if (io.park.aborted && log.endedWithToolCalls())
 		return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
+	if (log.stall) return { state: 'paused', resume: { reason: 'recovery', handoffSeq } };
 	if (log.endedWithToolCalls() && !log.succeeded('move_ticket'))
 		throw new DomainError(
 			'step_limit',
@@ -214,14 +278,18 @@ function toolUse(records: StepRecord[]): string {
 		.join(', ');
 }
 
-/** Turns the stream of the tool loop into run events (one set per step) and live phases. */
+/** Turns the stream of the tool loop into run events (one set per step) and live phases, and keeps a record of every step. */
 class StepLog {
 	readonly records: StepRecord[] = [];
 	lastMessage = '';
+	/** Set when the run stays stuck with no hint or step left: it hands off to a fresh run. */
+	stall?: Stall;
 	readonly #io: ExecutorIo;
 	readonly #inactivityMs: number;
 	readonly #withKey: boolean;
 	#step: OpenStep = openStep(1);
+	#stepsStarted = 0;
+	#reasoningDeltas = 0;
 	#lastPhaseAt = -Infinity;
 
 	constructor(io: ExecutorIo, inactivityMs: number, withKey: boolean) {
@@ -240,10 +308,29 @@ class StepLog {
 		return (this.records.at(-1)?.calls.length ?? 0) > 0;
 	}
 
+	/** Called by the SDK in stream order before `recordStep`; `record` may see the same part later. */
+	countChunk(part: Part) {
+		if (part.type === 'reasoning-delta') this.#reasoningDeltas += 1;
+	}
+
+	/** Called by the SDK before it decides on the next step, so the records are complete whenever a stop condition reads them. */
+	recordStep(step: StepResult<ToolSet>) {
+		this.records.push({
+			step: this.records.length + 1,
+			finishReason: step.finishReason,
+			inputTokens: step.usage.inputTokens,
+			// ponytail: llama.cpp reports no reasoning tokens; one delta counts as one token there, as for the phase ticker
+			reasoningTokens:
+				step.usage.outputTokenDetails.reasoningTokens || this.#reasoningDeltas || undefined,
+			calls: step.content.flatMap(callRecordOf)
+		});
+		this.#reasoningDeltas = 0;
+	}
+
 	record(part: Part) {
 		switch (part.type) {
 			case 'start-step':
-				this.#step = openStep(this.records.length + 1);
+				this.#step = openStep(++this.#stepsStarted);
 				return;
 			case 'reasoning-delta':
 				this.#step.reasoning += part.text;
@@ -333,7 +420,6 @@ class StepLog {
 	}
 
 	#recordToolResult(callId: string, call: ToolCall, result: string, isError: boolean) {
-		this.#step.calls.push({ tool: call.tool, isError });
 		const payload = {
 			step: this.#step.number,
 			tool: call.tool,
@@ -363,14 +449,16 @@ class StepLog {
 			// ponytail: cost 0 while only local models are supported; priced providers bring their prices into the catalog
 			usage: { tokensIn: usage.inputTokens ?? 0, tokensOut: usage.outputTokens ?? 0, cost: 0 }
 		});
-		this.records.push({
-			step: step.number,
-			finishReason,
-			inputTokens: usage.inputTokens,
-			reasoningTokens,
-			calls: step.calls
-		});
 	}
+}
+
+/** A tool call that got its result; progress is a successful call that changes something. */
+function callRecordOf(part: StepResult<ToolSet>['content'][number]): CallRecord[] {
+	if (part.type !== 'tool-result' && part.type !== 'tool-error') return [];
+	const isError = part.type === 'tool-error' || isErrorResult(part.output);
+	const call = { tool: part.toolName, args: part.input };
+	const progress = !isError && !READING_TOOLS.has(call.tool);
+	return [{ tool: call.tool, target: callTarget(call), isError, progress }];
 }
 
 const openStep = (number: number): OpenStep => ({
@@ -379,7 +467,6 @@ const openStep = (number: number): OpenStep => ({
 	reasoning: '',
 	text: '',
 	textsRecorded: false,
-	calls: [],
 	meters: {}
 });
 
