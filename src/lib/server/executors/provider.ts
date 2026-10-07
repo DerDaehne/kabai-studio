@@ -80,7 +80,9 @@ function failFastOnConnectionError(fetch: typeof globalThis.fetch): typeof globa
 			// no `cause` chain here: the AI SDK's own retry wrapper walks it for a retryable network error
 			// code and overrides isRetryable to true once it finds one; the message carries the detail instead
 			throw new APICallError({
-				message: cause.message,
+				// an AggregateError from trying every address of a host (Node's autoSelectFamily) has an
+				// empty message once all attempts fail, so fall back to the code
+				message: cause.message || String(cause.code),
 				url: String(input),
 				requestBodyValues: {},
 				isRetryable: false

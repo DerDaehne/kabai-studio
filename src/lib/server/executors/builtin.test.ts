@@ -1034,17 +1034,52 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 		expect(run(runId).error).toMatch(/^\[provider_auth\]/);
 	});
 
-	it('names the network cause of an unreachable endpoint, so a refused port and an unknown host read differently', async () => {
+	it('names the network cause when every address of a host refuses the connection', async () => {
 		const { db, queue, run } = setup();
+		// Node tries every address of a name like localhost (IPv6 and IPv4) and reports one AggregateError with an
+		// empty message and the first attempt's code
+		const refusedEverywhere = Object.assign(
+			new AggregateError(
+				[
+					Object.assign(new Error('connect ECONNREFUSED ::1:8090'), { code: 'ECONNREFUSED' }),
+					Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:8090'), { code: 'ECONNREFUSED' })
+				],
+				''
+			),
+			{ code: 'ECONNREFUSED' }
+		);
 		startBuiltin(db, {
 			fetch: async () => {
-				throw networkFailure('ENOTFOUND', 'getaddrinfo ENOTFOUND model.test');
+				throw Object.assign(new TypeError('fetch failed'), { cause: refusedEverywhere });
 			}
 		});
 		const runId = queue();
-		await vi.waitFor(() => expect(run(runId).state).toBe('failed'), { timeout: 10_000 });
+		await ended(() => run(runId).state);
 
-		expect(run(runId).error).toContain('ENOTFOUND');
+		expect(run(runId).error).toMatch(/^\[provider_unreachable\] .*ECONNREFUSED/);
+	});
+
+	it.each([
+		'ECONNREFUSED',
+		'ENOTFOUND',
+		'EAI_AGAIN',
+		'EHOSTUNREACH',
+		'ENETUNREACH',
+		'UND_ERR_CONNECT_TIMEOUT'
+	])('fails at once with provider_unreachable when the connect phase fails (%s)', async (code) => {
+		const { db, queue, run } = setup();
+		let attempts = 0;
+		startBuiltin(db, {
+			fetch: async () => {
+				attempts += 1;
+				throw networkFailure(code, `connect ${code} model.test`);
+			}
+		});
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(attempts).toBe(1);
+		expect(run(runId).error).toMatch(new RegExp(`^\\[provider_unreachable\\] .*${code}`));
 	});
 
 	it.each([
