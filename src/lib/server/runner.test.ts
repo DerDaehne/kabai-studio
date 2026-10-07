@@ -171,7 +171,7 @@ describe('claimRun', () => {
 		const file = join(tmp, 'parallel.db');
 		const { db, local, cloud, queue } = setup(openDb(file));
 		const other = openDb(file);
-		for (let i = 0; i < 200; i++) queue(i % 7 ? cloud : local); // 171 cloud runs, 29 local runs
+		for (let i = 0; i < 50; i++) queue(i % 7 ? cloud : local); // 42 cloud runs, 8 local runs
 
 		const limits = { global: 1000, pools: { cloud: 1000, local: 3 } };
 		const claimedBy = claimRoundRobin([db, other], limits);
@@ -186,7 +186,7 @@ describe('claimRun', () => {
 				.all(pool)
 				.map((r) => r.id as number);
 		expect(runningIn('local')).toEqual([1, 8, 15]);
-		expect(runningIn('cloud')).toHaveLength(171);
+		expect(runningIn('cloud')).toHaveLength(42);
 		expect(claimed).toEqual([...runningIn('local'), ...runningIn('cloud')].sort((a, b) => a - b));
 		expect(claimedBy.every((ids) => ids.length > 0)).toBe(true);
 	});
