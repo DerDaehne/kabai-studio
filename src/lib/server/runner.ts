@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
+import { RECOVERY } from './agents/loop-guard';
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
@@ -66,8 +67,6 @@ export type Executor = {
 
 // ponytail: fixed limits until there is a settings table and per-column overrides; 3 cloud runs plus 1 local GPU run.
 export const LIMITS: Limits = { global: 4, pools: { cloud: 3, local: 1 } };
-// ponytail: one fresh run per chain of resumes, then the human decides; configurable once practice asks for it.
-export const FRESH_RUNS_PER_CHAIN = 1;
 
 const SYSTEM: Actor = { kind: 'system' };
 const WAKING_EVENTS = new Set(['run.created', 'run.state_changed', 'runner.released']);
@@ -220,7 +219,7 @@ function ioFor(
 /** Queues the run that continues a paused one, or asks the human once its chain has used up its fresh runs. */
 function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
 	const actor: Actor = { kind: 'system', runId: run.id };
-	if (resume.reason === 'quota' || freshRunsInChain(db, run.id) < FRESH_RUNS_PER_CHAIN) {
+	if (resume.reason === 'quota' || freshRunsInChain(db, run.id) < RECOVERY.freshRunsPerChain) {
 		createRun(db, actor, {
 			ticketId: run.ticketId,
 			profileId: run.profile.id,
@@ -241,7 +240,7 @@ function askHumanAfterUsedUpChain(
 	reason: FreshRunReason,
 	handoffSeq: number
 ) {
-	const stuck = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht (höchstens ${FRESH_RUNS_PER_CHAIN} je Kette).`;
+	const stuck = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht (höchstens ${RECOVERY.freshRunsPerChain} je Kette).`;
 	const handoff = `Handoff von Run ${run.id} (Event ${handoffSeq})`;
 	try {
 		requestHuman(db, actor, run.ticketId, {

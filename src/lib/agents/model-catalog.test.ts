@@ -4,6 +4,7 @@ import {
 	MODEL_ROLES,
 	MODELS,
 	matchModel,
+	reasoningBudget,
 	type ModelEntry
 } from './model-catalog.ts';
 
@@ -165,4 +166,39 @@ describe('contextBudget', () => {
 		expect(contextBudget({ model: 'qwen3.8-27b' })).toBe(32768);
 		expect(contextBudget({ model: null })).toBe(32768);
 	});
+});
+
+describe('reasoningBudget', () => {
+	it('gives ornith-1.5-35b the measured budget of 12,288 tokens, also under its server alias', () => {
+		expect(reasoningBudget({ model: 'ornith-1.5-35b' })).toBe(12288);
+		expect(reasoningBudget({ model: 'Ornith-1.5-35B-A3B-GGUF:Q8_0' })).toBe(12288);
+	});
+
+	it('knows no budget for a model without a measured one, an unknown model or none at all', () => {
+		expect(reasoningBudget({ model: 'qwen3.6-35b' })).toBeUndefined();
+		expect(reasoningBudget({ model: 'some-unknown-model' })).toBeUndefined();
+		expect(reasoningBudget({ model: null })).toBeUndefined();
+	});
+
+	it.each(catalog)(
+		'recommends --reasoning-budget and its message to llama.cpp exactly when $id has a budget',
+		(entry) => {
+			const flags = entry.serverHints.llamaCpp;
+			const budgetFlags = flags.filter((flag) => flag.startsWith('--reasoning-budget '));
+			const messages = flags.filter((flag) => /^--reasoning-budget-message ".+"$/.test(flag));
+			if (entry.reasoningBudget === undefined) {
+				expect([...budgetFlags, ...messages]).toEqual([]);
+				return;
+			}
+			expect(budgetFlags).toEqual([`--reasoning-budget ${entry.reasoningBudget}`]);
+			expect(messages).toHaveLength(1);
+		}
+	);
+
+	it.each(catalog.filter((entry) => entry.reasoningBudget !== undefined))(
+		'leaves room for the answer of $id below its output limit',
+		(entry) => {
+			expect(entry.reasoningBudget).toBeLessThan(entry.maxTokensMinimum ?? 0);
+		}
+	);
 });

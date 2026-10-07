@@ -63,6 +63,8 @@ export interface ModelEntry {
 	readonly contextMinimum?: number;
 	/** The context size Studio plans prompts and fresh runs with, in tokens; without one it plans with `contextMinimum`. */
 	readonly contextBudget?: number;
+	/** Tokens a step may think before the server ends its thinking (llama.cpp `--reasoning-budget`); steps at it count as stalling. */
+	readonly reasoningBudget?: number;
 	readonly quantization?: string;
 	readonly serverHints: ServerHints;
 	readonly pitfalls: readonly Pitfall[];
@@ -78,6 +80,8 @@ const EVALUATED: EvaluationSource = { basis: 'maintainer evaluation', date: '202
 
 // Studio's own floor: enough context for a ticket, its tasks, linked notes and the role prompt.
 const STUDIO_CONTEXT_MINIMUM = 32768;
+const REASONING_BUDGET_MESSAGE =
+	'Thinking budget used up: decide now and take the smallest next action.';
 
 export const MODELS = [
 	{
@@ -101,8 +105,17 @@ export const MODELS = [
 		thinking: { enabled: true, method: 'chat_template_kwargs' },
 		maxTokensMinimum: 32000,
 		contextMinimum: STUDIO_CONTEXT_MINIMUM,
+		// evaluation runs with this cap hit the output limit no more; without it one step thought ~32k tokens and did nothing
+		reasoningBudget: 12288,
 		serverHints: {
-			llamaCpp: ['--jinja', '-fa on', '-cmoe', '-c 131072'],
+			llamaCpp: [
+				'--jinja',
+				'-fa on',
+				'-cmoe',
+				'-c 131072',
+				'--reasoning-budget 12288',
+				`--reasoning-budget-message "${REASONING_BUDGET_MESSAGE}"`
+			],
 			ollama: ['num_ctx 32768']
 		},
 		pitfalls: [
@@ -308,14 +321,25 @@ export function matchModel(
 	return matches.length === 1 ? matches[0] : null;
 }
 
+type ProfileModel = { model: string | null };
+
+const entryOf = (profile: ProfileModel, catalog: readonly ModelEntry[]) =>
+	profile.model === null ? null : matchModel(profile.model, catalog);
+
 /** The context size in tokens that prompts for this profile's model are planned with. */
 export function contextBudget(
-	profile: { model: string | null },
+	profile: ProfileModel,
 	catalog: readonly ModelEntry[] = MODELS
 ): number {
-	const entry = profile.model === null ? null : matchModel(profile.model, catalog);
+	const entry = entryOf(profile, catalog);
 	return entry?.contextBudget ?? entry?.contextMinimum ?? STUDIO_CONTEXT_MINIMUM;
 }
+
+/** The tokens a step of this profile's model may think, when the catalog knows a budget for it. */
+export const reasoningBudget = (
+	profile: ProfileModel,
+	catalog: readonly ModelEntry[] = MODELS
+): number | undefined => entryOf(profile, catalog)?.reasoningBudget;
 
 export interface RuntimeEndpoint {
 	readonly id: 'ollama' | 'lm-studio' | 'llama-cpp' | 'openai-compatible';
