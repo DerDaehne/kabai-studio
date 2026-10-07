@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,20 @@ jobs:
           name: browser-test-results
           path: test-results/
           retention-days: 7
+
+  # Separate job: an audit finding shares no job status with the tests, so a red npm audit
+  # cannot be mistaken for a red test run in the PR status.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       # No --omit=dev: package.json has only devDependencies (adapter-node bundles them into
-      # build/), so --omit=dev would drop the whole tree from the audit. After build, so that
-      # an audit outage (e.g. registry down) does not hide the build result.
+      # build/), so --omit=dev would drop the whole tree from the audit.
       - run: npm audit --audit-level=high

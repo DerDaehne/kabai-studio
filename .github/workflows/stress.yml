@@ -1,0 +1,71 @@
+name: Nightly stress test
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # A separate process per repeat, not vitest's --repeats: that reruns suites inside one
+      # worker process, and several suites keep state across repeats there (e.g. an owner row
+      # that only the first repeat may create). --sequence.shuffle stays out for the same class of
+      # reason: several suites depend on their own test order and fail under shuffle on main.
+      # ponytail: unit stress is only repeat-without-shuffle until those order dependencies are
+      # fixed; add --sequence.shuffle back once they are.
+      - run: |
+          for _ in 1 2 3; do npm test; done
+      - run: npm run build
+      - id: playwright
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - run: npx playwright install --with-deps --no-shell chromium
+      - id: browser
+        # taskset pins the whole process tree (Playwright, the dev server, Chromium) to one CPU
+        # core, so the runner is as contended as the slower CI runner where tests actually flaked.
+        run: taskset --cpu-list 0 npm run test:browser -- --repeat-each=3
+      - if: failure() && steps.browser.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stress-browser-test-results
+          path: test-results/
+          retention-days: 7
+
+  # Separate job so only this one needs issues: write, scoped to the single step that uses it.
+  report-failure:
+    needs: stress
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Nightly stress run failing"
+          body="The nightly stress workflow failed: $RUN_URL"
+          existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
