@@ -2,10 +2,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, expect, it } from 'vitest';
+import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import { DomainError } from '$lib/server/domain/error';
+import * as halt from '$lib/server/domain/halt';
 import { haltedSince } from '$lib/server/domain/halt';
 import * as runs from '$lib/server/domain/runs';
 import { startRunner, type Executor } from '$lib/server/runner';
@@ -59,7 +61,7 @@ it('stops every run on POST and lets the queue go on DELETE, through the runner 
 	expect([running, waiting].map(state)).toEqual(['cancelled', 'queued']);
 
 	const released = await DELETE({} as never);
-	expect(await released.json()).toEqual({ resumed: 0, released: 'stop' });
+	expect(await released.json()).toEqual({ resumed: 0, released: 'stop', skipped: [] });
 	await flush();
 	expect(state(waiting)).toBe('running');
 	expect(haltedSince(db())).toBeNull();
@@ -73,8 +75,31 @@ it('pauses every run on POST /api/pause, and DELETE resumes it ahead of the wait
 	expect([running, waiting].map(state)).toEqual(['paused', 'queued']);
 
 	const released = await DELETE({} as never);
-	expect(await released.json()).toEqual({ resumed: 1, released: 'pause' });
+	expect(await released.json()).toEqual({ resumed: 1, released: 'pause', skipped: [] });
 	await flush();
 	expect([continuationOf(running), waiting].map(state)).toEqual(['running', 'queued']);
 	expect(haltedSince(db())).toBeNull();
+});
+
+it('maps a DomainError that resumeAll itself did not turn into a skipped run to 400 with code, message and hint, instead of a 500', async () => {
+	const refusal = new DomainError(
+		'requires_human',
+		'Angehaltene Runs setzt nur der Mensch fort.',
+		'x'
+	);
+	const resumeAll = vi.spyOn(halt, 'resumeAll').mockImplementationOnce(() => {
+		throw refusal;
+	});
+
+	try {
+		const response = await DELETE({} as never);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			code: 'requires_human',
+			message: 'Angehaltene Runs setzt nur der Mensch fort.',
+			hint: 'x'
+		});
+	} finally {
+		resumeAll.mockRestore();
+	}
 });

@@ -97,6 +97,30 @@ test('the pause chip counts the runs :anhalten paused, and its Fortsetzen resume
 	await expect(agentsOf(page)).toContainText('arbeitet');
 });
 
+test(':fortsetzen all reports a halted run whose profile is gone instead of leaving it or the halt stuck', async ({
+	page,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	const ticket = seedTicket('Resume with a deleted profile');
+	fakeModel.reply('hang');
+	await open(page, '/');
+	await queueRun(db, page, ticket.id, fakeModel);
+	await expect(agentsOf(page)).toContainText('arbeitet');
+	const halted = runningRunOf(db, ticket.id);
+	expect((await page.request.post(`/api/runs/${halted}/pause`)).ok()).toBe(true);
+	// Simulates a profile deleted before the guard in deleteProfile existed: the run stays paused, forever waiting.
+	db.prepare('UPDATE runs SET agent_profile_id = NULL WHERE id = ?').run(halted);
+
+	await command(page, 'fortsetzen all');
+
+	await expectToast(
+		page,
+		`0 Runs setzen fort. Run ${halted} übersprungen: Das Agent-Profil von Run ${halted} gibt es nicht mehr. Ausweg: Starte in der Run-Akte einen neuen Run mit einem anderen Profil (:run).`
+	);
+});
+
 test(':fortsetzen alone names the way out and offers the halted runs; an unknown number gets a message with a way out, a halted one resumes', async ({
 	page,
 	db,

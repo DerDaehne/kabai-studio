@@ -80,6 +80,14 @@ const NEXT: Record<RunState, RunState[]> = {
 const via = (from: RunState, to: RunState) =>
 	NEXT[to].length === 0 ? 'finishRun' : from === 'queued' ? 'startRun' : 'setRunState';
 
+/**
+ * SQL condition: the run `alias` was paused by the human and nothing continues it yet. Lives here, not in
+ * domain/halt.ts, because it describes plain run state and `deleteProfile` needs it without importing halt.ts back
+ * (halt.ts already imports from here, so the reverse import would cycle); halt.ts re-exports it unchanged.
+ */
+export const awaitsResume = (alias: string) =>
+	`${alias}.state = 'paused' AND ${alias}.halted = 1 AND NOT EXISTS (SELECT 1 FROM runs c WHERE c.resumed_from_run_id = ${alias}.id)`;
+
 const PROFILE_FIELDS = [
 	'name',
 	'executor',
@@ -668,6 +676,17 @@ export function deleteProfile(db: DatabaseSync, actor: Actor, id: number) {
 				'profile_in_use',
 				`Profil „${name}“ wird von aktiven Runs genutzt: ${active.map((r) => r.id).join(', ')}.`,
 				'Warte, bis die Runs enden, oder brich sie ab, dann erneut löschen.'
+			);
+		const paused = db
+			.prepare(
+				`SELECT id FROM runs WHERE agent_profile_id = ? AND (${awaitsResume('runs')}) ORDER BY id`
+			)
+			.all(id) as { id: number }[];
+		if (paused.length)
+			throw new DomainError(
+				'profile_in_use',
+				`Profil „${name}“ wird von angehaltenen Runs genutzt, die noch auf Fortsetzen warten: ${paused.map((r) => r.id).join(', ')}.`,
+				'Erst fortsetzen (:fortsetzen all oder :fortsetzen <N>), dann erneut löschen.'
 			);
 		db.prepare('DELETE FROM agent_profiles WHERE id = ?').run(id);
 	});

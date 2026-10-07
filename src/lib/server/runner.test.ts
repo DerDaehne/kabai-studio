@@ -1398,7 +1398,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 				hint: 'Ein abgebrochener Run lässt sich nicht fortsetzen; einen neuen startet :run in der Run-Akte.'
 			})
 		);
-		expect(resumeAll(s.db, user)).toEqual([]);
+		expect(resumeAll(s.db, user)).toEqual({ resumed: [], skipped: [] });
 		expect(continuationsOf(s, stopped)).toEqual([]);
 		expect(() =>
 			runs.createRun(s.db, user, {
@@ -1419,9 +1419,10 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		runner.pauseAll();
 		const queued = s.queue(s.local);
 
-		const afterPause = resumeAll(s.db, user);
+		const { resumed: afterPause, skipped: skippedAfterPause } = resumeAll(s.db, user);
 		await flush();
 
+		expect(skippedAfterPause).toEqual([]);
 		expect(afterPause).toHaveLength(2);
 		expect(afterPause.map((id) => s.row(id))).toMatchObject(
 			[first, second].map((halted) => ({
@@ -1438,13 +1439,57 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		runner.pause(pausedAlone);
 		runner.halt();
 		const waiting = s.queue(s.local);
-		const afterStop = resumeAll(s.db, user);
+		const { resumed: afterStop, skipped: skippedAfterStop } = resumeAll(s.db, user);
 		await flush();
 
+		expect(skippedAfterStop).toEqual([]);
 		expect(afterStop.map((id) => s.row(id).resumed_from_run_id)).toEqual([pausedAlone]);
 		expect(continuationsOf(s, afterPause[1])).toEqual([]); // cancelled by the stop
 		expect([waiting, ...afterStop].map(s.state)).toEqual(['running', 'running']);
 		expect(haltKind(s.db)).toBeNull();
+	});
+
+	it('refuses to delete a profile a paused run still needs to resume, so the halt can never get stuck without a way out', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		await flush();
+		runner.pauseAll();
+
+		expect(() => runs.deleteProfile(s.db, user, s.local)).toThrow(
+			expect.objectContaining({ code: 'profile_in_use' })
+		);
+
+		const { resumed, skipped } = resumeAll(s.db, user);
+		expect(resumed).toHaveLength(1);
+		expect(skipped).toEqual([]);
+		expect(haltKind(s.db)).toBeNull();
+	});
+
+	it('skips a halted run whose profile is already gone (legacy data from before the delete guard), reports it, and still resumes the rest and releases the halt', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const [orphaned, healthy] = [s.queue(s.local), s.queue(s.cloud)];
+		await flush();
+		runner.pauseAll();
+		s.db.prepare('UPDATE runs SET agent_profile_id = NULL WHERE id = ?').run(orphaned);
+
+		const { resumed, skipped } = resumeAll(s.db, user);
+
+		expect(resumed).toHaveLength(1);
+		expect(s.row(resumed[0]).resumed_from_run_id).toBe(healthy);
+		expect(skipped).toEqual([
+			{
+				runId: orphaned,
+				code: 'profile_deleted',
+				message: `Das Agent-Profil von Run ${orphaned} gibt es nicht mehr.`,
+				hint: 'Starte in der Run-Akte einen neuen Run mit einem anderen Profil (:run).'
+			}
+		]);
+		expect(haltKind(s.db)).toBeNull();
+		expect(s.row(orphaned)).toMatchObject({ state: 'paused', halted: 1 });
 	});
 
 	it('lets only the human pause or resume runs: an agent or the system gets requires_human with a way out', async () => {

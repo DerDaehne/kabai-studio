@@ -3,6 +3,8 @@ import { invalidateLive, type HaltKind } from './live.svelte';
 
 /** How the server refuses a run it cannot pause or resume. */
 type Refusal = { code: string; message: string; hint: string };
+/** A halted run `:fortsetzen all` could not resume, e.g. because its profile is gone; `resumed` names those it did. */
+type SkippedResume = { runId: number; code: string; message: string; hint: string };
 
 const runs = (count: number) => (count === 1 ? 'Run' : 'Runs');
 
@@ -26,10 +28,15 @@ async function call<T>(method: 'POST' | 'DELETE', path: string, failure: string)
 }
 
 /** Without waiting for the event, which a broken connection would lose. */
-async function done(message: string) {
-	toast(message, 'success');
+async function done(message: string, tone: 'success' | 'error' = 'success') {
+	toast(message, tone);
 	await invalidateLive();
 }
+
+const skippedText = (skipped: SkippedResume[]) =>
+	skipped
+		.map((run) => ` Run ${run.runId} übersprungen: ${run.message} Ausweg: ${run.hint}`)
+		.join('');
 
 export async function stopAll() {
 	const answer = await call<{ cancelled: number }>('POST', '/api/halt', 'Stoppen ging nicht.');
@@ -55,15 +62,20 @@ export async function resumeRun(runId: number) {
 	if (await call('POST', path, 'Fortsetzen ging nicht.')) await done(resumedText(1));
 }
 
-/** `:fortsetzen all` and the head dock's „Fortsetzen“: every halted run resumes and the halt is lifted. */
+/**
+ * `:fortsetzen all` and the head dock's „Fortsetzen“: every halted run resumes and the halt is lifted; a run that
+ * could not resume is named with its way out instead of silently vanishing from the count.
+ */
 export async function resumeAll() {
-	const answer = await call<{ resumed: number; released: HaltKind | null }>(
-		'DELETE',
-		'/api/halt',
-		'Fortsetzen ging nicht.'
-	);
-	if (answer)
-		await done(
-			resumedText(answer.resumed) + (answer.released ? RELEASED_TEXT[answer.released] : '')
-		);
+	const answer = await call<{
+		resumed: number;
+		released: HaltKind | null;
+		skipped: SkippedResume[];
+	}>('DELETE', '/api/halt', 'Fortsetzen ging nicht.');
+	if (!answer) return;
+	const message =
+		resumedText(answer.resumed) +
+		(answer.released ? RELEASED_TEXT[answer.released] : '') +
+		skippedText(answer.skipped);
+	await done(message, answer.skipped.length ? 'error' : 'success');
 }

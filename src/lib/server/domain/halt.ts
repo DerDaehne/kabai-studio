@@ -1,7 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { addComment } from './board';
 import { DomainError, tx, type Actor } from './core';
-import { createRun, finishRun, prioritizeRun, type RunState } from './runs';
+import { awaitsResume, createRun, finishRun, prioritizeRun, type RunState } from './runs';
+
+// Re-exported so existing importers (live.ts, ticket-view.ts) keep working unchanged: the condition itself moved to
+// runs.ts, since deleteProfile needs it there without an import cycle back to this module.
+export { awaitsResume };
 
 /** `stop` cancelled the active runs, `pause` paused them so they can be resumed; both hold the queue. */
 export type HaltKind = 'stop' | 'pause';
@@ -32,10 +36,6 @@ const requireHumanToPause = (actor: Actor) =>
 	requireHuman(actor, 'Runs hält nur der Mensch an.', PAUSE_REFUSED_HINT);
 const requireHumanToResume = (actor: Actor) =>
 	requireHuman(actor, 'Angehaltene Runs setzt nur der Mensch fort.', PAUSE_REFUSED_HINT);
-
-/** SQL condition: the run `alias` was paused by the human and nothing continues it yet. */
-export const awaitsResume = (alias: string) =>
-	`${alias}.state = 'paused' AND ${alias}.halted = 1 AND NOT EXISTS (SELECT 1 FROM runs c WHERE c.resumed_from_run_id = ${alias}.id)`;
 
 const AWAITING_RESUME = `SELECT id FROM runs r WHERE ${awaitsResume('r')} ORDER BY id`;
 
@@ -190,14 +190,32 @@ function haltedRun(db: DatabaseSync, runId: number): HaltedRun {
 	return run;
 }
 
-/** `:fortsetzen all`: resumes every run the human paused and lifts the halt, whether a stop or a pause. Returns the new runs. */
-export function resumeAll(db: DatabaseSync, actor: Actor): number[] {
+/** A halted run `resumeAll` could not resume, with the reason a client can show next to the ones that did. */
+export type SkippedResume = { runId: number; code: string; message: string; hint: string };
+
+/**
+ * `:fortsetzen all`: resumes every run the human paused and lifts the halt, whether a stop or a pause. A run that
+ * cannot resume (e.g. its profile is gone) is reported instead of blocking the others, so the halt always lifts.
+ */
+export function resumeAll(
+	db: DatabaseSync,
+	actor: Actor
+): { resumed: number[]; skipped: SkippedResume[] } {
 	return tx(db, () => {
 		requireHumanToResume(actor);
 		const halted = db.prepare(AWAITING_RESUME).all() as { id: number }[];
-		const resumed = halted.map((run) => resumeRun(db, actor, run.id).id);
+		const resumed: number[] = [];
+		const skipped: SkippedResume[] = [];
+		for (const run of halted) {
+			try {
+				resumed.push(resumeRun(db, actor, run.id).id);
+			} catch (err) {
+				if (!(err instanceof DomainError)) throw err;
+				skipped.push({ runId: run.id, code: err.code, message: err.message, hint: err.hint });
+			}
+		}
 		releaseHalt(db, actor);
-		return resumed;
+		return { resumed, skipped };
 	});
 }
 

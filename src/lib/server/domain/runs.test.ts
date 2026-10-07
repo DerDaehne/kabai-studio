@@ -8,6 +8,7 @@ import { subscribe, type StudioEvent } from '../events';
 import { setSecret } from '../secrets';
 import * as board from './board';
 import { DomainError, type Actor } from './core';
+import { pauseRun } from './halt';
 import * as runs from './runs';
 
 const user: Actor = { kind: 'user' };
@@ -500,6 +501,22 @@ describe('agent profiles', () => {
 		runs.finishRun(db, user, waiting, { state: 'cancelled' });
 		runs.deleteProfile(db, user, profileId);
 		expect(row(active)).toMatchObject({ state: 'succeeded', agent_profile_id: null });
+	});
+
+	it('refuses to delete a profile a paused run is still waiting to resume, with a hint to resume first', () => {
+		const { db, profileId, running } = setup();
+		const halted = running();
+		pauseRun(db, user, halted);
+
+		const err = caught(() => runs.deleteProfile(db, user, profileId));
+
+		expect(err.code).toBe('profile_in_use');
+		expect(err.message).toBe(
+			`Profil „Lokal“ wird von angehaltenen Runs genutzt, die noch auf Fortsetzen warten: ${halted}.`
+		);
+		expect(err.hint).toBe(
+			'Erst fortsetzen (:fortsetzen all oder :fortsetzen <N>), dann erneut löschen.'
+		);
 	});
 });
 
