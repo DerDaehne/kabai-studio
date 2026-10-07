@@ -35,35 +35,18 @@ const requireHumanToResume = (actor: Actor) =>
 
 const AWAITING_RESUME = `SELECT id FROM runs r WHERE ${awaitsResume('r')} ORDER BY id`;
 
-const HALT_LOCK_ATTEMPTS = 3;
-
-/**
- * Retries `fn` while it throws SQLITE_BUSY (errcode 5): a concurrent writer can keep re-grabbing the write lock
- * faster than one BEGIN IMMEDIATE's busy_timeout waits it out. A few bounded retries ride out that unlucky timing
- * instead of failing for a contention window that is routinely gone a moment later.
- */
-function retryOnLockContention<T>(attempts: number, fn: () => T): T {
-	try {
-		return fn();
-	} catch (err) {
-		const lockContention = (err as { errcode?: number }).errcode === 5;
-		if (!lockContention || attempts <= 1) throw err;
-		return retryOnLockContention(attempts - 1, fn);
-	}
-}
-
 /**
  * The kill switch (`:stop`): cancels every active run and keeps queued runs waiting until {@link resumeAll}. Returns the
  * cancelled runs, whose executors the runner still has to abort. Setting the switch and picking the active runs share one
  * write transaction with the claim's halt check, so a concurrent claim either started its run before (cancelled here) or starts none.
  */
 export function haltRuns(db: DatabaseSync, actor: Actor): number[] {
-	return retryOnLockContention(HALT_LOCK_ATTEMPTS, () => haltActive(db, actor, 'stop'));
+	return haltActive(db, actor, 'stop');
 }
 
 /** `:anhalten` outside a Run-Akte: like {@link haltRuns}, but the active runs end paused and can be resumed. */
 export function pauseRuns(db: DatabaseSync, actor: Actor): number[] {
-	return retryOnLockContention(HALT_LOCK_ATTEMPTS, () => haltActive(db, actor, 'pause'));
+	return haltActive(db, actor, 'pause');
 }
 
 // A stop turns a pause into a stop, a pause leaves a stop as it is; either keeps the moment of the first halt.

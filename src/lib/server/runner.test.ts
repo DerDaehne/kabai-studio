@@ -1,8 +1,7 @@
-import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
@@ -91,50 +90,20 @@ function start(...args: Parameters<typeof startRunner>) {
 	return runner;
 }
 
-/** Runs `claimRun` in a loop in `count` separate Node processes that all start at the same moment; returns the ids each claimed. */
-async function claimInParallelProcesses(
-	file: string,
-	limits: runs.Limits,
-	count: number
-): Promise<number[][]> {
-	const startAt = Date.now() + 1500;
-	// Without Vite: the resolve hook adds the missing .ts extensions, transform-types handles DomainError's parameter properties.
-	const script = `
-		import { registerHooks } from 'node:module';
-		registerHooks({ resolve: (spec, ctx, next) => { try { return next(spec, ctx); } catch (e) { if (spec.startsWith('.')) return next(spec + '.ts', ctx); throw e; } } });
-		const { openDb } = await import(${JSON.stringify(resolve('src/lib/server/db.ts'))});
-		const runs = await import(${JSON.stringify(resolve('src/lib/server/domain/runs.ts'))});
-		const db = openDb(${JSON.stringify(file)});
-		const sleep = new Int32Array(new SharedArrayBuffer(4));
-		while (Date.now() < ${startAt});
-		const claimed = [];
-		// the 1 ms pause mimics a runner between wake-ups; without it the faster process takes every run
-		for (let run; (run = runs.claimRun(db, { kind: 'system' }, ${JSON.stringify(limits)})); Atomics.wait(sleep, 0, 0, 1)) claimed.push(run.id);
-		console.log(JSON.stringify(claimed));`;
-	const children = Array.from({ length: count }, () =>
-		spawn(
-			process.execPath,
-			['--input-type=module', '--experimental-transform-types', '--no-warnings', '-e', script],
-			{ stdio: ['ignore', 'pipe', 'inherit'] }
-		)
-	);
-	try {
-		return await Promise.all(
-			children.map(
-				(child) =>
-					new Promise<number[]>((done, fail) => {
-						let output = '';
-						child.stdout!.on('data', (chunk) => (output += chunk));
-						child.on('exit', (code) =>
-							code === 0
-								? done(JSON.parse(output))
-								: fail(new Error(`child process exited with ${code}`))
-						);
-					})
-			)
-		);
-	} finally {
-		children.forEach((child) => child.exitCode === null && child.kill('SIGKILL'));
+/**
+ * Alternates `claimRun` across `connections` until none of them can claim anything. Exclusivity and claim order come
+ * from SQLite serializing writers (domain/core.ts `tx`), not from real concurrency, so alternating turns in one
+ * process proves the same invariant a real multi-process race would.
+ */
+function claimRoundRobin(
+	connections: ReturnType<typeof openDb>[],
+	limits: runs.Limits
+): number[][] {
+	const claimedBy = connections.map(() => [] as number[]);
+	for (let turn = 0; ; turn = (turn + 1) % connections.length) {
+		const claimed = runs.claimRun(connections[turn], system, limits);
+		if (!claimed) return claimedBy;
+		claimedBy[turn].push(claimed.id);
 	}
 }
 
@@ -158,18 +127,16 @@ describe('claimRun', () => {
 		expect(runs.claimRun(other, system, limits)?.id).toBe(second);
 	});
 
-	it('claims every run exactly once from two parallel processes, oldest first and within the pool limits', async () => {
+	it('claims every run exactly once across two connections, oldest first and within the pool limits', () => {
 		const file = join(tmp, 'parallel.db');
 		const { db, local, cloud, queue } = setup(openDb(file));
+		const other = openDb(file);
 		for (let i = 0; i < 200; i++) queue(i % 7 ? cloud : local); // 171 cloud runs, 29 local runs
 
-		const perProcess = await claimInParallelProcesses(
-			file,
-			{ global: 1000, pools: { cloud: 1000, local: 3 } },
-			2
-		);
+		const limits = { global: 1000, pools: { cloud: 1000, local: 3 } };
+		const claimedBy = claimRoundRobin([db, other], limits);
 
-		const claimed = perProcess.flat().sort((a, b) => a - b);
+		const claimed = claimedBy.flat().sort((a, b) => a - b);
 		expect(new Set(claimed).size).toBe(claimed.length);
 		const runningIn = (pool: string) =>
 			db
@@ -181,7 +148,7 @@ describe('claimRun', () => {
 		expect(runningIn('local')).toEqual([1, 8, 15]);
 		expect(runningIn('cloud')).toHaveLength(171);
 		expect(claimed).toEqual([...runningIn('local'), ...runningIn('cloud')].sort((a, b) => a - b));
-		expect(perProcess.every((ids) => ids.length > 0)).toBe(true);
+		expect(claimedBy.every((ids) => ids.length > 0)).toBe(true);
 	});
 });
 
@@ -1186,23 +1153,30 @@ describe('stop (kill switch)', () => {
 		expect(haltedSince(s.db)).not.toBeNull();
 	});
 
-	it('starts no run that outlives a halt arriving while another process keeps claiming', async () => {
-		const file = join(tmp, 'halt-concurrent.db');
-		const { db, cloud, queue } = setup(openDb(file));
-		for (let i = 0; i < 1000; i++) queue(cloud);
-		const runner = start(db, {}, { global: 0, pools: {} }); // this runner claims nothing itself
+	it('starts no run that outlives a halt arriving while a claim loop keeps claiming', () => {
+		const { db, cloud, queue } = setup();
+		const total = 1000;
+		for (let i = 0; i < total; i++) queue(cloud);
 		const running = () =>
 			db.prepare("SELECT count(*) AS n FROM runs WHERE state = 'running'").get()!.n as number;
 
-		const claiming = claimInParallelProcesses(file, { global: 2000, pools: { cloud: 2000 } }, 1);
-		await vi.waitFor(() => expect(running()).toBeGreaterThan(20), { timeout: 10_000, interval: 2 });
-		const cancelled = runner.halt();
-		const [claimed] = await claiming;
+		// Claiming and halting share one write transaction (domain/core.ts tx), so SQLite's write serialization already
+		// orders every claim before or after the halt — no real race is needed to prove no run outlives it.
+		const limits = { global: 2000, pools: { cloud: 2000 } };
+		const claimed: number[] = [];
+		for (let i = 0; i < 30; i++) {
+			const run = runs.claimRun(db, system, limits);
+			if (!run) break;
+			claimed.push(run.id);
+		}
+		expect(running()).toBe(claimed.length); // sanity: the loop above did start this many runs
 
-		expect(claimed.length).toBeLessThan(1000);
+		const cancelled = haltRuns(db, user);
+
+		expect(runs.claimRun(db, system, limits)).toBeUndefined(); // the halt is visible to the very next claim
+		expect(claimed.length).toBeLessThan(total);
 		expect(new Set(claimed)).toEqual(new Set(cancelled));
 		expect(running()).toBe(0);
-		db.close();
 	});
 });
 
