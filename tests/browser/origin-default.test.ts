@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { findFreePort } from './free-port.ts';
 
 const ROOT = new URL('../..', import.meta.url);
 const PW = 'origin-default-test-pw';
@@ -110,19 +111,19 @@ async function expectSetupSucceeds(host: string, port: number): Promise<void> {
 	}
 }
 
-test('loopback HOST=127.0.0.1 without ORIGIN: setup succeeds, no CSRF 403', () =>
-	expectSetupSucceeds('127.0.0.1', 4391));
+test('loopback HOST=127.0.0.1 without ORIGIN: setup succeeds, no CSRF 403', async () =>
+	expectSetupSucceeds('127.0.0.1', await findFreePort()));
 
 // Some systems resolve HOST=localhost to ::1 rather than 127.0.0.1, so defaulting ORIGIN to a
 // fixed 127.0.0.1 would bind one address and advertise another there — the setup link then
 // refuses the connection, and opening http://localhost:<PORT> directly runs back into the CSRF
 // 403. The default must keep the literal hostname instead of resolving it.
-test('loopback HOST=localhost without ORIGIN: setup succeeds at the advertised host, no CSRF 403', () =>
-	expectSetupSucceeds('localhost', 4394));
+test('loopback HOST=localhost without ORIGIN: setup succeeds at the advertised host, no CSRF 403', async () =>
+	expectSetupSucceeds('localhost', await findFreePort()));
 
 test('non-loopback HOST without ORIGIN: plain-text error naming ORIGIN, exits non-zero, never listens', async () => {
 	const dir = dataDir();
-	const port = 4392;
+	const port = await findFreePort();
 	const server = startServer(port, { HOST: '0.0.0.0', STUDIO_DATA_DIR: dir, ORIGIN: undefined });
 	try {
 		const code = await waitUntilExited(server);
@@ -138,7 +139,7 @@ test('non-loopback HOST without ORIGIN: plain-text error naming ORIGIN, exits no
 
 test('explicit ORIGIN is never overwritten, even behind a non-loopback HOST (container/proxy setup)', async () => {
 	const dir = dataDir();
-	const port = 4393;
+	const port = await findFreePort();
 	const origin = `http://studio.example:${port}`;
 	const server = startServer(port, { HOST: '0.0.0.0', STUDIO_DATA_DIR: dir, ORIGIN: origin });
 	try {

@@ -2,8 +2,11 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { findFreePort } from './tests/browser/free-port.ts';
 
-const PORT = 4300;
+// Workers reload this file but inherit the runner's env, so they reuse the same probed port.
+process.env.STUDIO_BROWSER_PORT ??= String(await findFreePort());
+const PORT = Number(process.env.STUDIO_BROWSER_PORT);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 // Workers load this file again with the runner's environment, so they find the same fresh data directory.
