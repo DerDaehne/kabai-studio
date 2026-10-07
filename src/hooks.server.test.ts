@@ -1,7 +1,7 @@
 // Walks guard → setup → login → logout against a real DB file, calling the handlers directly.
 import { isActionFailure, isRedirect, type Cookies } from '@sveltejs/kit';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,10 +14,11 @@ import {
 	hasOwner,
 	issueSetupToken
 } from '$lib/server/auth';
-import { db } from '$lib/server/db';
+import { db, migrate, openDb } from '$lib/server/db';
 import * as dbModule from '$lib/server/db';
 import { DomainError } from '$lib/server/domain/error';
 import { listenerCount, publish } from '$lib/server/events';
+import { maskConsole, setSecret } from '$lib/server/secrets';
 import { handle, handleError, init } from './hooks.server';
 import { actions as loginActions } from './routes/login/+page.server';
 import { GET as events } from './routes/api/events/+server';
@@ -472,6 +473,62 @@ describe('handleError', () => {
 			expect(first.id).not.toBe(second.id);
 		} finally {
 			error.mockRestore();
+		}
+	});
+
+	it('a 404 for an address no route matches is not an unexpected error: no error id, no stack in the log', () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const notFound = Object.assign(new Error('Not found: /this-view-was-never-built'), {
+				status: 404
+			});
+			const result = handleError({
+				error: notFound,
+				event: { url: new URL('http://localhost/this-view-was-never-built') },
+				status: 404,
+				message: 'Not Found'
+			} as never) as App.Error;
+			expect(result).toEqual({ message: 'Not Found' });
+			expect(logged).not.toHaveBeenCalled();
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
+	it('hands the client only a fixed message and the id, never the error text, stack or SQL', () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const sqlError = new Error('SQLITE_CONSTRAINT: INSERT INTO secrets (name) VALUES (?)');
+			const result = handleError({
+				error: sqlError,
+				event: { url: new URL('http://localhost/board') }
+			} as never) as App.Error;
+			expect(Object.keys(result).sort()).toEqual(['id', 'message']);
+			expect(JSON.stringify(result)).not.toMatch(/SQLITE|INSERT|at /);
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
+	it('logs the unexpected error with its id through the secret masking, so a secret in the error text never reaches the log', () => {
+		const value = 'review-probe-secret-value-947';
+		const memory = openDb(':memory:');
+		migrate(memory);
+		setSecret(memory, 'probe', value, false, randomBytes(32));
+		const out: string[] = [];
+		const original = console.error;
+		console.error = (...args: unknown[]) => void out.push(args.join(' '));
+		maskConsole(console);
+		try {
+			const result = handleError({
+				error: new Error(`provider rejected key ${value}`),
+				event: { url: new URL('http://localhost/settings/profiles/1') }
+			} as never) as App.Error;
+			expect(out.join('\n')).toContain(result.id);
+			expect(out.join('\n')).not.toContain(value);
+			expect(out.join('\n')).toContain('[secret:probe]');
+		} finally {
+			console.error = original;
 		}
 	});
 });

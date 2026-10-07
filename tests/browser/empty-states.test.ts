@@ -32,13 +32,14 @@ function clearProfiles(db: DatabaseSync) {
 	db.exec('DELETE FROM agent_profiles');
 }
 
-test('a 404 for an address that matched no route points its way out at the Stellwerk it links', async ({
+test('a 404 for an address that matched no route points its way out at the Stellwerk it links, with no error id (it is not an unexpected error)', async ({
 	page
 }) => {
 	await page.goto('/this-view-was-never-built');
 	const way = page.getByRole('link', { name: 'Zum Stellwerk' });
 	await expect(way).toBeVisible();
 	await expect(way).toHaveAttribute('href', '/');
+	await expect(page.getByText('Fehler-ID')).toHaveCount(0);
 	await way.click();
 	await expect(page).toHaveURL('/');
 });

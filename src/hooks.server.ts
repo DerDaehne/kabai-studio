@@ -93,10 +93,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 };
 
 /**
- * Only unexpected errors reach this (not the `error()` helper, whose message is already user-facing):
- * logged with a short ID so the report in the log can be matched to the one the error page shows.
+ * This hook sees every error, including SvelteKit's own (an unmatched route's 404, a wrong method's 405),
+ * whose `message` is already user-facing and whose status it logs itself without a stack. Only a genuine
+ * server error (status 500) gets a short ID, logged with its stack so the report in the log can be matched
+ * to the one the error page shows.
  */
-export const handleError: HandleServerError = ({ error, event }) => {
+export const handleError: HandleServerError = ({ error, event, status, message }) => {
+	if (status < 500) return { message };
 	const id = randomBytes(4).toString('hex');
 	console.error(`kabai studio: unerwarteter Fehler ${id} auf ${event.url.pathname}`, error);
 	return { message: 'Unerwarteter Fehler.', id };
