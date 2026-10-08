@@ -171,6 +171,21 @@ describe('stepSeries', () => {
 		]);
 	});
 
+	it('treats a step with only one token field (tokensIn or tokensOut) as a gap, same as the client', () => {
+		const { db, running, step } = setup();
+		const runId = running();
+		step(runId, '2026-10-08 16:58:00', { tokensIn: 2, tokensOut: 1 });
+		step(runId, '2026-10-08 16:59:00', { tokensIn: 2 }); // only tokensIn, no tokensOut
+		step(runId, '2026-10-08 17:00:00', { tokensIn: 2, tokensOut: 1 });
+
+		const [series] = stepSeries(db, [runId], 3, NOW);
+		expect(series.points).toEqual([
+			{ minute: '2026-10-08T16:58:00Z', steps: 1, tokensIn: 2, tokensOut: 1 },
+			{ minute: '2026-10-08T16:59:00Z', steps: 1 }, // gap: no tokensOut
+			{ minute: '2026-10-08T17:00:00Z', steps: 1, tokensIn: 2, tokensOut: 1 }
+		]);
+	});
+
 	it('rejects a window smaller than one minute instead of building an empty, unusable grid', () => {
 		const { db } = setup();
 		expect(() => stepSeries(db, [1], 0)).toThrow(/windowMinutes/);

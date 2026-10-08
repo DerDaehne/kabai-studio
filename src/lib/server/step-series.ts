@@ -24,7 +24,7 @@ export const STEP_MINUTES = `
 		count(*) AS steps,
 		sum(payload ->> '$.tokensIn') AS tokensIn,
 		sum(payload ->> '$.tokensOut') AS tokensOut,
-		sum(CASE WHEN payload ->> '$.tokensIn' IS NULL THEN 1 ELSE 0 END) AS missing
+		sum(CASE WHEN payload ->> '$.tokensIn' IS NULL OR payload ->> '$.tokensOut' IS NULL THEN 1 ELSE 0 END) AS missing
 	FROM run_events
 	WHERE run_id IN (SELECT value FROM json_each(?1)) AND type = 'log' AND payload ->> '$.kind' = 'step'
 		AND created_at >= ?2

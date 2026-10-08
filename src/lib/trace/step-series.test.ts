@@ -117,10 +117,10 @@ describe('advanceSeries', () => {
 	});
 
 	it('turns the minute into a gap once one of its steps carries no token fields (an old run)', () => {
-		let series = advanceSeries(loaded(), stepEvent(1), t);
+		let series = advanceSeries(loaded(), stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
 		series = advanceSeries(
 			series,
-			stepEvent(2, { tokensIn: 10, tokensOut: 2 }),
+			stepEvent(2), // no tokens
 			new Date('2026-10-08T16:42:40Z')
 		);
 		expect(series.points.at(-1)).toEqual({ minute: '2026-10-08T16:42:00Z', steps: 2 });
@@ -141,6 +141,14 @@ describe('advanceSeries', () => {
 		const point = series.points.at(-1)!;
 		expect(point.tokensIn).toBeUndefined();
 		expect(point.tokensOut).toBeUndefined();
+	});
+
+	it('advances an empty series (points: []) without crashing, adding only the new point', () => {
+		const empty: RunSeries = { runId: 1, points: [] };
+		const series = advanceSeries(empty, stepEvent(1, { tokensIn: 5, tokensOut: 1 }), t);
+		expect(series.points).toEqual([
+			{ minute: '2026-10-08T16:42:00Z', steps: 1, tokensIn: 5, tokensOut: 1 }
+		]);
 	});
 });
 
