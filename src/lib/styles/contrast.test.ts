@@ -26,11 +26,11 @@ function declarationsOf(body: string): Map<string, string> {
 	);
 }
 
-function ruleBody(selector: string): string {
-	const start = css.indexOf(`\n${selector} {`);
-	if (start < 0) throw new Error(`tokens.css has no rule "${selector}"`);
-	const open = css.indexOf('{', start) + 1;
-	return css.slice(open, css.indexOf('}', open));
+function ruleBody(selector: string, source = css): string {
+	const start = source.indexOf(`\n${selector} {`);
+	if (start < 0) throw new Error(`no rule "${selector}"`);
+	const open = source.indexOf('{', start) + 1;
+	return source.slice(open, source.indexOf('}', open));
 }
 
 const reducedTransparencyRule = css.match(
@@ -95,6 +95,24 @@ const projectSlots = [1, 2, 3, 4, 5];
 const blurredTextCoverage = 0.35;
 const blurThatSoftensText = 20;
 
+type ColorOf = (token: string) => Rgba;
+
+function worstCase(
+	color: ColorOf,
+	mode: Mode,
+	fg: string,
+	backdrops: Backdrops,
+	against: string,
+	min = 4.5
+): PairResult {
+	let worst = { ratio: Infinity, name: '' };
+	for (const [name, backdrop] of Object.entries(backdrops)) {
+		const ratio = contrast(color(fg), backdrop);
+		if (ratio < worst.ratio) worst = { ratio, name };
+	}
+	return { fg, against, mode, min, ratio: Number(worst.ratio.toFixed(2)), worst: worst.name };
+}
+
 function checkContrast(declarations: Declarations): PairResult[] {
 	const results: PairResult[] = [];
 	for (const mode of ['light', 'dark'] as const) {
@@ -102,21 +120,8 @@ function checkContrast(declarations: Declarations): PairResult[] {
 		const opaque = (...tokens: string[]): Backdrops =>
 			Object.fromEntries(tokens.map((token) => [token, color(token)]));
 		const ground = color('--bg');
-		const check = (fg: string, backdrops: Backdrops, against: string, min = 4.5) => {
-			let worst = { ratio: Infinity, name: '' };
-			for (const [name, backdrop] of Object.entries(backdrops)) {
-				const ratio = contrast(color(fg), backdrop);
-				if (ratio < worst.ratio) worst = { ratio, name };
-			}
-			results.push({
-				fg,
-				against,
-				mode,
-				min,
-				ratio: Number(worst.ratio.toFixed(2)),
-				worst: worst.name
-			});
-		};
+		const check = (fg: string, backdrops: Backdrops, against: string, min = 4.5) =>
+			results.push(worstCase(color, mode, fg, backdrops, against, min));
 
 		const underCards: Backdrops = { '--bg': ground };
 		const backgroundTokens = [...declarations.keys()].filter((t) => /^--(aura|nebula)-/.test(t));
@@ -260,5 +265,57 @@ describe('prefers-reduced-transparency', () => {
 		expect(css.indexOf('@media (prefers-reduced-transparency')).toBeGreaterThan(
 			css.indexOf(":root[data-glass='frosted']")
 		);
+	});
+});
+
+// The Rekta tile language takes its values from the vendored rekta.css: light on its :root rule, dark under
+// :root[data-theme='dark'] (the same values as its prefers-color-scheme block).
+const rekta = readFileSync(new URL('./rekta.css', import.meta.url), 'utf8');
+const rektaLight = declarationsOf(ruleBody(':root', rekta));
+const rektaDark = new Map([
+	...rektaLight,
+	...declarationsOf(ruleBody(":root[data-theme='dark']", rekta))
+]);
+const tones = ['neutral', 'info', 'success', 'warning', 'error'];
+
+function checkTileContrast(
+	rektaByMode: Record<Mode, Declarations> = { light: rektaLight, dark: rektaDark }
+): PairResult[] {
+	return (['light', 'dark'] as const).flatMap((mode) => {
+		const declarations = new Map([...withStrength('bold'), ...rektaByMode[mode]]);
+		const color = (token: string) => parseColor(resolve(declarations, `var(${token})`, mode));
+		const opaque = (...tokens: string[]): Backdrops =>
+			Object.fromEntries(tokens.map((token) => [token, color(token)]));
+		const fills = opaque(...tones.map((tone) => `--tile-${tone}`));
+		const rektaGround = opaque('--rekta-color-bg', '--rekta-color-surface');
+		return [
+			// The tile's focus ring is drawn in its text colour, so this pair covers the ring as well
+			worstCase(color, mode, '--text', fills, 'tile fills'),
+			worstCase(color, mode, '--text-muted', opaque('--tile-neutral'), 'neutral tile'),
+			worstCase(color, mode, '--rekta-color-text-primary', fills, 'tile fills'),
+			worstCase(color, mode, '--rekta-color-text-contrast-high', rektaGround, 'Rekta ground'),
+			worstCase(color, mode, '--rekta-color-focus', rektaGround, 'Rekta ground', 3)
+		];
+	});
+}
+
+describe('Rekta tile language, from the vendored values', () => {
+	it.each(checkTileContrast())(
+		'$fg on $against ($mode): $ratio:1 ≥ $min, worst on $worst',
+		({ ratio, min }) => {
+			expect(ratio).toBeGreaterThanOrEqual(min);
+		}
+	);
+
+	it('fails the check when a dark tile fill gets as light as its light-theme counterpart', () => {
+		const lighterInfoTile = new Map([
+			...rektaDark,
+			['--rekta-color-status-info-tile', rektaLight.get('--rekta-color-status-info-tile')!]
+		]);
+		const results = checkTileContrast({ light: rektaLight, dark: lighterInfoTile });
+		expect(belowMinimum(results).map(({ fg, mode }) => `${fg} ${mode}`)).toEqual([
+			'--text dark',
+			'--rekta-color-text-primary dark'
+		]);
 	});
 });

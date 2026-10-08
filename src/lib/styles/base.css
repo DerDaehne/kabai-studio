@@ -1,4 +1,37 @@
 /* Grundstile: Reset, native Elemente, Fokus, reduzierte Bewegung. Tokens: tokens.css. */
+
+/* Barlow (SIL OFL 1.1, licence next to the files) is bundled, so the app never asks another origin for a font */
+@font-face {
+	font-family: 'Barlow';
+	font-weight: 300;
+	font-display: swap;
+	src: url('/fonts/barlow/barlow-latin-300-normal.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Barlow';
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/barlow/barlow-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Barlow';
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/barlow/barlow-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Barlow';
+	font-weight: 600;
+	font-display: swap;
+	src: url('/fonts/barlow/barlow-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Barlow';
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/barlow/barlow-latin-700-normal.woff2') format('woff2');
+}
+
 *,
 *::before,
 *::after {
@@ -15,8 +48,6 @@ body {
 	background: var(--bg);
 	color: var(--text);
 	font: var(--text-base) / var(--leading) var(--font-sans);
-	font-feature-settings:
-		'cv11', 'ss01'; /* Inter: ruhigere Ziffern/Formen, andere Schriften ignorieren es */
 	-webkit-font-smoothing: antialiased;
 }
 

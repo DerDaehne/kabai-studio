@@ -52,9 +52,23 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # Needs the network, so it stays out of the per-push CI: the pinned Rekta Design commit must still build the
+  # vendored rekta.css, and Rekta's default branch must not have moved the tokens on since.
+  rekta-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: node scripts/sync-rekta.ts --check
+
   # Separate job so only this one needs issues: write, scoped to the single step that uses it.
   report-failure:
-    needs: stress
+    needs: [stress, rekta-drift]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -64,13 +78,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STRESS_RESULT: ${{ needs.stress.result }}
+          REKTA_DRIFT_RESULT: ${{ needs.rekta-drift.result }}
         run: |
           set -euo pipefail
-          title="Nightly stress run failing"
-          body="The nightly stress workflow failed: $RUN_URL"
-          existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --repo "$REPO" --body "$body"
-          else
-            gh issue create --repo "$REPO" --title "$title" --body "$body"
-          fi
+          report() {
+            local title="$1" body="The nightly workflow failed: $RUN_URL"
+            existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$REPO" --body "$body"
+            else
+              gh issue create --repo "$REPO" --title "$title" --body "$body"
+            fi
+          }
+          if [ "$STRESS_RESULT" = failure ]; then report "Nightly stress run failing"; fi
+          if [ "$REKTA_DRIFT_RESULT" = failure ]; then report "Rekta Design tokens drifted from upstream"; fi

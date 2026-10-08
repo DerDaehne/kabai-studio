@@ -1,9 +1,12 @@
 /*
- * Design tokens of kabai studio: calm slate neutrals, one accent ("spring" green), glass layers lit by auras.
+ * Design tokens of kabai studio: calm slate neutrals, one accent ("spring" green), glass layers lit by auras,
+ * and the tile language of Rekta Design (rekta.css, vendored unchanged) that the views move over to.
  * Light/dark via light-dark(): follows prefers-color-scheme, <html data-theme="light|dark"> overrides it.
  * contrast.test.ts checks every text and control pair against WCAG AA in every glass strength.
- * Components use the semantic tokens only, never the scales.
+ * Components use the semantic tokens only, never the scales or the --rekta-* values.
  */
+@import './rekta.css';
+
 :root {
 	color-scheme: light dark;
 
@@ -133,7 +136,7 @@
 	/* Bold glass lets more of the ground through, so secondary text needs more weight */
 	--text-muted: light-dark(#48535a, #b4bec2);
 
-	--font-sans: Inter, 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--font-sans: var(--rekta-typography-font-family-base);
 	--font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
 	--text-sm: 12.5px;
 	--text-base: 14px;
@@ -176,6 +179,42 @@
 	--shift-sm: 6px;
 	--shift-md: 14px;
 	--shift-lg: 32px;
+
+	/* Rekta tile language. Text on tiles stays in --text, which contrast.test.ts holds to AA on every fill. */
+	--tile-neutral: var(--rekta-color-surface);
+	--tile-info: var(--rekta-color-status-info-tile);
+	--tile-success: var(--rekta-color-status-success-tile);
+	--tile-warning: var(--rekta-color-status-warning-tile);
+	--tile-error: var(--rekta-color-status-error-tile);
+	--radius-tile: var(--rekta-radius-tile);
+	/* Small marks (tag squares, sparklines, progress) carry the full state colour, always next to words */
+	--mark-neutral: var(--rekta-color-text-contrast-medium);
+	--mark-info: var(--rekta-color-status-info-full);
+	--mark-success: var(--rekta-color-status-success-full);
+	--mark-warning: var(--rekta-color-status-warning-full);
+	--mark-error: var(--rekta-color-status-error-full);
+	--rule: var(--rekta-color-text-contrast-low);
+
+	/* Type roles: UI words 12 and 13 px, body 15, items 18, light headings, medium figures; nothing below 12 px */
+	--type-label: var(--rekta-typography-size-xxs);
+	--type-meta: var(--rekta-typography-size-xs);
+	--type-body: var(--rekta-typography-size-s);
+	--type-item: var(--rekta-typography-size-m);
+	--type-figure: var(--rekta-typography-size-l);
+	--type-group: var(--rekta-typography-size-group);
+	--type-pivot: var(--rekta-typography-size-pivot-inactive);
+	--type-pivot-active: var(--rekta-typography-size-pivot-active);
+	--type-nav: var(--rekta-typography-size-nav-inactive);
+	--type-nav-active: var(--rekta-typography-size-nav-active);
+	--type-title: var(--rekta-typography-size-title);
+	--weight-heading: var(--rekta-typography-weight-light);
+	--weight-figure: var(--rekta-typography-weight-medium);
+	--weight-title: var(--rekta-typography-weight-semibold);
+
+	--motion-short: var(--rekta-motion-duration-short);
+	--motion-moderate: var(--rekta-motion-duration-moderate);
+	--motion-long: var(--rekta-motion-duration-long);
+	--ease-base: var(--rekta-motion-easing-base);
 }
 
 :root[data-glass='frosted'] {
@@ -220,6 +259,13 @@
 }
 :root[data-theme='dark'] {
 	color-scheme: dark;
+}
+
+/* The in-app motion setting; rekta.css itself only follows the system wish and data-motion='off' */
+:root[data-motion='reduced'] {
+	--rekta-motion-duration-short: 0s;
+	--rekta-motion-duration-moderate: 0s;
+	--rekta-motion-duration-long: 0s;
 }
 
 @media (pointer: coarse) {
