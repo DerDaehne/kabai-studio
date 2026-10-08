@@ -3,7 +3,7 @@
 	import { enhance } from '$app/forms';
 	import { pauseRun, resumeRun } from '$lib/shell/halt';
 	import { bindKeys, readKey } from '$lib/shell/router.svelte';
-	import { shell } from '$lib/shell/shell.svelte';
+	import { bindCommands } from '$lib/shell/shell.svelte';
 	import { runStateOf } from '$lib/trace/RunTrace.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -63,13 +63,12 @@
 		if (tab) await pauseRun(tab.id);
 	}
 
-	$effect(() => {
-		shell.viewCommands = [
+	$effect(() =>
+		bindCommands([
 			...runCommands(start.profiles, profileId, startWith),
 			...haltCommands(runs, selected, { pause: askToPause, resume: (tab) => resumeRun(tab.id) })
-		];
-		return () => (shell.viewCommands = []);
-	});
+		])
+	);
 	$effect(() => bindKeys({ stopRun: target ? () => (stopping = target) : undefined }));
 
 	// The router stays out of open dialogs, so each confirmation takes its y itself — with Alt when single keys are off.

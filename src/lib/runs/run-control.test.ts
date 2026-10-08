@@ -148,7 +148,6 @@ describe('runCommands', () => {
 			['run', ':run', 'Run starten mit „Lokal“'],
 			['run-1', ':run Cloud', 'Run mit diesem Profil starten']
 		]);
-		expect(found.every((c) => c.available !== false)).toBe(true);
 		found[0].run?.();
 		found[1].run?.();
 		expect(startWith.mock.calls).toEqual([[2], [1]]);

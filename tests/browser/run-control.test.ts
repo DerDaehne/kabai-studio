@@ -28,11 +28,12 @@ function seedProfiles(db: DatabaseSync, model: FakeModel, ticket: SeededTicket) 
 			model: 'fake',
 			pool
 		}).id;
-	profile(`Anderes ${suffix}`);
+	const other = { name: `Anderes ${suffix}` };
+	profile(other.name);
 	const lastUsed = { name: `Zuletzt ${suffix}`, id: profile(`Zuletzt ${suffix}`) };
 	const earlier = createRun(db, HUMAN, { ticketId: ticket.id, profileId: lastUsed.id }).id;
 	finishRun(db, HUMAN, earlier, { state: 'cancelled' });
-	return { pool, lastUsed };
+	return { pool, lastUsed, other };
 }
 
 async function runCommand(page: Page, expectedDetail: string) {
@@ -196,4 +197,32 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 	await expect(tabs).toHaveCount(3);
 	await expect(tabs.first()).toContainText(/läuft/);
 	await expect(page.getByRole('list', { name: 'Agents' })).toContainText(otherAgent);
+});
+
+test('a command the Run-Akte binds with bindCommands appears in the command line there and is gone once the view is left', async ({
+	page,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	const ticket = seedTicket('Bind a view command');
+	const { other } = seedProfiles(db, fakeModel, ticket);
+	await open(page, ticket.path);
+
+	// ":run <other profile>" is bound by this very Run-Akte; its unique profile name proves it is THIS view's own entry
+	const otherProfileRun = page.getByRole('option', { name: `:run ${other.name}` });
+
+	await page.keyboard.press(':');
+	await page.keyboard.type('run');
+	await expect(otherProfileRun).toBeVisible();
+
+	await page
+		.getByRole('navigation', { name: 'Ansichten' })
+		.getByRole('link', { name: 'Stellwerk' })
+		.click();
+	await expect(page).toHaveURL('/');
+
+	await page.keyboard.press(':');
+	await page.keyboard.type('run');
+	await expect(otherProfileRun).toHaveCount(0);
 });

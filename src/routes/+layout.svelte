@@ -8,15 +8,13 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
 	import {
-		commands,
 		focusCommands,
-		focusTarget,
+		globalCommands,
 		resumeCommands,
-		resumeTarget,
-		withViewCommands,
 		type Suggestion
 	} from '$lib/shell/commands';
-	import { pauseAll, resumeAll, resumeRun, stopAll } from '$lib/shell/halt';
+	import { resumeAll, resumeRun } from '$lib/shell/halt';
+	import HaltControl from '$lib/shell/HaltControl.svelte';
 	import { focusKeys, projectForLetter } from '$lib/shell/focus';
 	import KeyOverview from '$lib/shell/KeyOverview.svelte';
 	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
@@ -27,20 +25,17 @@
 		invalidateLive,
 		live,
 		openQuestionsLabel,
-		pauseQuestion,
-		showLive,
-		stopQuestion
+		showLive
 	} from '$lib/shell/live.svelte';
 	import {
 		bindKeys,
 		boundActions,
 		handleKey,
 		keyboard,
-		readKey,
 		restoreSingleKeys,
 		setSingleKeys
 	} from '$lib/shell/router.svelte';
-	import { shell } from '$lib/shell/shell.svelte';
+	import { bindCommands, boundCommands, shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
@@ -78,9 +73,9 @@
 	const haltedRuns = $derived(live.runs.filter((run) => run.state === 'paused'));
 	const sources = $derived({
 		commands: [
-			...withViewCommands(shell.viewCommands, commands),
+			...boundCommands(),
 			...focusCommands(live.projects),
-			...resumeCommands(haltedRuns, commandValue)
+			...resumeCommands(haltedRuns, commandValue, (id) => void resumeRun(id))
 		],
 		view: shell.viewItems,
 		tickets: shell.tickets
@@ -174,65 +169,22 @@
 		}
 	}
 
+	const globalCommandList = globalCommands({
+		setPreference: (id) => storePreference(preferences[id]),
+		setSingleKeys
+	});
+	// pre, like showLive: a view's own normal $effect runs before the layout's, so binding here first (not as a normal
+	// $effect) is what lets a view's `:run` etc. win over this one — see HaltControl.svelte for stop/pause/resume.
+	$effect.pre(() => {
+		if (bare) return;
+		return bindCommands(globalCommandList);
+	});
+
 	async function execute(suggestion: Suggestion) {
 		await closeOverlay();
 		commandInput?.blur();
-		const focusCommand = focusTarget(suggestion, live.projects);
-		const resume = resumeTarget(suggestion);
 		if (suggestion.run) suggestion.run();
 		else if (suggestion.href) await goto(suggestion.href);
-		else if (focusCommand !== undefined) shell.focus = focusCommand;
-		else if (preferences[suggestion.id]) storePreference(preferences[suggestion.id]);
-		else if (suggestion.id.startsWith('single-keys'))
-			setSingleKeys(suggestion.id === 'single-keys-on');
-		else if (suggestion.id === 'stop' || suggestion.id === 'pause') confirming = suggestion.id;
-		else if (suggestion.id === 'resume') askWhichRun();
-		else if (resume === 'all') await resumeAll();
-		else if (resume !== undefined) await resumeRun(resume);
-		else if (suggestion.id === 'run')
-			toast(':run startet einen Run in der Run-Akte eines Tickets — öffne zuerst das Ticket.');
-	}
-
-	/** Outside the Run-Akte `:fortsetzen` alone does not say which run; the command line then offers the halted ones. */
-	function askWhichRun() {
-		toast(
-			haltedRuns.length
-				? 'Welchen Run? :fortsetzen N setzt einen angehaltenen fort, :fortsetzen all alle.'
-				: 'Gerade ist kein Run angehalten; :fortsetzen all löst einen Halt.'
-		);
-		openCommandLine(':fortsetzen ');
-	}
-
-	const CONFIRMATIONS = {
-		stop: {
-			title: 'Alle Agents stoppen?',
-			question: stopQuestion,
-			action: 'Stoppen (y)',
-			run: stopAll
-		},
-		pause: {
-			title: 'Alle Agents anhalten?',
-			question: pauseQuestion,
-			action: 'Anhalten (y)',
-			run: pauseAll
-		}
-	};
-	/** The global `:stop` or `:anhalten` waiting for its confirmation. */
-	let confirming = $state<keyof typeof CONFIRMATIONS>();
-	const confirmation = $derived(confirming && CONFIRMATIONS[confirming]);
-
-	async function confirm() {
-		const run = confirmation?.run;
-		confirming = undefined;
-		await run?.();
-	}
-
-	// The router stays out of open dialogs, so the confirmation takes its y itself — with Alt when single keys are off.
-	function onWindowKey(event: KeyboardEvent) {
-		if (confirming && readKey(event) === 'y') {
-			event.preventDefault();
-			void confirm();
-		} else handleKey(event);
 	}
 
 	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
@@ -266,7 +218,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window onkeydown={handleKey} />
 
 {#snippet viewLabel(view: View)}
 	{view.label}
@@ -417,16 +369,7 @@
 		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
 	</Dialog>
 	<KeyOverview bind:open={keysOpen} />
-	<Dialog
-		bind:open={() => confirming !== undefined, (open) => !open && (confirming = undefined)}
-		title={confirmation?.title ?? ''}
-	>
-		<p>{confirmation?.question(live.activeRuns)}</p>
-		{#snippet footer()}
-			<Button onclick={() => (confirming = undefined)}>Weiterlaufen lassen</Button>
-			<Button variant="danger" onclick={confirm}>{confirmation?.action}</Button>
-		{/snippet}
-	</Dialog>
+	<HaltControl openResumePrompt={() => openCommandLine(':fortsetzen ')} />
 {/if}
 
 <Toaster />

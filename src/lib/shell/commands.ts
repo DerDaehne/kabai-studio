@@ -1,4 +1,5 @@
-import type { ProjectRef } from './shell.svelte';
+import { shell, type ProjectRef } from './shell.svelte';
+import { toast } from '$lib/ui/toast.svelte';
 
 /** `:` runs a command, `/` searches the current view and all tickets. */
 export type CommandMode = ':' | '/';
@@ -8,9 +9,7 @@ export type Suggestion = {
 	label: string;
 	detail?: string;
 	href?: string;
-	/** False for commands whose feature has not been built yet; they are listed but cannot be run. */
-	available?: boolean;
-	/** What a command of the current view does; see {@link withViewCommands}. */
+	/** What executing this suggestion does; see `bindCommands` in shell.svelte.ts. */
 	run?: () => void;
 };
 
@@ -20,84 +19,167 @@ export type SuggestionSources = {
 	tickets: Suggestion[];
 };
 
-export const commands: Suggestion[] = [
-	{ id: 'run', label: ':run', detail: 'Ticket als Run starten' },
-	{ id: 'diff', label: ':diff', detail: 'Änderungen am Code ansehen', available: false },
-	{ id: 'stop', label: ':stop', detail: 'Not-Aus: alle Agent-Runs sofort abbrechen' },
-	// only `:fortsetzen all` may match the query "fortsetzen all", or ↵ on it would run another command first
-	{ id: 'pause', label: ':anhalten', detail: 'Alle Agent-Runs pausieren' },
-	{ id: 'resume', label: ':fortsetzen', detail: 'Einen angehaltenen Run weiterlaufen lassen' },
-	{
-		id: 'resume-all',
-		label: ':fortsetzen all',
-		detail: 'Alle angehaltenen Runs fortsetzen, Not-Aus lösen'
-	},
-	{
-		id: 'projects',
-		label: ':projekte',
-		detail: 'Alle Projekte, Projekt anlegen',
-		href: '/projects'
-	},
-	{ id: 'fokus-aus', label: ':fokus aus', detail: 'Projekt-Fokus aufheben' },
-	{ id: 'theme-light', label: ':set farbschema hell', detail: 'Helles Farbschema' },
-	{ id: 'theme-dark', label: ':set farbschema dunkel', detail: 'Dunkles Farbschema' },
-	{ id: 'theme-system', label: ':set farbschema system', detail: 'Farbschema des Systems' },
-	{ id: 'motion-reduced', label: ':set bewegung reduziert', detail: 'Bewegung reduzieren' },
-	{ id: 'motion-system', label: ':set bewegung system', detail: 'Bewegung wie im System' },
-	{ id: 'single-keys-off', label: ':set einzeltasten aus', detail: 'Tasten nur mit Alt' },
-	{ id: 'single-keys-on', label: ':set einzeltasten an', detail: 'Tasten ohne Alt' },
-	{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
-	{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
-];
+export type GlobalCommandHandlers = {
+	/** Writes a `:set …` choice (theme or motion), by the id of the suggestion that chose it. */
+	setPreference: (id: string) => void;
+	setSingleKeys: (on: boolean) => void;
+};
+
+/** The `:set farbschema …`/`:set bewegung …` commands, replacing the old sidebar's selects. */
+function preferenceCommands(setPreference: (id: string) => void): Suggestion[] {
+	const preference = (id: string) => () => setPreference(id);
+	return [
+		{
+			id: 'theme-light',
+			label: ':set farbschema hell',
+			detail: 'Helles Farbschema',
+			run: preference('theme-light')
+		},
+		{
+			id: 'theme-dark',
+			label: ':set farbschema dunkel',
+			detail: 'Dunkles Farbschema',
+			run: preference('theme-dark')
+		},
+		{
+			id: 'theme-system',
+			label: ':set farbschema system',
+			detail: 'Farbschema des Systems',
+			run: preference('theme-system')
+		},
+		{
+			id: 'motion-reduced',
+			label: ':set bewegung reduziert',
+			detail: 'Bewegung reduzieren',
+			run: preference('motion-reduced')
+		},
+		{
+			id: 'motion-system',
+			label: ':set bewegung system',
+			detail: 'Bewegung wie im System',
+			run: preference('motion-system')
+		}
+	];
+}
+
+/** The `:set einzeltasten …` commands (WCAG 2.1.4 single-key toggle). */
+function singleKeysCommands(setSingleKeys: (on: boolean) => void): Suggestion[] {
+	return [
+		{
+			id: 'single-keys-off',
+			label: ':set einzeltasten aus',
+			detail: 'Tasten nur mit Alt',
+			run: () => setSingleKeys(false)
+		},
+		{
+			id: 'single-keys-on',
+			label: ':set einzeltasten an',
+			detail: 'Tasten ohne Alt',
+			run: () => setSingleKeys(true)
+		}
+	];
+}
+
+/** The commands that work everywhere, not just in one view; `+layout.svelte` binds the result via `bindCommands`. */
+export function globalCommands(handlers: GlobalCommandHandlers): Suggestion[] {
+	return [
+		{
+			id: 'run',
+			label: ':run',
+			detail: 'Ticket als Run starten',
+			run: () =>
+				toast(':run startet einen Run in der Run-Akte eines Tickets — öffne zuerst das Ticket.')
+		},
+		{
+			id: 'projects',
+			label: ':projekte',
+			detail: 'Alle Projekte, Projekt anlegen',
+			href: '/projects'
+		},
+		{
+			id: 'fokus-aus',
+			label: ':fokus aus',
+			detail: 'Projekt-Fokus aufheben',
+			run: () => (shell.focus = null)
+		},
+		...preferenceCommands(handlers.setPreference),
+		...singleKeysCommands(handlers.setSingleKeys),
+		{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
+		{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
+	];
+}
+
+export type GlobalHaltHandlers = {
+	confirmStop: () => void;
+	confirmPause: () => void;
+	/** Outside the Run-Akte, `:fortsetzen` alone does not say which run. */
+	askWhichRun: () => void;
+	resumeAll: () => void;
+};
 
 /**
- * The commands of the current view (such as `:run` in the Run-Akte) first; one with the id of a fixed command takes its
- * place, so the fixed one only answers where no view offers it.
+ * The global stop/pause/resume commands; `HaltControl.svelte` binds the result via `bindCommands` and owns the
+ * confirmation that `confirmStop`/`confirmPause` open.
  */
-export const withViewCommands = (view: Suggestion[], fixed: Suggestion[]): Suggestion[] => [
-	...view,
-	...fixed.filter((command) => !view.some((own) => own.id === command.id))
-];
+export function globalHaltCommands(handlers: GlobalHaltHandlers): Suggestion[] {
+	return [
+		{
+			id: 'stop',
+			label: ':stop',
+			detail: 'Not-Aus: alle Agent-Runs sofort abbrechen',
+			run: handlers.confirmStop
+		},
+		{
+			id: 'pause',
+			label: ':anhalten',
+			detail: 'Alle Agent-Runs pausieren',
+			run: handlers.confirmPause
+		},
+		// only `:fortsetzen all` may match the query "fortsetzen all", or ↵ on it would run another command first
+		{
+			id: 'resume',
+			label: ':fortsetzen',
+			detail: 'Einen angehaltenen Run weiterlaufen lassen',
+			run: handlers.askWhichRun
+		},
+		{
+			id: 'resume-all',
+			label: ':fortsetzen all',
+			detail: 'Alle angehaltenen Runs fortsetzen, Not-Aus lösen',
+			run: handlers.resumeAll
+		}
+	];
+}
 
 const focusCommandId = (projectId: number) => `fokus-${projectId}`;
 
-/** One `:fokus <code>` suggestion per project, for `sources.commands` alongside the fixed {@link commands}. */
+/** One `:fokus <code>` suggestion per project, for `sources.commands` alongside the global {@link globalCommands}. */
 export function focusCommands(projects: ProjectRef[]): Suggestion[] {
 	return projects.map((project) => ({
 		id: focusCommandId(project.id),
 		label: `:fokus ${project.code.toLowerCase()}`,
-		detail: `Fokus auf ${project.name}`
+		detail: `Fokus auf ${project.name}`,
+		run: () => (shell.focus = project)
 	}));
 }
 
-/**
- * What executing `suggestion` means for the focus: the project to focus, `null` to clear it (`:fokus aus`), or
- * `undefined` when it isn't a focus command at all — the single place that reads the id {@link focusCommands} writes.
- */
-export function focusTarget(
-	suggestion: Suggestion,
-	projects: ProjectRef[]
-): ProjectRef | null | undefined {
-	if (suggestion.id === 'fokus-aus') return null;
-	return projects.find((project) => focusCommandId(project.id) === suggestion.id);
-}
-
 const resumeCommandId = (runId: number) => `resume-${runId}`;
-const RESUME_COMMAND_ID = /^resume-(\d+)$/;
 const TYPED_RESUME = /^:\s*fortsetzen\s+(\d+)$/;
 
 /**
  * One `:fortsetzen N` per halted run, and one for a number typed in `value` that is none of them, so the server can say why
- * it cannot resume that run.
+ * it cannot resume that run; `resume` is the Run's resolution (`resumeRun` from halt.ts in production).
  */
 export function resumeCommands(
 	halted: { id: number; ticket: string }[],
-	value: string
+	value: string,
+	resume: (runId: number) => void
 ): Suggestion[] {
 	const listed = halted.map((run) => ({
 		id: resumeCommandId(run.id),
 		label: `:fortsetzen ${run.id}`,
-		detail: `Run ${run.id} · ${run.ticket} fortsetzen`
+		detail: `Run ${run.id} · ${run.ticket} fortsetzen`,
+		run: () => resume(run.id)
 	}));
 	const typed = TYPED_RESUME.exec(value.trim())?.[1];
 	if (typed === undefined || halted.some((run) => String(run.id) === typed)) return listed;
@@ -106,16 +188,10 @@ export function resumeCommands(
 		{
 			id: resumeCommandId(Number(typed)),
 			label: `:fortsetzen ${typed}`,
-			detail: `Run ${typed} fortsetzen`
+			detail: `Run ${typed} fortsetzen`,
+			run: () => resume(Number(typed))
 		}
 	];
-}
-
-/** What executing `suggestion` resumes: every halted run, one run, or `undefined` when it resumes nothing. */
-export function resumeTarget(suggestion: Suggestion): number | 'all' | undefined {
-	if (suggestion.id === 'resume-all') return 'all';
-	const runId = RESUME_COMMAND_ID.exec(suggestion.id)?.[1];
-	return runId === undefined ? undefined : Number(runId);
 }
 
 export function parseInput(value: string): { mode: CommandMode | null; query: string } {

@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 import type { Suggestion } from './commands';
 
@@ -19,8 +20,6 @@ export const shell = $state({
 	/** Count or prefix the key router has buffered so far, e.g. `3` or `g`. */
 	pendingKeys: '',
 	viewItems: [] as Suggestion[],
-	/** The current view's own `:` commands, such as `:run` in the Run-Akte. */
-	viewCommands: [] as Suggestion[],
 	tickets: [] as Suggestion[],
 	/** Increments on every new signal; each increment sweeps one light wave through the head dock. */
 	signals: 0
@@ -28,4 +27,32 @@ export const shell = $state({
 
 export function announceSignal() {
 	shell.signals += 1;
+}
+
+let commandLayers = $state.raw<Suggestion[][]>([]);
+
+/**
+ * Binds a view's or the layout's own `:` commands until the returned function unbinds them; return it from an
+ * `$effect`, same pattern as `bindKeys` in router.svelte.ts. A stack by object identity, not a flat reset, so one
+ * binding unmounting never clobbers another that is still bound.
+ */
+export function bindCommands(suggestions: Suggestion[]): () => void {
+	// untracked: an effect that binds must not depend on the layers it changes, or it reruns forever
+	untrack(() => (commandLayers = [...commandLayers, suggestions]));
+	return () =>
+		untrack(() => (commandLayers = commandLayers.filter((layer) => layer !== suggestions)));
+}
+
+/** Every bound command once, most recently bound layer first; it wins over an older layer's suggestion of the same id. */
+export function boundCommands(): Suggestion[] {
+	const seen = new Set<string>();
+	const result: Suggestion[] = [];
+	for (let i = commandLayers.length - 1; i >= 0; i--) {
+		for (const suggestion of commandLayers[i]) {
+			if (seen.has(suggestion.id)) continue;
+			seen.add(suggestion.id);
+			result.push(suggestion);
+		}
+	}
+	return result;
 }

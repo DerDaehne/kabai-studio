@@ -31,7 +31,7 @@
 	const optionId = (index: number) => `${id}-option-${index}`;
 
 	function execute(suggestion: Suggestion | undefined) {
-		if (!suggestion || suggestion.available === false) return;
+		if (!suggestion) return;
 		value = '';
 		onexecute(suggestion);
 	}
@@ -92,13 +92,11 @@
 				id={optionId(index)}
 				role="option"
 				aria-selected={index === active}
-				aria-disabled={suggestion.available === false}
 				onpointerdown={(event) => event.preventDefault()}
 				onclick={() => execute(suggestion)}
 			>
 				<span class="label">{suggestion.label}</span>
 				{#if suggestion.detail}<span class="detail">{suggestion.detail}</span>{/if}
-				{#if suggestion.available === false}<span class="later">folgt</span>{/if}
 			</li>
 		{/each}
 	</ul>
@@ -187,24 +185,16 @@
 		background: var(--fill-sel);
 		box-shadow: inset 2px 0 0 var(--accent);
 	}
-	li[aria-disabled='true'] {
-		cursor: default;
-	}
 	.label {
 		font: 600 var(--text-sm) / 1.43 var(--font-mono);
 		white-space: nowrap;
 	}
-	.detail,
-	.later {
+	.detail {
 		min-width: 0;
 		overflow: hidden;
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.later {
-		margin-left: auto;
-		flex-shrink: 0;
 	}
 </style>
