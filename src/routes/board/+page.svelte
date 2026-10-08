@@ -69,12 +69,25 @@
 	const [send, receive] = crossfade({ duration: glide, easing: easing.inOut });
 
 	const href = (row: BoardTicket) => `/p/${row.project.code}/t/${row.number}`;
-	const reload = () => invalidateLive(BOARD_DEPENDENCY);
 
 	async function focusRow(id: number | undefined) {
 		await tick();
 		// a row that slides to another column leaves an inert copy behind until the slide ends
 		document.querySelector<HTMLElement>(`[data-ticket="${id}"]:not([inert])`)?.focus();
+	}
+
+	/** A row re-rendered into another column is a new element; the old one went inert or away with the focus. */
+	const focusDropped = () =>
+		!document.activeElement ||
+		document.activeElement === document.body ||
+		document.activeElement.closest('[inert]') !== null;
+
+	/** Loads the board again; a row that had the focus keeps it, unless the focus has moved on meanwhile. */
+	async function reload() {
+		const focused = document.activeElement?.getAttribute('data-ticket');
+		await invalidateLive(BOARD_DEPENDENCY);
+		await tick();
+		if (focused && focusDropped()) await focusRow(Number(focused));
 	}
 
 	function select(index: number) {
@@ -94,7 +107,6 @@
 		if (failure) return void toast(failure, 'error');
 		if (notice) toast(notice);
 		await reload();
-		void focusRow(row.id);
 	}
 
 	/** `>`/`<`: one allowed column on; a closed one says why and what to do instead. */

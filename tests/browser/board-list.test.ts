@@ -155,6 +155,61 @@ test('> moves the selected ticket one allowed column on and the row slides there
 	await expect(page.getByText(`Rückgängig: ${ticket.ref} nach Refine`)).toBeVisible();
 });
 
+test('another tab moving my selected ticket keeps its row focused once it lands', async ({
+	page,
+	browser,
+	seedTicket
+}) => {
+	const ticket = seedTicket('Review the copy');
+	const otherContext = await browser.newContext();
+	const other = await otherContext.newPage();
+	try {
+		await open(page, '/board');
+		await open(other, '/board');
+		await focusSeededProject(page);
+		await select(page, ticket.ref);
+		await expect(selected(page)).toBeFocused();
+
+		// This tab moves nothing itself: only the reload its live event triggers can bring the focus back.
+		await focusSeededProject(other);
+		await select(other, ticket.ref);
+		await press(other, '>');
+
+		await expect(group(page, 'Refine')).toContainText(ticket.ref);
+		await expect(selected(page)).toBeFocused();
+	} finally {
+		await otherContext.close();
+	}
+});
+
+test('a reload that lands after the focus left the list does not pull the focus back to the row', async ({
+	page,
+	seedTicket
+}) => {
+	const ticket = seedTicket('Review the copy');
+	await open(page, '/board');
+	await focusSeededProject(page);
+	await select(page, ticket.ref);
+
+	let release = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/board/__data.json*', async (route) => {
+		await held;
+		await route.continue();
+	});
+	const reloading = page.waitForRequest((request) => request.url().includes('/board/__data.json'));
+	await press(page, '>');
+	await reloading;
+	await press(page, ':');
+	const commandLine = page.getByRole('combobox', { name: 'Befehlszeile' });
+	await expect(commandLine).toBeFocused();
+
+	release();
+	await expect(rowIn(page, 'Refine', ticket.ref)).toBeVisible();
+	await page.waitForTimeout(300); // time for a second reload, the live echo of the move, to land as well
+	await expect(commandLine).toBeFocused();
+});
+
 test('a closed column refuses > with the reason and the way out, and the ticket stays', async ({
 	page,
 	db

@@ -76,13 +76,28 @@ export function gateLiveInvalidation() {
 	onMount(() => on(window, 'pageshow', (event) => event.persisted && replayPending()));
 }
 
-/** The one place that reloads a dependency fed by live events; see `gateLiveInvalidation` for why it is gated. */
+type Batch = { dependencies: Set<string>; reloaded: Promise<void> };
+let batch: Batch | undefined;
+
+/**
+ * The one place that reloads a dependency fed by live events; see `gateLiveInvalidation` for why it is gated. Calls
+ * within one task share one invalidation and its promise: SvelteKit would merge them too, but resolve all but the first
+ * before the reload has landed.
+ */
 export function invalidateLive(dependency: string = LIVE_DEPENDENCY): Promise<void> {
-	if (navigating) {
-		pendingInvalidations.add(dependency);
-		return Promise.resolve();
-	}
-	return invalidate(dependency);
+	batch ??= startBatch();
+	batch.dependencies.add(dependency);
+	return batch.reloaded;
+}
+
+function startBatch(): Batch {
+	const dependencies = new Set<string>();
+	const reloaded = Promise.resolve().then(() => {
+		batch = undefined;
+		if (!navigating) return invalidate((url) => dependencies.has(url.href));
+		for (const dependency of dependencies) pendingInvalidations.add(dependency);
+	});
+	return { dependencies, reloaded };
 }
 
 const STATE_CHANGES = new Set([
