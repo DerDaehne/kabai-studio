@@ -435,6 +435,8 @@ class StepLog {
 		const step = this.#step;
 		const reasoningTokens = usage.outputTokenDetails.reasoningTokens || undefined;
 		const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens || undefined;
+		const tokensIn = usage.inputTokens ?? 0;
+		const tokensOut = usage.outputTokens ?? 0;
 		this.#io.emit({
 			type: 'log',
 			key: `step:${step.number}`,
@@ -444,10 +446,13 @@ class StepLog {
 				finishReason,
 				ms: Date.now() - step.startedAt,
 				reasoningTokens,
-				cachedInputTokens
+				cachedInputTokens,
+				// also in `usage` below (the run's total); kept here too, since the time-series read model has no other source
+				tokensIn,
+				tokensOut
 			},
 			// ponytail: cost 0 while only local models are supported; priced providers bring their prices into the catalog
-			usage: { tokensIn: usage.inputTokens ?? 0, tokensOut: usage.outputTokens ?? 0, cost: 0 }
+			usage: { tokensIn, tokensOut, cost: 0 }
 		});
 	}
 }

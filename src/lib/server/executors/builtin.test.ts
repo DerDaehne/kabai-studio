@@ -277,7 +277,9 @@ describe('builtin executor', () => {
 			kind: 'step',
 			step: 1,
 			finishReason: 'tool-calls',
-			ms: expect.any(Number)
+			ms: expect.any(Number),
+			tokensIn: 1000,
+			tokensOut: 50
 		});
 		expect(events(runId).at(-1)!.payload).toEqual({ text: 'Done.' });
 		expect(comments()).toMatchObject([{ body: 'first' }, { body: 'second' }]);
