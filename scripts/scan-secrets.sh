@@ -77,6 +77,21 @@ german_in_src() {
 		cut -d: -f1,2
 }
 
+# Prints the short sha of every unpushed commit whose subject or body contains German. Bot commits are skipped.
+# Quoted text ("…", „…", `…`) is stripped from the message, so commits may quote German product texts.
+german_in_messages() {
+	local sha message
+	for sha in $(git rev-list origin/main..HEAD); do
+		if git log -1 --format='%ae' "$sha" | grep -q '\[bot\]@'; then
+			continue
+		fi
+		message="$(git log -1 --format='%s%n%b' "$sha")"
+		message="$(printf '%s\n' "$message" | sed -E 's/"[^"]*"//g; s/„[^"]*"//g; s/`[^`]*`//g')"
+		if printf '%s\n' "$message" | grep -qE "$GERMAN"; then
+			echo "${sha:0:7}"
+		fi
+	done
+}
 report() {
 	local what="$1" hint="$2" hits="$3"
 	[ -z "$hits" ] && return 0
@@ -129,6 +144,9 @@ else
 	echo "origin/main unknown (git fetch needed) — commit messages not checked."
 fi
 report "German comment or test name" "$LANGUAGE_HINT" "$(german_in_src)" || conventions=1
+if git rev-parse --verify -q origin/main >/dev/null; then
+	report "German comment or test name in commit message of commit" "$LANGUAGE_HINT" "$(german_in_messages)" || conventions=1
+fi
 if [ "$conventions" -eq 0 ]; then
 	echo "Board references and language: no matches."
 else
