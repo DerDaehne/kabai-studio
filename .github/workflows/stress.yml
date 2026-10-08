@@ -11,6 +11,8 @@ permissions:
 jobs:
   stress:
     runs-on: ubuntu-latest
+    # 3x unit suite + build + browser stress need more headroom than the test job.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,7 +37,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - run: npx playwright install --with-deps --no-shell chromium
+      # One retry: the apt mirror hung twice in practice, a transient network blip, not a
+      # product bug; the outer timeout-minutes is still the hard ceiling either way.
+      - timeout-minutes: 8
+        run: timeout 3m npx playwright install --with-deps --no-shell chromium || timeout 3m npx playwright install --with-deps --no-shell chromium
       - id: browser
         # taskset pins the whole process tree (Playwright, the dev server, Chromium) to one CPU
         # core, so the runner is as contended as the slower CI runner where tests actually flaked.
