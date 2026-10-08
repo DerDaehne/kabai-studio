@@ -25,6 +25,7 @@
 	"devDependencies": {
 		"@ai-sdk/mcp": "2.0.66",
 		"@ai-sdk/openai-compatible": "3.0.62",
+		"@axe-core/playwright": "4.13.0",
 		"@modelcontextprotocol/server": "2.2.0",
 		"@playwright/test": "1.63.0",
 		"@sveltejs/adapter-node": "^5.5.4",
