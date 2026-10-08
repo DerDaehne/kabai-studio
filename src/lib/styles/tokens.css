@@ -195,7 +195,8 @@
 	--mark-error: var(--rekta-color-status-error-full);
 	--rule: var(--rekta-color-text-contrast-low);
 
-	/* Type roles: UI words 12 and 13 px, body 15, items 18, light headings, medium figures; nothing below 12 px */
+	/* Type roles: UI words 12 and 13 px, body 15, items 18, nothing below 12 px.
+	   Headings light, figures medium, the main title semibold. */
 	--type-label: var(--rekta-typography-size-xxs);
 	--type-meta: var(--rekta-typography-size-xs);
 	--type-body: var(--rekta-typography-size-s);
@@ -207,9 +208,9 @@
 	--type-nav: var(--rekta-typography-size-nav-inactive);
 	--type-nav-active: var(--rekta-typography-size-nav-active);
 	--type-title: var(--rekta-typography-size-title);
-	--weight-heading: var(--rekta-typography-weight-light);
-	--weight-figure: var(--rekta-typography-weight-medium);
-	--weight-title: var(--rekta-typography-weight-semibold);
+	--weight-light: var(--rekta-typography-weight-light);
+	--weight-medium: var(--rekta-typography-weight-medium);
+	--weight-semibold: var(--rekta-typography-weight-semibold);
 
 	--motion-short: var(--rekta-motion-duration-short);
 	--motion-moderate: var(--rekta-motion-duration-moderate);

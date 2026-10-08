@@ -21,6 +21,8 @@ FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409
 WORKDIR /app
 COPY --from=build /app/build ./build
 COPY --from=build /app/server.ts ./server.ts
+# The minified CSS drops the vendored files' licence headers, so the licence texts ship next to it
+COPY --from=build /app/LICENSE /app/NOTICE ./
 
 # Runs as the image's built-in non-root "node" user (uid/gid 1000) instead of creating one.
 RUN mkdir -p /data && chown node:node /data && chmod 0700 /data

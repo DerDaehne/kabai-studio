@@ -17,6 +17,7 @@
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
 	import { undoStack } from '$lib/shell/undo.svelte';
+	import RektaShowcase from './RektaShowcase.svelte';
 
 	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
 	let dialogOpen = $state(page.url.searchParams.get('open') === 'dialog');
@@ -331,6 +332,11 @@
 					><ProjectTag {...project} /></span
 				>{/each}
 		</div>
+	</section>
+
+	<section aria-labelledby="h-tiles">
+		<h2 id="h-tiles">Kacheln und Kennzahlen</h2>
+		<RektaShowcase />
 	</section>
 
 	<section aria-labelledby="h-shell">
