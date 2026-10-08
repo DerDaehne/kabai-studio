@@ -3,7 +3,8 @@ import { expect, open, test } from './fixtures.ts';
 import { PROJECT } from './global-setup.ts';
 
 // Projects cannot be deleted, so every run creates its own: capital letters and digits keep the key valid.
-const uniqueSuffix = () => randomUUID().slice(0, 6).toUpperCase();
+// 10 hex characters (hyphens stripped first) keep collisions astronomically unlikely (16^10 possibilities).
+const uniqueSuffix = () => randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
 
 test('creating a project leads straight into it, and from there to its first ticket', async ({
 	page

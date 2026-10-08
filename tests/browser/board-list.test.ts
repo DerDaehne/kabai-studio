@@ -66,7 +66,8 @@ function deleteByTitle(db: DatabaseSync, title: string) {
 
 /** A second project with one ticket; projects cannot be deleted, so the clean-up archives it. */
 function secondProject(db: DatabaseSync) {
-	const suffix = randomUUID().slice(0, 4).toUpperCase();
+	// 10 hex characters (hyphens stripped first) keep collisions astronomically unlikely (16^10 possibilities).
+	const suffix = randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
 	const project = board.createProject(db, HUMAN, {
 		key: `B${suffix}`,
 		name: `Zweitprojekt ${suffix}`
