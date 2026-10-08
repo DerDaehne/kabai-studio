@@ -15,8 +15,7 @@ type StepRow = {
 /**
  * One row per run and minute. `run_id IN (...)` seeks the primary key `(run_id, seq)` once per run, then a cheap
  * scan within that run's own rows filters type/kind/time — no index on `run_events(created_at)` is needed for
- * that. Picking which runs are "in the window" in the first place (a time index on `runs`) is a separate,
- * still-open concern for the caller, not part of this query.
+ * that. The caller picks which run ids to ask for; this query never scans `runs` to find them.
  * Exported only so the query-plan test can run `EXPLAIN QUERY PLAN` on this exact text.
  */
 export const STEP_MINUTES = `
@@ -56,9 +55,9 @@ function pointOf(rows: Map<string, StepRow>, runId: number, minute: string): Ser
 }
 
 /**
- * Per-minute step and token counts for each run id, over the last `windowMinutes` (default 30) up to `now`. One
- * query for every run, no N+1. A minute where any step's payload lacks `tokensIn`/`tokensOut` (an older run that
- * predates them) is a token gap for that minute, never a silent zero.
+ * Per-minute step and token counts for each run id, over the last `windowMinutes` (at least 1, default 30) up to
+ * `now`. One query for every run, no N+1. A minute where any step's payload lacks `tokensIn`/`tokensOut` (an older
+ * run that predates them) is a token gap for that minute, never a silent zero.
  */
 export function stepSeries(
 	db: DatabaseSync,
@@ -66,6 +65,7 @@ export function stepSeries(
 	windowMinutes = DEFAULT_WINDOW_MINUTES,
 	now = new Date()
 ): RunSeries[] {
+	if (windowMinutes < 1) throw new Error(`windowMinutes must be at least 1, got ${windowMinutes}`);
 	const grid = minuteGrid(now, windowMinutes);
 	const rows = runIds.length
 		? (db

@@ -17,7 +17,18 @@ const stepEvent = (seq: number, payload: Record<string, unknown> = {}): TraceEve
 	payload: { kind: 'step', step: seq, ...payload }
 });
 
-const empty: RunSeries = { runId: 1, points: [] };
+const zeroPoint = (minute: string) => ({ minute, steps: 0, tokensIn: 0, tokensOut: 0 });
+
+// A 3-minute window as `stepSeries` would load it, ending at the current minute — the realistic starting point
+// for `advanceSeries`, which is always called on a series a load already brought to its full window length.
+const loaded = (): RunSeries => ({
+	runId: 1,
+	points: [
+		zeroPoint('2026-10-08T16:40:00Z'),
+		zeroPoint('2026-10-08T16:41:00Z'),
+		zeroPoint('2026-10-08T16:42:00Z')
+	]
+});
 
 describe('minuteKey', () => {
 	it('truncates a timestamp to the start of its minute, in UTC', () => {
@@ -29,62 +40,107 @@ describe('advanceSeries', () => {
 	const t = new Date('2026-10-08T16:42:10Z');
 
 	it('ignores a log event that is not a step (e.g. a model-loading notice)', () => {
+		const series = loaded();
 		const event: TraceEvent = { seq: 1, type: 'log', key: null, payload: { kind: 'phase' } };
-		expect(advanceSeries(empty, event, t)).toBe(empty);
+		expect(advanceSeries(series, event, t)).toBe(series);
 	});
 
 	it('ignores a non-log event even if its payload happens to carry kind: step', () => {
+		const series = loaded();
 		const event: TraceEvent = { seq: 1, type: 'tool_call', key: null, payload: { kind: 'step' } };
-		expect(advanceSeries(empty, event, t)).toBe(empty);
+		expect(advanceSeries(series, event, t)).toBe(series);
 	});
 
-	it('opens the running minute on the first step, with its tokens', () => {
-		const series = advanceSeries(empty, stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
+	it('folds the first live step into the already-loaded running minute, length unchanged', () => {
+		const series = advanceSeries(loaded(), stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
 		expect(series.points).toEqual([
+			zeroPoint('2026-10-08T16:40:00Z'),
+			zeroPoint('2026-10-08T16:41:00Z'),
 			{ minute: '2026-10-08T16:42:00Z', steps: 1, tokensIn: 10, tokensOut: 2 }
 		]);
 	});
 
 	it('keeps counting within the same minute instead of opening a second point', () => {
-		let series = advanceSeries(empty, stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
+		let series = advanceSeries(loaded(), stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
 		series = advanceSeries(
 			series,
 			stepEvent(2, { tokensIn: 5, tokensOut: 1 }),
 			new Date('2026-10-08T16:42:40Z')
 		);
-		expect(series.points).toEqual([
-			{ minute: '2026-10-08T16:42:00Z', steps: 2, tokensIn: 15, tokensOut: 3 }
-		]);
+		expect(series.points.at(-1)).toEqual({
+			minute: '2026-10-08T16:42:00Z',
+			steps: 2,
+			tokensIn: 15,
+			tokensOut: 3
+		});
+		expect(series.points).toHaveLength(3);
 	});
 
-	it('starts a new point once the minute rolls over', () => {
-		let series = advanceSeries(empty, stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
-		series = advanceSeries(
-			series,
-			stepEvent(2, { tokensIn: 5, tokensOut: 1 }),
+	it('opens a new point for the next minute and slides the window, dropping the oldest point', () => {
+		const series = advanceSeries(
+			loaded(),
+			stepEvent(1, { tokensIn: 5, tokensOut: 1 }),
 			new Date('2026-10-08T16:43:05Z')
 		);
 		expect(series.points).toEqual([
-			{ minute: '2026-10-08T16:42:00Z', steps: 1, tokensIn: 10, tokensOut: 2 },
+			zeroPoint('2026-10-08T16:41:00Z'),
+			zeroPoint('2026-10-08T16:42:00Z'),
 			{ minute: '2026-10-08T16:43:00Z', steps: 1, tokensIn: 5, tokensOut: 1 }
 		]);
 	});
 
-	it('turns the minute into a gap once one of its steps carries no token fields (an old run)', () => {
-		let series = advanceSeries(empty, stepEvent(1, { tokensIn: 10, tokensOut: 2 }), t);
-		series = advanceSeries(series, stepEvent(2), new Date('2026-10-08T16:42:40Z'));
-		expect(series.points).toEqual([{ minute: '2026-10-08T16:42:00Z', steps: 2 }]);
+	it('fills a minute skipped entirely with a zero point, still sliding the window by one', () => {
+		const series = advanceSeries(
+			loaded(),
+			stepEvent(1, { tokensIn: 5, tokensOut: 1 }),
+			new Date('2026-10-08T16:44:05Z') // 16:43 never happened
+		);
+		expect(series.points).toEqual([
+			zeroPoint('2026-10-08T16:42:00Z'),
+			zeroPoint('2026-10-08T16:43:00Z'),
+			{ minute: '2026-10-08T16:44:00Z', steps: 1, tokensIn: 5, tokensOut: 1 }
+		]);
 	});
 
-	it('keeps a minute a gap even once a later step in it does carry tokens', () => {
-		let series = advanceSeries(empty, stepEvent(1), t); // no tokens: the earlier step in the minute lacked them
+	it('folds a step whose minute is not after the last point into the last point instead of appending out of order', () => {
+		// e.g. the client clock running a little behind the server, right at a minute boundary
+		const series = advanceSeries(
+			loaded(),
+			stepEvent(1, { tokensIn: 5, tokensOut: 1 }),
+			new Date('2026-10-08T16:41:50Z') // a minute before the series' last point (16:42)
+		);
+		expect(series.points).toEqual([
+			zeroPoint('2026-10-08T16:40:00Z'),
+			zeroPoint('2026-10-08T16:41:00Z'),
+			{ minute: '2026-10-08T16:42:00Z', steps: 1, tokensIn: 5, tokensOut: 1 }
+		]);
+	});
+
+	it('turns the minute into a gap once one of its steps carries no token fields (an old run)', () => {
+		let series = advanceSeries(loaded(), stepEvent(1), t);
 		series = advanceSeries(
 			series,
 			stepEvent(2, { tokensIn: 10, tokensOut: 2 }),
 			new Date('2026-10-08T16:42:40Z')
 		);
-		expect(series.points).toEqual([{ minute: '2026-10-08T16:42:00Z', steps: 2 }]);
-		expect(series.points[0].tokensIn).toBeUndefined();
+		expect(series.points.at(-1)).toEqual({ minute: '2026-10-08T16:42:00Z', steps: 2 });
+	});
+
+	it('keeps a minute a gap even once a later step in it does carry tokens', () => {
+		let series = advanceSeries(loaded(), stepEvent(1), t); // no tokens: the earlier step in the minute lacked them
+		series = advanceSeries(
+			series,
+			stepEvent(2, { tokensIn: 10, tokensOut: 2 }),
+			new Date('2026-10-08T16:42:40Z')
+		);
+		expect(series.points.at(-1)!.tokensIn).toBeUndefined();
+	});
+
+	it('treats a step with only one of the two token fields as having neither, never producing NaN', () => {
+		const series = advanceSeries(loaded(), stepEvent(1, { tokensIn: 10 }), t);
+		const point = series.points.at(-1)!;
+		expect(point.tokensIn).toBeUndefined();
+		expect(point.tokensOut).toBeUndefined();
 	});
 });
 

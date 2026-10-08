@@ -22,6 +22,9 @@ export type RunSeries = {
 /** `date` truncated to its minute, in the same form the server buckets `run_events.created_at` into. */
 export const minuteKey = (date: Date): string => `${date.toISOString().slice(0, 16)}:00Z`;
 
+const minuteIndex = (key: string) => Date.parse(key) / 60_000;
+const minuteAt = (index: number) => minuteKey(new Date(index * 60_000));
+
 const emptyPoint = (minute: string): SeriesPoint => ({
 	minute,
 	steps: 0,
@@ -29,23 +32,43 @@ const emptyPoint = (minute: string): SeriesPoint => ({
 	tokensOut: 0
 });
 
-/** Folds one more step into a minute's point; a step without token fields turns the whole minute into a gap. */
+/** The step's token fields as a pair, or `undefined` the moment either is missing — never a lone `tokensOut`. */
+function tokensOf(
+	payload: Record<string, unknown>
+): { tokensIn: number; tokensOut: number } | undefined {
+	const { tokensIn, tokensOut } = payload;
+	return typeof tokensIn === 'number' && typeof tokensOut === 'number'
+		? { tokensIn, tokensOut }
+		: undefined;
+}
+
+/** Folds one more step into a minute's point; a step without both token fields turns the whole minute into a gap. */
 function withStep(point: SeriesPoint, payload: Record<string, unknown>): SeriesPoint {
-	const tokensIn = typeof payload.tokensIn === 'number' ? payload.tokensIn : undefined;
-	const tokensOut = typeof payload.tokensOut === 'number' ? payload.tokensOut : undefined;
-	const known = point.tokensIn !== undefined && tokensIn !== undefined;
+	const added = point.tokensIn === undefined ? undefined : tokensOf(payload);
 	return {
 		minute: point.minute,
 		steps: point.steps + 1,
-		tokensIn: known ? point.tokensIn! + tokensIn! : undefined,
-		tokensOut: known ? point.tokensOut! + tokensOut! : undefined
+		tokensIn: added && point.tokensIn !== undefined ? point.tokensIn + added.tokensIn : undefined,
+		tokensOut:
+			added && point.tokensOut !== undefined ? point.tokensOut + added.tokensOut : undefined
 	};
 }
 
+/** Every minute strictly between `from` and `to` (both exclusive), oldest first, as empty points. */
+function fillGap(from: string, to: string): SeriesPoint[] {
+	const points: SeriesPoint[] = [];
+	for (let i = minuteIndex(from) + 1; i < minuteIndex(to); i++)
+		points.push(emptyPoint(minuteAt(i)));
+	return points;
+}
+
 /**
- * Appends one live step event (`run.event` with `eventType: 'log'`, `payload.kind: 'step'`) to the series' running
- * minute; any other event is ignored. `receivedAt` (not a server timestamp — a live event carries none) decides the
- * minute; a reload after reconnect or `invalidate` replaces the series with the authoritative server one again.
+ * Appends one live step event (`run.event` with `eventType: 'log'`, `payload.kind: 'step'`) to the series, keeping
+ * it equal to what reloading `stepSeries` would return: a minute skipped by this event (no event arrived for it)
+ * becomes a zero point, and the window slides — the point count never grows past what the series already held, so
+ * the oldest points fall off the front as new ones are appended. A step whose minute is not after the last point's
+ * minute (e.g. the client clock running a little behind the server, right at a minute boundary) folds into the
+ * last point instead of appending out of order. Any other event is ignored.
  */
 export function advanceSeries(
 	series: RunSeries,
@@ -55,9 +78,13 @@ export function advanceSeries(
 	if (event.type !== 'log' || event.payload.kind !== 'step') return series;
 	const minute = minuteKey(receivedAt);
 	const last = series.points.at(-1);
-	const point = withStep(last?.minute === minute ? last : emptyPoint(minute), event.payload);
-	const points = last?.minute === minute ? series.points.slice(0, -1) : series.points;
-	return { ...series, points: [...points, point] };
+	if (last && minute <= last.minute) {
+		return { ...series, points: [...series.points.slice(0, -1), withStep(last, event.payload)] };
+	}
+	const windowSize = series.points.length;
+	const gap = last ? fillGap(last.minute, minute) : [];
+	const points = [...series.points, ...gap, withStep(emptyPoint(minute), event.payload)];
+	return { ...series, points: windowSize ? points.slice(-windowSize) : points };
 }
 
 const trend = (values: number[]): 'steigend' | 'fallend' | 'gleichbleibend' => {

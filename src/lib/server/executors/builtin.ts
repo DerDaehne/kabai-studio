@@ -435,8 +435,9 @@ class StepLog {
 		const step = this.#step;
 		const reasoningTokens = usage.outputTokenDetails.reasoningTokens || undefined;
 		const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens || undefined;
-		const tokensIn = usage.inputTokens ?? 0;
-		const tokensOut = usage.outputTokens ?? 0;
+		// undefined when the provider reports no usage for this step: a gap for the time series, never a silent zero
+		const tokensIn = usage.inputTokens;
+		const tokensOut = usage.outputTokens;
 		this.#io.emit({
 			type: 'log',
 			key: `step:${step.number}`,
@@ -447,7 +448,8 @@ class StepLog {
 				ms: Date.now() - step.startedAt,
 				reasoningTokens,
 				cachedInputTokens,
-				// also in `usage` below (the run's total); kept here too, since the time-series read model has no other source
+				// also in `usage` below (the run's total, which coalesces a missing report to 0); kept here too,
+				// since the time-series read model has no other source
 				tokensIn,
 				tokensOut
 			},

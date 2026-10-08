@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { advanceSeries } from '$lib/trace/step-series';
+import { liveTraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import { appendEvent, createProfile, createRun, startRun } from './domain/runs';
 import { migrate, openDb } from './db';
+import { subscribe, type StudioEvent } from './events';
 import { DEFAULT_WINDOW_MINUTES, STEP_MINUTES, stepSeries } from './step-series';
 
 const user: Actor = { kind: 'user' };
@@ -129,7 +132,7 @@ describe('stepSeries', () => {
 		]);
 	});
 
-	it('answers one run per id, each with its own series, from a single query', () => {
+	it('answers one run per id, each with its own series', () => {
 		const { db, running, step } = setup();
 		const a = running();
 		const b = running();
@@ -145,6 +148,74 @@ describe('stepSeries', () => {
 	it('returns no runs for an empty id list without touching the database', () => {
 		const { db } = setup();
 		expect(stepSeries(db, [], DEFAULT_WINDOW_MINUTES, NOW)).toEqual([]);
+	});
+
+	it('counts only log events as steps, even when another event type carries kind: step', () => {
+		const { db, running, step } = setup();
+		const runId = running();
+		const agent: Actor = { kind: 'agent', runId };
+		const { seq } = appendEvent(db, agent, runId, {
+			type: 'intervention',
+			payload: { kind: 'step' }
+		});
+		db.prepare('UPDATE run_events SET created_at = ? WHERE run_id = ? AND seq = ?').run(
+			'2026-10-08 17:00:20',
+			runId,
+			seq
+		);
+		step(runId, '2026-10-08 17:00:00', { tokensIn: 1, tokensOut: 1 });
+
+		const [series] = stepSeries(db, [runId], 1, NOW);
+		expect(series.points).toEqual([
+			{ minute: '2026-10-08T17:00:00Z', steps: 1, tokensIn: 1, tokensOut: 1 }
+		]);
+	});
+
+	it('rejects a window smaller than one minute instead of building an empty, unusable grid', () => {
+		const { db } = setup();
+		expect(() => stepSeries(db, [1], 0)).toThrow(/windowMinutes/);
+		expect(() => stepSeries(db, [1], -5)).toThrow(/windowMinutes/);
+	});
+});
+
+describe('advanceSeries matches a reload', () => {
+	function liveSetup() {
+		const { db, running, step } = setup();
+		const runId = running();
+		const live: StudioEvent[] = [];
+		const off = subscribe((e) => {
+			if (e.type === 'run.event') live.push(e);
+		});
+		const liveStep = (at: string, payload: Record<string, unknown>) => {
+			step(runId, at, payload);
+			return liveTraceEvent(live.at(-1)!);
+		};
+		return { db, runId, liveStep, off };
+	}
+
+	it('a tab that loaded earlier and followed live steps shows the same series as a fresh reload', () => {
+		const { db, runId, liveStep, off } = liveSetup();
+		liveStep('2026-10-08 16:59:10', { tokensIn: 10, tokensOut: 1 });
+		const [loaded] = stepSeries(db, [runId], 30, new Date('2026-10-08T17:00:30Z'));
+
+		const event = liveStep('2026-10-08 17:02:10', { tokensIn: 5, tokensOut: 1 });
+		const followed = advanceSeries(loaded, event, new Date('2026-10-08T17:02:10Z'));
+
+		const [reloaded] = stepSeries(db, [runId], 30, new Date('2026-10-08T17:02:40Z'));
+		off();
+		expect(followed).toEqual(reloaded);
+	});
+
+	it('a live step received a moment before the last server minute (client clock behind) stays in order and does not grow the window', () => {
+		const { db, runId, liveStep, off } = liveSetup();
+		const [loaded] = stepSeries(db, [runId], 30, new Date('2026-10-08T17:00:00.200Z'));
+		const event = liveStep('2026-10-08 17:00:00', { tokensIn: 5, tokensOut: 1 });
+		const followed = advanceSeries(loaded, event, new Date('2026-10-08T16:59:59.500Z'));
+		off();
+
+		const minutes = followed.points.map((p) => p.minute);
+		expect(minutes).toEqual([...new Set(minutes)].sort());
+		expect(followed.points).toHaveLength(30);
 	});
 });
 
