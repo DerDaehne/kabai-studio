@@ -233,7 +233,7 @@ printf 'ProbeNoop\n' >"$work/.privacy-patterns"
 echo x >"$work/f.txt"
 git -C "$work" add f.txt
 commit_as Neutral neutral@example.invalid "fix: wird behoben"
-check "language: German subject in commit message" 1 "German comment or test name in commit"
+check "language: German subject in commit message" 1 "German in the message of commit"
 
 reset_work
 printf 'ProbeNoop\n' >"$work/.privacy-patterns"
@@ -246,8 +246,15 @@ reset_work
 printf 'ProbeNoop\n' >"$work/.privacy-patterns"
 echo x >"$work/f.txt"
 git -C "$work" add f.txt
-commit_as Neutral neutral@example.invalid "fix: show \"wird behoben\" message"
+commit_as Neutral neutral@example.invalid "fix: show \"wird behoben\" and „wird gespeichert“ messages"
 check "language: quoted German text in commit message is allowed" 0
+
+reset_work
+printf 'ProbeNoop\n' >"$work/.privacy-patterns"
+echo x >"$work/f.txt"
+git -C "$work" add f.txt
+commit_as 'dependabot[bot]' '1+dependabot[bot]@users.noreply.github.com' "chore(deps): Abhängigkeit aktualisiert"
+check "language: a bot commit message is not checked" 0
 
 if command -v gitleaks >/dev/null 2>&1 || command -v nix >/dev/null 2>&1; then
 	reset_work

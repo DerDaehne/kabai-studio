@@ -27,6 +27,7 @@ CONTENT_HINT="Remove it; if already committed → git commit --amend or git reba
 PATH_HINT="Rename the file (git mv); if already committed → git rebase -i origin/main, before pushing."
 BOARD_HINT="Remove the board reference: a ticket id belongs only in the commit subject as (#<id>), knowledge in the knowledge base."
 LANGUAGE_HINT="Write comments and test names in English; quote product texts in \"…\" or „…“."
+MESSAGE_LANGUAGE_HINT="Write commit messages in English; quote product texts in \"…\" or „…“. If already committed → git commit --amend or git rebase -i origin/main, before pushing."
 
 # Generic board reference patterns. They are public on purpose and always run, also in CI.
 # Wikilinks alone are fine (the notes feature uses [[slug]]); only real board slug prefixes count.
@@ -67,31 +68,32 @@ board_references_in_messages() {
 	done
 }
 
-# Prints "<file>:<line>" for German comments and test names in src/. Quoted text ("…", „…“, `…`) is skipped,
-# so test names and comments may still quote the German product texts they are about.
+# Removes quoted text ("…", „…“, `…`), so comments, test names and commit messages may quote German product texts.
+strip_quotes() {
+	sed -E 's/"[^"]*"//g; s/„[^“]*“//g; s/`[^`]*`//g'
+}
+
+# Prints "<file>:<line>" for German comments and test names in src/ (quoted text skipped).
 german_in_src() {
 	git grep -n -I --untracked -E -e "^[[:space:]]*(//|/\*|\*|<!--)|[^:]//[[:space:]]|^[[:space:]]*(it|test|describe)(\.[a-z]+)*\(" \
 		-- 'src/*.ts' 'src/*.js' 'src/*.svelte' |
-		sed -E 's/"[^"]*"//g; s/„[^“]*“//g; s/`[^`]*`//g' |
+		strip_quotes |
 		{ grep -E "$GERMAN" || true; } |
 		cut -d: -f1,2
 }
 
-# Prints the short sha of every unpushed commit whose subject or body contains German. Bot commits are skipped.
-# Quoted text ("…", „…", `…`) is stripped from the message, so commits may quote German product texts.
+# Prints the short sha of every unpushed commit whose message contains German (quoted text skipped).
+# Bot commits may carry upstream release notes and are skipped.
 german_in_messages() {
-	local sha message
+	local sha
 	for sha in $(git rev-list origin/main..HEAD); do
-		if git log -1 --format='%ae' "$sha" | grep -q '\[bot\]@'; then
-			continue
-		fi
-		message="$(git log -1 --format='%s%n%b' "$sha")"
-		message="$(printf '%s\n' "$message" | sed -E 's/"[^"]*"//g; s/„[^"]*"//g; s/`[^`]*`//g')"
-		if printf '%s\n' "$message" | grep -qE "$GERMAN"; then
+		git log -1 --format='%ae' "$sha" | grep -q '\[bot\]@' && continue
+		if git log -1 --format='%s%n%b' "$sha" | strip_quotes | grep -qE "$GERMAN"; then
 			echo "${sha:0:7}"
 		fi
 	done
 }
+
 report() {
 	local what="$1" hint="$2" hits="$3"
 	[ -z "$hits" ] && return 0
@@ -140,13 +142,11 @@ conventions=0
 report "Board reference" "$BOARD_HINT" "$(board_references_in_files)" || conventions=1
 if git rev-parse --verify -q origin/main >/dev/null; then
 	report "Board reference in the message of commit" "$BOARD_HINT" "$(board_references_in_messages)" || conventions=1
+	report "German in the message of commit" "$MESSAGE_LANGUAGE_HINT" "$(german_in_messages)" || conventions=1
 else
 	echo "origin/main unknown (git fetch needed) — commit messages not checked."
 fi
 report "German comment or test name" "$LANGUAGE_HINT" "$(german_in_src)" || conventions=1
-if git rev-parse --verify -q origin/main >/dev/null; then
-	report "German comment or test name in commit message of commit" "$LANGUAGE_HINT" "$(german_in_messages)" || conventions=1
-fi
 if [ "$conventions" -eq 0 ]; then
 	echo "Board references and language: no matches."
 else
