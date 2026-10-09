@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
-	import { goto, onNavigate } from '$app/navigation';
+	import { afterNavigate, goto, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import favicon from '$lib/assets/favicon.svg';
@@ -71,6 +71,12 @@
 	}
 
 	let keysOpen = $state(false);
+
+	// a sheet belongs to the page it was opened on; invalidate() is no navigation, so live events leave it open
+	afterNavigate(() => {
+		commandOpen = false;
+		keysOpen = false;
+	});
 
 	function announce(verb: string, actions: Undoable[]) {
 		if (actions.length) toast(`${verb}: ${actions.map((action) => action.label).join(', ')}`);

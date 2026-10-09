@@ -7,6 +7,7 @@ import { pageOverflowX } from './widths.ts';
 const HUMAN: Actor = { kind: 'user' };
 const PHONE = { width: 375, height: 667 };
 const DESKTOP = { width: 1440, height: 900 };
+const ULTRAWIDE = { width: 2560, height: 1440 };
 
 const navOf = (page: Page) => page.getByRole('navigation', { name: 'Ansichten' });
 const titleOf = (page: Page, name: string) =>
@@ -110,9 +111,36 @@ test('the head pivot keeps its order and height: the active title glides to the 
 	).toBeLessThanOrEqual(1);
 });
 
+test('the focus ring of the active head title is not cut off by its row', async ({ page }) => {
+	await page.setViewportSize(DESKTOP);
+	await open(page, '/');
+	await settledHead(page, 'kabai studio');
+	await page.keyboard.press('Tab'); // skip link
+	await page.keyboard.press('Tab'); // first title, the active one
+	await expect(titleOf(page, 'kabai studio')).toBeFocused();
+	const clip = await page.evaluate(() => {
+		const nav = document.querySelector('nav[aria-label="Ansichten"]')!;
+		const link = nav.querySelector('[aria-current]')!;
+		const style = getComputedStyle(link);
+		const scale = parseFloat(style.scale) || 1;
+		const ring = (parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)) * scale;
+		const row = nav.getBoundingClientRect();
+		const box = link.getBoundingClientRect();
+		return {
+			ringTop: box.top - ring,
+			rowTop: row.top,
+			ringBottom: box.bottom + ring,
+			rowBottom: row.bottom
+		};
+	});
+	expect(clip.ringTop, 'ring top inside the row').toBeGreaterThanOrEqual(clip.rowTop);
+	expect(clip.ringBottom, 'ring bottom inside the row').toBeLessThanOrEqual(clip.rowBottom);
+});
+
 for (const [viewport, commands] of [
 	[PHONE, ['zurück', 'anhalten', 'not-aus', 'befehl', 'tasten']],
-	[DESKTOP, ['anhalten', 'not-aus', 'befehl', 'tasten']]
+	[DESKTOP, ['anhalten', 'not-aus', 'befehl', 'tasten']],
+	[ULTRAWIDE, ['anhalten', 'not-aus', 'befehl', 'tasten']]
 ] as const) {
 	test(`at ${viewport.width} px the app bar sits on the bottom edge with the runner state as a word and labelled commands that open the keys and the command line`, async ({
 		page
@@ -157,6 +185,44 @@ for (const [viewport, commands] of [
 		await expect(page.getByRole('dialog', { name: 'Befehlszeile' })).toBeHidden();
 	});
 }
+
+test('the command sheet closes when the browser goes back to another page', async ({ page }) => {
+	await open(page, '/');
+	await titleOf(page, 'takt').click();
+	await expect(page).toHaveURL('/takt');
+	await page.keyboard.press(':');
+	const sheet = page.getByRole('dialog', { name: 'Befehlszeile' });
+	await expect(sheet).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL('/');
+	await expect(sheet).toBeHidden();
+});
+
+test('the keys sheet closes when the browser goes back to another page', async ({ page }) => {
+	await open(page, '/');
+	await titleOf(page, 'takt').click();
+	await expect(page).toHaveURL('/takt');
+	await page.keyboard.press('?');
+	const sheet = page.getByRole('dialog', { name: 'Alle Tasten' });
+	await expect(sheet).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL('/');
+	await expect(sheet).toBeHidden();
+});
+
+test('the halt confirmation sheet closes when the browser goes back to another page', async ({
+	page
+}) => {
+	await open(page, '/');
+	await titleOf(page, 'takt').click();
+	await expect(page).toHaveURL('/takt');
+	await appBarOf(page).getByRole('button', { name: 'anhalten' }).click();
+	const sheet = page.getByRole('dialog', { name: 'Alle Agents anhalten?' });
+	await expect(sheet).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL('/');
+	await expect(sheet).toBeHidden();
+});
 
 test('on a phone zurück is the first command and goes back to where you came from', async ({
 	page
@@ -369,9 +435,31 @@ test('the start view is called kabai studio everywhere, and g s still leads ther
 	await expect(page).toHaveURL('/');
 	await expect(titleOf(page, 'kabai studio')).toHaveAttribute('aria-current', 'page');
 
-	for (const path of ['/', '/takt', '/no-such-page']) {
-		await page.goto(path);
+	await page.goto('/no-such-page'); // not a `live`-signed-in page, so checked without the ? overview
+	await expect(page.getByText(/Stellwerk/)).toHaveCount(0);
+	await expect(page.locator('[aria-label*="Stellwerk"]')).toHaveCount(0);
+});
+
+test('no page of the shell shows Stellwerk or names it in an aria-label, the Run-Akte crumb and the key overview included', async ({
+	page,
+	seedTicket
+}) => {
+	const ticket = seedTicket('A ticket whose crumb leads home');
+	for (const path of [
+		'/',
+		'/takt',
+		'/board',
+		'/projects',
+		'/p/WEB',
+		'/settings',
+		'/settings/profiles',
+		ticket.path
+	]) {
+		await open(page, path);
+		await page.keyboard.press('?');
+		await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeVisible();
 		await expect(page.getByText(/Stellwerk/), path).toHaveCount(0);
 		await expect(page.locator('[aria-label*="Stellwerk"]'), path).toHaveCount(0);
+		await page.keyboard.press('Escape');
 	}
 });

@@ -129,6 +129,11 @@
 	a:hover {
 		color: var(--text);
 	}
+	/* the row clips vertically, so the scaled title needs an inner ring, like a tile's */
+	a:focus-visible {
+		outline-offset: -2px;
+		box-shadow: none;
+	}
 	a[aria-current] {
 		scale: var(--active-scale, 1);
 		color: var(--text);
@@ -143,7 +148,7 @@
 		display: inline-block;
 		min-width: 1.4em;
 		margin-left: var(--space-1);
-		padding: 0 4px;
+		padding: 0 var(--space-1);
 		background: var(--status-waiting-tint);
 		color: var(--status-waiting);
 		font-size: var(--type-label);

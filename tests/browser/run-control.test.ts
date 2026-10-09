@@ -12,6 +12,8 @@ const tabsOf = (view: Page) =>
 	view.getByRole('navigation', { name: 'Runs dieses Tickets' }).getByRole('listitem');
 const confirmationOf = (page: Page) => page.getByRole('dialog', { name: /^Run \d+ abbrechen\?$/ });
 const appBarOf = (page: Page) => page.getByRole('contentinfo', { name: 'App-Leiste' });
+const runningRunOf = (db: DatabaseSync, ticketId: number) =>
+	db.prepare("SELECT id FROM runs WHERE ticket_id = ? AND state = 'running'").get(ticketId);
 
 /**
  * Two profiles on the fake model in a pool of their own (one run at a time), and an ended run of the ticket with the
@@ -200,8 +202,9 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 	await expectToast(page, '1 Run setzt fort.');
 	await expect(tabs).toHaveCount(3);
 	await expect(tabs.first()).toContainText(/läuft/);
-	// the run of the other ticket is the one agent still at work
-	await expect(appBarOf(page).getByText('arbeitet', { exact: true })).toBeVisible();
+	// the resumed run of this ticket now also says "arbeitet", so only the database still shows the other
+	// ticket's run as the one that kept going throughout
+	expect(runningRunOf(db, other.id), "the other ticket's run is still running").toBeTruthy();
 });
 
 test('a command the Run-Akte binds with bindCommands appears in the command line there and is gone once the view is left', async ({

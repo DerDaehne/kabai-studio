@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { afterNavigate } from '$app/navigation';
 	import { globalHaltCommands } from './commands';
 	import { pauseAll, resumeAll, stopAll } from './halt';
 	import { live, pauseQuestion, stopQuestion } from './live.svelte';
@@ -40,6 +41,8 @@
 	/** The global `:stop` or `:anhalten` waiting for its confirmation. */
 	let confirming = $state<keyof typeof CONFIRMATIONS>();
 	const confirmation = $derived(confirming && CONFIRMATIONS[confirming]);
+
+	afterNavigate(() => (confirming = undefined));
 
 	async function confirm() {
 		const run = confirmation?.run;
