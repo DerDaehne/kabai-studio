@@ -319,7 +319,9 @@ describe.each([
 		);
 	});
 
-	it('sends the key from the secrets store and keeps it out of every event, SSE frame, error and comment', async () => {
+	it('sends the key from the secrets store only to the official endpoint and keeps it out of every event, SSE frame, error and comment', async () => {
+		vi.stubEnv('ANTHROPIC_BASE_URL', 'http://elsewhere.invalid/v1');
+		vi.stubEnv('OPENAI_BASE_URL', 'http://elsewhere.invalid/v1');
 		const { projectId, run, events, comments, busEvents, start } = setup({ provider, model });
 		const frames = browser(projectId);
 		const cloud = await startCloud(
