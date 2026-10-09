@@ -19,8 +19,10 @@ its own database — no compatibility with kabai required.
 
 - One SvelteKit app (TypeScript, Svelte 5, `adapter-node`) = web server +
   orchestrator + runner in a single process.
-- Own SQLite database (single file, WAL) via `node:sqlite`, stored in `./data`
-  (override with `STUDIO_DATA_DIR`); migrations in `migrations/` run on startup.
+- Own SQLite database (single file, WAL) via `node:sqlite`, stored in the OS-conventional
+  per-user data directory (`$XDG_DATA_HOME` or `~/.local/share/kabai-studio` on Linux,
+  `~/Library/Application Support/kabai-studio` on macOS; override with `STUDIO_DATA_DIR`);
+  migrations in `migrations/` run on startup.
 - Secrets (API keys, tokens) are entered in the UI and stored AES-256-GCM
   encrypted. The key is `secret.key` in the data directory, created on first
   start — back it up separately from the database — or `STUDIO_SECRET_KEY`
@@ -46,10 +48,32 @@ npm run dev            # dev server
 npm run check          # svelte-check / TypeScript
 npm test               # vitest
 npm run build && npm run test:browser   # key flows in headless Chromium (without Nix: npx playwright install --no-shell chromium first)
-npm run build && node server.ts   # production build on http://127.0.0.1:3000
 npm run reset-password # recovery: set a new owner password, ends all sessions
 npm run restore -- data/backups/studio-20260101-0300.db   # stop the server first; saves the current DB, then restores
 ```
+
+## Start
+
+`node server.ts` (after `npm run build`, or directly from a released binary) is the
+`kabai-studio` CLI — zero config: it picks the OS-default data directory above, binds
+127.0.0.1 only, and prints the URL once it's listening. If the port is taken it falls
+back to the next free one and says so.
+
+```sh
+node server.ts                      # same as "start": http://127.0.0.1:3000 (or the next free port)
+node server.ts service install      # Linux: a systemd user unit; macOS: a launchd agent — user scope, nothing system-wide
+node server.ts service install --print   # print the unit/agent file instead of installing it
+node server.ts service status       # one line: running or not, and the next step if not
+node server.ts service uninstall
+node server.ts reset-password       # same as npm run reset-password
+node server.ts restore <backup-file>   # same as npm run restore --
+node server.ts --version
+```
+
+On Linux, autostart without an active login session needs
+`loginctl enable-linger $(whoami)` once (`service install` prints a reminder). Every
+error (no free port, an unknown command, a missing systemd/launchd, no permission to
+write the unit file) exits non-zero with a one-line, plain-text way out.
 
 On first start the server prints a one-time setup link; open it to create the owner
 account. Open studio at exactly the address given in `ORIGIN` — form posts from any
