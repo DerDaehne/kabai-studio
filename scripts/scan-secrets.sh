@@ -15,9 +15,9 @@
 #      otherwise a name added in commit A and removed in commit B would pass the scan
 #      unnoticed while still reaching the history on push),
 #    - commit message, author and committer of these commits.
-#    Found from a git worktree too: the file lives only in the main checkout (gitignored,
-#    worktree-local), so a missing worktree-root copy falls back to the main checkout's one via
-#    --git-common-dir and reads it there in place — never copy or symlink it into a worktree.
+#    Found from a git worktree too: a worktree-local copy wins if present; otherwise the main
+#    checkout's file, located via --git-common-dir and read there in place — never copied or
+#    symlinked into the worktree.
 #    A hit never shows the pattern text, only its file/line or commit plus a 1-based pattern
 #    number (stable as long as the file is unchanged).
 #    Without the file this part passes with a notice (see .privacy-patterns.example).
@@ -160,9 +160,7 @@ fi
 
 echo
 echo "== Privacy scan (working tree + every unpushed commit on its own, against origin/main) =="
-# Worktree root first (a worktree never holds its own copy — gitignored, worktree-local);
-# otherwise fall back to the main checkout's file, located via --git-common-dir, and read it
-# there in place. Never copy or symlink it into the worktree.
+# Path resolution and the no-pattern-text output rule: see part 3 in the header comment above.
 patterns_file=".privacy-patterns"
 if [ ! -f "$patterns_file" ]; then
 	common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
@@ -182,10 +180,9 @@ else
 	mapfile -d '' -t changed_files < <(git -c core.quotePath=false diff --name-only -z origin/main -- . 2>/dev/null)
 	mapfile -t unpushed_shas < <(git rev-list origin/main..HEAD 2>/dev/null)
 	hit=0
-	# 1-based, counted over non-blank/non-comment lines only — stable as long as the file is
-	# unchanged. Never print the pattern itself, only this number: a hit stays traceable
-	# (file:line / commit sha + number) without ever showing the private pattern text.
-	pattern_index=0
+	pattern_index=0 # 1-based over non-blank/non-comment lines, see header comment above
+	# bash -x would otherwise print every pattern via xtrace from here on.
+	{ set +x; } 2>/dev/null
 	while IFS= read -r pattern || [ -n "$pattern" ]; do
 		pattern=${pattern%$'\r'} # a CRLF in .privacy-patterns would otherwise keep the pattern from ever matching
 		case "$pattern" in "" | "#"*) continue ;; esac
@@ -207,7 +204,7 @@ else
 		# -i: patterns match case-insensitively.
 		# tr -d '\0': avoids bash's "ignored null byte" warning for binary files.
 		for file in "${changed_files[@]}"; do
-			if printf '%s' "$file" | grep -qiE -- "$pattern"; then
+			if printf '%s' "$file" | grep -qiE -- "$pattern" 2>/dev/null; then
 				echo "Match for pattern #$pattern_index in file name $file (working tree) — $PATH_HINT" >&2
 				hit=1
 			fi
@@ -228,7 +225,7 @@ else
 		for sha in "${unpushed_shas[@]}"; do
 			mapfile -d '' -t commit_files < <(git -c core.quotePath=false diff-tree --no-commit-id --name-only -r -z --diff-filter=d "$sha")
 			for file in "${commit_files[@]}"; do
-				if printf '%s' "$file" | grep -qiE -- "$pattern"; then
+				if printf '%s' "$file" | grep -qiE -- "$pattern" 2>/dev/null; then
 					echo "Match for pattern #$pattern_index in file name $file (commit ${sha:0:7}) — $PATH_HINT" >&2
 					hit=1
 				fi
@@ -241,7 +238,7 @@ else
 			done
 
 			meta="$(git log -1 --format='%an <%ae>%n%cn <%ce>%n%B' "$sha")"
-			if printf '%s\n' "$meta" | grep -qiE -- "$pattern"; then
+			if printf '%s\n' "$meta" | grep -qiE -- "$pattern" 2>/dev/null; then
 				echo "Match for pattern #$pattern_index in commit message/author/committer of ${sha:0:7} — $CONTENT_HINT" >&2
 				hit=1
 			fi

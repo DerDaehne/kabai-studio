@@ -108,13 +108,14 @@ check_absent "content hit: output never contains the pattern text" 1 "ProbeName"
 check_absent "content hit: output never contains the matched line content" 1 "wohnt hier"
 
 reset_work
-printf 'ProbeTrans\n' >"$work/.privacy-patterns"
+printf 'Probe[T]rans\n' >"$work/.privacy-patterns" # bracket form: matches "ProbeTrans" but is a different string than the match
 echo "ProbeTrans drin" >"$work/trans.txt"
 git -C "$work" add trans.txt
 commit_as probe probe@example.invalid "add a file"
 git -C "$work" rm -q trans.txt
 commit_as probe probe@example.invalid "remove the file again"
 check "intermediate commit: empty net diff, content still found" 1 "trans.txt:1"
+check_absent "commit content hit: output never contains the pattern text" 1 "Probe[T]rans"
 
 reset_work
 printf 'ProbeUmlaut\n' >"$work/.privacy-patterns"
@@ -123,19 +124,21 @@ git -C "$work" add Übersicht.md
 check "non-ASCII file name is not skipped" 1 "Übersicht.md:1"
 
 reset_work
-printf 'ProbeDateiname\n' >"$work/.privacy-patterns"
+printf 'Probe[D]ateiname\n' >"$work/.privacy-patterns" # bracket form: matches the file name but is a different string than it
 echo x >"$work/ProbeDateiname.txt"
 git -C "$work" add ProbeDateiname.txt
 check "pattern in the file name itself, not only in the content" 1 "file name ProbeDateiname.txt"
+check_absent "working tree file name hit: output never contains the pattern text" 1 "Probe[D]ateiname"
 
 reset_work
-printf 'ProbeRename\n' >"$work/.privacy-patterns"
+printf 'Probe[R]ename\n' >"$work/.privacy-patterns" # bracket form: matches the file name but is a different string than it
 echo x >"$work/ProbeRename.txt"
 git -C "$work" add ProbeRename.txt
 commit_as probe probe@example.invalid "add a file named after the probe"
 git -C "$work" mv ProbeRename.txt safe.txt
 commit_as probe probe@example.invalid "rename the file again"
 check "file name only in an intermediate commit, renamed later" 1 "file name ProbeRename.txt (commit"
+check_absent "commit file name hit: output never contains the pattern text" 1 "Probe[R]ename"
 
 reset_work
 printf 'ProbeCRLF\r\n' >"$work/.privacy-patterns"
@@ -205,10 +208,55 @@ check_absent "worktree: output never contains the matched line content" 1 "insid
 git -C "$work" worktree remove --force "$wt"
 
 reset_work
+rm -f "$work/.privacy-patterns" # reset_work only resets tracked files; this one is gitignored
 wt="$tmp/worktree-no-patterns"
 git -C "$work" worktree add -q -b probe-worktree-no-patterns "$wt"
-check "worktree: no pattern file anywhere still reports skipped, like today" 0 "skipped" "$wt"
+check "worktree: no pattern file anywhere still reports skipped, like today" 0 "No .privacy-patterns found" "$wt"
 git -C "$work" worktree remove --force "$wt"
+
+reset_work
+printf 'ProbeMainOnly\n' >"$work/.privacy-patterns" # must be ignored once a worktree-local file exists
+wt="$tmp/worktree-local-patterns"
+git -C "$work" worktree add -q -b probe-worktree-local-patterns "$wt"
+printf 'ProbeWorktreeOwn\n' >"$wt/.privacy-patterns" # worktree-local file, takes precedence over the main checkout's
+echo "contains ProbeMainOnly text" >"$wt/main-only.txt"
+echo "contains ProbeWorktreeOwn text" >"$wt/worktree-own.txt"
+git -C "$wt" add main-only.txt worktree-own.txt
+check "worktree: a worktree-local pattern file is used" 1 "worktree-own.txt:1" "$wt"
+check_absent "worktree: the main checkout's pattern file is not applied once a local one exists" 1 "main-only.txt:1" "$wt"
+git -C "$work" worktree remove --force "$wt"
+
+reset_work
+printf '# a comment line\n\nProbeCount\n' >"$work/.privacy-patterns" # comment and blank line must not be counted
+echo "ProbeCount here" >"$work/count.txt"
+git -C "$work" add count.txt
+check "pattern numbering: comment and blank lines are not counted" 1 "pattern #1"
+
+reset_work
+printf 'Probe\\@Warn\n' >"$work/.privacy-patterns" # a stray backslash before an ordinary char: GNU grep >=3.8 warns on stderr
+echo "Probe@Warn here" >"$work/warn.txt"
+git -C "$work" add warn.txt
+check "a stray backslash in the pattern still matches" 1 "warn.txt:1"
+check_absent "grep's own stderr warning about the pattern never leaks into the output" 1 "grep:"
+
+reset_work
+printf 'ProbeXtrace\n' >"$work/.privacy-patterns"
+echo "ProbeXtrace here" >"$work/xtrace.txt"
+git -C "$work" add xtrace.txt
+got=0
+(cd "$work" && bash -x scripts/scan-secrets.sh) >"$tmp/out.txt" 2>&1 || got=$?
+if [ "$got" -ne 1 ]; then
+	echo "FAIL: bash -x: exit $got, expected 1" >&2
+	sed 's/^/    /' "$tmp/out.txt" >&2
+	fail=$((fail + 1))
+elif grep -qF "ProbeXtrace" "$tmp/out.txt"; then
+	echo "FAIL: bash -x: xtrace must not print the pattern text" >&2
+	sed 's/^/    /' "$tmp/out.txt" >&2
+	fail=$((fail + 1))
+else
+	echo "ok: bash -x: xtrace never prints the pattern text"
+	pass=$((pass + 1))
+fi
 
 # Board references: the planted values are assembled at runtime, so this file does not match itself.
 slug="arch-"'studio-demo'
