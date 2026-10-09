@@ -20,7 +20,7 @@ export type Command =
 	| { kind: 'help' };
 
 const SERVICE_ACTIONS = new Set<string>(['install', 'uninstall', 'status']);
-const HELP =
+export const HELP =
 	'Verwendung: kabai-studio [start|service <install|uninstall|status>|reset-password|restore <datei>|--version]';
 
 /** Pure so the error contract (unknown command/subcommand) is testable without spawning a process. */
