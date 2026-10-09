@@ -9,7 +9,6 @@ import type { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
-import { resumeAll } from './domain/halt';
 import { answerQuestion, latestOpenQuestion, type Answer } from './domain/questions';
 import { createProfile, createRun } from './domain/runs';
 import { migrate, openDb } from './db';
@@ -168,11 +167,12 @@ const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(do
  * answer left), 'answered' right after a scripted request_human answer queued the follow-up run, else 'waiting'.
  */
 function pollTicket(
-	db: DatabaseSync,
+	instance: Instance,
 	ticketId: number,
 	answer: Answer | undefined,
 	alreadyAnswered: boolean
 ): 'settled' | 'answered' | 'waiting' {
+	const { db } = instance;
 	const newest = runsOfTicket(db, ticketId).at(-1);
 	if (!newest || TERMINAL_STATES.has(newest.state)) return 'settled';
 	if (newest.state !== 'paused') return 'waiting';
@@ -180,21 +180,22 @@ function pollTicket(
 	const question = latestOpenQuestion(db, ticketId);
 	if (!question) return 'settled';
 	answerQuestion(db, USER, question.id, answer);
-	skipAnswerUndoWindow(db, newest.id);
+	skipAnswerUndoWindow(instance, newest.id);
 	return 'answered';
 }
 
 /**
  * The harness scripts the answer itself, so it has no use for `ANSWER_UNDO_WINDOW_MS` (the window a human gets to
  * take an answer back) — waiting it out would cost 10s per scripted question. Clears the one follow-up run the
- * answer just queued and wakes the runner the same way `releaseHalt` already does, instead of polling for it.
+ * answer just queued and wakes the runner directly, instead of `resumeAll`, which would also resume every
+ * human-paused run and lift the kill switch.
  */
-function skipAnswerUndoWindow(db: DatabaseSync, askingRunId: number): void {
-	const changes = db
+export function skipAnswerUndoWindow(instance: Instance, askingRunId: number): void {
+	const changes = instance.db
 		.prepare(`UPDATE runs SET not_before = NULL WHERE resumed_from_run_id = ? AND state = 'queued'`)
 		.run(askingRunId).changes;
 	if (changes !== 1) return; // the answer only held back an already-waiting run, or queued none
-	resumeAll(db, USER);
+	instance.runner.wake();
 }
 
 /** Waits for the ticket's run to settle; past `maxWaitMs` it cancels the still-active run and returns true. */
@@ -207,7 +208,7 @@ async function waitForOutcome(
 	const deadline = Date.now() + maxWaitMs;
 	let answered = false;
 	while (Date.now() < deadline) {
-		const outcome = pollTicket(instance.db, ticketId, answer, answered);
+		const outcome = pollTicket(instance, ticketId, answer, answered);
 		if (outcome === 'settled') return false;
 		answered ||= outcome === 'answered';
 		await sleep(POLL_INTERVAL_MS);

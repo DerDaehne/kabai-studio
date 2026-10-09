@@ -315,6 +315,8 @@ export function startRunner(
 		},
 		/** Pauses every active run and returns them; queued runs wait until `resumeAll`. Human only. */
 		pauseAll: (actor: Actor = { kind: 'user' }) => instance.abortAfter(pauseRuns(db, actor)),
+		/** Re-checks queued runs now, e.g. after `not_before` changed outside the normal write path. */
+		wake: () => instance.wake(),
 		/** Stops claiming; executors already running finish on their own. */
 		stop: () => instance.stop()
 	};
@@ -411,7 +413,7 @@ class Runner {
 	}
 
 	// ponytail: no polling — run events, executor ends and the not_before timer wake the runner; a failed claim (e.g. database locked) waits for the next wake-up.
-	private wake() {
+	wake() {
 		if (this.stopped || this.wakeScheduled) return;
 		this.wakeScheduled = true;
 		queueMicrotask(() => this.claimQueuedRuns()); // not inside the stack of whoever just created or ended a run
