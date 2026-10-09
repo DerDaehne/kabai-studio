@@ -663,6 +663,29 @@ describe('previous state', () => {
 		expect(prompt.blocks.map((b) => b.name).slice(-2)).toEqual(['previous_state', 'assignment']);
 	});
 
+	it('structures a chosen escalation option by its label, the same way as any other option answer', () => {
+		const w = world();
+		const r = runsOf(w);
+		const first = r.started();
+		const question = requestHuman(w.db, { kind: 'agent', runId: first }, w.parser, {
+			question: 'Wie weiter?',
+			options: [
+				{ label: 'Neuer Versuch mit frischem Kontext und meinem Hinweis' },
+				{ label: 'Aufgabe verkleinern: nur den nächsten prüfbaren Schritt' },
+				{
+					label: 'Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen',
+					stopsRun: true
+				}
+			]
+		}).id;
+		r.pause(first, { text: 'Handoff of the stuck run.' });
+		answerQuestion(w.db, user, question, { option: 1 });
+		const prompt = assembleRun(w, r.queued(first));
+		expect(previousState(prompt)).toContain(
+			'Answer: 1. Neuer Versuch mit frischem Kontext und meinem Hinweis'
+		);
+	});
+
 	it('tells a run that resumes a run the human halted why it paused; the halt dropped the unfinished step, so there is no handoff', () => {
 		const w = world();
 		const halted = runsOf(w).started();

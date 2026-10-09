@@ -7,6 +7,7 @@ const question = (id: number): QueuedQuestion => ({
 	ticket: { ref: `STU-${id}`, number: id, title: `Ticket ${id}` },
 	project: { id: 1, code: 'STU', name: 'Studio', palette: 1 },
 	profile: 'qwen',
+	runId: id,
 	askedAt: '2026-10-03T12:00:00.000Z',
 	question: `Frage ${id}?`,
 	options: [{ label: 'A' }, { label: 'B' }]

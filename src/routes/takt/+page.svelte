@@ -48,8 +48,10 @@
 	let ownField = $state<HTMLTextAreaElement>();
 	let ownButton = $state<HTMLButtonElement>();
 
+	// With the asking run's id the link opens its own trace, not just the ticket's newest run.
 	const runRecordHref = (question: QueuedQuestion) =>
-		`/p/${question.project.code}/t/${question.ticket.number}`;
+		`/p/${question.project.code}/t/${question.ticket.number}` +
+		(question.runId ? `?run=${question.runId}` : '');
 	const askedLabel = (iso: string) =>
 		new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
 

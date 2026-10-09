@@ -879,11 +879,121 @@ describe('parking and resuming a run', () => {
 				.prepare('SELECT c.kind FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
 				.get(s.ticketId)
 		).toEqual({ kind: 'human_intervention' });
-		const question = `Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht (höchstens 1 je Kette). Den Stand beschreibt der Handoff von Run ${exhausted} (Event 7). Wie soll es weitergehen?`;
-		expect(s.db.prepare('SELECT run_id, question FROM questions').all()).toEqual([
+		const question =
+			`Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht ` +
+			`(höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}. Wie soll es weitergehen?`;
+		expect(question).not.toContain('Event');
+		const stored = s.db.prepare('SELECT run_id, question, options FROM questions').all() as {
+			run_id: number;
+			question: string;
+			options: string;
+		}[];
+		expect(stored.map(({ run_id, question }) => ({ run_id, question }))).toEqual([
 			{ run_id: exhausted, question }
 		]);
-		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: exhausted, body: question }]);
+		expect(JSON.parse(stored[0].options)).toEqual([
+			{ label: 'Neuer Versuch mit frischem Kontext und meinem Hinweis' },
+			{ label: 'Aufgabe verkleinern: nur den nächsten prüfbaren Schritt' },
+			{
+				label: 'Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen',
+				stopsRun: true
+			}
+		]);
+		const commentBody = [
+			question,
+			'1. Neuer Versuch mit frischem Kontext und meinem Hinweis',
+			'2. Aufgabe verkleinern: nur den nächsten prüfbaren Schritt',
+			'3. Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen'
+		].join('\n');
+		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: exhausted, body: commentBody }]);
+	});
+
+	it('answering the escalation question with option 1 resumes the run like any other option answer', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		await flush();
+		const exhausted = lastRunId(s);
+		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
+			.id as number;
+
+		answerQuestion(s.db, user, questionId, { option: 1 });
+
+		expect(runsOf(s).at(-1)).toMatchObject({ resumed_from_run_id: exhausted, resume_reason: null });
+	});
+
+	it('stops the chain instead of starting a run when the human picks the "Aufhören" option, and keeps the handoff comment', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		await flush();
+		const exhausted = lastRunId(s);
+		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
+			.id as number;
+		const runsBefore = (s.db.prepare('SELECT count(*) AS n FROM runs').get() as { n: number }).n;
+
+		const question =
+			`Run ${exhausted} kommt nicht weiter (Stillstand oder Längenlimit), und seine Kette hat ihren frischen Run schon verbraucht ` +
+			`(höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}. Wie soll es weitergehen?`;
+		const askComment = [
+			question,
+			'1. Neuer Versuch mit frischem Kontext und meinem Hinweis',
+			'2. Aufgabe verkleinern: nur den nächsten prüfbaren Schritt',
+			'3. Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen'
+		].join('\n');
+
+		const { resumesRun } = answerQuestion(s.db, user, questionId, { option: 3 });
+
+		expect(resumesRun).toBe(false);
+		expect((s.db.prepare('SELECT count(*) AS n FROM runs').get() as { n: number }).n).toBe(
+			runsBefore
+		);
+		// Exactly the ask-time comment, no second "start a run" way-out comment for a deliberate stop.
+		expect(s.comments()).toEqual([{ author_kind: 'system', run_id: exhausted, body: askComment }]);
+	});
+
+	it('still accepts a free-text answer to the escalation question alongside its three fixed options', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		s.queue(s.local);
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		await flush();
+		fake
+			.call(lastRunId(s))
+			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		await flush();
+		const exhausted = lastRunId(s);
+		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
+			.id as number;
+
+		const { resumesRun } = answerQuestion(s.db, user, questionId, {
+			text: 'Versuch es mit dem anderen Parser.'
+		});
+
+		expect(resumesRun).toBe(true);
+		expect(runsOf(s).at(-1)).toMatchObject({ resumed_from_run_id: exhausted });
 	});
 
 	it('starts a new chain with a run the human resumes, so it gets its own fresh run', async () => {
@@ -936,8 +1046,8 @@ describe('parking and resuming a run', () => {
 		expect(s.db.prepare('SELECT count(*) AS n FROM questions').get()).toEqual({ n: 0 });
 		const error =
 			`[no_escalation_column] Run ${fresh} kommt nicht weiter (Stillstand oder Längenlimit), und seine Kette hat ihren frischen Run schon verbraucht ` +
-			'(höchstens 1 je Kette). Die Frage an den Menschen ging nicht: Das Board von STU-1 hat keine human_intervention-Spalte.';
-		const wayOut = `Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; den Stand beschreibt der Handoff von Run ${fresh} (Event 2).`;
+			'(höchstens 1 je Kette). 0 Hinweise in diesem Run. Die Frage an den Menschen ging nicht: Das Board von STU-1 hat keine human_intervention-Spalte.';
+		const wayOut = `Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; Run-Akte: /p/STU/t/1?run=${fresh}.`;
 		expect(s.row(fresh).error).toBe(error);
 		expect(s.comments()).toEqual([
 			{

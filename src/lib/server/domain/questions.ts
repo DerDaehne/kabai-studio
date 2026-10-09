@@ -4,7 +4,8 @@ import { appendComment, applyAnswerMove, applyMove, ticket, type Ticket } from '
 import { DomainError, tx, type Actor } from './core';
 import { createRun, finishRun, prioritizeRun } from './runs';
 
-export type QuestionOption = { label: string; effect?: string };
+/** `stopsRun` marks an option that must never start a follow-up run, e.g. "stop, keep it with the human". */
+export type QuestionOption = { label: string; effect?: string; stopsRun?: boolean };
 /** `option` counts from 1, as the options are shown to the human. */
 export type Answer = { option: number } | { text: string };
 export type LatestQuestion = {
@@ -32,10 +33,14 @@ type QuestionRow = {
 };
 type OpenQuestion = QuestionRow & { t: Ticket };
 type PausedRun = { id: number; profileId: number; columnId: number | null };
-/** What an answer sets going: a new run continuing the paused one, the follow-up runs already waiting, or no run at all. */
+/**
+ * What an answer sets going: a new run continuing the paused one, the follow-up runs already waiting, a deliberate
+ * stop (the human's own choice, needs no "way out" comment), or no run for another reason.
+ */
 type Continuation =
 	| { kind: 'resume'; run: PausedRun }
 	| { kind: 'waiting'; followUpIds: number[] }
+	| { kind: 'stopped'; reason: string }
 	| { kind: 'none'; reason: string };
 
 const QUESTION_COLUMNS = 'id, ticket_id, run_id, question, options, answer, collected_at';
@@ -60,7 +65,11 @@ function normalizedOptions(options: QuestionOption[]): QuestionOption[] {
 			'Jede Antwortoption braucht ein label.',
 			'Gib jeder Option ein kurzes label, z. B. „Variante A übernehmen“.'
 		);
-	return options.map(({ label, effect }) => (effect?.trim() ? { label, effect } : { label }));
+	return options.map(({ label, effect, stopsRun }) => ({
+		label,
+		...(effect?.trim() ? { effect } : {}),
+		...(stopsRun ? { stopsRun: true } : {})
+	}));
 }
 
 const asComment = (text: string, options: QuestionOption[]) =>
@@ -151,6 +160,9 @@ function questionOpenForHuman(db: DatabaseSync, actor: Actor, questionId: number
 	return { ...q, t: ticket(db, q.ticket_id) };
 }
 
+const stopsRun = (q: QuestionRow, option: number): boolean =>
+	(JSON.parse(q.options) as QuestionOption[])[option - 1]?.stopsRun === true;
+
 function validAnswer(q: QuestionRow, answer: Answer): Answer {
 	if ('text' in answer) {
 		if (!answer.text.trim())
@@ -186,7 +198,7 @@ export function answerQuestion(
 	return tx(db, (emit) => {
 		const q = questionOpenForHuman(db, actor, questionId);
 		const stored = validAnswer(q, answer);
-		const continuation = continuationOf(db, q);
+		const continuation = continuationOf(db, q, stored);
 		db.prepare('UPDATE questions SET answer = ?, answered_at = CURRENT_TIMESTAMP WHERE id = ?').run(
 			JSON.stringify(stored),
 			q.id
@@ -199,12 +211,14 @@ export function answerQuestion(
 			questionId: q.id
 		});
 		continueAfterAnswer(db, emit, actor, q, continuation);
-		return { resumesRun: continuation.kind !== 'none' };
+		return { resumesRun: continuation.kind === 'resume' || continuation.kind === 'waiting' };
 	});
 }
 
 /** Throws `answer_in_use` once a follow-up run has started: from then on it works with the answer. */
-function continuationOf(db: DatabaseSync, q: QuestionRow): Continuation {
+function continuationOf(db: DatabaseSync, q: QuestionRow, answer: Answer): Continuation {
+	if ('option' in answer && stopsRun(q, answer.option))
+		return { kind: 'stopped', reason: 'die gewählte Option startet keinen Run' };
 	if (q.run_id === null) return { kind: 'none', reason: 'die Frage stammt aus keinem Run' };
 	const run = db
 		.prepare(
@@ -253,6 +267,7 @@ function continueAfterAnswer(
 		return resumeRun(db, emit, actor, q.t, continuation.run, notBefore);
 	const answered = columnOfKind(db, q.t, 'human_answered');
 	if (answered) applyAnswerMove(db, emit, actor, q.t, answered.id);
+	if (continuation.kind === 'stopped') return; // the human's own choice: the ask-time comment already explains it
 	if (q.answer !== null) return; // only a changed answer: the way out is already on the ticket
 	const wayOut = `Die Antwort auf Frage ${q.id} setzt keinen Run fort: ${continuation.reason}.\nAusweg: Starte einen Run für das Ticket, er liest die Antwort.`;
 	appendComment(db, emit, actor, q.t, wayOut, true);
@@ -294,7 +309,7 @@ export function retractAnswer(db: DatabaseSync, actor: Actor, questionId: number
 				`Frage ${q.id} ist noch nicht beantwortet.`,
 				'Zurücknehmen lässt sich nur eine gegebene Antwort.'
 			);
-		const continuation = continuationOf(db, q);
+		const continuation = continuationOf(db, q, JSON.parse(q.answer) as Answer);
 		if (continuation.kind === 'waiting')
 			continuation.followUpIds.forEach((id) => finishRun(db, actor, id, { state: 'cancelled' }));
 		const intervention = columnOfKind(db, q.t, 'human_intervention');

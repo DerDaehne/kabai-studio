@@ -26,12 +26,13 @@ type QuestionRow = {
 	key: string;
 	name: string;
 	profile: string | null;
+	runId: number | null;
 };
 
 // The same open questions the head dock counts, so the queue and the count never disagree.
 const OPEN_QUESTIONS = `
 	SELECT q.id, q.question, q.options, q.created_at AS createdAt, t.number, t.title,
-		p.id AS projectId, p.key, p.name, ap.name AS profile
+		p.id AS projectId, p.key, p.name, ap.name AS profile, q.run_id AS runId
 	FROM questions q
 	JOIN tickets t ON t.id = q.ticket_id
 	JOIN projects p ON p.id = t.project_id
@@ -46,6 +47,7 @@ function openQuestions(db: DatabaseSync): QueuedQuestion[] {
 		ticket: { ref: `${row.key}-${row.number}`, number: row.number, title: row.title },
 		project: projectRef({ id: row.projectId, key: row.key, name: row.name }),
 		profile: row.profile,
+		runId: row.runId,
 		askedAt: new Date(`${row.createdAt.replace(' ', 'T')}Z`).toISOString(), // SQLite stores UTC without a zone
 		question: row.question,
 		options: JSON.parse(row.options)

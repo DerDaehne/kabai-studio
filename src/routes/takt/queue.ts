@@ -8,6 +8,8 @@ export type QueuedQuestion = {
 	project: ProjectRef;
 	/** The profile of the asking run; null for a question without a run or with a deleted profile. */
 	profile: string | null;
+	/** The asking run, so its Run-Akte link opens that run's trace instead of the ticket's newest. */
+	runId: number | null;
 	/** ISO timestamp. */
 	askedAt: string;
 	question: string;

@@ -4,13 +4,14 @@ import { RECOVERY } from './agents/loop-guard';
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
-import { requestHuman } from './domain/questions';
+import { requestHuman, type QuestionOption } from './domain/questions';
 import {
 	appendEvent,
 	claimRun,
 	createRun,
 	finishRun,
 	freshRunsInChain,
+	type Intervention,
 	type Limits,
 	type Profile,
 	type ResumeReason,
@@ -229,7 +230,42 @@ function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
 		});
 		return;
 	}
-	askHumanAfterUsedUpChain(db, actor, run, resume.reason, resume.handoffSeq);
+	askHumanAfterUsedUpChain(db, actor, run, resume.reason);
+}
+
+// Fixed wording, chosen by the human once for every escalation; option 3 ends the chain instead of starting a run.
+const ESCALATION_OPTIONS: QuestionOption[] = [
+	{ label: 'Neuer Versuch mit frischem Kontext und meinem Hinweis' },
+	{ label: 'Aufgabe verkleinern: nur den nächsten prüfbaren Schritt' },
+	{ label: 'Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen', stopsRun: true }
+];
+
+function ticketPath(db: DatabaseSync, ticketId: number): string {
+	const row = db
+		.prepare(
+			'SELECT p.key AS key, t.number AS number FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = ?'
+		)
+		.get(ticketId) as { key: string; number: number };
+	return `/p/${row.key}/t/${row.number}`;
+}
+
+function lastIntervention(db: DatabaseSync, runId: number): Intervention | undefined {
+	const row = db
+		.prepare(
+			"SELECT payload FROM run_events WHERE run_id = ? AND type = 'intervention' ORDER BY seq DESC LIMIT 1"
+		)
+		.get(runId) as { payload: string } | undefined;
+	return row && (JSON.parse(row.payload) as Intervention);
+}
+
+/** Stage-1 hints share `max = RECOVERY.hintsPerRun`; the final stage-2 entry that ends the run has a different max. */
+function hintsGiven(db: DatabaseSync, runId: number): number {
+	const { n } = db
+		.prepare(
+			"SELECT count(*) AS n FROM run_events WHERE run_id = ? AND type = 'intervention' AND payload ->> '$.max' = ?"
+		)
+		.get(runId, RECOVERY.hintsPerRun) as { n: number };
+	return n;
 }
 
 /** If the board cannot take the question, the failed run carries it and a way out for the human. */
@@ -237,21 +273,27 @@ function askHumanAfterUsedUpChain(
 	db: DatabaseSync,
 	actor: Actor,
 	run: RunContext,
-	reason: FreshRunReason,
-	handoffSeq: number
+	reason: FreshRunReason
 ) {
-	const stuck = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht (höchstens ${RECOVERY.freshRunsPerChain} je Kette).`;
-	const handoff = `Handoff von Run ${run.id} (Event ${handoffSeq})`;
+	const hints = hintsGiven(db, run.id);
+	const lastHint = lastIntervention(db, run.id)?.hint;
+	const stuck =
+		`Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht ` +
+		`(höchstens ${RECOVERY.freshRunsPerChain} je Kette). ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
+		(lastHint ? `, zuletzt: „${lastHint}“` : '') +
+		'.';
+	const link = `${ticketPath(db, run.ticketId)}?run=${run.id}`;
 	try {
 		requestHuman(db, actor, run.ticketId, {
-			question: `${stuck} Den Stand beschreibt der ${handoff}. Wie soll es weitergehen?`
+			question: `${stuck} Den Stand zeigt die Run-Akte: ${link}. Wie soll es weitergehen?`,
+			options: ESCALATION_OPTIONS
 		});
 	} catch (err) {
 		if (!(err instanceof DomainError) || err.code !== 'no_escalation_column') throw err;
 		throw new DomainError(
 			err.code,
 			`${stuck} Die Frage an den Menschen ging nicht: ${err.message}`,
-			`Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; den Stand beschreibt der ${handoff}.`
+			`Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; Run-Akte: ${link}.`
 		);
 	}
 }
