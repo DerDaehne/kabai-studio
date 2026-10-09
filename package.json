@@ -23,8 +23,10 @@
 		"test:browser": "playwright test"
 	},
 	"devDependencies": {
-		"@ai-sdk/mcp": "2.0.66",
-		"@ai-sdk/openai-compatible": "3.0.62",
+		"@ai-sdk/anthropic": "4.0.78",
+		"@ai-sdk/mcp": "2.0.73",
+		"@ai-sdk/openai": "4.0.91",
+		"@ai-sdk/openai-compatible": "3.0.67",
 		"@axe-core/playwright": "4.13.0",
 		"@modelcontextprotocol/server": "2.2.0",
 		"@playwright/test": "1.63.0",
@@ -34,7 +36,7 @@
 		"@types/markdown-it": "14.2.0",
 		"@types/node": "^24.19.0",
 		"@typescript-eslint/parser": "8.71.0",
-		"ai": "7.0.127",
+		"ai": "7.0.137",
 		"eslint": "10.12.0",
 		"markdown-it": "15.0.2",
 		"prettier": "3.9.9",
