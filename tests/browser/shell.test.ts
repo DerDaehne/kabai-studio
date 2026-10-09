@@ -95,6 +95,19 @@ test('the head pivot keeps its order and height: the active title glides to the 
 	const last = await settledHead(page, 'einstellungen');
 	expect(last.head.height).toBe(start.head.height);
 	expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
+
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await titleOf(page, 'board').click();
+	await expect(titleOf(page, 'board')).toHaveAttribute('aria-current', 'page');
+	const twoFramesLater = await page
+		.evaluate(
+			() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+		)
+		.then(() => measureHead(page));
+	expect(
+		Math.abs(twoFramesLater.titles.board.left - twoFramesLater.edge),
+		'with reduced motion the title jumps to the edge instead of gliding'
+	).toBeLessThanOrEqual(1);
 });
 
 for (const [viewport, commands] of [
@@ -114,7 +127,12 @@ for (const [viewport, commands] of [
 		expect(Math.round(barBox.y + barBox.height)).toBe(viewport.height);
 		for (const button of await bar.getByRole('button').all()) {
 			const box = (await button.boundingBox())!;
-			expect(Math.min(box.width, box.height), await button.innerText()).toBeGreaterThanOrEqual(44);
+			const name = await button.innerText();
+			expect(Math.min(box.width, box.height), name).toBeGreaterThanOrEqual(44);
+			// a fixed bar never widens the page, so a command cut off at the edge has to be caught here
+			expect(box.x + box.width, `${name} lies within the screen`).toBeLessThanOrEqual(
+				viewport.width
+			);
 		}
 		expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
 
