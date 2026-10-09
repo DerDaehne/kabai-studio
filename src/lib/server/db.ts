@@ -12,7 +12,24 @@ export function openDb(file: string): DatabaseSync {
 	return db;
 }
 
-export const dataDir = () => process.env.STUDIO_DATA_DIR || 'data';
+/**
+ * The OS-conventional per-user data directory for an app named `name`: `$XDG_DATA_HOME` (falling
+ * back to `~/.local/share`) on Linux and other non-Apple platforms, `~/Library/Application
+ * Support` on macOS. Pure so the CLI's "start without any config" path is testable without a real
+ * home directory.
+ */
+export function defaultDataDir(
+	platform: string,
+	env: Record<string, string | undefined>,
+	name = 'kabai-studio'
+): string {
+	const home = env.HOME || '';
+	if (platform === 'darwin') return join(home, 'Library', 'Application Support', name);
+	return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), name);
+}
+
+export const dataDir = () =>
+	process.env.STUDIO_DATA_DIR || defaultDataDir(process.platform, process.env);
 export const backupDir = () => join(dataDir(), 'backups');
 
 export function assertKnownMigrations(applied: Iterable<string>, known: ReadonlySet<string>): void {

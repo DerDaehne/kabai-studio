@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { latestMigration, migrate, openDb } from './db';
+import { defaultDataDir, latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
@@ -14,6 +14,24 @@ const names = (db: ReturnType<typeof openDb>) =>
 		.prepare('SELECT name FROM schema_migrations ORDER BY name')
 		.all()
 		.map((r) => r.name);
+
+describe('defaultDataDir', () => {
+	it('uses XDG_DATA_HOME on Linux when set', () => {
+		expect(defaultDataDir('linux', { XDG_DATA_HOME: '/custom/xdg', HOME: '/home/x' })).toBe(
+			'/custom/xdg/kabai-studio'
+		);
+	});
+
+	it('falls back to ~/.local/share on Linux without XDG_DATA_HOME', () => {
+		expect(defaultDataDir('linux', { HOME: '/home/x' })).toBe('/home/x/.local/share/kabai-studio');
+	});
+
+	it('uses ~/Library/Application Support on macOS, ignoring XDG_DATA_HOME', () => {
+		expect(defaultDataDir('darwin', { XDG_DATA_HOME: '/custom/xdg', HOME: '/Users/x' })).toBe(
+			'/Users/x/Library/Application Support/kabai-studio'
+		);
+	});
+});
 
 describe('openDb', () => {
 	it('sets WAL, foreign_keys and busy_timeout', () => {
