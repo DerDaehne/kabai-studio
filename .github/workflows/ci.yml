@@ -67,3 +67,23 @@ jobs:
       # No --omit=dev: package.json has only devDependencies (adapter-node bundles them into
       # build/), so --omit=dev would drop the whole tree from the audit.
       - run: npm audit --audit-level=high
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Unit and browser tests run in the repository, where every source file exists; only the shipped
+      # image shows a file the Dockerfile's runtime stage forgot to copy.
+      - run: docker build --build-arg STUDIO_VERSION=ci -t studio-ci .
+      - name: Start the image and wait for /api/health
+        run: |
+          docker run -d --name studio --network host -e HOST=127.0.0.1 -e PORT=3311 studio-ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3311/api/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs studio
+          exit 1

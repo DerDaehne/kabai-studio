@@ -11,7 +11,7 @@
 // it happens to resolve to: adapter-node (like the browser's Origin header) compares origins as
 // plain strings, never resolved IPs — "localhost" can resolve to ::1 on one machine and 127.0.0.1
 // on another, so defaulting it to a fixed "127.0.0.1" origin would mismatch on the ::1 ones.
-import { defaultDataDir } from './src/lib/server/db.ts';
+import { defaultDataDir } from './src/lib/server/data-dir.ts';
 import {
 	CliUsageError,
 	HELP,

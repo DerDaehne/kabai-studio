@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { backup, privateDir } from './backup.ts';
+import { defaultDataDir } from './data-dir.ts';
 import { DomainError } from './domain/error.ts';
 
 export function openDb(file: string): DatabaseSync {
@@ -10,22 +11,6 @@ export function openDb(file: string): DatabaseSync {
 	// "database is locked" instead of waiting.
 	db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 	return db;
-}
-
-/**
- * The OS-conventional per-user data directory for an app named `name`: `$XDG_DATA_HOME` (falling
- * back to `~/.local/share`) on Linux and other non-Apple platforms, `~/Library/Application
- * Support` on macOS. Pure so the CLI's "start without any config" path is testable without a real
- * home directory.
- */
-export function defaultDataDir(
-	platform: string,
-	env: Record<string, string | undefined>,
-	name = 'kabai-studio'
-): string {
-	const home = env.HOME || '';
-	if (platform === 'darwin') return join(home, 'Library', 'Application Support', name);
-	return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), name);
 }
 
 export const dataDir = () =>

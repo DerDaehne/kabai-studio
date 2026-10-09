@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { defaultDataDir, latestMigration, migrate, openDb } from './db';
+import { defaultDataDir } from './data-dir';
+import { latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
