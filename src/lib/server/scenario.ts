@@ -9,6 +9,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
+import { resumeAll } from './domain/halt';
 import { answerQuestion, latestOpenQuestion, type Answer } from './domain/questions';
 import { createProfile, createRun } from './domain/runs';
 import { migrate, openDb } from './db';
@@ -179,7 +180,21 @@ function pollTicket(
 	const question = latestOpenQuestion(db, ticketId);
 	if (!question) return 'settled';
 	answerQuestion(db, USER, question.id, answer);
+	skipAnswerUndoWindow(db, newest.id);
 	return 'answered';
+}
+
+/**
+ * The harness scripts the answer itself, so it has no use for `ANSWER_UNDO_WINDOW_MS` (the window a human gets to
+ * take an answer back) — waiting it out would cost 10s per scripted question. Clears the one follow-up run the
+ * answer just queued and wakes the runner the same way `releaseHalt` already does, instead of polling for it.
+ */
+function skipAnswerUndoWindow(db: DatabaseSync, askingRunId: number): void {
+	const changes = db
+		.prepare(`UPDATE runs SET not_before = NULL WHERE resumed_from_run_id = ? AND state = 'queued'`)
+		.run(askingRunId).changes;
+	if (changes !== 1) return; // the answer only held back an already-waiting run, or queued none
+	resumeAll(db, USER);
 }
 
 /** Waits for the ticket's run to settle; past `maxWaitMs` it cancels the still-active run and returns true. */

@@ -227,7 +227,11 @@ describe('runScenario with a resumed run', () => {
 				model: 'fake',
 				tickets: [{ title: 'asks first', requestHumanAnswer: { option: 1 }, expect: {} }]
 			});
+			const startedAt = Date.now();
 			const [result] = await runScenario(file, outDir, dataRoot);
+			// The product path holds the follow-up run back for ANSWER_UNDO_WINDOW_MS (10s); the harness
+			// scripts its own answer, so it must not pay that wait.
+			expect(Date.now() - startedAt).toBeLessThan(5000);
 			expect(result.runState).toBe('succeeded');
 			const resumed = model.requests[2].messages as { role: string; content: string }[];
 			expect(resumed.map((message) => message.role)).toEqual([
