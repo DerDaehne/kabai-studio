@@ -104,7 +104,12 @@ const SYSTEMD_LABEL = 'kabai-studio';
 const LAUNCHD_LABEL = 'studio.kabai.kabai-studio';
 
 export const systemdUnitPath = (env: Record<string, string | undefined>): string =>
-	join(env.XDG_CONFIG_HOME || join(env.HOME || '', '.config'), 'systemd', 'user', 'kabai-studio.service');
+	join(
+		env.XDG_CONFIG_HOME || join(env.HOME || '', '.config'),
+		'systemd',
+		'user',
+		'kabai-studio.service'
+	);
 
 export const launchdPlistPath = (env: Record<string, string | undefined>): string =>
 	join(env.HOME || '', 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
@@ -149,8 +154,10 @@ export function launchdPlist(ctx: ServiceContext): string {
 }
 
 const UNAVAILABLE = {
-	systemd: 'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
-	launchd: 'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.'
+	systemd:
+		'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
+	launchd:
+		'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.'
 };
 
 /**
@@ -191,7 +198,8 @@ function installSystemd(ctx: ServiceContext, print: boolean, run: CommandRunner)
 
 function uninstallSystemd(ctx: ServiceContext, run: CommandRunner): ServiceResult {
 	const path = systemdUnitPath(ctx.env);
-	if (!existsSync(path)) return { exitCode: 0, message: 'Keine systemd-User-Unit installiert — nichts zu tun.' };
+	if (!existsSync(path))
+		return { exitCode: 0, message: 'Keine systemd-User-Unit installiert — nichts zu tun.' };
 	run('systemctl', ['--user', 'disable', '--now', SYSTEMD_LABEL]);
 	rmSync(path, { force: true });
 	run('systemctl', ['--user', 'daemon-reload']);
@@ -200,7 +208,8 @@ function uninstallSystemd(ctx: ServiceContext, run: CommandRunner): ServiceResul
 
 function statusSystemd(run: CommandRunner): ServiceResult {
 	const r = run('systemctl', ['--user', 'is-active', SYSTEMD_LABEL]);
-	if (r.status === null) return { exitCode: 1, message: `${UNAVAILABLE.systemd} Kein Status abrufbar.` };
+	if (r.status === null)
+		return { exitCode: 1, message: `${UNAVAILABLE.systemd} Kein Status abrufbar.` };
 	if (r.stdout.trim() === 'active')
 		return { exitCode: 0, message: 'kabai studio läuft (systemd-User-Dienst aktiv).' };
 	return {
@@ -224,7 +233,8 @@ function installLaunchd(ctx: ServiceContext, print: boolean, run: CommandRunner)
 
 function uninstallLaunchd(ctx: ServiceContext, run: CommandRunner): ServiceResult {
 	const path = launchdPlistPath(ctx.env);
-	if (!existsSync(path)) return { exitCode: 0, message: 'Kein launchd-Agent installiert — nichts zu tun.' };
+	if (!existsSync(path))
+		return { exitCode: 0, message: 'Kein launchd-Agent installiert — nichts zu tun.' };
 	run('launchctl', ['unload', path]);
 	rmSync(path, { force: true });
 	return { exitCode: 0, message: `launchd-Agent entfernt: ${path}.` };
@@ -232,8 +242,10 @@ function uninstallLaunchd(ctx: ServiceContext, run: CommandRunner): ServiceResul
 
 function statusLaunchd(run: CommandRunner): ServiceResult {
 	const r = run('launchctl', ['list', LAUNCHD_LABEL]);
-	if (r.status === null) return { exitCode: 1, message: `${UNAVAILABLE.launchd} Kein Status abrufbar.` };
-	if (r.status === 0) return { exitCode: 0, message: 'kabai studio läuft (launchd-Agent geladen).' };
+	if (r.status === null)
+		return { exitCode: 1, message: `${UNAVAILABLE.launchd} Kein Status abrufbar.` };
+	if (r.status === 0)
+		return { exitCode: 0, message: 'kabai studio läuft (launchd-Agent geladen).' };
 	return {
 		exitCode: 0,
 		message:
@@ -256,7 +268,9 @@ export function runServiceCommand(
 			message: `service wird unter ${platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).`
 		};
 	const linux = platform === 'linux';
-	if (action === 'install') return linux ? installSystemd(ctx, print, run) : installLaunchd(ctx, print, run);
-	if (action === 'uninstall') return linux ? uninstallSystemd(ctx, run) : uninstallLaunchd(ctx, run);
+	if (action === 'install')
+		return linux ? installSystemd(ctx, print, run) : installLaunchd(ctx, print, run);
+	if (action === 'uninstall')
+		return linux ? uninstallSystemd(ctx, run) : uninstallLaunchd(ctx, run);
 	return linux ? statusSystemd(run) : statusLaunchd(run);
 }

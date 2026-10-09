@@ -32,7 +32,9 @@ async function waitUntilListening(server: Server, port: number, timeoutMs = 10_0
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (server.proc.exitCode !== null)
-			throw new Error(`server exited (${server.proc.exitCode}) before listening:\n${server.output()}`);
+			throw new Error(
+				`server exited (${server.proc.exitCode}) before listening:\n${server.output()}`
+			);
 		try {
 			if ((await fetch(`http://127.0.0.1:${port}/login`)).ok) return;
 		} catch {
@@ -40,7 +42,9 @@ async function waitUntilListening(server: Server, port: number, timeoutMs = 10_0
 		}
 		await sleep(100);
 	}
-	throw new Error(`server did not answer on 127.0.0.1:${port} within ${timeoutMs}ms:\n${server.output()}`);
+	throw new Error(
+		`server did not answer on 127.0.0.1:${port} within ${timeoutMs}ms:\n${server.output()}`
+	);
 }
 
 async function waitUntilExited(server: Server, timeoutMs = 10_000): Promise<number | null> {
@@ -143,7 +147,10 @@ test('service install --print prints the unit without touching the filesystem or
 // only checks the shared exit-code/one-sentence contract, not which branch fired.
 test('service status reports exactly one outcome: running, not running, or unavailable', async () => {
 	const home = throwawayHome();
-	const server = startServer(['service', 'status'], { HOME: home, XDG_CONFIG_HOME: join(home, 'xdg-config') });
+	const server = startServer(['service', 'status'], {
+		HOME: home,
+		XDG_CONFIG_HOME: join(home, 'xdg-config')
+	});
 	try {
 		const code = await waitUntilExited(server);
 		expect([0, 1]).toContain(code);

@@ -97,7 +97,13 @@ function runService(command: Extract<Command, { kind: 'service' }>): void {
 		entryPath: process.argv[1] ?? '',
 		dataDir: process.env.STUDIO_DATA_DIR || defaultDataDir(process.platform, process.env)
 	};
-	const result = runServiceCommand(command.action, command.print, process.platform, ctx, realRunner);
+	const result = runServiceCommand(
+		command.action,
+		command.print,
+		process.platform,
+		ctx,
+		realRunner
+	);
 	finish(result.exitCode, result.message);
 }
 

@@ -65,12 +65,16 @@ describe('findFreePort', () => {
 	it('fails with a plain-text message when no port is free in range', async () => {
 		const blockers = [createServer(), createServer()];
 		await Promise.all(
-			blockers.map((s, i) => new Promise<void>((resolve) => s.listen(21350 + i, '127.0.0.1', resolve)))
+			blockers.map(
+				(s, i) => new Promise<void>((resolve) => s.listen(21350 + i, '127.0.0.1', resolve))
+			)
 		);
 		try {
 			await expect(findFreePort(21350, '127.0.0.1', 2)).rejects.toThrow(/Keine freien Ports/);
 		} finally {
-			await Promise.all(blockers.map((s) => new Promise<void>((resolve) => s.close(() => resolve()))));
+			await Promise.all(
+				blockers.map((s) => new Promise<void>((resolve) => s.close(() => resolve())))
+			);
 		}
 	});
 });
