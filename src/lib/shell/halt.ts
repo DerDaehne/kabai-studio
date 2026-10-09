@@ -63,7 +63,7 @@ export async function resumeRun(runId: number) {
 }
 
 /**
- * `:fortsetzen all` and the head dock's „Fortsetzen“: every halted run resumes and the halt is lifted; a run that
+ * `:fortsetzen all` and the halt banner's „Fortsetzen“: every halted run resumes and the halt is lifted; a run that
  * could not resume is named with its way out, so the human knows exactly which run still needs attention.
  */
 export async function resumeAll() {

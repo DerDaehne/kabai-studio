@@ -29,7 +29,7 @@ type QuestionRow = {
 	runId: number | null;
 };
 
-// The same open questions the head dock counts, so the queue and the count never disagree.
+// The same open questions the head's Takt title counts, so the queue and the count never disagree.
 const OPEN_QUESTIONS = `
 	SELECT q.id, q.question, q.options, q.created_at AS createdAt, t.number, t.title,
 		p.id AS projectId, p.key, p.name, ap.name AS profile, q.run_id AS runId

@@ -19,7 +19,7 @@ export type LiveRun = {
 };
 
 /** How a run's state reads wherever a list of runs names it: the badge tone and the German word, shared so the
- *  same run never reads differently in two places (the head dock, the board, the Stellwerk). */
+ *  same run never reads differently in two places (the app bar, the board, the Stellwerk). */
 export const RUN_STATE_LABELS: Record<LiveRun['state'], { tone: Tone; label: string }> = {
 	queued: { tone: 'neutral', label: 'in der Queue' },
 	running: { tone: 'running', label: 'arbeitet' },
@@ -146,7 +146,7 @@ export const openQuestionsLabel = (count: number) =>
 const countOf = (runs: LiveRun[], state: LiveRun['state']) =>
 	runs.filter((run) => run.state === state).length;
 
-/** The head dock's signal while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
+/** The halt banner's text while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
 export const haltLabel = (halt: HaltKind, runs: LiveRun[]) =>
 	halt === 'stop'
 		? `Gestoppt · ${countOf(runs, 'queued')} wartend`

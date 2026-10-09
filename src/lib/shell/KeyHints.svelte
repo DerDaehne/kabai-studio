@@ -39,10 +39,10 @@
 	li {
 		display: flex;
 		align-items: center;
-		gap: 3px;
+		gap: var(--space-1);
 	}
 	span {
-		margin-left: 3px;
+		margin-left: var(--space-1);
 		color: var(--text-muted);
 	}
 </style>

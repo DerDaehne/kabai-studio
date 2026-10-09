@@ -97,7 +97,7 @@
 	/* Sheets span the screen up to a reading width and stay clear of the head or rest on the app bar */
 	dialog.sheet,
 	dialog.bar-sheet {
-		width: min(760px, 100vw);
+		width: min(var(--sheet-max-w), 100vw);
 		max-width: 100vw;
 		margin: 0 auto;
 	}

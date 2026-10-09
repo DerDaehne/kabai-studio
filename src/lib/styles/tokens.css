@@ -222,6 +222,7 @@
 	--gutter: clamp(var(--rekta-spacing-m), 2.5vw, var(--rekta-spacing-xl));
 	--appbar-h: 64px;
 	--head-h: calc(var(--type-nav-active) * 1.25 + var(--space-2) + var(--space-1));
+	--sheet-max-w: var(--rekta-breakpoint-sideways-scroll-min);
 }
 
 :root[data-glass='frosted'] {

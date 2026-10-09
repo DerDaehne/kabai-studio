@@ -21,7 +21,7 @@ export const shell = $state({
 	pendingKeys: '',
 	viewItems: [] as Suggestion[],
 	tickets: [] as Suggestion[],
-	/** Increments on every new signal; each increment sweeps one light wave through the head dock. */
+	/** Increments on every new signal; each increment sweeps one light wave through the head. */
 	signals: 0
 });
 
