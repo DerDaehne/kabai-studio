@@ -47,9 +47,15 @@ commit_as_author() {
 	git -C "$work" -c user.name="$3" -c user.email="$4" commit -q -m "$5" --author="$1 <$2>"
 }
 
+run_scan() {
+	local dir="$1" got=0
+	(cd "$dir" && bash scripts/scan-secrets.sh) >"$tmp/out.txt" 2>&1 || got=$?
+	return "$got"
+}
+
 check() {
-	local name="$1" want="$2" grep_for="${3:-}" got=0
-	(cd "$work" && bash scripts/scan-secrets.sh) >"$tmp/out.txt" 2>&1 || got=$?
+	local name="$1" want="$2" grep_for="${3:-}" dir="${4:-$work}" got=0
+	run_scan "$dir" || got=$?
 	if [ "$got" -ne "$want" ]; then
 		echo "FAIL: $name — exit $got, expected $want" >&2
 		sed 's/^/    /' "$tmp/out.txt" >&2
@@ -58,6 +64,26 @@ check() {
 	fi
 	if [ -n "$grep_for" ] && ! grep -qF "$grep_for" "$tmp/out.txt"; then
 		echo "FAIL: $name — output lacks: $grep_for" >&2
+		sed 's/^/    /' "$tmp/out.txt" >&2
+		fail=$((fail + 1))
+		return
+	fi
+	echo "ok: $name"
+	pass=$((pass + 1))
+}
+
+# Like check, but the given string must be ABSENT from the output (e.g. the pattern text itself).
+check_absent() {
+	local name="$1" want="$2" absent="$3" dir="${4:-$work}" got=0
+	run_scan "$dir" || got=$?
+	if [ "$got" -ne "$want" ]; then
+		echo "FAIL: $name — exit $got, expected $want" >&2
+		sed 's/^/    /' "$tmp/out.txt" >&2
+		fail=$((fail + 1))
+		return
+	fi
+	if grep -qF "$absent" "$tmp/out.txt"; then
+		echo "FAIL: $name — output must not contain: $absent" >&2
 		sed 's/^/    /' "$tmp/out.txt" >&2
 		fail=$((fail + 1))
 		return
@@ -77,6 +103,9 @@ printf 'ProbeName\n' >"$work/.privacy-patterns"
 echo "Kontakt: ProbeName wohnt hier" >"$work/note.txt"
 git -C "$work" add note.txt
 check "working tree: match in file content" 1 "note.txt:1"
+check "content hit: output names the pattern number" 1 "pattern #1"
+check_absent "content hit: output never contains the pattern text" 1 "ProbeName"
+check_absent "content hit: output never contains the matched line content" 1 "wohnt hier"
 
 reset_work
 printf 'ProbeTrans\n' >"$work/.privacy-patterns"
@@ -133,6 +162,7 @@ git -C "$work" add c.txt
 commit_as Neutral neutral@example.invalid neutral
 git -C "$work" -c user.name=ProbeCommitter -c user.email=probecommitter@example.invalid commit -q --amend --no-edit
 check "pattern only in the committer, not the author" 1 "commit message/author/committer"
+check_absent "commit hit: output never contains the pattern text" 1 "ProbeCommitter"
 
 reset_work
 printf 'ProbeAuthor\n' >"$work/.privacy-patterns"
@@ -159,6 +189,26 @@ printf 'foo(\n' >"$work/.privacy-patterns"
 echo x >"$work/ok.txt"
 git -C "$work" add ok.txt
 check "invalid regex is reported, not silently skipped" 1 "Invalid regex"
+check_absent "invalid regex: output never contains the pattern text" 1 "foo("
+
+# --- worktree: the main checkout's pattern file is used in place, never copied or symlinked ---
+
+reset_work
+printf 'ProbeWorktree\n' >"$work/.privacy-patterns" # lives only in the main checkout, gitignored
+wt="$tmp/worktree-hit"
+git -C "$work" worktree add -q -b probe-worktree-hit "$wt"
+echo "ProbeWorktree inside the worktree" >"$wt/hit.txt"
+git -C "$wt" add hit.txt
+check "worktree: a hit against the main checkout's pattern is found" 1 "hit.txt:1" "$wt"
+check_absent "worktree: output never contains the pattern text" 1 "ProbeWorktree" "$wt"
+check_absent "worktree: output never contains the matched line content" 1 "inside the worktree" "$wt"
+git -C "$work" worktree remove --force "$wt"
+
+reset_work
+wt="$tmp/worktree-no-patterns"
+git -C "$work" worktree add -q -b probe-worktree-no-patterns "$wt"
+check "worktree: no pattern file anywhere still reports skipped, like today" 0 "skipped" "$wt"
+git -C "$work" worktree remove --force "$wt"
 
 # Board references: the planted values are assembled at runtime, so this file does not match itself.
 slug="arch-"'studio-demo'

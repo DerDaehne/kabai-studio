@@ -41,7 +41,10 @@ hostnames, IP addresses, hardware/setup details, or internal board content
 subjects as `(#<id>)`. Personal and internal information belongs in
 `CLAUDE.local.md`. Before every commit run `npm run scan:secrets` (gitleaks, built-in
 board-reference check + privacy scan against the local `.privacy-patterns`) and check
-the diff.
+the diff. **Never read, copy or symlink `.privacy-patterns`** — not even to get the
+scan to run fully in a worktree: it finds the main checkout's copy on its own (via
+`git rev-parse --path-format=absolute --git-common-dir`) and a hit is always reported
+as file/line/commit plus a pattern number, never the pattern text itself.
 
 ## Code style (binding)
 
