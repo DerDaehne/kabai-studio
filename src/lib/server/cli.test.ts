@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -175,6 +175,15 @@ describe('runServiceCommand', () => {
 		const result = runServiceCommand('uninstall', false, 'linux', ctx(dir), run);
 		expect(result.exitCode).toBe(0);
 		expect(() => readFileSync(systemdUnitPath(ctx(dir).env), 'utf8')).toThrow();
+	});
+
+	it('install fails with a plain-text message, not a crash, when the unit directory cannot be created', () => {
+		writeFileSync(join(dir, 'systemd'), 'not a directory'); // blocks mkdirSync(.../systemd/user) with ENOTDIR
+		const run: CommandRunner = () => ({ status: 0, stdout: '' });
+		const result = runServiceCommand('install', false, 'linux', ctx(dir), run);
+		expect(result.exitCode).toBe(1);
+		expect(result.message.split('\n')).toHaveLength(1);
+		expect(result.message).not.toContain('at '); // no stack trace frame
 	});
 
 	it('refuses an unsupported platform with exit code 1', () => {

@@ -153,14 +153,32 @@ const UNAVAILABLE = {
 	launchd: 'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.'
 };
 
+/**
+ * Wraps the unit/plist write so a permission or disk error turns into the same one-line
+ * exit-code-1 contract as every other CLI error, not a raw Node stack trace.
+ */
+function writeUnitFile(path: string, content: string): ServiceResult | undefined {
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, content, { mode: 0o600 });
+		return undefined;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+		return {
+			exitCode: 1,
+			message: `${path} lässt sich nicht schreiben (${code}). Schreibrechte und Speicherplatz prüfen.`
+		};
+	}
+}
+
 function installSystemd(ctx: ServiceContext, print: boolean, run: CommandRunner): ServiceResult {
 	const unit = systemdUnit(ctx);
 	if (print) return { exitCode: 0, message: unit };
 	if (run('systemctl', ['--version']).status !== 0)
 		return { exitCode: 1, message: UNAVAILABLE.systemd };
 	const path = systemdUnitPath(ctx.env);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, unit, { mode: 0o600 });
+	const writeError = writeUnitFile(path, unit);
+	if (writeError) return writeError;
 	run('systemctl', ['--user', 'daemon-reload']);
 	run('systemctl', ['--user', 'enable', SYSTEMD_LABEL]);
 	return {
@@ -198,8 +216,8 @@ function installLaunchd(ctx: ServiceContext, print: boolean, run: CommandRunner)
 	if (print) return { exitCode: 0, message: plist };
 	if (run('launchctl', ['list']).status !== 0) return { exitCode: 1, message: UNAVAILABLE.launchd };
 	const path = launchdPlistPath(ctx.env);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, plist, { mode: 0o600 });
+	const writeError = writeUnitFile(path, plist);
+	if (writeError) return writeError;
 	run('launchctl', ['load', path]);
 	return { exitCode: 0, message: `launchd-Agent installiert: ${path}.` };
 }
