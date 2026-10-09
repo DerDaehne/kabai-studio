@@ -236,6 +236,7 @@ reset_work
 printf 'Probe\\@Warn\n' >"$work/.privacy-patterns" # a stray backslash before an ordinary char: GNU grep >=3.8 warns on stderr
 echo "Probe@Warn here" >"$work/warn.txt"
 git -C "$work" add warn.txt
+commit_as Neutral neutral@example.invalid "feat: add warn"
 check "a stray backslash in the pattern still matches" 1 "warn.txt:1"
 check_absent "grep's own stderr warning about the pattern never leaks into the output" 1 "grep:"
 
