@@ -10,6 +10,7 @@ import * as board from './board';
 import { DomainError, type Actor } from './core';
 import { pauseRun } from './halt';
 import * as runs from './runs';
+import { CLAIM } from './runs';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
@@ -546,5 +547,35 @@ describe('assignee', () => {
 		const second = runs.createRun(db, system, { ticketId, profileId }).id;
 		expect(runs.claimRun(db, system, { global: 4, pools: { local: 2 } })?.id).toBe(second);
 		expect(assignee()).toBe(`agent (Run ${second})`);
+	});
+});
+
+describe('query plan: claimRun must not scan runs fully', () => {
+	const claimParams = [5, '{}', '2026-01-01T00:00:00.000Z'];
+	const planLines = (db: ReturnType<typeof openDb>) =>
+		(db.prepare(`EXPLAIN QUERY PLAN ${CLAIM}`).all(...claimParams) as { detail: string }[]).map(
+			(r) => r.detail
+		);
+
+	it('scans runs fully before migration 015', () => {
+		const bundled = import.meta.glob<string>('/migrations/*.sql', {
+			query: '?raw',
+			import: 'default',
+			eager: true
+		});
+		const db = openDb(':memory:');
+		migrate(
+			db,
+			Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/015'))
+		);
+		expect(planLines(db)).toContain('SCAN r');
+	});
+
+	it('searches runs by index instead of scanning after migration 015', () => {
+		const db = openDb(':memory:');
+		migrate(db);
+		const lines = planLines(db);
+		expect(lines).not.toContain('SCAN r');
+		expect(lines).toContain('SEARCH r USING INDEX runs_by_state (state=?)');
 	});
 });

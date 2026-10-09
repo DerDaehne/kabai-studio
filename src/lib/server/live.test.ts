@@ -1,3 +1,4 @@
+import type { SQLInputValue } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
@@ -5,7 +6,27 @@ import type { Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns, releaseHalt, resumeRun } from './domain/halt';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
-import { liveState, projectRef, recentFinishedRuns } from './live';
+import { ACTIVE_RUNS, FINISHED_RUNS, liveState, projectRef, recentFinishedRuns } from './live';
+
+/** A DB migrated up to (excluding) the given migration, so a query plan test can show the state before an index lands. */
+function dbBeforeMigration(name: string) {
+	const bundled = import.meta.glob<string>('/migrations/*.sql', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	});
+	const db = openDb(':memory:');
+	migrate(
+		db,
+		Object.fromEntries(Object.entries(bundled).filter(([path]) => path < `/migrations/${name}`))
+	);
+	return db;
+}
+
+const planLines = (db: ReturnType<typeof openDb>, sql: string, params: SQLInputValue[] = []) =>
+	(db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]).map(
+		(r) => r.detail
+	);
 
 const user: Actor = { kind: 'user' };
 
@@ -223,5 +244,42 @@ describe('recentFinishedRuns', () => {
 		finishedAt(startedFirst, '2026-10-07 10:05:00');
 
 		expect(recentFinishedRuns(s.db).map((r) => r.id)).toEqual([startedFirst, startedSecond]);
+	});
+});
+
+describe('query plans: liveState and recentFinishedRuns must not scan questions/runs fully', () => {
+	it('scans questions and runs fully before migration 015', () => {
+		const db = dbBeforeMigration('015');
+		const lines = planLines(db, ACTIVE_RUNS);
+		expect(lines).toContain('SCAN r');
+		expect(lines).toContain('SCAN q');
+		expect(lines).toContain('SCAN c');
+	});
+
+	it('searches by index instead of scanning questions or runs after migration 015', () => {
+		const db = openDb(':memory:');
+		migrate(db);
+		const lines = planLines(db, ACTIVE_RUNS);
+		expect(lines).not.toContain('SCAN r');
+		expect(lines).not.toContain('SCAN q');
+		expect(lines).not.toContain('SCAN c');
+		expect(lines).toContain('SEARCH r USING INDEX runs_by_state (state=?)');
+		expect(lines).toContain('SEARCH q USING INDEX questions_by_run (run_id=?)');
+		expect(lines).toContain(
+			'SEARCH c USING COVERING INDEX runs_by_resumed_from (resumed_from_run_id=?)'
+		);
+	});
+
+	it('cannot plan recentFinishedRuns before migration 015: the pinned index does not exist yet', () => {
+		const db = dbBeforeMigration('015');
+		expect(() => planLines(db, FINISHED_RUNS)).toThrow(/no such index/);
+	});
+
+	it('scans the finished_at index after migration 015 and needs no sort step', () => {
+		const db = openDb(':memory:');
+		migrate(db);
+		const lines = planLines(db, FINISHED_RUNS);
+		expect(lines).toContain('SCAN r USING INDEX runs_by_finished_at');
+		expect(lines).not.toContain('USE TEMP B-TREE FOR ORDER BY');
 	});
 });

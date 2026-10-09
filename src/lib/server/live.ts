@@ -29,7 +29,7 @@ export const projectRef = ({ id, key, name }: ProjectRow): ProjectRef => ({
 // Only the newest question of a ticket can still be answered meaningfully; collectAnswer reads no other.
 export const OPEN_QUESTION = `q.answer IS NULL AND q.id = (SELECT max(id) FROM questions WHERE ticket_id = q.ticket_id)`;
 
-const ACTIVE_RUNS = `
+export const ACTIVE_RUNS = `
 	WITH candidates AS (
 		SELECT r.id AS runId, r.state, ap.name AS profile, ap.pool, p.id, p.key, p.name,
 			p.key || '-' || t.number AS ticket,
@@ -110,9 +110,11 @@ type FinishedRunRow = ProjectRow & {
 };
 
 // 'paused' ends a run too (it can still resume), so it stays out: it belongs with the active runs above, not here.
-const FINISHED_RUNS = `
+// INDEXED BY pins the plan to runs_by_finished_at: without ANALYZE statistics SQLite sometimes prefers the broader
+// runs_by_state index here and re-sorts the result instead.
+export const FINISHED_RUNS = `
 	SELECT r.id AS runId, r.state, r.error, p.id, p.key, p.name, t.number
-	FROM runs r
+	FROM runs r INDEXED BY runs_by_finished_at
 	JOIN tickets t ON t.id = r.ticket_id
 	JOIN projects p ON p.id = t.project_id
 	WHERE p.archived = 0 AND r.state IN ('succeeded', 'failed', 'cancelled')

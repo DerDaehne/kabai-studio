@@ -391,10 +391,15 @@ describe('migrate', () => {
 			expect(
 				db
 					.prepare(
-						"SELECT name FROM sqlite_master WHERE tbl_name = 'runs' AND type = 'index' AND sql IS NOT NULL"
+						"SELECT name FROM sqlite_master WHERE tbl_name = 'runs' AND type = 'index' AND sql IS NOT NULL ORDER BY name"
 					)
 					.all()
-			).toEqual([{ name: 'runs_by_ticket' }]);
+			).toEqual([
+				{ name: 'runs_by_finished_at' },
+				{ name: 'runs_by_resumed_from' },
+				{ name: 'runs_by_state' },
+				{ name: 'runs_by_ticket' }
+			]); // 013 recreates runs_by_ticket; 015's indexes land in the same migrate() call right after
 			expect(migrate(db)).toEqual([]);
 		});
 
@@ -485,7 +490,12 @@ describe('migrate', () => {
 		for (const [name, text] of Object.entries({ ...PREVIOUS_DEFAULTS, ...EDITED }))
 			setRole.run(text, old, name);
 
-		expect(migrate(db)).toEqual(['014_default_role_prompts.sql']);
+		expect(
+			migrate(
+				db,
+				Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/015'))
+			)
+		).toEqual(['014_default_role_prompts.sql']);
 
 		const current = board.createProject(db, { kind: 'user' }, { key: 'NEW', name: 'New' }).id;
 		const rolePrompts = (projectId: number) =>
@@ -497,6 +507,32 @@ describe('migrate', () => {
 			);
 		expect(rolePrompts(old)).toEqual({ ...rolePrompts(current), ...EDITED });
 		expect(rolePrompts(old).Backlog).not.toBe(PREVIOUS_DEFAULTS.Backlog);
+		expect(
+			migrate(
+				db,
+				Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/015'))
+			)
+		).toEqual([]);
+	});
+
+	it('015 adds the four indexes liveState, claimRun and recentFinishedRuns need, leaving runs_by_ticket in place', () => {
+		const db = openDb(':memory:');
+		expect(migrate(db)).toContain('015_live_state_indexes.sql');
+
+		const indexNames = (table: string) =>
+			db
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL ORDER BY name"
+				)
+				.all(table)
+				.map((r) => r.name);
+		expect(indexNames('runs')).toEqual([
+			'runs_by_finished_at',
+			'runs_by_resumed_from',
+			'runs_by_state',
+			'runs_by_ticket'
+		]);
+		expect(indexNames('questions')).toEqual(['questions_by_run', 'questions_by_ticket']);
 		expect(migrate(db)).toEqual([]);
 	});
 });

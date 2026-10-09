@@ -398,7 +398,7 @@ function assignTicketToRun(db: DatabaseSync, emit: Emit, actor: Actor, r: Run) {
 }
 
 // An active run without a profile counts towards the global limit only.
-const CLAIM = `WITH active AS (
+export const CLAIM = `WITH active AS (
 	SELECT p.pool FROM runs r LEFT JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state IN ('running', 'waiting_approval'))
 SELECT r.id, r.ticket_id AS ticketId, t.project_id AS projectId, r.agent_profile_id AS profileId
 FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id JOIN tickets t ON t.id = r.ticket_id
