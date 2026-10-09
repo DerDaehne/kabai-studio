@@ -44,7 +44,7 @@ import type {
 	RunContext
 } from '../runner';
 import { mask } from '../secrets';
-import { modelFor, requestSettings } from './provider';
+import { modelFor, requestSettings, stepCostFor, type StepCost } from './provider';
 import { studioTools } from './studio-mcp-client';
 
 export type BuiltinOptions = {
@@ -72,7 +72,7 @@ const PHASE_INTERVAL_MS = 1000;
 // ponytail: the studio tools that only read; a read tool missing here counts as progress and only makes the guard more lenient
 const READING_TOOLS = new Set(['get_ticket', 'list_workable', 'notes_search', 'notes_get']);
 
-/** Works a run in a tool loop on an OpenAI-compatible model server, with the studio MCP tools of the run. */
+/** Works a run in a tool loop on its profile's model (an OpenAI-compatible server, OpenAI or Anthropic), with the studio MCP tools of the run. */
 export function builtinExecutor(
 	db: DatabaseSync,
 	{ fetch = globalThis.fetch, inactivityMs = INACTIVITY_LIMIT_MS }: BuiltinOptions = {}
@@ -134,7 +134,7 @@ type Loop = {
  */
 async function runSteps(loop: Loop): Promise<StepLog> {
 	const { prompt, run, io } = loop;
-	const log = new StepLog(io, loop.inactivityMs, run.profile.api_key_ref !== null);
+	const log = new StepLog(io, loop.inactivityMs, run.profile);
 	const limits = { reasoningBudget: reasoningBudget(run.profile) };
 	let hintedAt = 0;
 	const stall = () => detectStagnation(log.records.slice(hintedAt), limits);
@@ -287,15 +287,17 @@ class StepLog {
 	readonly #io: ExecutorIo;
 	readonly #inactivityMs: number;
 	readonly #withKey: boolean;
+	readonly #costOf: ReturnType<typeof stepCostFor>;
 	#step: OpenStep = openStep(1);
 	#stepsStarted = 0;
 	#reasoningDeltas = 0;
 	#lastPhaseAt = -Infinity;
 
-	constructor(io: ExecutorIo, inactivityMs: number, withKey: boolean) {
+	constructor(io: ExecutorIo, inactivityMs: number, profile: RunContext['profile']) {
 		this.#io = io;
 		this.#inactivityMs = inactivityMs;
-		this.#withKey = withKey;
+		this.#withKey = profile.api_key_ref !== null;
+		this.#costOf = stepCostFor(profile);
 	}
 
 	succeeded(tool: string) {
@@ -435,9 +437,11 @@ class StepLog {
 		const step = this.#step;
 		const reasoningTokens = usage.outputTokenDetails.reasoningTokens || undefined;
 		const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens || undefined;
+		const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens || undefined;
 		// undefined when the provider reports no usage for this step: a gap for the time series, never a silent zero
 		const tokensIn = usage.inputTokens;
 		const tokensOut = usage.outputTokens;
+		const { cost, priced } = this.#price(usage);
 		this.#io.emit({
 			type: 'log',
 			key: `step:${step.number}`,
@@ -448,13 +452,24 @@ class StepLog {
 				ms: Date.now() - step.startedAt,
 				reasoningTokens,
 				cachedInputTokens,
+				cacheWriteTokens,
+				cost,
+				...(priced ? {} : { priced: false }),
 				// also in `usage` below (the run's total, which coalesces a missing report to 0); kept here too,
 				// since the time-series read model has no other source
 				tokensIn,
 				tokensOut
 			},
-			// ponytail: cost 0 while only local models are supported; priced providers bring their prices into the catalog
-			usage: { tokensIn, tokensOut, cost: 0 }
+			usage: { tokensIn, tokensOut, cost }
+		});
+	}
+
+	#price(usage: Extract<Part, { type: 'finish-step' }>['usage']): StepCost {
+		return this.#costOf({
+			tokensIn: usage.inputTokens ?? 0,
+			cacheRead: usage.inputTokenDetails.cacheReadTokens ?? 0,
+			cacheWrite: usage.inputTokenDetails.cacheWriteTokens ?? 0,
+			tokensOut: usage.outputTokens ?? 0
 		});
 	}
 }

@@ -15,7 +15,7 @@
 		extraPromptWarning,
 		POOL_LABELS,
 		PROVIDERS,
-		providerNotice,
+		pricingNotice,
 		thinkingBudgetWarning,
 		withCatalogDefaults
 	} from '$lib/agents/profile-defaults';
@@ -43,7 +43,7 @@
 	const suggestion = $derived(catalogDefaults(values.model, values.role || undefined));
 	const budgetWarning = $derived(thinkingBudgetWarning(values));
 	const promptWarning = $derived(extraPromptWarning(values.extra_prompt));
-	const notice = $derived(providerNotice(values.provider));
+	const priceNotice = $derived(pricingNotice(values.provider, values.model));
 	const errorFor = (field: string) => (form?.field === field ? form.message : undefined);
 	const focusOnError = (field: string) => (input: HTMLElement) => {
 		if (form?.field === field) input.focus();
@@ -103,7 +103,7 @@
 		{/snippet}
 	</FormField>
 
-	<FormField label="Provider" hint={notice ?? undefined} error={errorFor('provider')}>
+	<FormField label="Provider" error={errorFor('provider')}>
 		{#snippet children(attrs)}
 			<select
 				{...attrs}
@@ -171,7 +171,7 @@
 			label="Modell"
 			hint={local
 				? 'Aus der geladenen Liste wählen (Pfeil nach unten) oder frei eintragen.'
-				: 'Modell-ID laut aktueller Doku des Anbieters.'}
+				: ['Modell-ID laut aktueller Doku des Anbieters.', priceNotice].filter(Boolean).join(' ')}
 			error={errorFor('model')}
 		>
 			{#snippet children(attrs)}
@@ -272,25 +272,27 @@
 		</FormField>
 	</fieldset>
 
-	<FormField
-		label="Temperatur"
-		hint="Leer: Wert aus dem Katalog oder Default des Servers."
-		error={errorFor('temperature')}
-	>
-		{#snippet children(attrs)}
-			<input
-				{...attrs}
-				form={formId}
-				name="temperature"
-				type="number"
-				min="0"
-				max="2"
-				step="0.05"
-				bind:value={values.temperature}
-				{@attach focusOnError('temperature')}
-			/>
-		{/snippet}
-	</FormField>
+	{#if local}
+		<FormField
+			label="Temperatur"
+			hint="Leer: Wert aus dem Katalog oder Default des Servers."
+			error={errorFor('temperature')}
+		>
+			{#snippet children(attrs)}
+				<input
+					{...attrs}
+					form={formId}
+					name="temperature"
+					type="number"
+					min="0"
+					max="2"
+					step="0.05"
+					bind:value={values.temperature}
+					{@attach focusOnError('temperature')}
+				/>
+			{/snippet}
+		</FormField>
+	{/if}
 	<FormField
 		label="max_steps"
 		hint="Höchstzahl der Schritte je Run; danach endet der Run mit einem Hinweis."

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { POOL_LABELS, PROVIDERS, providerNotice } from '$lib/agents/profile-defaults';
-	import Badge from '$lib/ui/Badge.svelte';
+	import { POOL_LABELS, PROVIDERS } from '$lib/agents/profile-defaults';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -30,9 +29,6 @@
 					{providerLabel(profile.provider)} · <span class="mono">{profile.model}</span> · Pool
 					{POOL_LABELS[profile.pool] ?? profile.pool}
 				</span>
-				{#if providerNotice(profile.provider)}
-					<Badge tone="waiting">läuft ab Provider-Unterstützung</Badge>
-				{/if}
 				<Button
 					variant="ghost"
 					size="sm"

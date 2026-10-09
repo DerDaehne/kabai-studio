@@ -126,7 +126,7 @@ describe('agent profiles in the settings', () => {
 		expect(body).toMatch(/<dialog[\s\S]*action="\?\/delete"[\s\S]*<\/dialog>/);
 		expect(body).toContain('href="/settings/profiles/7"');
 		expect(body).toContain('online');
-		expect(body).toContain('läuft ab Provider-Unterstützung');
+		expect(body).not.toContain('läuft ab Provider-Unterstützung');
 	});
 
 	it('keeps every catalog default overridable: overridden values are stored as entered', async () => {
@@ -159,7 +159,7 @@ describe('agent profiles in the settings', () => {
 		expect(body).toMatch(/<input[^>]*name="model"[^>]*list="/); // free input stays possible
 	});
 
-	it('offers OpenAI and Anthropic with the cloud pool and a notice instead of a silent failure', async () => {
+	it('offers OpenAI and Anthropic with the cloud pool, without a support notice or a temperature, and names a missing price', async () => {
 		await save({
 			...LOCAL,
 			name: 'Claude',
@@ -171,7 +171,9 @@ describe('agent profiles in the settings', () => {
 		const profile = listProfiles(db()).find((p) => p.name === 'Claude')!;
 		expect(profile).toMatchObject({ provider: 'anthropic', pool: 'cloud', base_url: null });
 		const body = await editorHtml(`${profile.id}`);
-		expect(body).toContain('läuft ab Provider-Unterstützung');
+		expect(body).not.toContain('läuft ab Provider-Unterstützung');
+		expect(body).toContain('Kein Preis im Katalog — Kosten dieses Profils zählen als 0.');
+		expect(body).not.toContain('name="temperature"');
 		expect(body).not.toContain('name="base_url"');
 		expect(body).not.toContain('Modelle laden');
 		expect(body).toMatch(/<option value="anthropic" selected/);

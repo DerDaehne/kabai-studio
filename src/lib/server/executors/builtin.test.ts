@@ -278,6 +278,7 @@ describe('builtin executor', () => {
 			step: 1,
 			finishReason: 'tool-calls',
 			ms: expect.any(Number),
+			cost: 0,
 			tokensIn: 1000,
 			tokensOut: 50
 		});
@@ -1246,7 +1247,7 @@ describe('loop guard of the builtin executor', () => {
 
 describe('request settings', () => {
 	it('takes sampling, thinking and the output limit from the profile first, then from the catalog for the role', () => {
-		const qwen = { model: 'qwen3.6-35b', max_tokens: null };
+		const qwen = { provider: 'openai-compatible', model: 'qwen3.6-35b', max_tokens: null };
 		expect(requestSettings({ ...qwen, params: { role: 'refine', top_p: 0.5 } })).toEqual({
 			maxOutputTokens: 8000,
 			providerOptions: {
@@ -1268,7 +1269,14 @@ describe('request settings', () => {
 				studio: { temperature: 0.6, chat_template_kwargs: { enable_thinking: true } }
 			}
 		});
-		expect(requestSettings({ model: 'unknown-model', max_tokens: null, params: {} })).toEqual({
+		expect(
+			requestSettings({
+				provider: 'openai-compatible',
+				model: 'unknown-model',
+				max_tokens: null,
+				params: {}
+			})
+		).toEqual({
 			maxOutputTokens: undefined,
 			providerOptions: { studio: {} }
 		});

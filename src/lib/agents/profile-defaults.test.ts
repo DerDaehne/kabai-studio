@@ -4,7 +4,7 @@ import {
 	defaultPool,
 	extraPromptWarning,
 	NEW_PROFILE,
-	providerNotice,
+	pricingNotice,
 	thinkingBudgetWarning,
 	withCatalogDefaults,
 	type ProfileValues
@@ -113,9 +113,13 @@ describe('providers', () => {
 		expect(defaultPool('anthropic')).toBe('cloud');
 	});
 
-	it('announces OpenAI and Anthropic as waiting for provider support instead of failing silently', () => {
-		expect(providerNotice('openai')).toContain('läuft ab Provider-Unterstützung');
-		expect(providerNotice('anthropic')).toContain('läuft ab Provider-Unterstützung');
-		expect(providerNotice('openai-compatible')).toBeNull();
+	it('says that a cloud model without a catalog price counts as 0, and nothing for priced or local models', () => {
+		const notice = 'Kein Preis im Katalog — Kosten dieses Profils zählen als 0.';
+		expect(pricingNotice('anthropic', 'claude-unknown-9')).toBe(notice);
+		expect(pricingNotice('openai', 'gpt-unknown-9')).toBe(notice);
+		expect(pricingNotice('anthropic', 'claude-sonnet-5')).toBeNull();
+		expect(pricingNotice('openai', 'gpt-6-sol')).toBeNull();
+		expect(pricingNotice('openai-compatible', 'qwen3.6-35b')).toBeNull();
+		expect(pricingNotice('anthropic', '')).toBeNull();
 	});
 });

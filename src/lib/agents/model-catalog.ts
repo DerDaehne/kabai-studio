@@ -386,3 +386,143 @@ export const COLD_START_LIMITS: ColdStartLimits = { hintAfterMs: 30_000, failAft
 
 /** Once a model has started to answer, a stream that stays silent this long has hung: the run fails with `provider_inactive`. */
 export const INACTIVITY_LIMIT_MS = 300_000;
+
+export type CloudProvider = 'openai' | 'anthropic';
+export type Effort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** USD per million tokens. */
+export interface TokenRates {
+	readonly inputPerMTok: number;
+	readonly cacheReadPerMTok: number;
+	/** Without one, cache writes cost as much as fresh input. */
+	readonly cacheWritePerMTok?: number;
+	readonly outputPerMTok: number;
+}
+
+export interface Pricing extends TokenRates {
+	/** Rates for a whole request whose input, cache reads and writes included, exceeds `aboveInputTokens`. */
+	readonly longContext?: TokenRates & { readonly aboveInputTokens: number };
+	readonly source: string;
+	readonly checkedAt: string;
+	/** False when the rates could not be confirmed on the provider's official pricing page. */
+	readonly verified: boolean;
+}
+
+export interface CloudModelEntry {
+	readonly id: string;
+	readonly provider: CloudProvider;
+	/** Reasoning effort with thinking on, and with thinking off: an effort, or `disabled` where the model can switch it off. */
+	readonly effort: { readonly on: Effort; readonly off: Effort | 'disabled' };
+	readonly maxOutputTokens: number;
+	readonly pricing: Pricing;
+}
+
+const ANTHROPIC_PRICING = {
+	source: 'https://platform.claude.com/docs/en/about-claude/pricing',
+	checkedAt: '2026-10-09',
+	verified: true
+} as const;
+const OPENAI_PRICING = {
+	source: 'https://developers.openai.com/api/docs/pricing',
+	checkedAt: '2026-10-09',
+	verified: true
+} as const;
+const OPENAI_LONG_CONTEXT_FROM = 272_000;
+
+// Standard tier; Anthropic cache writes at the 5-minute rate, the default lifetime. Effort `on` is each provider's default.
+export const CLOUD_MODELS = [
+	{
+		id: 'claude-opus-5',
+		provider: 'anthropic',
+		// with thinking disabled, Opus 5 may write a tool call as visible text instead of calling it
+		effort: { on: 'high', off: 'low' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 5,
+			cacheReadPerMTok: 0.5,
+			cacheWritePerMTok: 6.25,
+			outputPerMTok: 25,
+			...ANTHROPIC_PRICING
+		}
+	},
+	{
+		id: 'claude-sonnet-5',
+		provider: 'anthropic',
+		effort: { on: 'high', off: 'disabled' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 2,
+			cacheReadPerMTok: 0.2,
+			cacheWritePerMTok: 2.5,
+			outputPerMTok: 10,
+			...ANTHROPIC_PRICING
+		}
+	},
+	{
+		id: 'gpt-6-sol',
+		provider: 'openai',
+		effort: { on: 'medium', off: 'none' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 2,
+			cacheReadPerMTok: 0.2,
+			cacheWritePerMTok: 2.5,
+			outputPerMTok: 10,
+			longContext: {
+				aboveInputTokens: OPENAI_LONG_CONTEXT_FROM,
+				inputPerMTok: 4,
+				cacheReadPerMTok: 0.4,
+				cacheWritePerMTok: 5,
+				outputPerMTok: 15
+			},
+			...OPENAI_PRICING
+		}
+	},
+	{
+		id: 'gpt-6-luna',
+		provider: 'openai',
+		effort: { on: 'medium', off: 'none' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 0.1,
+			cacheReadPerMTok: 0.01,
+			cacheWritePerMTok: 0.125,
+			outputPerMTok: 0.5,
+			longContext: {
+				aboveInputTokens: OPENAI_LONG_CONTEXT_FROM,
+				inputPerMTok: 0.2,
+				cacheReadPerMTok: 0.02,
+				cacheWritePerMTok: 0.25,
+				outputPerMTok: 0.75
+			},
+			...OPENAI_PRICING
+		}
+	}
+] as const satisfies readonly CloudModelEntry[];
+
+/** Cloud model ids are exact, unlike the many local spellings `matchModel` resolves. */
+export const cloudModel = (provider: string | null, model: string | null): CloudModelEntry | null =>
+	CLOUD_MODELS.find((entry) => entry.provider === provider && entry.id === model) ?? null;
+
+export type StepTokens = {
+	tokensIn: number;
+	cacheRead: number;
+	cacheWrite: number;
+	tokensOut: number;
+};
+
+/** The USD cost of one request; `tokensIn` counts all input, cache reads and writes included. */
+export function stepCost(
+	pricing: TokenRates & Pick<Pricing, 'longContext'>,
+	tokens: StepTokens
+): number {
+	const long = pricing.longContext;
+	const rates = long && tokens.tokensIn > long.aboveInputTokens ? long : pricing;
+	const freshInput = tokens.tokensIn - tokens.cacheRead - tokens.cacheWrite;
+	const micros =
+		freshInput * rates.inputPerMTok +
+		tokens.cacheRead * rates.cacheReadPerMTok +
+		tokens.cacheWrite * (rates.cacheWritePerMTok ?? rates.inputPerMTok) +
+		tokens.tokensOut * rates.outputPerMTok;
+	return micros / 1e6;
+}

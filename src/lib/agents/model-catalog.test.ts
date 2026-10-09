@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CLOUD_MODELS,
+	cloudModel,
 	contextBudget,
 	MODEL_ROLES,
 	MODELS,
 	matchModel,
 	reasoningBudget,
+	stepCost,
 	type ModelEntry
 } from './model-catalog.ts';
 
@@ -201,4 +204,55 @@ describe('reasoningBudget', () => {
 			expect(entry.reasoningBudget).toBeLessThan(entry.maxTokensMinimum ?? 0);
 		}
 	);
+});
+
+describe('cloud models', () => {
+	it.each(CLOUD_MODELS)(
+		'$id has a price per million tokens with its official source, the day it was checked and whether it is verified',
+		({ provider, pricing }) => {
+			const officialPage = provider === 'anthropic' ? 'platform.claude.com' : 'openai.com';
+			expect(new URL(pricing.source).hostname).toContain(officialPage);
+			expect(pricing.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+			expect(typeof pricing.verified).toBe('boolean');
+			for (const rate of [pricing.inputPerMTok, pricing.cacheReadPerMTok, pricing.outputPerMTok])
+				expect(rate).toBeGreaterThan(0);
+		}
+	);
+
+	it('finds a cloud model only by its provider and exact id', () => {
+		expect(cloudModel('anthropic', 'claude-sonnet-5')?.id).toBe('claude-sonnet-5');
+		expect(cloudModel('openai', 'claude-sonnet-5')).toBeNull();
+		expect(cloudModel('anthropic', 'claude-sonnet-5-preview')).toBeNull();
+		expect(cloudModel('openai-compatible', 'gpt-6-sol')).toBeNull();
+	});
+
+	it('prices a step with fresh input, cache reads, cache writes and output at their own rates', () => {
+		const { pricing } = cloudModel('openai', 'gpt-6-sol')!;
+		const cost = stepCost(pricing, {
+			tokensIn: 1300,
+			cacheRead: 1000,
+			cacheWrite: 100,
+			tokensOut: 20
+		});
+		expect(cost).toBeCloseTo((200 * 2 + 1000 * 0.2 + 100 * 2.5 + 20 * 10) / 1e6, 12);
+	});
+
+	it('prices cache writes as fresh input where the provider names no write price', () => {
+		const pricing = { inputPerMTok: 1, cacheReadPerMTok: 0.1, outputPerMTok: 5 };
+		const cost = stepCost(pricing, { tokensIn: 1000, cacheRead: 0, cacheWrite: 400, tokensOut: 0 });
+		expect(cost).toBeCloseTo(1000 / 1e6, 12);
+	});
+
+	it('prices a request above the long-context threshold entirely at the long-context rates', () => {
+		const { pricing } = cloudModel('openai', 'gpt-6-sol')!;
+		const usage = { tokensIn: 300_000, cacheRead: 100_000, cacheWrite: 0, tokensOut: 1000 };
+		expect(stepCost(pricing, usage)).toBeCloseTo(
+			(200_000 * 4 + 100_000 * 0.4 + 1000 * 15) / 1e6,
+			12
+		);
+		expect(stepCost(pricing, { ...usage, tokensIn: 272_000, cacheRead: 0 })).toBeCloseTo(
+			(272_000 * 2 + 1000 * 10) / 1e6,
+			12
+		);
+	});
 });

@@ -1,5 +1,6 @@
 // What the profile form suggests and warns about, derived from the model catalog. Texts are German UI copy.
 import {
+	cloudModel,
 	matchModel,
 	MODEL_ROLES,
 	RUNTIME_ENDPOINTS,
@@ -62,12 +63,13 @@ export const NEW_PROFILE: ProfileValues = {
 export const defaultPool = (provider: string) =>
 	provider === 'openai-compatible' ? 'local' : 'cloud';
 
-// ponytail: the builtin executor speaks only OpenAI-compatible endpoints so far; drop a provider here once it runs.
-const PROVIDERS_AWAITING_SUPPORT: readonly string[] = ['openai', 'anthropic'];
+const CLOUD_PROVIDERS: readonly string[] = ['openai', 'anthropic'];
 
-export function providerNotice(provider: string | null): string | null {
-	if (!provider || !PROVIDERS_AWAITING_SUPPORT.includes(provider)) return null;
-	return 'Dieses Profil läuft ab Provider-Unterstützung im builtin-Executor; bis dahin bricht ein Run mit provider_unsupported ab. Ausweg bis dahin: „OpenAI-kompatibel“ wählen, falls der Anbieter einen OpenAI-kompatiblen Endpunkt hat.';
+/** A cloud model without a price in the catalog counts as 0 in the run's cost, which the profile page says. */
+export function pricingNotice(provider: string | null, model: string | null): string | null {
+	if (!provider || !CLOUD_PROVIDERS.includes(provider) || !model) return null;
+	if (cloudModel(provider, model)) return null;
+	return 'Kein Preis im Katalog — Kosten dieses Profils zählen als 0.';
 }
 
 export type CatalogDefaults = {
