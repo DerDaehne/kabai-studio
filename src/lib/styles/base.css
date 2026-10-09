@@ -207,27 +207,31 @@ input[type='radio'] {
 	padding: 0;
 }
 
-/* Page swaps (motion.ts starts the view transition): the old page sinks back, the new one rises into place */
-.shell > main {
-	view-transition-name: page;
+/* A change of place (motion.ts starts the view transition): the page swings around its left edge like a turnstile,
+   the head and the app bar stand still under their own transition names. */
+::view-transition-old(root),
+::view-transition-new(root) {
+	transform-origin: left center;
+	animation-duration: var(--motion-moderate);
+	animation-timing-function: var(--ease-out);
+	animation-fill-mode: both;
 }
-::view-transition-old(page) {
-	animation: var(--dur-fast) var(--ease-in) both page-out;
+::view-transition-old(root) {
+	animation-name: turnstile-out;
 }
-::view-transition-new(page) {
-	animation: var(--dur-slow) var(--ease-out) both page-in;
+::view-transition-new(root) {
+	animation-name: turnstile-in;
 }
-@keyframes page-out {
+@keyframes turnstile-out {
 	to {
 		opacity: 0;
-		scale: 0.985;
+		transform: perspective(1400px) rotateY(calc(-1 * var(--motion-turnstile)));
 	}
 }
-@keyframes page-in {
+@keyframes turnstile-in {
 	from {
 		opacity: 0;
-		translate: 0 var(--shift-md);
-		scale: 1.01;
+		transform: perspective(1400px) rotateY(var(--motion-turnstile));
 	}
 }
 

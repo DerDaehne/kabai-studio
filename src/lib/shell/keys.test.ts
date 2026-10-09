@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { continuing, keymap, validKeys, type KeyAction, type KeyGroup, type KeyHint } from './keys';
+import {
+	continuing,
+	keyContextOf,
+	keymap,
+	validKeys,
+	type KeyAction,
+	type KeyGroup,
+	type KeyHint
+} from './keys';
 
 const sequences = (hints: KeyHint[]) =>
 	hints.map((hint) => hint.keys.map((sequence) => sequence.join('')).join('|'));
@@ -97,5 +105,16 @@ describe('continuing', () => {
 
 	it('drops a hint without any continuation', () => {
 		expect(continuing({ keys: [['x']], label: 'stoppen' }, 'g')).toEqual([]);
+	});
+});
+
+describe('keyContextOf', () => {
+	it('names the view, the Run-Akte or any other page a path belongs to', () => {
+		expect(keyContextOf('/')).toBe('stellwerk');
+		expect(keyContextOf('/takt')).toBe('takt');
+		expect(keyContextOf('/board')).toBe('board');
+		expect(keyContextOf('/p/WEB/t/12')).toBe('ticket');
+		expect(keyContextOf('/p/WEB')).toBe('page');
+		expect(keyContextOf('/settings/profiles')).toBe('page');
 	});
 });

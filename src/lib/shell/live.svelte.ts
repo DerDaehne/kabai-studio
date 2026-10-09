@@ -2,6 +2,7 @@ import { afterNavigate, beforeNavigate, invalidate } from '$app/navigation';
 import { navigating as currentNavigation } from '$app/state';
 import { connectLiveUpdates, type LiveUpdatesHandle } from '$lib/live-updates';
 import type { Tone } from '$lib/ui/Badge.svelte';
+import type { Tone as RektaTone } from '$lib/ui/rekta/tone';
 import { onMount } from 'svelte';
 import { on } from 'svelte/events';
 import { announceSignal, shell, type AgentChip, type ProjectRef } from './shell.svelte';
@@ -150,6 +151,18 @@ export const haltLabel = (halt: HaltKind, runs: LiveRun[]) =>
 	halt === 'stop'
 		? `Gestoppt · ${countOf(runs, 'queued')} wartend`
 		: `Angehalten · ${countOf(runs, 'paused')} pausiert`;
+
+/** The runner in the one word the app bar shows: a halt first, then an agent holding for the human, then one at work. */
+export function runnerState(
+	halt: HaltKind | null,
+	agents: AgentChip[]
+): { word: string; tone: RektaTone } {
+	if (halt === 'stop') return { word: 'not-aus', tone: 'error' };
+	if (halt === 'pause') return { word: 'angehalten', tone: 'warning' };
+	if (agents.some((agent) => agent.state === 'waiting')) return { word: 'hält', tone: 'warning' };
+	if (agents.length) return { word: 'arbeitet', tone: 'info' };
+	return { word: 'frei', tone: 'neutral' };
+}
 
 const QUEUE_WAITS = 'Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).';
 

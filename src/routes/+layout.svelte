@@ -1,11 +1,11 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
-	import { goto, onNavigate, pushState } from '$app/navigation';
+	import { goto, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { MediaQuery } from 'svelte/reactivity';
 	import favicon from '$lib/assets/favicon.svg';
+	import AppBar from '$lib/shell/AppBar.svelte';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
 	import {
 		focusCommands,
@@ -13,63 +13,39 @@
 		resumeCommands,
 		type Suggestion
 	} from '$lib/shell/commands';
+	import { projectForLetter } from '$lib/shell/focus';
 	import { resumeAll, resumeRun } from '$lib/shell/halt';
-	import HaltControl from '$lib/shell/HaltControl.svelte';
-	import { focusKeys, projectForLetter } from '$lib/shell/focus';
+	import HeadPivot from '$lib/shell/HeadPivot.svelte';
+	import KeyHints from '$lib/shell/KeyHints.svelte';
+	import { keyContextOf, validKeys } from '$lib/shell/keys';
 	import KeyOverview from '$lib/shell/KeyOverview.svelte';
-	import { anyLetter, contextLabels, validKeys, type KeyContext } from '$lib/shell/keys';
 	import {
 		connectLive,
 		gateLiveInvalidation,
 		haltLabel,
 		invalidateLive,
 		live,
-		openQuestionsLabel,
 		showLive
 	} from '$lib/shell/live.svelte';
-	import {
-		bindKeys,
-		boundActions,
-		handleKey,
-		keyboard,
-		restoreSingleKeys,
-		setSingleKeys
-	} from '$lib/shell/router.svelte';
+	import { bindKeys, handleKey, restoreSingleKeys, setSingleKeys } from '$lib/shell/router.svelte';
 	import { bindCommands, boundCommands, shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
-	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
-	import Kbd from '$lib/ui/Kbd.svelte';
+	import Icon from '$lib/ui/Icon.svelte';
 	import { transitionPage } from '$lib/ui/motion';
-	import Nebula from '$lib/ui/Nebula.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 
 	let { data, children } = $props();
 
-	type View = { href: string; label: string; icon: IconName; context: KeyContext };
-	const views: View[] = [
-		{ href: '/', label: 'Stellwerk', icon: 'projects', context: 'stellwerk' },
-		{ href: '/takt', label: 'Takt', icon: 'inbox', context: 'takt' },
-		{ href: '/board', label: 'Board', icon: 'notes', context: 'board' }
-	];
 	const path: string = $derived(page.url.pathname);
 	const bare = $derived(path === '/login' || path === '/setup');
-	const currentView = $derived(
-		views.find((view) => (view.href === '/' ? path === '/' : path.startsWith(view.href)))
-	);
-	// The Run-Akte (/p/<key>/t/<n>) is a deep link, not one of the top-nav views above.
-	const onTicketPage = $derived(/^\/p\/[^/]+\/t\/\d+/.test(path));
 
 	let commandValue = $state('');
-	let commandInput = $state<HTMLInputElement>();
-	let commandFocused = $state(false);
-	const keyContext: KeyContext = $derived(
-		commandFocused ? 'commandline' : (currentView?.context ?? (onTicketPage ? 'ticket' : 'page'))
-	);
-	const keyBar = $derived(validKeys(keyContext, shell.pendingKeys, boundActions()));
+	let commandOpen = $state(false);
+	const commandLineKeys = validKeys('commandline', '', new Set()).hints;
 	const haltedRuns = $derived(live.runs.filter((run) => run.state === 'paused'));
 	const sources = $derived({
 		commands: [
@@ -81,24 +57,17 @@
 		tickets: shell.tickets
 	});
 
-	const compact = new MediaQuery('max-width: 719px');
-	const overlayOpen = $derived(page.state.commandLine === true);
-
+	// The sheet is plain state, not a shallow-routing entry: invalidate() resets page.state, so every live event
+	// would close it. The back gesture of a phone still closes a modal dialog natively.
 	function openCommandLine(mode: string) {
 		commandValue = mode;
-		if (compact.current) {
-			if (!overlayOpen) pushState('', { commandLine: true });
-		} else {
-			commandInput?.focus();
-		}
+		commandOpen = true;
 	}
 
-	/** The overlay is a history entry, so the back gesture closes it like Escape or a tap outside. */
-	async function closeOverlay() {
-		if (!page.state.commandLine) return;
-		const popped = new Promise((resolve) => addEventListener('popstate', resolve, { once: true }));
-		history.back();
-		await popped;
+	async function execute(suggestion: Suggestion) {
+		commandOpen = false;
+		if (suggestion.run) suggestion.run();
+		else if (suggestion.href) await goto(suggestion.href);
 	}
 
 	let keysOpen = $state(false);
@@ -121,7 +90,7 @@
 		});
 	});
 	// focusAll only while something is focused, focusProject only while there is a project to focus — otherwise the
-	// key bar would offer a key that does nothing
+	// keys overview would offer a key that does nothing
 	$effect(() => {
 		if (bare) return;
 		return bindKeys({
@@ -180,26 +149,8 @@
 		return bindCommands(globalCommandList);
 	});
 
-	async function execute(suggestion: Suggestion) {
-		await closeOverlay();
-		commandInput?.blur();
-		if (suggestion.run) suggestion.run();
-		else if (suggestion.href) await goto(suggestion.href);
-	}
-
-	const waitingAgents = $derived(shell.agents.filter((agent) => agent.state === 'waiting').length);
-	// a narrow head dock fits only one chip, and a second one would hide whether an agent waits
-	const groupAgents = $derived(shell.agents.length >= (compact.current ? 2 : 3));
-
 	gateLiveInvalidation();
 	onNavigate(transitionPage);
-
-	const openQuestionsOf = (view: View) => (view.context === 'takt' ? live.openQuestions : 0);
-	// a bare number would be read out as "Takt 2"; with a count the link's name says what is counted
-	const accessibleViewName = (view: View) =>
-		openQuestionsOf(view)
-			? `${view.label}, ${openQuestionsLabel(openQuestionsOf(view))}`
-			: undefined;
 
 	const signedIn = $derived(data.live !== undefined);
 	// pre: runs before the effects of the page, so a page that shows agents of its own (/dev/ui) is not overwritten
@@ -220,11 +171,6 @@
 
 <svelte:window onkeydown={handleKey} />
 
-{#snippet viewLabel(view: View)}
-	{view.label}
-	{#if openQuestionsOf(view)}<span class="count">{openQuestionsOf(view)}</span>{/if}
-{/snippet}
-
 <!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
 {#snippet attribution()}
 	<p class="attribution">
@@ -241,379 +187,97 @@
 	</div>
 {:else}
 	<div class="shell">
-		<Nebula />
 		<a class="skip btn" href="#main">Zum Inhalt springen</a>
+		<HeadPivot />
 
-		<header class="head dock">
-			<a class="brand" href="/" aria-label="kabai studio, Stellwerk"
-				><img src={favicon} alt="" width="18" height="18" /></a
-			>
-			<nav class="views" aria-label="Ansichten">
-				{#each views as view (view.href)}
-					<a
-						href={view.href}
-						aria-current={view === currentView ? 'page' : undefined}
-						aria-label={accessibleViewName(view)}>{@render viewLabel(view)}</a
-					>
-				{/each}
-			</nav>
-			{#if shell.focus}
-				<span class="chip focus-chip">
-					Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
-					<span class="focus-name">{shell.focus.name}</span>
-					<button
-						class="clear"
-						aria-label="Projekt-Fokus aufheben"
-						onclick={() => (shell.focus = null)}
-					>
-						<Icon name="x" size={14} />
-					</button>
-				</span>
-			{/if}
+		<main id="main" tabindex="-1">
 			{#if live.halt}
-				<div class="chip halted">
-					<Icon name={live.halt === 'stop' ? 'stop' : 'pause'} size={14} />
+				<div class="halt-banner" data-tone={live.halt === 'stop' ? 'error' : 'warning'}>
+					<Icon name={live.halt === 'stop' ? 'stop' : 'pause'} />
 					<span role="status">{haltLabel(live.halt, live.runs)}</span>
 					<Button size="sm" onclick={resumeAll}>Fortsetzen</Button>
 				</div>
 			{/if}
-			<ul class="agents" aria-label="Agents">
-				{#if groupAgents}
-					<li class="chip" class:halt={waitingAgents > 0}>
-						<span class="dot" aria-hidden="true"></span>{shell.agents.length} Agents
-						{#if waitingAgents}<span class="state"
-								>· {waitingAgents} {waitingAgents === 1 ? 'hält' : 'halten'}</span
-							>{/if}
-					</li>
-				{:else}
-					{#each shell.agents as agent (agent.id)}
-						<li class="chip" class:halt={agent.state === 'waiting'}>
-							<span class="dot" aria-hidden="true"></span>{agent.name}
-							<span class="muted">{agent.location}</span>
-							<ProjectTag code={agent.project.code} palette={agent.project.palette} />
-							<span class="state">{agent.state === 'waiting' ? 'hält' : 'arbeitet'}</span>
-						</li>
-					{/each}
-				{/if}
-			</ul>
-			<a class="btn btn-ghost btn-icon settings" href="/settings" aria-label="Einstellungen"
-				><Icon name="settings" /></a
-			>
-			{#key shell.signals}
-				{#if shell.signals}<span class="wave" aria-hidden="true"></span>{/if}
-			{/key}
-		</header>
-
-		<main id="main" tabindex="-1">
+			{#if shell.focus}
+				<p class="focus">
+					Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
+					{shell.focus.name}
+					<button
+						class="btn btn-ghost btn-icon"
+						aria-label="Projekt-Fokus aufheben"
+						onclick={() => (shell.focus = null)}><Icon name="x" size={14} /></button
+					>
+				</p>
+			{/if}
 			{@render children()}
 			<footer class="page-end">{@render attribution()}</footer>
 		</main>
 
-		<footer class="commands dock">
-			<CommandLine
-				{sources}
-				floating
-				bind:value={commandValue}
-				bind:input={commandInput}
-				bind:focused={commandFocused}
-				onexecute={execute}
-				onescape={() => commandInput?.blur()}
-			/>
-			<p class="context"><strong>{contextLabels[keyContext]}</strong></p>
-			<ul class="keys" aria-label="Gültige Tasten">
-				{#if !keyboard.singleKeys}
-					<li><span>nur mit</span><Kbd key="Alt" /></li>
-				{/if}
-				{#if keyBar.count || keyBar.prefix}
-					<li class="pending">
-						{#each [...keyBar.count, ...keyBar.prefix] as key, index (index)}<Kbd
-								{key}
-								active
-							/>{/each}
-						<Kbd key="Escape" /><span>abbrechen</span>
-					</li>
-				{/if}
-				{#each keyBar.hints as hint (hint.label)}
-					<li>
-						{#if hint.keys[0]?.includes(anyLetter)}
-							<Kbd key={hint.keys[0][0]} />
-							{#each focusKeys(live.projects) as { letter } (letter)}<Kbd key={letter} />{/each}
-						{:else}
-							{#each hint.keys as sequence, index (index)}
-								{#each sequence as key, position (position)}<Kbd {key} />{/each}
-							{/each}
-						{/if}
-						<span>{hint.label}</span>
-					</li>
-				{/each}
-			</ul>
-			{@render attribution()}
-		</footer>
-
-		<nav class="tabs dock" aria-label="Ansichten">
-			{#each views as view (view.href)}
-				<a
-					href={view.href}
-					aria-current={view === currentView ? 'page' : undefined}
-					aria-label={accessibleViewName(view)}
-					><Icon name={view.icon} />{@render viewLabel(view)}</a
-				>
-			{/each}
-			<button type="button" onclick={() => openCommandLine('')}
-				><span class="glyph" aria-hidden="true">:/</span>Befehl</button
-			>
-		</nav>
+		<AppBar {openCommandLine} openKeys={() => (keysOpen = true)} />
 	</div>
 
-	<Dialog bind:open={() => overlayOpen, (open) => !open && closeOverlay()} title="Befehlszeile">
+	<Dialog variant="bar-sheet" bind:open={commandOpen} title="Befehlszeile">
 		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
+		<KeyHints hints={commandLineKeys} label="Tasten der Befehlszeile" />
 	</Dialog>
-	<KeyOverview bind:open={keysOpen} />
-	<HaltControl openResumePrompt={() => openCommandLine(':fortsetzen ')} />
+	<KeyOverview bind:open={keysOpen} context={keyContextOf(path)} />
 {/if}
 
 <Toaster />
 
 <style>
+	/* The window scrolls under the sticky head and the fixed app bar: what the page scrolls into view (focus, anchors)
+	   keeps clear of both. On the content only — as scroll-padding it would also scroll the page for the head's own
+	   links, which sit in that very strip. */
+	main :global(*) {
+		scroll-margin-block: var(--head-h) calc(var(--appbar-h) + env(safe-area-inset-bottom));
+	}
 	.shell {
-		position: relative;
-		isolation: isolate;
-		display: grid;
-		grid-template-rows: auto minmax(0, 1fr) auto;
-		height: 100dvh;
+		min-height: 100dvh;
 		background: var(--bg);
 	}
-	.dock {
-		background: var(--glass-float);
-		backdrop-filter: blur(var(--blur-float)) saturate(var(--glass-sat));
-		box-shadow: var(--shadow-float);
-	}
-	.head {
-		position: relative;
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		min-width: 0;
-		margin: var(--space-3) var(--space-3) 0;
-		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-		border-radius: 18px;
-		overflow: hidden;
-		view-transition-name: head-dock;
-	}
-	.brand {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		font-weight: 650;
-		letter-spacing: -0.01em;
-	}
-	.head .brand {
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
-		width: 32px;
-		height: 32px;
-		border-radius: 11px;
-		background: var(--accent-tint);
-	}
-	.views {
-		display: flex;
-		gap: var(--space-05);
-		padding: 3px;
-		border-radius: 12px;
-		background: var(--fill-soft);
-	}
-	.views a {
-		padding: var(--space-1) var(--space-3);
-		border-radius: 9px;
-		color: var(--text-muted);
-		font-weight: 560;
-		text-decoration: none;
-	}
-	.views a:hover {
-		color: var(--text);
-	}
-	.count {
-		display: inline-block;
-		min-width: 18px;
-		margin-left: 6px;
-		padding: 0 5px;
-		border-radius: 9px;
-		background: var(--status-waiting-tint);
-		color: var(--status-waiting);
-		font: 700 12px / 18px var(--font-mono);
-		text-align: center;
-	}
-	.views a[aria-current='page'] {
-		background: var(--glass-raised);
-		box-shadow: var(--shadow-card);
-		color: var(--text);
-	}
-	.agents {
-		display: flex;
-		justify-content: flex-end;
-		gap: var(--space-2);
-		flex: 1;
-		min-width: 0;
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-		list-style: none;
-	}
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		height: 30px;
-		padding: 0 var(--space-3) 0 10px;
-		border-radius: 15px;
-		background: var(--fill-soft);
-		font-size: var(--text-sm);
-		white-space: nowrap;
-	}
-	.chip .dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--status-running);
-	}
-	.chip .state {
-		color: var(--status-running);
-	}
-	.chip.halt .dot {
-		background: var(--status-waiting);
-	}
-	.chip.halt .state {
-		color: var(--status-waiting);
-	}
-	/* The kill switch stays visible until it is released: it never shrinks away like the agent chips */
-	.halted {
-		flex-shrink: 0;
-		height: auto;
-		min-height: 30px;
-		padding-right: 3px;
-		background: var(--status-paused-tint);
-		box-shadow: 0 0 16px var(--aura-paused);
-		color: var(--status-paused);
-		font-weight: 560;
-	}
-	.settings {
-		flex-shrink: 0;
-	}
-	.focus-chip {
-		flex-shrink: 0;
-		padding-right: var(--space-1);
-		background: var(--fill-sel);
-	}
-	.clear {
-		display: grid;
-		place-items: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		border: 0;
-		border-radius: 50%;
-		background: transparent;
-		color: var(--text-muted);
-	}
-	.wave {
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-	}
-	.wave::before {
-		content: '';
-		position: absolute;
-		inset: 0;
-		width: 30%;
-		background: linear-gradient(90deg, transparent, var(--aura-waiting), transparent);
-		transform: translateX(-100%);
-		animation: wave var(--dur-sweep) var(--ease-inout) both;
-	}
-	@keyframes wave {
-		to {
-			transform: translateX(400%);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.wave {
-			display: none;
-		}
-	}
-	:global(:root[data-motion='reduced']) .wave {
-		display: none;
-	}
-
 	main {
 		min-width: 0;
-		min-height: 0;
-		overflow: auto;
-		padding: var(--space-6) var(--space-6) var(--space-4);
-		scroll-padding-block: var(--space-6);
+		padding: var(--space-6) var(--gutter)
+			calc(var(--appbar-h) + env(safe-area-inset-bottom) + var(--space-6));
 	}
 	main:focus-visible {
 		outline: none; /* target of the skip link, not a control */
 		box-shadow: none;
 	}
-	.page-end {
-		display: none;
-		margin-top: var(--space-8);
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-
-	.commands {
+	.halt-banner,
+	.focus {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: var(--space-4);
-		min-width: 0;
-		margin: 0 var(--space-3) var(--space-3);
-		padding: var(--space-2) var(--space-3);
-		border-radius: 18px;
-		view-transition-name: command-dock;
+		gap: var(--space-2) var(--space-3);
+		margin-bottom: var(--space-4);
 	}
-	.commands > :global(.commandline) {
-		flex: 0 0 260px;
+	.halt-banner {
+		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+		border-radius: var(--radius-tile);
+		background: var(--tile-warning);
+		color: var(--text);
+		font-weight: var(--weight-medium);
 	}
-	.context {
-		flex-shrink: 0;
-		font-size: var(--text-sm);
+	.halt-banner[data-tone='error'] {
+		background: var(--tile-error);
 	}
-	.keys {
-		/* contains the hidden key names of Kbd (position: absolute), so the clipped keys cannot widen the page */
-		position: relative;
-		display: flex;
-		gap: var(--space-3);
+	.halt-banner [role='status'] {
 		flex: 1;
-		min-width: 0;
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-		list-style: none;
-		font-size: var(--text-sm);
-		white-space: nowrap;
 	}
-	.keys li {
-		display: flex;
-		align-items: center;
-		gap: 3px;
-	}
-	.keys span {
-		margin-left: 3px;
+	.focus {
 		color: var(--text-muted);
+		font-size: var(--type-meta);
 	}
-	.commands .attribution {
-		flex-shrink: 0;
+	.page-end {
+		margin-top: var(--space-8);
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 	}
 	.attribution a {
 		color: inherit;
 		font-weight: 600;
-	}
-
-	.tabs {
-		display: none;
 	}
 	.skip {
 		position: fixed;
@@ -626,81 +290,6 @@
 		translate: 0 0;
 	}
 
-	/* Phones: views and the command line move to a tab dock in thumb reach, the attribution to the end of the content */
-	@media (max-width: 719px) {
-		.head {
-			margin: var(--space-2) var(--space-2) 0;
-		}
-		.head .views,
-		.commands,
-		.agents .muted {
-			display: none;
-		}
-		.agents {
-			justify-content: flex-start;
-		}
-		/* too narrow for the whole label on one line: it wraps instead of pushing the settings out of the dock */
-		.halted {
-			flex-shrink: 1;
-			min-width: 0;
-			line-height: 1.2;
-			white-space: normal;
-		}
-		.halted > :global(svg),
-		.halted :global(.btn) {
-			flex-shrink: 0;
-			white-space: nowrap;
-		}
-		main {
-			padding: var(--space-4) var(--space-3);
-		}
-		.page-end {
-			display: block;
-		}
-		.tabs {
-			display: grid;
-			grid-template-columns: repeat(4, minmax(0, 1fr));
-			margin: 0 var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
-			border-radius: 18px;
-			view-transition-name: command-dock;
-		}
-		.tabs a,
-		.tabs button {
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			justify-content: center;
-			gap: 3px;
-			height: var(--tabbar-h);
-			padding: 0;
-			border: 0;
-			background: transparent;
-			color: var(--text-muted);
-			font-size: var(--text-sm);
-			text-decoration: none;
-		}
-		.tabs a[aria-current='page'] {
-			color: var(--accent-text);
-		}
-		.tabs a {
-			position: relative;
-		}
-		.tabs .count {
-			position: absolute;
-			top: 6px;
-			left: calc(50% + 6px);
-			margin: 0;
-		}
-		.glyph {
-			font: 700 15px / 16px var(--font-mono);
-		}
-	}
-
-	:global(::view-transition-group(head-dock)),
-	:global(::view-transition-group(command-dock)) {
-		animation: none;
-	}
-
 	.bare {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
@@ -711,13 +300,17 @@
 		padding: var(--space-6) var(--space-4);
 	}
 	.bare .brand {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
 		font-size: var(--text-lg);
+		font-weight: 650;
+		letter-spacing: -0.01em;
 	}
 	.bare main {
 		display: grid;
 		gap: var(--space-3);
 		width: min(360px, 100%);
-		overflow: visible;
 		padding: 0;
 	}
 	/* Login and setup forms: spacing between fields, label above its field, errors stand out */

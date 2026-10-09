@@ -264,7 +264,7 @@
 			<EmptyState title="Nichts wartet auf dich">
 				Die Agents arbeiten weiter; fragt einer, erscheint seine Frage hier.
 				{#snippet action()}
-					<a class="btn" href="/">Zum Stellwerk <Kbd key="g" /><Kbd key="s" /></a>
+					<a class="btn" href="/">Zum kabai studio <Kbd key="g" /><Kbd key="s" /></a>
 				{/snippet}
 			</EmptyState>
 		{/if}

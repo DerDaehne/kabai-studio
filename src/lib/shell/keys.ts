@@ -32,7 +32,7 @@ const keymapTable = {
 	endSearch: { group: 'Öffnen und zurück', keys: [['Escape']], label: 'Suche beenden' },
 	back: { group: 'Öffnen und zurück', keys: [['Escape']], label: 'zurück' },
 	jumpBack: { group: 'Öffnen und zurück', keys: [['Ctrl+o']], label: 'vorige Stelle' },
-	goStellwerk: { group: 'Öffnen und zurück', keys: [['g', 's']], label: 'Stellwerk' },
+	goStellwerk: { group: 'Öffnen und zurück', keys: [['g', 's']], label: 'kabai studio' },
 	goTakt: { group: 'Öffnen und zurück', keys: [['g', 't']], label: 'Takt' },
 	goBoard: { group: 'Öffnen und zurück', keys: [['g', 'b']], label: 'Board' },
 	goLastRun: { group: 'Öffnen und zurück', keys: [['g', 'r']], label: 'letzter Run' },
@@ -75,7 +75,7 @@ export const keymap: Record<KeyAction, KeyBinding> = keymapTable;
 export type KeyContext = 'stellwerk' | 'takt' | 'board' | 'ticket' | 'page' | 'commandline';
 
 export const contextLabels: Record<KeyContext, string> = {
-	stellwerk: 'Stellwerk',
+	stellwerk: 'kabai studio',
 	takt: 'Takt',
 	board: 'Board',
 	ticket: 'Run-Akte',
@@ -122,4 +122,12 @@ export function validKeys(
 	if (count) hints = hints.filter((hint) => hint.counted);
 	if (prefix) hints = hints.flatMap((hint) => continuing(hint, prefix));
 	return { count, prefix, hints };
+}
+
+/** The key context of a page: one of the views, the Run-Akte, or any other page. */
+export function keyContextOf(path: string): KeyContext {
+	if (path === '/') return 'stellwerk';
+	if (path.startsWith('/takt')) return 'takt';
+	if (path.startsWith('/board')) return 'board';
+	return /^\/p\/[^/]+\/t\/\d+/.test(path) ? 'ticket' : 'page';
 }

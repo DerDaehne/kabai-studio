@@ -17,7 +17,7 @@ test('signing in leads from the login form to the Stellwerk, after a wrong passw
 	await page.getByLabel('Passwort').fill(OWNER.password);
 	await page.getByRole('button', { name: 'Anmelden' }).click();
 	await expect(page).toHaveURL('/');
-	await expect(page.getByRole('link', { name: 'Stellwerk', exact: true })).toHaveAttribute(
+	await expect(page.getByRole('link', { name: 'kabai studio', exact: true })).toHaveAttribute(
 		'aria-current',
 		'page'
 	);

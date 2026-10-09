@@ -320,7 +320,9 @@ test.describe('on a phone', () => {
 		await expect(tabsOf(page).first()).toContainText(/Run \d+/);
 		await expectStuckRunRecovers(page, ticket, tapVisible, async () => {
 			await tapVisible(
-				page.getByRole('navigation', { name: 'Ansichten' }).getByRole('link', { name: 'Stellwerk' })
+				page
+					.getByRole('navigation', { name: 'Ansichten' })
+					.getByRole('link', { name: 'kabai studio' })
 			);
 		});
 		expect(await pageOverflowPx(page)).toBeLessThanOrEqual(0);

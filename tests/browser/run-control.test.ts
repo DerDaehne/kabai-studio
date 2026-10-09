@@ -11,6 +11,7 @@ const HUMAN: Actor = { kind: 'user' };
 const tabsOf = (view: Page) =>
 	view.getByRole('navigation', { name: 'Runs dieses Tickets' }).getByRole('listitem');
 const confirmationOf = (page: Page) => page.getByRole('dialog', { name: /^Run \d+ abbrechen\?$/ });
+const appBarOf = (page: Page) => page.getByRole('contentinfo', { name: 'App-Leiste' });
 
 /**
  * Two profiles on the fake model in a pool of their own (one run at a time), and an ended run of the ticket with the
@@ -105,9 +106,11 @@ test('a run starts from the Run-Akte with the preselected profile, waits for its
 		await phone.evaluate(sideways),
 		'the tab row scrolls on its own, not the page'
 	).toBeLessThanOrEqual(0);
+	await page.keyboard.press('?');
 	await expect(page.getByRole('list', { name: 'Gültige Tasten' })).not.toContainText(
 		'Run abbrechen'
 	);
+	await page.keyboard.press('Escape');
 
 	const firstStopped = tabsOf(page).nth(2).getByRole('link').first();
 	await firstStopped.click();
@@ -153,7 +156,7 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 	fakeModel.reply('hang', 'hang', 'hang', 'hang');
 	await open(page, ticket.path);
 	await workingRun(db, page, fakeModel, ticket);
-	const otherAgent = await workingRun(db, page, fakeModel, other);
+	await workingRun(db, page, fakeModel, other);
 	const tabs = tabsOf(page);
 	await expect(tabs.first()).toContainText(/Run \d+\s*läuft/);
 	const halted = /Run \d+/.exec((await tabs.first().textContent()) ?? '')![0];
@@ -169,7 +172,8 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 	await expectToast(page, `${halted} angehalten. :fortsetzen setzt ihn fort.`);
 	await expect(tabs.first()).toContainText(`${halted} angehalten`);
 	await expect(page.getByText('angehalten — :fortsetzen setzt ihn fort')).toBeVisible();
-	await expect(page.getByRole('list', { name: 'Agents' })).toContainText(otherAgent);
+	// the run of the other ticket is the one agent still at work
+	await expect(appBarOf(page).getByText('arbeitet', { exact: true })).toBeVisible();
 	const phoneContext = await browser.newContext({ viewport: { width: 320, height: 640 } });
 	const phone = await phoneContext.newPage();
 	await open(phone, ticket.path);
@@ -196,7 +200,8 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 	await expectToast(page, '1 Run setzt fort.');
 	await expect(tabs).toHaveCount(3);
 	await expect(tabs.first()).toContainText(/läuft/);
-	await expect(page.getByRole('list', { name: 'Agents' })).toContainText(otherAgent);
+	// the run of the other ticket is the one agent still at work
+	await expect(appBarOf(page).getByText('arbeitet', { exact: true })).toBeVisible();
 });
 
 test('a command the Run-Akte binds with bindCommands appears in the command line there and is gone once the view is left', async ({
@@ -215,10 +220,13 @@ test('a command the Run-Akte binds with bindCommands appears in the command line
 	await page.keyboard.press(':');
 	await page.keyboard.type('run');
 	await expect(otherProfileRun).toBeVisible();
+	// the command sheet is modal: the first Escape clears the line, the second closes the sheet
+	await page.keyboard.press('Escape');
+	await page.keyboard.press('Escape');
 
 	await page
 		.getByRole('navigation', { name: 'Ansichten' })
-		.getByRole('link', { name: 'Stellwerk' })
+		.getByRole('link', { name: 'kabai studio' })
 		.click();
 	await expect(page).toHaveURL('/');
 

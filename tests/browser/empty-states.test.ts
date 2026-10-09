@@ -36,7 +36,7 @@ test('a 404 for an address that matched no route points its way out at the Stell
 	page
 }) => {
 	await page.goto('/this-view-was-never-built');
-	const way = page.getByRole('link', { name: 'Zum Stellwerk' });
+	const way = page.getByRole('link', { name: 'Zum kabai studio' });
 	await expect(way).toBeVisible();
 	await expect(way).toHaveAttribute('href', '/');
 	await expect(page.getByText('Fehler-ID')).toHaveCount(0);
@@ -76,7 +76,7 @@ test('Takt without an open question says so and points back to the Stellwerk', a
 	await open(page, '/takt');
 	// The same sentence also sits in a visually-hidden live region for screen readers (line below the queue).
 	await expect(page.locator('p.title', { hasText: 'Nichts wartet auf dich' })).toBeVisible();
-	const way = page.getByRole('link', { name: 'Zum Stellwerk' });
+	const way = page.getByRole('link', { name: 'Zum kabai studio' });
 	await way.click();
 	await expect(page).toHaveURL('/');
 });

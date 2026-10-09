@@ -88,17 +88,47 @@ export function tilt(
 	};
 }
 
+const ignore = () => {};
+
 /**
- * For onNavigate: swaps pages inside a view transition. Skipped within the same route (only parameters change),
- * with reduced motion and without browser support.
+ * For onNavigate: a change of place turns the page like a turnstile inside a view transition (keyframes in base.css).
+ * Skipped within the same route (only parameters change), with reduced motion and without browser support.
  */
 export function transitionPage(navigation: OnNavigate): Promise<void> | undefined {
 	const samePage = navigation.from?.route.id === navigation.to?.route.id;
 	if (samePage || !document.startViewTransition || motionMode() === 'reduced') return;
 	return new Promise((resolve) => {
-		document.startViewTransition(async () => {
+		const transition = document.startViewTransition(async () => {
 			resolve();
 			await navigation.complete;
 		});
+		// A newer navigation aborts this one and skips its transition: the normal case while clicking on, not an error.
+		for (const step of [transition.updateCallbackDone, transition.ready, transition.finished])
+			step.catch(ignore);
 	});
+}
+
+/** A duration token such as `--motion-moderate` in milliseconds, as the stylesheets resolve it right now. */
+export function tokenMs(name: string): number {
+	const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	return value.endsWith('ms') ? parseFloat(value) : parseFloat(value) * 1000 || 0;
+}
+
+const glides = new WeakMap<HTMLElement, number>();
+
+/**
+ * Scrolls `element` sideways to `left` with the ease-in-out of `--ease-inout` over `durationMs`; at once for 0, which
+ * is what the duration tokens become under reduced motion. Each frame scrolls instantly so CSS smooth scrolling
+ * cannot fight the easing.
+ */
+export function glideScrollLeft(element: HTMLElement, left: number, durationMs: number): void {
+	const from = element.scrollLeft;
+	const started = performance.now();
+	const frame = (now: number) => {
+		const progress = durationMs > 0 ? Math.min(1, (now - started) / durationMs) : 1;
+		element.scrollTo({ left: from + (left - from) * easing.inOut(progress), behavior: 'instant' });
+		if (progress < 1) glides.set(element, requestAnimationFrame(frame));
+	};
+	cancelAnimationFrame(glides.get(element) ?? 0);
+	frame(started);
 }

@@ -8,6 +8,9 @@
 		settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4',
 		pause: 'M9 5.5v13M15 5.5v13',
 		stop: 'M6.5 6.5h11v11h-11z',
+		back: 'M19 12H5M11 6l-6 6 6 6',
+		command: 'M6 8l4 4-4 4M12 16h6',
+		keys: 'M3.5 6.5h17v11h-17zM7.5 10.5h.01M10.5 10.5h.01M13.5 10.5h.01M16.5 10.5h.01M8 14h8',
 		// comment author kinds (Run-Akte): a head-and-shoulders mark for the human, a chip for the agent
 		user: 'M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM5 20c0-4 3-6.5 7-6.5s7 2.5 7 6.5',
 		agent: 'M9 9h6v6H9zM9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3'

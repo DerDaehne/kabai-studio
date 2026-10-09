@@ -90,8 +90,11 @@ export async function queueRun(db: DatabaseSync, page: Page, ticketId: number, m
 export function sidewaysScrollers(page: Page): Promise<string[]> {
 	return page.evaluate(() => {
 		const root = document.documentElement;
+		// Title rows (the head pivot) are sideways strips by design; they scroll inside themselves, never the page.
 		const scrolls = (element: Element) =>
-			element === root || /auto|scroll/.test(getComputedStyle(element).overflowX);
+			element === root ||
+			(!element.hasAttribute('data-title-row') &&
+				/auto|scroll/.test(getComputedStyle(element).overflowX));
 		return [root, ...document.body.querySelectorAll('*')]
 			.filter((element) => element.scrollWidth > element.clientWidth && scrolls(element))
 			.map((element) => [element.tagName.toLowerCase(), ...element.classList].join('.'));

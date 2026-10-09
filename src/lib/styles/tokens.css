@@ -215,7 +215,13 @@
 	--motion-short: var(--rekta-motion-duration-short);
 	--motion-moderate: var(--rekta-motion-duration-moderate);
 	--motion-long: var(--rekta-motion-duration-long);
+	--motion-turnstile: var(--rekta-motion-turnstile-angle);
 	--ease-base: var(--rekta-motion-easing-base);
+
+	/* Shell: the window scrolls under a sticky head and above a fixed app bar, whose height the page keeps free */
+	--gutter: clamp(var(--rekta-spacing-m), 2.5vw, var(--rekta-spacing-xl));
+	--appbar-h: 64px;
+	--head-h: calc(var(--type-nav-active) * 1.25 + var(--space-2) + var(--space-1));
 }
 
 :root[data-glass='frosted'] {

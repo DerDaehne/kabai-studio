@@ -40,7 +40,7 @@
 
 <style>
 	.toaster {
-		inset: auto var(--space-4) var(--space-4) auto;
+		inset: var(--space-4) var(--space-4) auto auto;
 		margin: 0;
 		padding: 0;
 		border: 0;
@@ -72,7 +72,7 @@
 	@starting-style {
 		.toast {
 			opacity: 0;
-			translate: 0 6px;
+			translate: 0 -6px;
 		}
 	}
 	.toast p {
@@ -95,8 +95,7 @@
 	}
 	@media (max-width: 719px) {
 		.toaster {
-			inset: auto var(--space-3)
-				calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--space-2)) var(--space-3);
+			inset: var(--space-3) var(--space-3) auto;
 		}
 		.list {
 			width: auto;

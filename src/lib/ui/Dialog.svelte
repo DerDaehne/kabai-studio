@@ -4,7 +4,8 @@
 
 	/**
 	 * A modal dialog on a native <dialog> with showModal(): top layer, inert background (focus stays in the dialog),
-	 * Escape closes, and focus returns to the trigger on close. variant="panel" = a side panel docked on the right.
+	 * Escape closes, and focus returns to the trigger on close. variant="panel" = a side panel docked on the right,
+	 * "sheet" = a sheet coming down from the top, "bar-sheet" = a sheet rising above the app bar.
 	 * Initial focus: the first focusable element — `autofocus` on a field sets it explicitly.
 	 */
 	let {
@@ -16,7 +17,7 @@
 	}: {
 		open?: boolean;
 		title: string;
-		variant?: 'dialog' | 'panel';
+		variant?: 'dialog' | 'panel' | 'sheet' | 'bar-sheet';
 		children: Snippet;
 		footer?: Snippet;
 	} = $props();
@@ -93,6 +94,29 @@
 	dialog.panel[open] {
 		translate: 0 0;
 	}
+	/* Sheets span the screen up to a reading width and stay clear of the head or rest on the app bar */
+	dialog.sheet,
+	dialog.bar-sheet {
+		width: min(760px, 100vw);
+		max-width: 100vw;
+		margin: 0 auto;
+	}
+	dialog.sheet {
+		inset: 0 0 auto;
+		border-width: 0 0 1px;
+		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+		translate: 0 -16px;
+	}
+	dialog.bar-sheet {
+		inset: auto 0 calc(var(--appbar-h) + env(safe-area-inset-bottom));
+		border-width: 1px 0 0;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+		translate: 0 16px;
+	}
+	dialog.sheet[open],
+	dialog.bar-sheet[open] {
+		translate: 0 0;
+	}
 	@starting-style {
 		dialog[open] {
 			opacity: 0;
@@ -100,6 +124,12 @@
 		}
 		dialog.panel[open] {
 			translate: 16px 0;
+		}
+		dialog.sheet[open] {
+			translate: 0 -16px;
+		}
+		dialog.bar-sheet[open] {
+			translate: 0 16px;
 		}
 	}
 	dialog::backdrop {

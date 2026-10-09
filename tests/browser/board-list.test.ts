@@ -24,7 +24,7 @@ async function press(page: Page, ...keys: string[]) {
 /** The seeded project is the first, so the leader and its first letter focus it whatever else exists. */
 async function focusSeededProject(page: Page) {
 	await press(page, ' ', PROJECT.key[0].toLowerCase());
-	await expect(page.getByRole('banner')).toContainText(`Fokus ${PROJECT.key}`);
+	await expect(page.getByRole('main')).toContainText(`Fokus ${PROJECT.key}`);
 }
 
 /** Walks the selection down from the top with j until the row with `title` is selected. */
@@ -93,6 +93,8 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 	await expect(page).toHaveURL('/board');
 	await focusSeededProject(page);
 
+	// the keys valid here head the overview of all keys
+	await press(page, '?');
 	const keyBar = page.getByRole('list', { name: 'Gültige Tasten' });
 	for (const label of [
 		'nächstes/voriges',
@@ -107,6 +109,7 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 		'Fokus auf dieses Projekt'
 	])
 		await expect(keyBar).toContainText(label);
+	await page.keyboard.press('Escape');
 	expect(await sidewaysScrollers(page)).toEqual([]);
 
 	await expect(group(page, 'Backlog')).toContainText('Start per :run');
@@ -228,9 +231,11 @@ test('a closed column refuses > with the reason and the way out, and the ticket 
 		);
 		await expect(group(page, 'Abnahme')).toContainText(ticket.ref);
 		// refused before anything happened, so there is nothing to take back
+		await press(page, '?');
 		await expect(page.getByRole('list', { name: 'Gültige Tasten' })).not.toContainText(
 			'rückgängig'
 		);
+		await page.keyboard.press('Escape');
 	} finally {
 		deleteByTitle(db, title);
 	}
@@ -348,7 +353,7 @@ test('the project focus collapses other projects into one line; * focuses the ro
 		await select(page, ticket.ref);
 
 		await press(page, '*');
-		await expect(page.getByRole('banner')).toContainText(`Fokus ${PROJECT.key}`);
+		await expect(page.getByRole('main')).toContainText(`Fokus ${PROJECT.key}`);
 		await expect(row(page, second.title)).toBeHidden();
 		await expect(page.getByText(/^\d+ weitere in \d+ anderen Projekt(en)?$/)).toBeVisible();
 

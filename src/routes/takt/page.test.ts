@@ -234,10 +234,10 @@ describe('the Takt page', () => {
 		expect(markup).toContain('1 weitere in 1 anderen Projekt');
 	});
 
-	it('with an empty queue says that nothing waits and leads to the Stellwerk', async () => {
+	it('with an empty queue says that nothing waits and leads to the start view', async () => {
 		clearQueue();
 		const markup = html((await loaded()).data);
 		expect(text(markup)).toContain('Nichts wartet auf dich');
-		expect(markup).toMatch(/<a [^>]*href="\/"[^>]*>[^<]*Zum Stellwerk/);
+		expect(markup).toMatch(/<a [^>]*href="\/"[^>]*>[^<]*Zum kabai studio/);
 	});
 });

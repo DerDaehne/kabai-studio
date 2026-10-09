@@ -113,7 +113,7 @@
 <svelte:head><title>{ticket.ref} {ticket.title} – kabai studio</title></svelte:head>
 
 <p class="crumbs">
-	<a href="/">Stellwerk</a> /
+	<a href="/">kabai studio</a> /
 	<ProjectTag code={ticket.project.code} palette={ticket.project.palette} />
 	{ticket.project.name} / {ticket.ref}
 </p>

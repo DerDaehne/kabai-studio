@@ -16,7 +16,9 @@ async function confirmCommand(page: Page, line: string, dialog: string) {
 
 const chipOf = (view: Page) =>
 	view.getByText(/^(Gestoppt · \d+ wartend|Angehalten · \d+ pausiert)$/);
-const agentsOf = (view: Page) => view.getByRole('list', { name: 'Agents' });
+// the runner's state word in the app bar
+const runnerOf = (view: Page) =>
+	view.getByRole('contentinfo', { name: 'App-Leiste' }).locator('[data-tone]');
 
 /**
  * Expects exactly one toast with `text`, then closes it, so a later toast with the same text counts on its own.
@@ -51,8 +53,7 @@ test('the stop chip appears after :stop at every width and disappears with a toa
 	await open(wide, '/');
 
 	await queueRun(db, page, ticket.id, fakeModel);
-	// Scoped to the dock: the Stellwerk's own "Aktive Runs" list names the same profile a second time.
-	await expect(agentsOf(page)).toContainText('Fake model');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 
 	await confirmCommand(page, 'stop', 'Alle Agents stoppen?');
 
@@ -87,19 +88,19 @@ test('the pause chip counts the runs :anhalten paused, and its Fortsetzen resume
 	fakeModel.reply('hang', 'hang');
 	await open(page, '/');
 	await queueRun(db, page, ticket.id, fakeModel);
-	await expect(agentsOf(page)).toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 
 	await confirmCommand(page, 'anhalten', 'Alle Agents anhalten?');
 
 	await expect(chipOf(page)).toHaveText('Angehalten · 1 pausiert');
-	await expect(agentsOf(page)).not.toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('angehalten');
 	await expectToast(page, 'Angehalten: 1 Run pausiert. :fortsetzen all setzt fort.');
 
 	await page.getByRole('button', { name: 'Fortsetzen' }).click();
 
 	await expect(chipOf(page)).toBeHidden();
 	await expectToast(page, '1 Run setzt fort. Wartende Runs starten wieder.');
-	await expect(agentsOf(page)).toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 });
 
 test(':fortsetzen all reports a halted run whose profile is gone instead of leaving it or the halt stuck', async ({
@@ -112,7 +113,7 @@ test(':fortsetzen all reports a halted run whose profile is gone instead of leav
 	fakeModel.reply('hang');
 	await open(page, '/');
 	await queueRun(db, page, ticket.id, fakeModel);
-	await expect(agentsOf(page)).toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 	const halted = runningRunOf(db, ticket.id);
 	expect((await page.request.post(`/api/runs/${halted}/pause`)).ok()).toBe(true);
 	// Simulates a profile deleted before the guard in deleteProfile existed: the run stays paused, forever waiting.
@@ -137,10 +138,10 @@ test(':fortsetzen alone names the way out and offers the halted runs; an unknown
 	fakeModel.reply('hang', 'hang');
 	await open(page, '/');
 	await queueRun(db, page, ticket.id, fakeModel);
-	await expect(agentsOf(page)).toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 	const halted = runningRunOf(db, ticket.id);
 	expect((await page.request.post(`/api/runs/${halted}/pause`)).ok()).toBe(true);
-	await expect(agentsOf(page)).not.toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('frei');
 
 	await command(page, 'fortsetzen');
 
@@ -163,5 +164,5 @@ test(':fortsetzen alone names the way out and offers the halted runs; an unknown
 
 	await command(page, `fortsetzen ${halted}`);
 	await expectToast(page, '1 Run setzt fort.');
-	await expect(agentsOf(page)).toContainText('arbeitet');
+	await expect(runnerOf(page)).toHaveText('arbeitet');
 });

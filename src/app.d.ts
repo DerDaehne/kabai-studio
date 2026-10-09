@@ -15,9 +15,7 @@ declare global {
 			user?: import('$lib/server/auth').User;
 		}
 		// interface PageData {}
-		interface PageState {
-			commandLine?: boolean;
-		}
+		// interface PageState {}
 		// interface Platform {}
 	}
 }

@@ -17,7 +17,7 @@
 		: (page.error?.message ?? 'Unbekannter Fehler.')}
 	{#if page.error?.id}(Fehler-ID: {page.error.id}){/if}
 	{#snippet action()}
-		<a class="btn" href="/">Zum Stellwerk</a>
+		<a class="btn" href="/">Zum kabai studio</a>
 		{#if onTicket}<a class="btn" href="/board">Zum Board</a>{/if}
 	{/snippet}
 </EmptyState>

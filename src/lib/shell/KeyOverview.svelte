@@ -2,16 +2,23 @@
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
 	import { focusKeys } from './focus';
-	import { anyLetter, keymap } from './keys';
+	import KeyHints from './KeyHints.svelte';
+	import { anyLetter, contextLabels, keymap, validKeys, type KeyContext } from './keys';
 	import { live } from './live.svelte';
-	import { keyboard, setSingleKeys } from './router.svelte';
+	import { boundActions, keyboard, setSingleKeys } from './router.svelte';
 
-	let { open = $bindable(false) }: { open?: boolean } = $props();
+	/** `context`: the view the overview was opened in; its bound keys come first. */
+	let { open = $bindable(false), context }: { open?: boolean; context: KeyContext } = $props();
 
 	const groups = Object.entries(Object.groupBy(Object.values(keymap), (binding) => binding.group));
+	const valid = $derived(validKeys(context, '', boundActions()).hints);
 </script>
 
-<Dialog bind:open title="Alle Tasten">
+<Dialog bind:open variant="sheet" title="Alle Tasten">
+	<section aria-label="Hier gültig">
+		<h3>hier gültig · {contextLabels[context]}</h3>
+		<KeyHints hints={valid} label="Gültige Tasten" />
+	</section>
 	<label class="single-keys">
 		<input
 			type="checkbox"

@@ -30,6 +30,10 @@ async function setTheme(page: Page, theme: Theme) {
 async function checkView(page: Page, view: string, theme: Theme, width: Width) {
 	await page.setViewportSize(width === 'phone' ? phoneViewport : { width: 1280, height: 720 });
 	await setTheme(page, theme);
+	// Switching in place starts colour transitions; axe has to judge the colours they settle on, not one in between.
+	await page.waitForFunction(() =>
+		document.getAnimations().every((animation) => !(animation instanceof CSSTransition))
+	);
 	const { violations } = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 	const found = violations.flatMap((violation) =>
 		violation.nodes.map((node) => ({ ruleId: violation.id, selector: node.target.join(' ') }))

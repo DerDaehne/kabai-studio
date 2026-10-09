@@ -12,6 +12,7 @@ import * as questions from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
 import { liveState } from '$lib/server/live';
 import { GET as events } from '../../routes/api/events/+server';
+import type { AgentChip } from './shell.svelte';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-live-'));
 process.env.STUDIO_DATA_DIR = tmp; // db() reads the directory on its first call
@@ -90,7 +91,7 @@ function startRun() {
 	return { ticketId, runId };
 }
 
-const chip = (runId: number, state: 'running' | 'waiting') => ({
+const chip = (runId: number, state: AgentChip['state']): AgentChip => ({
 	id: runId,
 	name: 'qwen',
 	location: 'lokal',
@@ -216,6 +217,17 @@ it('shows a pause with the number of paused runs and no agent at work in every o
 		await vi.waitFor(() => expect(tab.live.halt).toBeNull());
 		expect(tab.live.runs.filter((run) => run.state === 'paused')).toEqual([]);
 	}
+});
+
+it('names the runner in one word: a halt before an agent that holds, before one at work, else free', async () => {
+	const { runnerState } = await import('./live.svelte');
+	const working = chip(1, 'running');
+	const holding = chip(2, 'waiting');
+	expect(runnerState('stop', [holding])).toEqual({ word: 'not-aus', tone: 'error' });
+	expect(runnerState('pause', [holding])).toEqual({ word: 'angehalten', tone: 'warning' });
+	expect(runnerState(null, [working, holding])).toEqual({ word: 'hält', tone: 'warning' });
+	expect(runnerState(null, [working])).toEqual({ word: 'arbeitet', tone: 'info' });
+	expect(runnerState(null, [])).toEqual({ word: 'frei', tone: 'neutral' });
 });
 
 it('names the runs a stop cancels in its confirmation, and how the waiting ones go on', async () => {

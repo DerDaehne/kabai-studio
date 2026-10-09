@@ -24,7 +24,7 @@
 		`/p/${run.project.code}/t/${run.number}?run=${run.id}`;
 </script>
 
-<h1>Stellwerk</h1>
+<h1 class="visually-hidden">kabai studio</h1>
 
 {#if !projects.length}
 	<NoProject />
