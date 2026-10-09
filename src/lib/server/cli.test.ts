@@ -1,7 +1,7 @@
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	CliUsageError,
@@ -188,6 +188,20 @@ describe('runServiceCommand', () => {
 		expect(result.exitCode).toBe(1);
 		expect(result.message.split('\n')).toHaveLength(1);
 		expect(result.message).not.toContain('at '); // no stack trace frame
+	});
+
+	it('uninstall fails with a plain-text message, not a crash, when the unit file cannot be removed', () => {
+		const run: CommandRunner = () => ({ status: 0, stdout: '' });
+		runServiceCommand('install', false, 'linux', ctx(dir), run);
+		const unitDir = dirname(systemdUnitPath(ctx(dir).env));
+		chmodSync(unitDir, 0o500); // directory not writable: rmSync(force:true) still throws EACCES
+		try {
+			const result = runServiceCommand('uninstall', false, 'linux', ctx(dir), run);
+			expect(result.exitCode).toBe(1);
+			expect(result.message.split('\n')).toHaveLength(1);
+		} finally {
+			chmodSync(unitDir, 0o700); // afterEach's rmSync(dir) needs write access back
+		}
 	});
 
 	it('refuses an unsupported platform with exit code 1', () => {

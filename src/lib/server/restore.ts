@@ -51,7 +51,8 @@ function requireSourceArgument(): string {
 	const src = process.argv[2];
 	if (!src)
 		throw new Error(
-			`Aufruf: npm run restore -- <backup-datei>. Sicherungen liegen unter ${backupDir()}.`
+			`Aufruf: npm run restore -- <backup-datei> oder kabai-studio restore <backup-datei>. ` +
+				`Sicherungen liegen unter ${backupDir()}.`
 		);
 	if (!existsSync(src))
 		throw new Error(`${src} nicht gefunden. Sicherungen liegen unter ${backupDir()}.`);

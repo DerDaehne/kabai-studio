@@ -161,22 +161,30 @@ const UNAVAILABLE = {
 };
 
 /**
- * Wraps the unit/plist write so a permission or disk error turns into the same one-line
- * exit-code-1 contract as every other CLI error, not a raw Node stack trace.
+ * Runs an fs operation on the unit/plist file and turns a permission or disk error into the
+ * same one-line exit-code-1 contract as every other CLI error, not a raw Node stack trace.
  */
-function writeUnitFile(path: string, content: string): ServiceResult | undefined {
+function tryFs(path: string, verb: string, fn: () => void): ServiceResult | undefined {
 	try {
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, content, { mode: 0o600 });
+		fn();
 		return undefined;
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
 		return {
 			exitCode: 1,
-			message: `${path} lässt sich nicht schreiben (${code}). Schreibrechte und Speicherplatz prüfen.`
+			message: `${path} lässt sich nicht ${verb} (${code}). Rechte im Verzeichnis prüfen.`
 		};
 	}
 }
+
+const writeUnitFile = (path: string, content: string): ServiceResult | undefined =>
+	tryFs(path, 'schreiben', () => {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, content, { mode: 0o600 });
+	});
+
+const removeUnitFile = (path: string): ServiceResult | undefined =>
+	tryFs(path, 'entfernen', () => rmSync(path, { force: true }));
 
 function installSystemd(ctx: ServiceContext, print: boolean, run: CommandRunner): ServiceResult {
 	const unit = systemdUnit(ctx);
@@ -201,7 +209,8 @@ function uninstallSystemd(ctx: ServiceContext, run: CommandRunner): ServiceResul
 	if (!existsSync(path))
 		return { exitCode: 0, message: 'Keine systemd-User-Unit installiert — nichts zu tun.' };
 	run('systemctl', ['--user', 'disable', '--now', SYSTEMD_LABEL]);
-	rmSync(path, { force: true });
+	const removeError = removeUnitFile(path);
+	if (removeError) return removeError;
 	run('systemctl', ['--user', 'daemon-reload']);
 	return { exitCode: 0, message: `systemd-User-Unit entfernt: ${path}.` };
 }
@@ -236,7 +245,8 @@ function uninstallLaunchd(ctx: ServiceContext, run: CommandRunner): ServiceResul
 	if (!existsSync(path))
 		return { exitCode: 0, message: 'Kein launchd-Agent installiert — nichts zu tun.' };
 	run('launchctl', ['unload', path]);
-	rmSync(path, { force: true });
+	const removeError = removeUnitFile(path);
+	if (removeError) return removeError;
 	return { exitCode: 0, message: `launchd-Agent entfernt: ${path}.` };
 }
 
