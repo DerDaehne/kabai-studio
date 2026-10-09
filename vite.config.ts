@@ -18,5 +18,10 @@ export default defineConfig({
 	define: {
 		__STUDIO_VERSION__: JSON.stringify(resolveVersion()),
 		__STUDIO_BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10))
+	},
+	// Scoped to src so `vitest run` never picks up tests/browser/ (Playwright) or
+	// stray *.test.ts files under .direnv's flake-input source copies.
+	test: {
+		include: ['src/**/*.test.ts']
 	}
 });
