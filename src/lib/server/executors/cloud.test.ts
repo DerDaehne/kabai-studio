@@ -96,7 +96,7 @@ function openaiFrames(turn: Exclude<Turn, { status: number }>): string[] {
 			frame({
 				type: 'response.output_item.done',
 				output_index: 0,
-				item: { type: 'reasoning', id: 'rs_1' }
+				item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'encrypted-reasoning' }
 			})
 		);
 	if (turn.text)
@@ -349,6 +349,27 @@ describe.each([
 		expect(everything).toContain('[secret:cloud-key]');
 		expect(everything).not.toContain(KEY);
 		expect(everything).not.toContain(KEY.slice(-8));
+	});
+});
+
+describe('OpenAI responses', () => {
+	it('carries the reasoning to the next step encrypted, since the provider stores no response', async () => {
+		const { run, start } = setup({ provider: 'openai', model: 'gpt-6-sol' });
+		const cloud = await startCloud(
+			{
+				thinking: 'Comment first.',
+				call: { id: 'call-1', name: 'add_comment', args: { text: 'x' } }
+			},
+			{ text: 'Done.' }
+		);
+		const runId = start(cloud.fetch);
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(cloud.received[0].body.include).toEqual(['reasoning.encrypted_content']);
+		expect(cloud.received[1].body.input).toContainEqual(
+			expect.objectContaining({ type: 'reasoning', encrypted_content: 'encrypted-reasoning' })
+		);
 	});
 });
 
