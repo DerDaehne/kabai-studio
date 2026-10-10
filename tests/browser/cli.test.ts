@@ -47,6 +47,19 @@ async function waitUntilListening(server: Server, port: number, timeoutMs = 10_0
 	);
 }
 
+/** The port the server says it fell back to; the next free one is not always busyPort + 1. */
+async function announcedFallbackPort(server: Server, timeoutMs = 10_000): Promise<number> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const match = server.output().match(/benutze stattdessen (\d+)/);
+		if (match) return Number(match[1]);
+		if (server.proc.exitCode !== null)
+			throw new Error(`server exited (${server.proc.exitCode}):\n${server.output()}`);
+		await sleep(100);
+	}
+	throw new Error(`server announced no fallback port within ${timeoutMs}ms:\n${server.output()}`);
+}
+
 async function waitUntilExited(server: Server, timeoutMs = 10_000): Promise<number | null> {
 	if (server.proc.exitCode !== null) return server.proc.exitCode;
 	await Promise.race([
@@ -102,9 +115,11 @@ test('a busy port falls back to the next free one and names both in the output',
 		ORIGIN: undefined
 	});
 	try {
-		await waitUntilListening(server, busyPort + 1);
-		expect(server.output()).toContain(String(busyPort));
-		expect(server.output()).toContain(String(busyPort + 1));
+		const fallbackPort = await announcedFallbackPort(server);
+		expect(fallbackPort).toBeGreaterThan(busyPort);
+		await waitUntilListening(server, fallbackPort);
+		expect(server.output()).toContain(`Port ${busyPort} ist belegt`);
+		expect(server.output()).toContain(`http://127.0.0.1:${fallbackPort}`);
 	} finally {
 		await stop(server);
 		await new Promise<void>((resolve) => blocker.close(() => resolve()));
