@@ -90,6 +90,25 @@ test('every tile tone takes its Rekta fill, in light and in dark', async ({ page
 	}
 });
 
+test('the focus ring uses the Rekta focus colour, in light and in dark', async ({ page }) => {
+	await open(page, '/');
+	await page.keyboard.press('Tab'); // skip link, the first focusable element
+	for (const theme of ['light', 'dark'] as const) {
+		await setTheme(page, theme);
+		const colors = await page.evaluate(() => {
+			const probe = document.createElement('span');
+			probe.style.color = 'var(--rekta-color-focus)';
+			document.body.append(probe);
+			const rektaFocus = getComputedStyle(probe).color;
+			probe.remove();
+			return { rektaFocus, outline: getComputedStyle(document.activeElement!).outlineColor };
+		});
+		// Comparing against --rekta-color-focus directly, not --focus, so this fails if --focus
+		// ever points somewhere else again (e.g. back at the old spring-green accent).
+		expect(colors.outline, theme).toBe(colors.rektaFocus);
+	}
+});
+
 test('the in-app reduced motion setting stops the Rekta durations as well', async ({ page }) => {
 	await open(page, '/dev/ui');
 	// The minified CSS writes durations either way, "250ms" or ".25s"

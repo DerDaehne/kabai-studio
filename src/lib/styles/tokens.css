@@ -1,7 +1,8 @@
 /*
- * Design tokens of kabai studio: calm slate neutrals, one accent ("spring" green), glass layers lit by auras,
- * and the tile language of Rekta Design (rekta.css, vendored unchanged) that the views move over to.
- * Light/dark via light-dark(): follows prefers-color-scheme, <html data-theme="light|dark"> overrides it.
+ * Design tokens of kabai studio: ground, surfaces, text and focus come from Rekta Design, plus one accent
+ * ("spring" green), glass layers lit by auras, and the tile language of Rekta (rekta.css, vendored unchanged).
+ * Light/dark follows prefers-color-scheme; <html data-theme="light|dark"> overrides it, both for light-dark()
+ * here and for the matching Rekta colour overrides in rekta.css.
  * contrast.test.ts checks every text and control pair against WCAG AA in every glass strength.
  * Components use the semantic tokens only, never the scales or the --rekta-* values.
  */
@@ -41,12 +42,12 @@
 	--a-950: #003315;
 
 	/* Opaque surfaces: ground < surface < raised; sunken for tracks, code and the command line */
-	--bg: light-dark(var(--gray-25), var(--gray-950));
-	--surface: light-dark(var(--gray-0), var(--gray-900));
-	--surface-raised: light-dark(var(--gray-0), var(--gray-850));
-	--surface-sunken: light-dark(var(--gray-50), var(--gray-925));
-	--surface-hover: light-dark(var(--gray-50), var(--gray-800));
-	--text: light-dark(var(--gray-900), var(--gray-100));
+	--bg: var(--rekta-color-bg);
+	--surface: var(--rekta-color-surface);
+	--surface-raised: var(--rekta-color-bg);
+	--surface-sunken: var(--rekta-color-surface);
+	--surface-hover: var(--rekta-color-surface-2);
+	--text: var(--rekta-color-text-primary);
 
 	/* Borders only on input fields and diff tables; cards float without one */
 	--border: light-dark(var(--gray-150), var(--gray-800));
@@ -74,23 +75,27 @@
 	--on-accent: var(--gray-950);
 	--accent-text: light-dark(var(--a-800), var(--a-300));
 	--accent-tint: light-dark(var(--a-100), #17321f);
-	--focus: light-dark(var(--a-600), var(--a-400));
+	--focus: var(--rekta-color-focus);
 	--fill-sel: light-dark(rgb(62 178 104 / 0.1), rgb(96 201 129 / 0.13));
 	--fill-soft: light-dark(rgb(20 30 35 / 0.05), rgb(255 255 255 / 0.05));
 
-	/* Status: text and dot, plus a background tint. Always paired with a symbol and text, never colour alone. */
-	--status-running: light-dark(#23639f, #8dc3fb);
-	--status-running-tint: light-dark(#e5f2ff, #14283c);
-	--status-waiting: light-dark(#805800, #f1c683);
-	--status-waiting-tint: light-dark(#fceeda, #32230a);
-	--status-failed: light-dark(#7d2c46, #ed9db0);
-	--status-failed-tint: light-dark(#ffeaee, #391d24);
-	--status-succeeded: light-dark(var(--a-800), var(--a-300));
-	--status-succeeded-tint: light-dark(var(--a-50), #17321f);
-	--status-paused: light-dark(#5e4f79, #b6a9d2);
-	--status-paused-tint: light-dark(#f2edff, #292333);
+	/* Status: text and dot, plus a background tint. Always paired with a symbol and text, never colour alone.
+	   The Rekta full tones are tuned for marks and tiles, not for text on every backdrop in this app (glass,
+	   auras, the accent) — contrast.test.ts holds the word to contrast-high, the colour lives in the tint and
+	   in the matching --mark-* used alongside it. Tone: info = running, warning = waiting or paused,
+	   error = failed, success = done. */
+	--status-running: var(--rekta-color-text-contrast-high);
+	--status-running-tint: var(--rekta-color-status-info-soft);
+	--status-waiting: var(--rekta-color-text-contrast-high);
+	--status-waiting-tint: var(--rekta-color-status-warning-soft);
+	--status-failed: var(--rekta-color-text-contrast-high);
+	--status-failed-tint: var(--rekta-color-status-error-soft);
+	--status-succeeded: var(--rekta-color-text-contrast-high);
+	--status-succeeded-tint: var(--rekta-color-status-success-soft);
+	--status-paused: var(--rekta-color-text-contrast-high);
+	--status-paused-tint: var(--rekta-color-status-warning-soft);
 	--status-neutral: var(--text-muted);
-	--status-neutral-tint: light-dark(var(--gray-100), var(--gray-800));
+	--status-neutral-tint: var(--rekta-color-surface-2);
 
 	/* Project palette: text / fill / dot per slot, hues at least 45 degrees away from the accent */
 	--project-1: light-dark(#00686a, #7edddf);
@@ -133,8 +138,7 @@
 	--blur-card: 30px;
 	--blur-float: 34px;
 	--glass-sat: 1.9;
-	/* Bold glass lets more of the ground through, so secondary text needs more weight */
-	--text-muted: light-dark(#48535a, #b4bec2);
+	--text-muted: var(--rekta-color-text-contrast-high);
 
 	--font-sans: var(--rekta-typography-font-family-base);
 	--font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
@@ -238,7 +242,7 @@
 	--blur-card: 22px;
 	--blur-float: 26px;
 	--glass-sat: 1.5;
-	--text-muted: light-dark(var(--gray-600), #a3adb1);
+	--text-muted: var(--rekta-color-text-contrast-high);
 }
 
 :root[data-glass='solid'] {
@@ -249,7 +253,7 @@
 	--blur-card: 0px;
 	--blur-float: 12px;
 	--glass-sat: 1.2;
-	--text-muted: light-dark(var(--gray-600), #a3adb1);
+	--text-muted: var(--rekta-color-text-contrast-high);
 }
 
 /* The system wish for less transparency wins over any glass choice: same values as solid, declared last */
@@ -263,7 +267,7 @@
 		--blur-card: 0px;
 		--blur-float: 12px;
 		--glass-sat: 1.2;
-		--text-muted: light-dark(var(--gray-600), #a3adb1);
+		--text-muted: var(--rekta-color-text-contrast-high);
 	}
 }
 

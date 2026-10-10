@@ -38,6 +38,16 @@ const reducedTransparencyRule = css.match(
 );
 const rootDeclarations = declarationsOf(ruleBody(':root'));
 
+// The base tokens point into the vendored rekta.css, which carries dark mode on its own rule
+// (:root[data-theme='dark'], the same values as its prefers-color-scheme block) instead of light-dark().
+const rekta = readFileSync(new URL('./rekta.css', import.meta.url), 'utf8');
+const rektaLight = declarationsOf(ruleBody(':root', rekta));
+const rektaDark = new Map([
+	...rektaLight,
+	...declarationsOf(ruleBody(":root[data-theme='dark']", rekta))
+]);
+const rektaByMode: Record<Mode, Declarations> = { light: rektaLight, dark: rektaDark };
+
 const glassStrengths = {
 	bold: new Map<string, string>(),
 	frosted: declarationsOf(ruleBody(":root[data-glass='frosted']")),
@@ -116,7 +126,8 @@ function worstCase(
 function checkContrast(declarations: Declarations): PairResult[] {
 	const results: PairResult[] = [];
 	for (const mode of ['light', 'dark'] as const) {
-		const color = (token: string) => parseColor(resolve(declarations, `var(${token})`, mode));
+		const merged = new Map([...declarations, ...rektaByMode[mode]]);
+		const color = (token: string) => parseColor(resolve(merged, `var(${token})`, mode));
 		const opaque = (...tokens: string[]): Backdrops =>
 			Object.fromEntries(tokens.map((token) => [token, color(token)]));
 		const ground = color('--bg');
@@ -237,6 +248,13 @@ describe('the default, spring accent with bold glass', () => {
 			0
 		);
 	});
+
+	it('fails the check when --text-muted points at the low-contrast Rekta step', () => {
+		const lowContrastMuted = new Map([['--text-muted', 'var(--rekta-color-text-contrast-low)']]);
+		expect(
+			belowMinimum(checkContrast(withStrength('bold', lowContrastMuted))).length
+		).toBeGreaterThan(0);
+	});
 });
 
 describe('focus ring', () => {
@@ -268,14 +286,7 @@ describe('prefers-reduced-transparency', () => {
 	});
 });
 
-// The Rekta tile language takes its values from the vendored rekta.css: light on its :root rule, dark under
-// :root[data-theme='dark'] (the same values as its prefers-color-scheme block).
-const rekta = readFileSync(new URL('./rekta.css', import.meta.url), 'utf8');
-const rektaLight = declarationsOf(ruleBody(':root', rekta));
-const rektaDark = new Map([
-	...rektaLight,
-	...declarationsOf(ruleBody(":root[data-theme='dark']", rekta))
-]);
+// The Rekta tile language takes its values from the same vendored rekta.css declarations as rektaLight/rektaDark.
 const tones = ['neutral', 'info', 'success', 'warning', 'error'];
 
 function checkTileContrast(
