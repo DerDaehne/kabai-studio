@@ -109,6 +109,28 @@ test('the focus ring uses the Rekta focus colour, in light and in dark', async (
 	}
 });
 
+test('ground, surface, raised, sunken and hover stay five distinct colours, in light and in dark', async ({
+	page
+}) => {
+	await open(page, '/');
+	for (const theme of ['light', 'dark'] as const) {
+		await setTheme(page, theme);
+		const surfaces = await page.evaluate(() =>
+			['--bg', '--surface', '--surface-raised', '--surface-sunken', '--surface-hover'].map(
+				(token) => {
+					const probe = document.createElement('span');
+					probe.style.backgroundColor = `var(${token})`;
+					document.body.append(probe);
+					const color = getComputedStyle(probe).backgroundColor;
+					probe.remove();
+					return color;
+				}
+			)
+		);
+		expect(new Set(surfaces).size, `${theme}: ${surfaces.join(' | ')}`).toBe(5);
+	}
+});
+
 test('the in-app reduced motion setting stops the Rekta durations as well', async ({ page }) => {
 	await open(page, '/dev/ui');
 	// The minified CSS writes durations either way, "250ms" or ".25s"

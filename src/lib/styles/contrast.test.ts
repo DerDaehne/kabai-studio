@@ -22,8 +22,27 @@ const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
 
 function declarationsOf(body: string): Map<string, string> {
 	return new Map(
-		[...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()])
+		[...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [
+			match[1],
+			match[2].replace(/\s+/g, ' ').trim()
+		])
 	);
+}
+
+/** Splits a function's arguments at top-level commas, so a nested color-mix() stays whole. */
+function topLevelArgs(inner: string): string[] {
+	const args: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let index = 0; index < inner.length; index++) {
+		if (inner[index] === '(') depth++;
+		else if (inner[index] === ')') depth--;
+		else if (inner[index] === ',' && depth === 0) {
+			args.push(inner.slice(start, index).trim());
+			start = index + 1;
+		}
+	}
+	return [...args, inner.slice(start).trim()];
 }
 
 function ruleBody(selector: string, source = css): string {
@@ -69,9 +88,25 @@ function parseColor(value: string): Rgba {
 	throw new Error(`not a colour: ${value}`);
 }
 
+/** `color-mix(in srgb, <a> <p>%, <b>)` for two opaque colours: the share p of a, the rest of b. */
+function mixSrgb(declarations: Declarations, args: string[], mode: Mode): string {
+	const [space, first, second] = args;
+	if (space !== 'in srgb') throw new Error(`unsupported colour-mix space: ${space}`);
+	const share = first.match(/^(.*?)\s+([\d.]+)%$/);
+	const weight = share ? Number(share[2]) / 100 : 0.5;
+	const a = parseColor(resolve(declarations, share ? share[1] : first, mode));
+	const b = parseColor(resolve(declarations, second, mode));
+	const channel = (index: number) => Math.round(a[index] * weight + b[index] * (1 - weight));
+	return `rgb(${channel(0)} ${channel(1)} ${channel(2)})`;
+}
+
 function resolve(declarations: Declarations, value: string, mode: Mode): string {
-	const lightDark = value.match(/^light-dark\((.+),\s*(.+)\)$/);
-	if (lightDark) return resolve(declarations, lightDark[mode === 'light' ? 1 : 2].trim(), mode);
+	const call = value.match(/^(light-dark|color-mix)\((.*)\)$/);
+	if (call?.[1] === 'light-dark') {
+		const [light, dark] = topLevelArgs(call[2]);
+		return resolve(declarations, mode === 'light' ? light : dark, mode);
+	}
+	if (call?.[1] === 'color-mix') return mixSrgb(declarations, topLevelArgs(call[2]), mode);
 	const reference = value.match(/^var\((--[\w-]+)\)$/);
 	if (reference) {
 		const target = declarations.get(reference[1]);

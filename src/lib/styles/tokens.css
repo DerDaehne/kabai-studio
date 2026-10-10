@@ -41,17 +41,25 @@
 	--a-900: #004b22;
 	--a-950: #003315;
 
-	/* Opaque surfaces: ground < surface < raised; sunken for tracks, code and the command line */
+	/* Opaque surfaces: ground < surface < raised; sunken for tracks, code and the command line.
+	   Rekta has three opaque steps for these five roles, so raised and sunken sit halfway between two of
+	   them — every role stays its own colour in both themes (rekta-design.test.ts checks that). */
 	--bg: var(--rekta-color-bg);
 	--surface: var(--rekta-color-surface);
-	--surface-raised: var(--rekta-color-bg);
-	--surface-sunken: var(--rekta-color-surface);
+	--surface-raised: light-dark(
+		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-bg)),
+		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-surface-2))
+	);
+	--surface-sunken: light-dark(
+		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-surface-2)),
+		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-bg))
+	);
 	--surface-hover: var(--rekta-color-surface-2);
 	--text: var(--rekta-color-text-primary);
 
 	/* Borders only on input fields and diff tables; cards float without one */
 	--border: light-dark(var(--gray-150), var(--gray-800));
-	--border-control: light-dark(var(--gray-400), var(--gray-500));
+	--border-control: var(--gray-500);
 	--hairline: light-dark(rgb(20 30 35 / 0.07), rgb(255 255 255 / 0.05));
 
 	/* Depth from light instead of borders: a highlight on the top edge, soft long shadows */
@@ -81,9 +89,9 @@
 
 	/* Status: text and dot, plus a background tint. Always paired with a symbol and text, never colour alone.
 	   The Rekta full tones are tuned for marks and tiles, not for text on every backdrop in this app (glass,
-	   auras, the accent) — contrast.test.ts holds the word to contrast-high, the colour lives in the tint and
-	   in the matching --mark-* used alongside it. Tone: info = running, warning = waiting or paused,
-	   error = failed, success = done. */
+	   auras, the accent) — contrast.test.ts holds the word to contrast-high, so the state's colour lives in
+	   its tint, and the word always names the state. Tone: info = running, warning =
+	   waiting or paused, error = failed, success = done. */
 	--status-running: var(--rekta-color-text-contrast-high);
 	--status-running-tint: var(--rekta-color-status-info-soft);
 	--status-waiting: var(--rekta-color-text-contrast-high);
