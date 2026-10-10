@@ -1,8 +1,8 @@
 import { untrack } from 'svelte';
-import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
+import type { ProjectRef } from '$lib/live';
 import type { Suggestion } from './commands';
 
-export type ProjectRef = { id: number; code: string; palette: ProjectPalette; name: string };
+export type { ProjectRef };
 
 export type AgentChip = {
 	/** The run the agent works in. */

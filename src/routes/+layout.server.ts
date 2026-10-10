@@ -1,6 +1,6 @@
+import { LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import { liveState } from '$lib/server/live';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { LayoutServerLoad } from './$types';
 
 // /login and /setup run without a session and without the shell, so they get no live state.

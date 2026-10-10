@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { ticketDependency } from '$lib/live';
 	import { renderDescription } from '$lib/markdown';
 	import RunControl from '$lib/runs/RunControl.svelte';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
@@ -96,7 +97,7 @@
 		})
 	);
 
-	const reloadTicket = () => void invalidateLive(`studio:ticket:${ticket.id}`);
+	const reloadTicket = () => void invalidateLive(ticketDependency(ticket.id));
 
 	// Agent changes (comment, task, column, run) reach this tab's one live connection; a matching event reloads the ticket.
 	$effect(() =>

@@ -1,22 +1,18 @@
 import { afterNavigate, beforeNavigate, invalidate } from '$app/navigation';
 import { navigating as currentNavigation } from '$app/state';
+import {
+	LIVE_DEPENDENCY,
+	type HaltKind,
+	type LiveEvent,
+	type LiveRun,
+	type LiveState
+} from '$lib/live';
 import { connectLiveUpdates, type LiveUpdatesHandle } from '$lib/live-updates';
 import type { Tone } from '$lib/ui/Badge.svelte';
 import type { Tone as RektaTone } from '$lib/ui/rekta/tone';
 import { onMount } from 'svelte';
 import { on } from 'svelte/events';
-import { announceSignal, shell, type AgentChip, type ProjectRef } from './shell.svelte';
-
-export type LiveRun = {
-	id: number;
-	profile: string;
-	location: 'lokal' | 'online';
-	project: ProjectRef;
-	/** e.g. `STU-12` */
-	ticket: string;
-	/** `waiting`: holds for the human, on an approval or an open question; `paused`: the human halted it, `:fortsetzen` resumes it. */
-	state: 'queued' | 'running' | 'waiting' | 'paused';
-};
+import { announceSignal, shell, type AgentChip } from './shell.svelte';
 
 /** How a run's state reads wherever a list of runs names it: the badge tone and the German word, shared so the
  *  same run never reads differently in two places (the app bar, the board, the Stellwerk). */
@@ -26,25 +22,6 @@ export const RUN_STATE_LABELS: Record<LiveRun['state'], { tone: Tone; label: str
 	waiting: { tone: 'waiting', label: 'hält' },
 	paused: { tone: 'paused', label: 'angehalten' }
 };
-
-/** `stop` cancelled the active runs, `pause` paused them; either holds the queue until `:fortsetzen all`. */
-export type HaltKind = 'stop' | 'pause';
-
-export type LiveState = {
-	projects: ProjectRef[];
-	runs: LiveRun[];
-	openQuestions: number;
-	/** While set, no run starts until the human resumes all (`:fortsetzen all`). */
-	halt: HaltKind | null;
-	/** Running or waiting for an approval, in every project: what the kill switch would cancel. */
-	activeRuns: number;
-};
-
-/** An event as the event route sends it; one that concerns every project, such as the kill switch, has no projectId. */
-export type LiveEvent = { type: string; projectId?: number; [key: string]: unknown };
-
-/** The root layout load depends on this; invalidating it loads the live state again. */
-export const LIVE_DEPENDENCY = 'studio:live';
 
 let navigating = false;
 const pendingInvalidations = new Set<string>();
@@ -143,15 +120,6 @@ export const agentChips = (runs: LiveRun[]): AgentChip[] =>
 export const openQuestionsLabel = (count: number) =>
 	`${count} offene ${count === 1 ? 'Frage' : 'Fragen'}`;
 
-const countOf = (runs: LiveRun[], state: LiveRun['state']) =>
-	runs.filter((run) => run.state === state).length;
-
-/** The halt banner's text while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
-export const haltLabel = (halt: HaltKind, runs: LiveRun[]) =>
-	halt === 'stop'
-		? `Gestoppt · ${countOf(runs, 'queued')} wartend`
-		: `Angehalten · ${countOf(runs, 'paused')} pausiert`;
-
 /** The runner in the one word the app bar shows: a halt first, then an agent holding for the human, then one at work. */
 export function runnerState(
 	halt: HaltKind | null,
@@ -163,22 +131,6 @@ export function runnerState(
 	if (agents.length) return { word: 'arbeitet', tone: 'info' };
 	return { word: 'frei', tone: 'neutral' };
 }
-
-const QUEUE_WAITS = 'Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).';
-
-function activeRunsText(count: number, what: string) {
-	if (count === 0) return 'Gerade läuft kein Run.';
-	if (count === 1) return `1 Run läuft und wird sofort ${what}.`;
-	return `${count} Runs laufen und werden sofort ${what}.`;
-}
-
-/** The confirmation before `:stop`: what gets cancelled and how the queue goes on. */
-export const stopQuestion = (activeRuns: number) =>
-	`${activeRunsText(activeRuns, 'abgebrochen')} ${QUEUE_WAITS}`;
-
-/** The confirmation before a global `:anhalten`: what gets paused, what is lost and how everything goes on. */
-export const pauseQuestion = (activeRuns: number) =>
-	`${activeRunsText(activeRuns, 'angehalten')}${activeRuns ? ' Der angefangene Schritt wird verworfen, :fortsetzen all setzt die Arbeit fort.' : ''} ${QUEUE_WAITS}`;
 
 /** Lets a view follow the events of all projects over the tab's one connection; returns the unsubscribe function. */
 export function onLiveEvent(listener: (event: LiveEvent) => void): () => void {

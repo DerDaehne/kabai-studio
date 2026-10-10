@@ -7,7 +7,7 @@ import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { createProfile, createRun } from '$lib/server/domain/runs';
 import { findTicketId, type TicketDetail } from '$lib/server/ticket-view';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
+import { LIVE_DEPENDENCY } from '$lib/live';
 import type { RunTrace } from '$lib/trace/trace';
 import { actions, load } from './+page.server';
 

@@ -1,7 +1,7 @@
 // Renders the views a fresh instance opens on: no tickets yet, the rest comes from the root layout's live state.
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import type { LiveState } from '$lib/shell/live.svelte';
+import type { LiveState } from '$lib/live';
 import Board from './board/+page.svelte';
 import Stellwerk from './+page.svelte';
 

@@ -1,13 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { BOARD_DEPENDENCY, LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketMoves, type TicketMove } from '$lib/server/ticket-view';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import { nextMove } from '$lib/ticket-move';
-import { BOARD_DEPENDENCY, type BoardTicket, type ColumnKind, type StepTarget } from './list';
+import { type BoardTicket, type ColumnKind, type StepTarget } from './list';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };

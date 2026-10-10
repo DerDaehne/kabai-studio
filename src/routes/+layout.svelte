@@ -14,7 +14,7 @@
 		type Suggestion
 	} from '$lib/shell/commands';
 	import { projectForLetter } from '$lib/shell/focus';
-	import { resumeAll, resumeRun } from '$lib/shell/halt';
+	import { haltLabel, resumeAll, resumeRun } from '$lib/shell/halt';
 	import HeadPivot from '$lib/shell/HeadPivot.svelte';
 	import KeyHints from '$lib/shell/KeyHints.svelte';
 	import { keyContextOf, validKeys } from '$lib/shell/keys';
@@ -22,7 +22,6 @@
 	import {
 		connectLive,
 		gateLiveInvalidation,
-		haltLabel,
 		invalidateLive,
 		live,
 		showLive

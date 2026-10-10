@@ -1,5 +1,6 @@
+import type { HaltKind, LiveRun } from '$lib/live';
 import { toast } from '$lib/ui/toast.svelte';
-import { invalidateLive, type HaltKind } from './live.svelte';
+import { invalidateLive } from './live.svelte';
 
 /** How the server refuses a run it cannot pause or resume. */
 type Refusal = { code: string; message: string; hint: string };
@@ -15,6 +16,31 @@ const RELEASED_TEXT: Record<HaltKind, string> = {
 	stop: ' Not-Aus gelöst: wartende Runs starten wieder.',
 	pause: ' Wartende Runs starten wieder.'
 };
+
+const countOf = (allRuns: LiveRun[], state: LiveRun['state']) =>
+	allRuns.filter((run) => run.state === state).length;
+
+/** The halt banner's text while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
+export const haltLabel = (halt: HaltKind, allRuns: LiveRun[]) =>
+	halt === 'stop'
+		? `Gestoppt · ${countOf(allRuns, 'queued')} wartend`
+		: `Angehalten · ${countOf(allRuns, 'paused')} pausiert`;
+
+const QUEUE_WAITS = 'Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).';
+
+function activeRunsText(count: number, what: string) {
+	if (count === 0) return 'Gerade läuft kein Run.';
+	if (count === 1) return `1 Run läuft und wird sofort ${what}.`;
+	return `${count} Runs laufen und werden sofort ${what}.`;
+}
+
+/** The confirmation before `:stop`: what gets cancelled and how the queue goes on. */
+export const stopQuestion = (activeRuns: number) =>
+	`${activeRunsText(activeRuns, 'abgebrochen')} ${QUEUE_WAITS}`;
+
+/** The confirmation before a global `:anhalten`: what gets paused, what is lost and how everything goes on. */
+export const pauseQuestion = (activeRuns: number) =>
+	`${activeRunsText(activeRuns, 'angehalten')}${activeRuns ? ' Der angefangene Schritt wird verworfen, :fortsetzen all setzt die Arbeit fort.' : ''} ${QUEUE_WAITS}`;
 
 /** Calls a halt route; on a refusal or a broken connection a toast names the way out and nothing comes back. */
 async function call<T>(method: 'POST' | 'DELETE', path: string, failure: string) {

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
 	import { globalHaltCommands } from './commands';
-	import { pauseAll, resumeAll, stopAll } from './halt';
-	import { live, pauseQuestion, stopQuestion } from './live.svelte';
+	import { pauseAll, pauseQuestion, resumeAll, stopAll, stopQuestion } from './halt';
+	import { live } from './live.svelte';
 	import { readKey } from './router.svelte';
 	import { bindCommands } from './shell.svelte';
 	import Button from '$lib/ui/Button.svelte';

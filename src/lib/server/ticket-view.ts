@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { ProjectRef } from '$lib/live';
 import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
-import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';

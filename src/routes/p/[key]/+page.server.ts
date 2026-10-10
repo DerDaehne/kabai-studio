@@ -1,10 +1,10 @@
 import { error, redirect } from '@sveltejs/kit';
+import type { ProjectRef } from '$lib/live';
 import { db } from '$lib/server/db';
 import { domainFail } from '$lib/server/domain-failure';
 import { createTicket } from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { projectRef } from '$lib/server/live';
-import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };

@@ -8,7 +8,7 @@ import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { requestHuman } from '$lib/server/domain/questions';
 import { subscribe, type StudioEvent } from '$lib/server/events';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
+import { LIVE_DEPENDENCY } from '$lib/live';
 import { actions, load, type ProjectRow } from './+page.server';
 import Page from './+page.svelte';
 

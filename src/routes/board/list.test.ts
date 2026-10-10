@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LiveRun } from '$lib/shell/live.svelte';
+import type { LiveRun } from '$lib/live';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import {
 	edgeIndex,

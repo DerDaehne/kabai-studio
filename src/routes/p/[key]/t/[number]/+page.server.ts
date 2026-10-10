@@ -1,4 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
+import { LIVE_DEPENDENCY, ticketDependency } from '$lib/live';
 import { domainFail } from '$lib/server/domain-failure';
 import * as board from '$lib/server/domain/board';
 import { tx, type Actor } from '$lib/server/domain/core';
@@ -13,14 +14,10 @@ import {
 	runTrace,
 	ticketDetail
 } from '$lib/server/ticket-view';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { Actions, PageServerLoad } from './$types';
 
 // Studio has one owner account; every action in the Run-Akte acts for the human (see CLAUDE.md "Architecture guardrails").
 const HUMAN: Actor = { kind: 'user' };
-
-/** The dependency the ticket page's load registers, so a matching live event can `invalidate()` it by id alone. */
-const ticketDependency = (id: number) => `studio:ticket:${id}`;
 
 function requireTicketId(params: { key: string; number: string }): number {
 	const number = Number(params.number);

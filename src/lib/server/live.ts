@@ -1,6 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { LiveRun, LiveState } from '$lib/shell/live.svelte';
-import type { ProjectRef } from '$lib/shell/shell.svelte';
+import type { LiveRun, LiveState, ProjectRef } from '$lib/live';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 import { haltKind } from './domain/halt';
 import { awaitsResume, type RunState } from './domain/runs';

@@ -1,11 +1,10 @@
 import { redirect } from '@sveltejs/kit';
+import { LIVE_DEPENDENCY, type ProjectRef } from '$lib/live';
 import { db } from '$lib/server/db';
 import { domainFail } from '$lib/server/domain-failure';
 import { createProject } from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { OPEN_QUESTION, projectRef } from '$lib/server/live';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
-import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };

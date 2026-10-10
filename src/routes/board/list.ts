@@ -1,9 +1,9 @@
-import { RUN_STATE_LABELS, type LiveRun } from '$lib/shell/live.svelte';
+import type { LiveRun } from '$lib/live';
+import { RUN_STATE_LABELS } from '$lib/shell/live.svelte';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { Tone } from '$lib/ui/Badge.svelte';
 
-/** The board load depends on this; the view invalidates it on every live event that changes what the board shows. */
-export const BOARD_DEPENDENCY = 'studio:board';
+export { BOARD_DEPENDENCY } from '$lib/live';
 
 export type ColumnKind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
 export type BoardColumn = { id: number; name: string; kind: ColumnKind; position: number };

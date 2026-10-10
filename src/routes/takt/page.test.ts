@@ -12,7 +12,7 @@ import {
 	type QuestionOption
 } from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
+import { LIVE_DEPENDENCY } from '$lib/live';
 import { shell } from '$lib/shell/shell.svelte';
 import { actions, load } from './+page.server';
 import Page from './+page.svelte';

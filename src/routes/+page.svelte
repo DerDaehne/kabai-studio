@@ -1,6 +1,7 @@
 <script lang="ts">
 	import NoProject from '$lib/components/NoProject.svelte';
-	import { openQuestionsLabel, RUN_STATE_LABELS, type LiveRun } from '$lib/shell/live.svelte';
+	import type { LiveRun } from '$lib/live';
+	import { openQuestionsLabel, RUN_STATE_LABELS } from '$lib/shell/live.svelte';
 	import { RUN_STATES as FINISHED_STATES } from '$lib/trace/RunTrace.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';

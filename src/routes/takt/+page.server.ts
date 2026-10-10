@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import type { Actor } from '$lib/server/domain/core';
 import { attempt } from '$lib/server/domain-failure';
@@ -9,7 +10,6 @@ import {
 	type Answer
 } from '$lib/server/domain/questions';
 import { OPEN_QUESTION, projectRef } from '$lib/server/live';
-import { LIVE_DEPENDENCY } from '$lib/shell/live.svelte';
 import type { QueuedQuestion } from './queue';
 import type { Actions, PageServerLoad } from './$types';
 

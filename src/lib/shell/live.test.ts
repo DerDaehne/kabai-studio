@@ -12,6 +12,7 @@ import * as questions from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
 import { liveState } from '$lib/server/live';
 import { GET as events } from '../../routes/api/events/+server';
+import { haltLabel } from './halt';
 import type { AgentChip } from './shell.svelte';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-live-'));
@@ -192,7 +193,7 @@ it('shows the stop with the number of waiting runs in every open tab and drops i
 	haltRuns(db(), user); // no run is active, so only the halt event itself can reach the tabs
 	for (const tab of open) {
 		await vi.waitFor(() => expect(tab.live.halt).toBe('stop'));
-		expect(tab.haltLabel('stop', tab.live.runs)).toBe(`Gestoppt · ${queued} wartend`);
+		expect(haltLabel('stop', tab.live.runs)).toBe(`Gestoppt · ${queued} wartend`);
 	}
 
 	releaseHalt(db(), user);
@@ -208,7 +209,7 @@ it('shows a pause with the number of paused runs and no agent at work in every o
 	pauseRuns(db(), user);
 	for (const tab of open) {
 		await vi.waitFor(() => expect(tab.live.halt).toBe('pause'));
-		expect(tab.haltLabel('pause', tab.live.runs)).toBe('Angehalten · 1 pausiert');
+		expect(haltLabel('pause', tab.live.runs)).toBe('Angehalten · 1 pausiert');
 		expect(tab.shell.agents).toEqual([]);
 	}
 
@@ -231,7 +232,7 @@ it('names the runner in one word: a halt before an agent that holds, before one 
 });
 
 it('names the runs a stop cancels in its confirmation, and how the waiting ones go on', async () => {
-	const { stopQuestion } = await import('./live.svelte');
+	const { stopQuestion } = await import('./halt');
 	expect(stopQuestion(0)).toBe(
 		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
 	);
@@ -244,7 +245,7 @@ it('names the runs a stop cancels in its confirmation, and how the waiting ones 
 });
 
 it('names the runs a pause halts in its confirmation, what they lose and how everything goes on', async () => {
-	const { pauseQuestion } = await import('./live.svelte');
+	const { pauseQuestion } = await import('./halt');
 	expect(pauseQuestion(0)).toBe(
 		'Gerade läuft kein Run. Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).'
 	);
