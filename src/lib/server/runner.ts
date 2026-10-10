@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
+import { isLocalProvider } from '../agents/profile-defaults';
 import { RECOVERY } from './agents/loop-guard';
 import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
@@ -422,7 +423,9 @@ class Runner {
 	private async execute(run: RunContext) {
 		const controls = { cancel: new AbortController(), park: new AbortController() };
 		this.active.set(run.id, controls);
-		const endColdStart = watchColdStart(this.db, run, controls.cancel, this.coldStart);
+		const endColdStart = isLocalProvider(run.profile.provider)
+			? watchColdStart(this.db, run, controls.cancel, this.coldStart)
+			: () => {}; // a cloud model has no "loading" phase; its own first-chunk timeout covers a silent provider
 		try {
 			const io = ioFor(this.db, run, controls, endColdStart);
 			const result = (await executorFor(this.executors, run.profile).execute(run, io)) ?? {};

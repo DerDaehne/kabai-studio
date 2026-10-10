@@ -387,6 +387,10 @@ export const COLD_START_LIMITS: ColdStartLimits = { hintAfterMs: 30_000, failAft
 /** Once a model has started to answer, a stream that stays silent this long has hung: the run fails with `provider_inactive`. */
 export const INACTIVITY_LIMIT_MS = 300_000;
 
+// A cloud model's first chunk never needs the long grace period a local model's cold start does: a cloud provider
+// is either up and answers in seconds, or it is not, so this stays well under INACTIVITY_LIMIT_MS.
+export const FIRST_CHUNK_TIMEOUT_MS = 120_000;
+
 export type CloudProvider = 'openai' | 'anthropic';
 export type Effort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 

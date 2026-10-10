@@ -1,5 +1,4 @@
 import {
-	APICallError,
 	streamText,
 	type LanguageModel,
 	type ModelMessage,
@@ -9,7 +8,12 @@ import {
 	type ToolSet
 } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
-import { INACTIVITY_LIMIT_MS, reasoningBudget } from '../../agents/model-catalog';
+import {
+	FIRST_CHUNK_TIMEOUT_MS,
+	INACTIVITY_LIMIT_MS,
+	reasoningBudget
+} from '../../agents/model-catalog';
+import { isLocalProvider } from '../../agents/profile-defaults';
 import {
 	detectStagnation,
 	RECOVERY,
@@ -30,11 +34,7 @@ import { DomainError } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
 import { freshRunsInChain, type Intervention } from '../domain/runs';
 import { mcpEndpoint, tasksOf } from '../mcp';
-import {
-	classifyProviderFailure,
-	providerErrorHint,
-	type ProviderErrorCode
-} from '../provider-error';
+import { inactiveProviderFailure, providerFailure } from '../provider-error';
 import type {
 	Executor,
 	ExecutorIo,
@@ -51,6 +51,7 @@ export type BuiltinOptions = {
 	/** The HTTP client for the model server. */
 	fetch?: typeof globalThis.fetch;
 	inactivityMs?: number;
+	firstChunkMs?: number;
 };
 type Part = TextStreamPart<ToolSet>;
 type OpenStep = {
@@ -59,6 +60,8 @@ type OpenStep = {
 	reasoning: string;
 	text: string;
 	textsRecorded: boolean;
+	/** Whether the step has produced any output yet, to tell a cloud model that never started from one that stalled. */
+	started: boolean;
 	meters: Partial<Record<Phase['name'], TokenMeter>>;
 };
 /** Tokens of one phase within a step, counted from its first delta. */
@@ -75,11 +78,16 @@ const READING_TOOLS = new Set(['get_ticket', 'list_workable', 'notes_search', 'n
 /** Works a run in a tool loop on its profile's model (an OpenAI-compatible server, OpenAI or Anthropic), with the studio MCP tools of the run. */
 export function builtinExecutor(
 	db: DatabaseSync,
-	{ fetch = globalThis.fetch, inactivityMs = INACTIVITY_LIMIT_MS }: BuiltinOptions = {}
+	{
+		fetch = globalThis.fetch,
+		inactivityMs = INACTIVITY_LIMIT_MS,
+		firstChunkMs = FIRST_CHUNK_TIMEOUT_MS
+	}: BuiltinOptions = {}
 ): Executor {
 	const endpoint = mcpEndpoint(db);
 	return {
 		async execute(run, io) {
+			const cloud = !isLocalProvider(run.profile.provider);
 			const prompt = promptOf(db, run);
 			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
 			const model = modelFor(
@@ -89,16 +97,17 @@ export function builtinExecutor(
 			);
 			const studio = await studioTools(endpoint, run.token, io.signal);
 			try {
-				io.emit({
-					type: 'log',
-					payload: {
-						kind: 'prompt',
-						estimate: prompt.estimate,
-						toolTokens: studio.toolTokens,
-						blocks: prompt.blocks
-					}
+				logPrompt(io, prompt, studio.toolTokens);
+				const log = await runSteps({
+					model,
+					prompt,
+					tools: studio.tools,
+					run,
+					io,
+					inactivityMs,
+					firstChunkMs,
+					cloud
 				});
-				const log = await runSteps({ model, prompt, tools: studio.tools, run, io, inactivityMs });
 				return endOfRun(db, run, io, log);
 			} finally {
 				await studio.close();
@@ -118,6 +127,13 @@ function promptOf(db: DatabaseSync, run: RunContext): RunPrompt {
 	return { ...withHistory, history };
 }
 
+function logPrompt(io: ExecutorIo, prompt: RunPrompt, toolTokens: number) {
+	io.emit({
+		type: 'log',
+		payload: { kind: 'prompt', estimate: prompt.estimate, toolTokens, blocks: prompt.blocks }
+	});
+}
+
 type RunPrompt = AssembledPrompt & { history: ModelMessage[] };
 type Loop = {
 	model: LanguageModel;
@@ -126,6 +142,9 @@ type Loop = {
 	run: RunContext;
 	io: ExecutorIo;
 	inactivityMs: number;
+	firstChunkMs: number;
+	/** Whether the profile's provider is a cloud one; local models get the runner's own cold-start watch instead. */
+	cloud: boolean;
 };
 
 /**
@@ -134,7 +153,7 @@ type Loop = {
  */
 async function runSteps(loop: Loop): Promise<StepLog> {
 	const { prompt, run, io } = loop;
-	const log = new StepLog(io, loop.inactivityMs, run.profile);
+	const log = new StepLog(io, loop.inactivityMs, loop.firstChunkMs, run.profile);
 	const limits = { reasoningBudget: reasoningBudget(run.profile) };
 	let hintedAt = 0;
 	const stall = () => detectStagnation(log.records.slice(hintedAt), limits);
@@ -159,7 +178,7 @@ async function runSteps(loop: Loop): Promise<StepLog> {
 
 /** One attempt: the AI SDK's tool loop until a step ends without a tool call or a stop condition holds. */
 async function streamSteps(
-	{ model, prompt, tools, run, io, inactivityMs }: Loop,
+	{ model, prompt, tools, run, io, inactivityMs, firstChunkMs, cloud }: Loop,
 	log: StepLog,
 	messages: ModelMessage[],
 	stuck: () => boolean
@@ -171,10 +190,11 @@ async function streamSteps(
 		tools,
 		...requestSettings(run.profile),
 		abortSignal: io.signal,
-		// ponytail: chunkMs starts with a step's first output, so loading the model stays the cold start watch's job; a later
-		// step that never starts to answer is not caught (add firstChunkMs from the second step on), and the timer keeps running
-		// while a tool executes, so a tool slower than the limit ends as provider_inactive (pause it between tool call and result)
-		timeout: { chunkMs: inactivityMs },
+		// chunkMs starts with a step's first output, so loading a local model stays the runner's cold-start watch's
+		// job instead; a cloud step that never starts to answer is caught by firstChunkMs, which resets every step.
+		// The timer keeps running while a tool executes, so a tool slower than the limit also ends as provider_inactive
+		// (pause it between tool call and result if that becomes a problem)
+		timeout: { chunkMs: inactivityMs, ...(cloud ? { firstChunkMs } : {}) },
 		stopWhen: [() => log.records.length >= maxSteps(run), askedHuman, () => io.park.aborted, stuck],
 		onChunk: ({ chunk }) => log.countChunk(chunk),
 		onStepFinish: (step) => log.recordStep(step),
@@ -286,17 +306,26 @@ class StepLog {
 	stall?: Stall;
 	readonly #io: ExecutorIo;
 	readonly #inactivityMs: number;
+	readonly #firstChunkMs: number;
 	readonly #withKey: boolean;
+	readonly #cloud: boolean;
 	readonly #costOf: ReturnType<typeof stepCostFor>;
 	#step: OpenStep = openStep(1);
 	#stepsStarted = 0;
 	#reasoningDeltas = 0;
 	#lastPhaseAt = -Infinity;
 
-	constructor(io: ExecutorIo, inactivityMs: number, profile: RunContext['profile']) {
+	constructor(
+		io: ExecutorIo,
+		inactivityMs: number,
+		firstChunkMs: number,
+		profile: RunContext['profile']
+	) {
 		this.#io = io;
 		this.#inactivityMs = inactivityMs;
+		this.#firstChunkMs = firstChunkMs;
 		this.#withKey = profile.api_key_ref !== null;
+		this.#cloud = !isLocalProvider(profile.provider);
 		this.#costOf = stepCostFor(profile);
 	}
 
@@ -361,15 +390,24 @@ class StepLog {
 			case 'finish-step':
 				return this.#finishStep(part);
 			case 'abort':
-				if (this.#io.signal.aborted) return; // cancelled; otherwise only the inactivity timeout aborts the stream
-				throw inactiveProvider(this.#inactivityMs);
+				if (this.#io.signal.aborted) return; // cancelled; otherwise only a timeout aborts the stream
+				throw this.#inactiveFailure();
 			case 'error':
-				throw providerError(part.error, this.#withKey);
+				throw providerFailure(part.error, { withKey: this.#withKey, cloud: this.#cloud });
 		}
+	}
+
+	#inactiveFailure() {
+		const neverStarted = !this.#step.started;
+		return inactiveProviderFailure(neverStarted ? this.#firstChunkMs : this.#inactivityMs, {
+			cloud: this.#cloud,
+			neverStarted
+		});
 	}
 
 	/** Throttled to one update a second; the first one comes at once, because it ends the runner's cold start watch. */
 	#showPhase(name: Phase['name'], text: string) {
+		this.#step.started = true;
 		const now = Date.now();
 		// ponytail: one delta counts as one token, as llama.cpp, Ollama and LM Studio stream them; a server that
 		// sends several tokens per delta shows too few (then count with the step's usage or a tokenizer)
@@ -411,6 +449,7 @@ class StepLog {
 	}
 
 	#recordToolCall(part: Extract<Part, { type: 'tool-call' }>) {
+		this.#step.started = true;
 		this.#recordTexts();
 		const { number, text, reasoning } = this.#step;
 		const call = { tool: part.toolName, args: part.input };
@@ -489,6 +528,7 @@ const openStep = (number: number): OpenStep => ({
 	reasoning: '',
 	text: '',
 	textsRecorded: false,
+	started: false,
 	meters: {}
 });
 
@@ -514,36 +554,3 @@ function textOf(output: unknown): string {
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function providerError(error: unknown, withKey: boolean) {
-	if (APICallError.isInstance(error)) {
-		const code = classifyProviderFailure(error.statusCode);
-		if (code)
-			return new DomainError(
-				code,
-				mask(classifiedMessage(code, error)),
-				providerErrorHint(code, { withKey })
-			);
-	}
-	return new DomainError(
-		'provider_error',
-		mask(`Der Modell-Server hat mit einem Fehler geantwortet: ${errorText(error)}`),
-		'Prüfe im Agent-Profil base_url, model und api_key_ref und im Log des Modell-Servers die Ursache, dann starte einen neuen Run.'
-	);
-}
-
-function classifiedMessage(code: ProviderErrorCode, error: APICallError): string {
-	if (code === 'provider_unreachable')
-		return `Endpunkt ${new URL(error.url).origin} nicht erreichbar: ${errorText(error)}.`;
-	if (code === 'model_unknown')
-		return `Der Modell-Server kennt das Modell nicht: ${errorText(error)}`;
-	return `Der Modell-Server verlangt oder verweigert den API-Key (HTTP ${error.statusCode}).`;
-}
-
-function inactiveProvider(inactivityMs: number) {
-	return new DomainError(
-		'provider_inactive',
-		`Das Modell hat ${Math.round(inactivityMs / 1000)} s lang nichts mehr gesendet, nachdem es zu antworten begonnen hatte.`,
-		'Prüfe im Log des Modell-Servers, ob er hängt oder abgestürzt ist, dann starte einen neuen Run.'
-	);
-}

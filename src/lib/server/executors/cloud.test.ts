@@ -10,7 +10,7 @@ import { subscribe, type StudioEvent } from '../events';
 import { startRunner } from '../runner';
 import { setSecret } from '../secrets';
 import { eventStream } from '../sse';
-import { builtinExecutor } from './builtin';
+import { builtinExecutor, type BuiltinOptions } from './builtin';
 
 const user: Actor = { kind: 'user' };
 const KEY = 'sk-cloud-provider-key-4711';
@@ -23,7 +23,7 @@ type Turn =
 			call?: { id: string; name: string; args: object };
 			usage?: Usage;
 	  }
-	| { status: number; body: object };
+	| { status: number; body: object; headers?: Record<string, string> };
 type Received = { path: string; headers: IncomingHttpHeaders; body: Record<string, unknown> };
 
 const frame = (data: object) =>
@@ -160,10 +160,29 @@ function answer(response: ServerResponse, path: string, turn: Turn | undefined) 
 	if (!turn) return response.writeHead(500).end('{"error":{"message":"no turn left"}}');
 	if ('status' in turn)
 		return response
-			.writeHead(turn.status, { 'content-type': 'application/json' })
+			.writeHead(turn.status, { 'content-type': 'application/json', ...turn.headers })
 			.end(JSON.stringify(turn.body));
 	const frames = path.endsWith('/messages') ? anthropicFrames(turn) : openaiFrames(turn);
 	response.writeHead(200, { 'content-type': 'text/event-stream' }).end(frames.join(''));
+}
+
+/** The real HTTP client, with the providers' public hosts pointed at this local server instead. */
+function redirectToLocalServer(server: ReturnType<typeof createServer>): typeof globalThis.fetch {
+	const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	return (input, init) =>
+		globalThis.fetch(
+			String(input).replace(/^https:\/\/api\.(anthropic|openai)\.com/, origin),
+			init
+		);
+}
+
+async function listening(server: ReturnType<typeof createServer>) {
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	cleanups.push(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	return redirectToLocalServer(server);
 }
 
 /** A local server speaking the Anthropic Messages and OpenAI Responses wire formats; each request takes the next turn. */
@@ -177,19 +196,69 @@ async function startCloud(...turns: Turn[]) {
 			answer(response, request.url!, turns.shift());
 		});
 	});
-	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-	const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-	cleanups.push(() => {
-		server.closeAllConnections();
-		server.close();
-	});
-	// the real HTTP client, with the providers' public hosts pointed at the local server
-	const fetch: typeof globalThis.fetch = (input, init) =>
-		globalThis.fetch(
-			String(input).replace(/^https:\/\/api\.(anthropic|openai)\.com/, origin),
-			init
-		);
+	const fetch = await listening(server);
 	return { fetch, received };
+}
+
+/** A provider that always answers the same status and body, however many times the SDK's own retries call it. */
+async function startFailingCloud(
+	status: number,
+	body: object,
+	headers: Record<string, string> = {}
+) {
+	const server = createServer((_request, response) => {
+		response
+			.writeHead(status, { 'content-type': 'application/json', ...headers })
+			.end(JSON.stringify(body));
+	});
+	return listening(server);
+}
+
+/**
+ * A provider that opens the stream and then never sends a content chunk, like a real one stalled mid-request.
+ * `firstChunkMs` only starts timing once a stream exists, so unlike the local cold-start watch this needs the
+ * response to actually open, not just a connection nobody answers on.
+ */
+async function startSilentCloud() {
+	return listening(
+		createServer((request, response) => {
+			response.writeHead(200, { 'content-type': 'text/event-stream' });
+			// each SDK's doStream reads ahead for its own opening event before it resolves at all, so a response
+			// with truly no bytes never even reaches the point where firstChunkMs starts timing; the initial framing
+			// itself carries no content chunk, so the timeout still applies from here on
+			if (request.url!.endsWith('/messages'))
+				response.write(
+					frame({
+						type: 'message_start',
+						message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'm', content: [] }
+					})
+				);
+			else {
+				response.write(
+					frame({ type: 'response.created', response: { id: 'resp_1', created_at: 0, model: 'm' } })
+				);
+				response.write(
+					frame({
+						type: 'response.in_progress',
+						response: { id: 'resp_1', created_at: 0, model: 'm' }
+					})
+				);
+			}
+		})
+	);
+}
+
+/** A provider that accepts the connection and then drops it before answering. */
+async function startDroppingCloud() {
+	return listening(createServer((request) => request.socket.destroy()));
+}
+
+/** A port nobody listens on, for the one failure a redirected real fetch can still reach: the connection is refused. */
+async function closedCloudPort() {
+	const server = createServer();
+	const fetch = await listening(server);
+	await new Promise<void>((done) => server.close(() => done()));
+	return fetch;
 }
 
 const cleanups: (() => void)[] = [];
@@ -223,8 +292,8 @@ function setup(profile: Partial<runs.Profile>) {
 			.all(id)
 			.map((e) => ({ type: e.type as string, payload: JSON.parse(e.payload as string) }));
 	const comments = () => db.prepare('SELECT body FROM comments ORDER BY id').all();
-	const start = (fetch: typeof globalThis.fetch) => {
-		const runner = startRunner(db, { builtin: builtinExecutor(db, { fetch }) });
+	const start = (fetch: typeof globalThis.fetch, options: Partial<BuiltinOptions> = {}) => {
+		const runner = startRunner(db, { builtin: builtinExecutor(db, { ...options, fetch }) });
 		cleanups.push(runner.stop);
 		return runs.createRun(db, user, { ticketId, profileId }).id;
 	};
@@ -436,4 +505,149 @@ describe('thinking and sampling in the cloud request', () => {
 		const openai = await firstRequest({ provider: 'openai', model: 'gpt-unknown-9' });
 		expect(openai).not.toHaveProperty('reasoning');
 	});
+});
+
+describe.each([
+	{ provider: 'anthropic', model: 'claude-sonnet-5' },
+	{ provider: 'openai', model: 'gpt-6-sol' }
+])(
+	'builtin executor with $provider: provider failures over the real HTTP client',
+	({ provider, model }) => {
+		it('fails with provider_unreachable and a cloud way out when the port is closed', async () => {
+			const { run, comments, start } = setup({ provider, model });
+			const runId = start(await closedCloudPort());
+			await ended(() => run(runId).state);
+
+			expect(run(runId)).toMatchObject({
+				state: 'failed',
+				error: expect.stringMatching(/^\[provider_unreachable\]/)
+			});
+			const hint = comments().at(-1)!.body;
+			expect(hint).toContain('Netzwerkzugang des Servers prüfen');
+			expect(hint).not.toMatch(/Modell-Server|Modelle laden/);
+		});
+
+		it('fails with model_unknown and a cloud way out when the provider does not know the model', async () => {
+			const { run, comments, start } = setup({ provider, model });
+			const runId = start(
+				await startFailingCloud(404, {
+					type: 'error',
+					error: { type: 'not_found_error', message: `unknown model ${model}` }
+				})
+			);
+			await ended(() => run(runId).state);
+
+			expect(run(runId)).toMatchObject({
+				state: 'failed',
+				error: expect.stringMatching(new RegExp(`^\\[model_unknown\\] .*unknown model ${model}`))
+			});
+			const hint = comments().at(-1)!.body;
+			expect(hint).toContain('Modellliste in der Doku des Providers');
+			expect(hint).not.toMatch(/Modell-Server|Modelle laden/);
+		});
+
+		it("fails with provider_rate_limited and a cloud way out once the SDK's own retries on a 429 are exhausted", async () => {
+			const { run, comments, start } = setup({ provider, model });
+			const runId = start(
+				// retry-after-ms: 0 keeps the SDK's own retries from spending the test on backoff delays
+				await startFailingCloud(
+					429,
+					{ type: 'error', error: { type: 'rate_limit_error', message: 'rate limit exceeded' } },
+					{ 'retry-after-ms': '0' }
+				)
+			);
+			await ended(() => run(runId).state);
+
+			expect(run(runId)).toMatchObject({
+				state: 'failed',
+				error: expect.stringMatching(/^\[provider_rate_limited\] .*rate limit exceeded/)
+			});
+			const hint = comments().at(-1)!.body;
+			expect(hint).toContain('Rate-Limit oder Guthaben im Konto des Providers');
+			expect(hint).not.toMatch(/Modell-Server|Modelle laden/);
+		});
+
+		it("fails with provider_unavailable and a cloud way out once the SDK's own retries on a 503 are exhausted", async () => {
+			const { run, comments, start } = setup({ provider, model });
+			const runId = start(
+				await startFailingCloud(
+					503,
+					{ type: 'error', error: { type: 'api_error', message: 'provider overloaded' } },
+					{ 'retry-after-ms': '0' }
+				)
+			);
+			await ended(() => run(runId).state);
+
+			expect(run(runId)).toMatchObject({
+				state: 'failed',
+				error: expect.stringMatching(/^\[provider_unavailable\] .*provider overloaded/)
+			});
+			const hint = comments().at(-1)!.body;
+			expect(hint).toContain('Statusseite prüfen');
+			expect(hint).not.toMatch(/Modell-Server|Modelle laden/);
+		});
+
+		it('fails with provider_unavailable, not provider_unreachable, when the connection drops after the provider accepted it', async () => {
+			const { run, start } = setup({ provider, model });
+			const runId = start(await startDroppingCloud());
+			await vi.waitFor(() => expect(String(run(runId).state)).not.toMatch(/^(queued|running)$/), {
+				timeout: 10000
+			});
+
+			expect(run(runId).error).toMatch(/^\[provider_unavailable\]/);
+		}, 10000);
+
+		it('masks the key a 429 echoes back in its body, in neither event, SSE frame, error nor comment', async () => {
+			const { projectId, run, events, comments, busEvents, start } = setup({ provider, model });
+			const frames = browser(projectId);
+			// a retryable 429 on the key-bearing step repeats for every one of the SDK's own attempts
+			const rateLimited = {
+				status: 429,
+				body: {
+					type: 'error',
+					error: { type: 'rate_limit_error', message: `rate limited for key ${KEY}` }
+				},
+				headers: { 'retry-after-ms': '0' }
+			} as const;
+			const cloud = await startCloud(
+				{
+					thinking: `The header says ${KEY}.`,
+					text: `Using ${KEY}.`,
+					call: { id: 'call-1', name: 'add_comment', args: { text: `key ${KEY}` } }
+				},
+				rateLimited,
+				rateLimited,
+				rateLimited
+			);
+			const runId = start(cloud.fetch);
+			await ended(() => run(runId).state);
+
+			expect(run(runId)).toMatchObject({
+				state: 'failed',
+				error: expect.stringContaining('[provider_rate_limited]')
+			});
+			await vi.waitFor(() => expect(frames.join('')).toContain('"to":"failed"'));
+			const everything = JSON.stringify([events(runId), busEvents, run(runId), comments(), frames]);
+			expect(everything).toContain('[secret:cloud-key]');
+			expect(everything).not.toContain(KEY);
+		});
+	}
+);
+
+// One provider suffices here: the gating (cold start only for openai-compatible, firstChunkMs for cloud) is our
+// own code, not provider-specific, and the Anthropic SDK's own lookahead for an immediate stream error is flaky
+// against a response that never produces a second chunk at all.
+it('shows no cold-start message and fails with provider_inactive after firstChunkMs when a cloud provider stays silent', async () => {
+	const { run, events, start } = setup({ provider: 'openai', model: 'gpt-6-sol' });
+	const runId = start(await startSilentCloud(), { firstChunkMs: 300 });
+	await ended(() => run(runId).state);
+
+	expect(run(runId)).toMatchObject({
+		state: 'failed',
+		error: expect.stringMatching(/^\[provider_inactive\] .*nicht zu antworten begonnen/)
+	});
+	const loading = events(runId).some(
+		(e) => e.type === 'log' && (e.payload as { phase?: string }).phase === 'model_loading'
+	);
+	expect(loading).toBe(false);
 });

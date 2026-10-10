@@ -1300,6 +1300,32 @@ async function silentServer() {
 	return `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
 }
 
+/** A model server that always answers the same status and body, however many times the SDK's own retries call it. */
+async function statusServer(status: number, body: object, headers: Record<string, string> = {}) {
+	const server = createServer((_req, res) => {
+		res
+			.writeHead(status, { 'content-type': 'application/json', ...headers })
+			.end(JSON.stringify(body));
+	});
+	await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
+	cleanups.push(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	return `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+}
+
+/** A model server that accepts the connection and then drops it before answering, unlike a port nobody listens on. */
+async function droppingServer() {
+	const server = createServer((req) => req.socket.destroy());
+	await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
+	cleanups.push(() => {
+		server.closeAllConnections();
+		server.close();
+	});
+	return `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+}
+
 describe('local provider failures against an openai-compatible endpoint', () => {
 	it('tells a profile whose key the server rejects to fix that key, in the words of the profile page', async () => {
 		vi.stubEnv('STUDIO_SECRET_KEY', randomBytes(32).toString('base64')); // so that the test writes no key file
@@ -1422,4 +1448,55 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 
 		expect(run(runId).error).toMatch(/^\[model_loading_timeout\]/);
 	});
+
+	it("fails with provider_rate_limited and a local way out once the SDK's own retries on a 429 are exhausted", async () => {
+		const { db, queue, run, comments } = setup({
+			// retry-after-ms: 0 keeps the SDK's own retries from spending the test on backoff delays
+			base_url: await statusServer(
+				429,
+				{ error: { message: 'rate limit exceeded' } },
+				{ 'retry-after-ms': '0' }
+			)
+		});
+		startBuiltin(db, { fetch: globalThis.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[provider_rate_limited\] .*rate limit exceeded/)
+		});
+		expect(comments().at(-1)!.body).toContain('Modell-Server ist ausgelastet');
+	});
+
+	it("fails with provider_unavailable and a local way out once the SDK's own retries on a 503 are exhausted", async () => {
+		const { db, queue, run, comments } = setup({
+			base_url: await statusServer(
+				503,
+				{ error: { message: 'model overloaded' } },
+				{ 'retry-after-ms': '0' }
+			)
+		});
+		startBuiltin(db, { fetch: globalThis.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId)).toMatchObject({
+			state: 'failed',
+			error: expect.stringMatching(/^\[provider_unavailable\] .*model overloaded/)
+		});
+		expect(comments().at(-1)!.body).toContain('Log des Modell-Servers prüfen');
+	});
+
+	it('fails with provider_unavailable, not provider_unreachable, when the connection drops after the server accepted it', async () => {
+		// not in CONNECT_ERROR_CODES, so the SDK's own retries run their full backoff before this gives up
+		const { db, queue, run } = setup({ base_url: await droppingServer() });
+		startBuiltin(db, { fetch: globalThis.fetch });
+		const runId = queue();
+		await vi.waitFor(() => expect(String(run(runId).state)).not.toMatch(/^(queued|running)$/), {
+			timeout: 10000
+		});
+
+		expect(run(runId).error).toMatch(/^\[provider_unavailable\]/);
+	}, 10000);
 });

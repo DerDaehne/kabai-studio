@@ -59,9 +59,11 @@ export const NEW_PROFILE: ProfileValues = {
 	extra_prompt: ''
 };
 
+/** Whether a profile's provider is a local, OpenAI-compatible server rather than a cloud API. */
+export const isLocalProvider = (provider: string | null) => provider === 'openai-compatible';
+
 /** The runner limits parallel runs per pool, and an OpenAI-compatible server usually runs on the local GPU. */
-export const defaultPool = (provider: string) =>
-	provider === 'openai-compatible' ? 'local' : 'cloud';
+export const defaultPool = (provider: string) => (isLocalProvider(provider) ? 'local' : 'cloud');
 
 const CLOUD_PROVIDERS: readonly string[] = ['openai', 'anthropic'];
 
