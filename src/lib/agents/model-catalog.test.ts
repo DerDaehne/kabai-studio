@@ -226,6 +226,12 @@ describe('cloud models', () => {
 		expect(cloudModel('openai-compatible', 'gpt-6-sol')).toBeNull();
 	});
 
+	it('knows the current Anthropic and OpenAI models', () => {
+		expect(cloudModel('anthropic', 'claude-opus-5-5')?.id).toBe('claude-opus-5-5');
+		expect(cloudModel('anthropic', 'claude-sonnet-5-5')?.id).toBe('claude-sonnet-5-5');
+		expect(cloudModel('openai', 'gpt-6.1-sol')?.id).toBe('gpt-6.1-sol');
+	});
+
 	it('prices a step with fresh input, cache reads, cache writes and output at their own rates', () => {
 		const { pricing } = cloudModel('openai', 'gpt-6-sol')!;
 		const cost = stepCost(pricing, {

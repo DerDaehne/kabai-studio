@@ -423,12 +423,12 @@ export interface CloudModelEntry {
 
 const ANTHROPIC_PRICING = {
 	source: 'https://platform.claude.com/docs/en/about-claude/pricing',
-	checkedAt: '2026-10-09',
+	checkedAt: '2026-10-10',
 	verified: true
 } as const;
 const OPENAI_PRICING = {
 	source: 'https://developers.openai.com/api/docs/pricing',
-	checkedAt: '2026-10-09',
+	checkedAt: '2026-10-10',
 	verified: true
 } as const;
 const OPENAI_LONG_CONTEXT_FROM = 272_000;
@@ -463,6 +463,36 @@ export const CLOUD_MODELS = [
 		}
 	},
 	{
+		id: 'claude-opus-5-5',
+		provider: 'anthropic',
+		// launching: thinking cannot be disabled at any effort (400), and its own default effort is
+		// medium, one below Opus 5's high (pricing page + claude-api skill, 2026-10-10).
+		effort: { on: 'medium', off: 'low' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 4,
+			cacheReadPerMTok: 0.2,
+			cacheWritePerMTok: 5,
+			outputPerMTok: 20,
+			...ANTHROPIC_PRICING
+		}
+	},
+	{
+		id: 'claude-sonnet-5-5',
+		provider: 'anthropic',
+		// The docs offer `between_tools` as the lowest adaptive-thinking setting here, not `disabled`;
+		// the executor only sends adaptive + effort or disabled, so "off" falls back to low effort.
+		effort: { on: 'high', off: 'low' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 2,
+			cacheReadPerMTok: 0.1,
+			cacheWritePerMTok: 2.5,
+			outputPerMTok: 10,
+			...ANTHROPIC_PRICING
+		}
+	},
+	{
 		id: 'gpt-6-sol',
 		provider: 'openai',
 		effort: { on: 'medium', off: 'none' },
@@ -476,6 +506,26 @@ export const CLOUD_MODELS = [
 				aboveInputTokens: OPENAI_LONG_CONTEXT_FROM,
 				inputPerMTok: 4,
 				cacheReadPerMTok: 0.4,
+				cacheWritePerMTok: 5,
+				outputPerMTok: 15
+			},
+			...OPENAI_PRICING
+		}
+	},
+	{
+		id: 'gpt-6.1-sol',
+		provider: 'openai',
+		effort: { on: 'medium', off: 'none' },
+		maxOutputTokens: 32000,
+		pricing: {
+			inputPerMTok: 2,
+			cacheReadPerMTok: 0.1,
+			cacheWritePerMTok: 2.5,
+			outputPerMTok: 10,
+			longContext: {
+				aboveInputTokens: OPENAI_LONG_CONTEXT_FROM,
+				inputPerMTok: 4,
+				cacheReadPerMTok: 0.2,
 				cacheWritePerMTok: 5,
 				outputPerMTok: 15
 			},

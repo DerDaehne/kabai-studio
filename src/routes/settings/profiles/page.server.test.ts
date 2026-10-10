@@ -172,7 +172,9 @@ describe('agent profiles in the settings', () => {
 		expect(profile).toMatchObject({ provider: 'anthropic', pool: 'cloud', base_url: null });
 		const body = await editorHtml(`${profile.id}`);
 		expect(body).not.toContain('läuft ab Provider-Unterstützung');
-		expect(body).toContain('Kein Preis im Katalog — Kosten dieses Profils zählen als 0.');
+		expect(body).toContain(
+			'Kein Preis im Katalog — Kosten dieses Profils zählen als 0, keine Denk-Zusammenfassung.'
+		);
 		expect(body).not.toContain('name="temperature"');
 		expect(body).not.toContain('name="base_url"');
 		expect(body).not.toContain('Modelle laden');

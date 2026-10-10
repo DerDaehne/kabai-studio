@@ -360,6 +360,25 @@ describe.each([
 		);
 	});
 
+	it('falls back to the step text as the reason when the model gives none', async () => {
+		const { run, events, start } = setup({ provider, model });
+		const cloud = await startCloud(
+			{
+				text: 'I will comment first.',
+				call: { id: 'call-1', name: 'add_comment', args: { text: 'from the cloud' } }
+			},
+			{ text: 'Done.' }
+		);
+		const runId = start(cloud.fetch);
+		await ended(() => run(runId).state);
+
+		const toolCall = events(runId).find((e) => e.type === 'tool_call')!;
+		expect(toolCall.payload).toMatchObject({
+			reason: 'I will comment first.',
+			reason_source: 'text'
+		});
+	});
+
 	it('counts a model without a catalog price as 0 and says so in the step', async () => {
 		const { run, events, start } = setup({ provider, model: `${model}-preview-x` });
 		const cloud = await startCloud({ text: 'Done.', usage: { input: 1000, output: 50 } });
@@ -418,6 +437,28 @@ describe.each([
 		expect(everything).toContain('[secret:cloud-key]');
 		expect(everything).not.toContain(KEY);
 		expect(everything).not.toContain(KEY.slice(-8));
+	});
+});
+
+describe('claude-sonnet-5-5', () => {
+	it('sends adaptive thinking and prices the step from the catalog', async () => {
+		const { run, events, start } = setup({ provider: 'anthropic', model: 'claude-sonnet-5-5' });
+		const cloud = await startCloud({
+			thinking: 'Weighing the options.',
+			text: 'Done.',
+			usage: { input: 1000, output: 50 }
+		});
+		const runId = start(cloud.fetch);
+		await ended(() => run(runId).state);
+
+		expect(cloud.received[0].body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+		expect(events(runId).find((e) => e.type === 'reasoning')!.payload.text).toBe(
+			'Weighing the options.'
+		);
+		// claude-sonnet-5-5: $2 input, $10 output per million tokens
+		const cost = (1000 * 2 + 50 * 10) / 1e6;
+		expect(run(runId)).toMatchObject({ state: 'succeeded' });
+		expect(run(runId).cost).toBeCloseTo(cost, 12);
 	});
 });
 

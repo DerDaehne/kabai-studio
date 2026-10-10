@@ -1,5 +1,6 @@
 // What the profile form suggests and warns about, derived from the model catalog. Texts are German UI copy.
 import {
+	CLOUD_MODELS,
 	cloudModel,
 	matchModel,
 	MODEL_ROLES,
@@ -71,7 +72,18 @@ const CLOUD_PROVIDERS: readonly string[] = ['openai', 'anthropic'];
 export function pricingNotice(provider: string | null, model: string | null): string | null {
 	if (!provider || !CLOUD_PROVIDERS.includes(provider) || !model) return null;
 	if (cloudModel(provider, model)) return null;
-	return 'Kein Preis im Katalog — Kosten dieses Profils zählen als 0.';
+	return 'Kein Preis im Katalog — Kosten dieses Profils zählen als 0, keine Denk-Zusammenfassung.';
+}
+
+export type CloudModelOption = { id: string; label: string };
+
+/** The catalog's cloud models for this provider, with their price per 1M tokens, for the model field's datalist. */
+export function cloudModelOptions(provider: string | null): readonly CloudModelOption[] {
+	if (!provider || !CLOUD_PROVIDERS.includes(provider)) return [];
+	return CLOUD_MODELS.filter((entry) => entry.provider === provider).map((entry) => ({
+		id: entry.id,
+		label: `${entry.pricing.inputPerMTok} $ / ${entry.pricing.outputPerMTok} $ pro 1M Tokens (Eingabe/Ausgabe)`
+	}));
 }
 
 export type CatalogDefaults = {

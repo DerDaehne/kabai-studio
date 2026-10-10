@@ -10,6 +10,7 @@
 	import {
 		BASE_URL_EXAMPLE,
 		catalogDefaults,
+		cloudModelOptions,
 		DEFAULT_PORTS,
 		defaultPool,
 		extraPromptWarning,
@@ -44,6 +45,7 @@
 	const budgetWarning = $derived(thinkingBudgetWarning(values));
 	const promptWarning = $derived(extraPromptWarning(values.extra_prompt));
 	const priceNotice = $derived(pricingNotice(values.provider, values.model));
+	const catalogModels = $derived(cloudModelOptions(values.provider));
 	const errorFor = (field: string) => (form?.field === field ? form.message : undefined);
 	const focusOnError = (field: string) => (input: HTMLElement) => {
 		if (form?.field === field) input.focus();
@@ -202,7 +204,13 @@
 			{/snippet}
 		</FormField>
 		<datalist id="{formId}-models">
-			{#each models as model (model)}<option value={model}></option>{/each}
+			{#if local}
+				{#each models as model (model)}<option value={model}></option>{/each}
+			{:else}
+				{#each catalogModels as option (option.id)}
+					<option value={option.id}>{option.label}</option>
+				{/each}
+			{/if}
 		</datalist>
 		{#if modelError}
 			<p id="{formId}-model-error" class="error" role="alert">{modelError}</p>

@@ -114,7 +114,8 @@ describe('providers', () => {
 	});
 
 	it('says that a cloud model without a catalog price counts as 0, and nothing for priced or local models', () => {
-		const notice = 'Kein Preis im Katalog — Kosten dieses Profils zählen als 0.';
+		const notice =
+			'Kein Preis im Katalog — Kosten dieses Profils zählen als 0, keine Denk-Zusammenfassung.';
 		expect(pricingNotice('anthropic', 'claude-unknown-9')).toBe(notice);
 		expect(pricingNotice('openai', 'gpt-unknown-9')).toBe(notice);
 		expect(pricingNotice('anthropic', 'claude-sonnet-5')).toBeNull();
