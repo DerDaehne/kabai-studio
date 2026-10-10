@@ -132,3 +132,26 @@ export function glideScrollLeft(element: HTMLElement, left: number, durationMs: 
 	cancelAnimationFrame(glides.get(element) ?? 0);
 	frame(started);
 }
+
+/**
+ * Titles are laid out at the small size; the active one scales up by the ratio of the row's font size to its own and
+ * the titles after it move aside by the room it takes, so only transforms change and the row keeps its height.
+ */
+function makeRoomForActive(row: HTMLElement, active: HTMLElement | null) {
+	const small = active ?? (row.firstElementChild as HTMLElement);
+	const scale =
+		parseFloat(getComputedStyle(row).fontSize) / parseFloat(getComputedStyle(small).fontSize);
+	row.style.setProperty('--active-scale', String(scale));
+	row.style.setProperty('--active-room', `${active ? active.offsetWidth * (scale - 1) : 0}px`);
+}
+
+/**
+ * Brings the active title of a pivot's title row to its left edge, gliding unless `jump`; the titles before it scroll
+ * out of view. The row sets the active size as its font size, the titles the small one (see `--active-scale`).
+ */
+export function revealActiveTitle(row: HTMLElement, active: HTMLElement | null, jump: boolean) {
+	makeRoomForActive(row, active);
+	const first = row.firstElementChild as HTMLElement;
+	const left = active ? active.offsetLeft - first.offsetLeft : 0;
+	glideScrollLeft(row, left, jump ? 0 : tokenMs('--motion-moderate'));
+}

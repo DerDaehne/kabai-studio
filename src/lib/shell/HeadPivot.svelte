@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { glideScrollLeft, tokenMs } from '$lib/ui/motion';
+	import { revealActiveTitle } from '$lib/ui/motion';
 	import { live, openQuestionsLabel } from './live.svelte';
 	import { shell } from './shell.svelte';
 
@@ -35,26 +35,8 @@
 
 	let strip = $state<HTMLElement>();
 
-	/**
-	 * Titles are laid out at the small size; the active one scales up by the ratio of the two sizes and the titles
-	 * after it move aside by the room it takes, so only transforms change and the row keeps its height.
-	 */
-	function makeRoomForActive(row: HTMLElement, active: HTMLElement | null) {
-		const small = active ?? (row.firstElementChild as HTMLElement);
-		const scale =
-			parseFloat(getComputedStyle(row).fontSize) / parseFloat(getComputedStyle(small).fontSize);
-		row.style.setProperty('--active-scale', String(scale));
-		row.style.setProperty('--active-room', `${active ? active.offsetWidth * (scale - 1) : 0}px`);
-	}
-
-	/** Brings the active title to the left edge, gliding unless `jump`; the ones before it scroll out of view. */
 	function reveal(jump: boolean) {
-		if (!strip) return;
-		const active = strip.querySelector<HTMLElement>('[aria-current]');
-		makeRoomForActive(strip, active);
-		const first = strip.firstElementChild as HTMLElement;
-		const left = active ? active.offsetLeft - first.offsetLeft : 0;
-		glideScrollLeft(strip, left, jump ? 0 : tokenMs('--motion-moderate'));
+		if (strip) revealActiveTitle(strip, strip.querySelector('[aria-current]'), jump);
 	}
 
 	let placed = false;
