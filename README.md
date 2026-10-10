@@ -133,9 +133,12 @@ printf '%s' 'new-password' | docker exec -i kabai-studio node server.ts reset-pa
 
 # restore: stop the server first. Backups made before a migration already live in the
 # volume under backups/; copy one in with `docker cp` if restoring from outside the volume.
+# Run the restore with the image the server itself uses (not :latest): a newer image would
+# accept a backup the running version cannot open afterwards.
+image=$(docker inspect --format '{{.Config.Image}}' kabai-studio)
 docker stop kabai-studio
 docker cp ./backup.db kabai-studio:/data/backups/backup.db
-docker run --rm -v kabai-studio-data:/data ghcr.io/derdaehne/kabai-studio:latest \
+docker run --rm -v kabai-studio-data:/data "$image" \
   node server.ts restore /data/backups/backup.db
 docker start kabai-studio
 ```
