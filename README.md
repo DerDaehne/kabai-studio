@@ -121,6 +121,25 @@ docker stop kabai-studio && docker rm kabai-studio
 docker run …   # same command as above, same -v kabai-studio-data:/data
 ```
 
+**Recovery:** `reset-password` and `restore` (see "Start" above) ship in the image too.
+`reset-password` runs fine next to the running server (`docker exec`); `restore` takes the
+data directory's single-instance lock for its whole run, so it needs the container stopped
+first — the lock is on the volume, not the process, so a throwaway container on the same
+volume can run it:
+
+```sh
+# reset-password: pipe the new password in, same as `npm run reset-password` above.
+printf '%s' 'new-password' | docker exec -i kabai-studio node server.ts reset-password
+
+# restore: stop the server first. Backups made before a migration already live in the
+# volume under backups/; copy one in with `docker cp` if restoring from outside the volume.
+docker stop kabai-studio
+docker cp ./backup.db kabai-studio:/data/backups/backup.db
+docker run --rm -v kabai-studio-data:/data ghcr.io/derdaehne/kabai-studio:latest \
+  node server.ts restore /data/backups/backup.db
+docker start kabai-studio
+```
+
 ## Local models
 
 Recommendations and parameters for local models (llama.cpp, LM Studio, Ollama,

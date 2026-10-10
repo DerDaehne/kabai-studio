@@ -16,14 +16,24 @@ RUN npm run build
 
 # Runtime: build/ plus the entry point. adapter-node bundles every dependency into build/ (no
 # "dependencies" entry in package.json), so no npm install or node_modules are needed here.
-# server.ts runs under Node's type stripping and statically imports the three source files below,
-# which use Node builtins only; every file it imports must be copied here (CI starts the image).
+# server.ts runs under Node's type stripping and statically (or via runLegacyScript dynamically)
+# imports every source file below, all Node-builtin-only (one `import type` from @sveltejs/kit in
+# auth.ts, erased by type stripping); every file it can reach must be copied here (CI starts the
+# image and runs the CLI subcommands below, so a missing file fails CI, not just a user).
 FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 AS runtime
 WORKDIR /app
+# Same build arg as above, redeclared for this stage: Docker scopes ARG per stage, so `--version`
+# would otherwise read `dev` here even though the build stage baked the real version into build/.
+ARG STUDIO_VERSION
+ENV STUDIO_VERSION=$STUDIO_VERSION
 COPY --from=build /app/build ./build
 COPY --from=build /app/server.ts ./server.ts
-COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts ./src/lib/server/
+COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts ./src/lib/server/
+COPY --from=build /app/src/lib/server/domain/error.ts ./src/lib/server/domain/
 COPY --from=build /app/src/lib/version.ts ./src/lib/version.ts
+# restore.ts reads this directly off disk (assertKnownMigrations) — it cannot use the Vite-only
+# import.meta.glob that db.ts's migrate() relies on for the bundled server.
+COPY --from=build /app/migrations ./migrations
 # The minified CSS drops the vendored files' licence headers, so the licence texts ship next to it
 COPY --from=build /app/LICENSE /app/NOTICE ./
 

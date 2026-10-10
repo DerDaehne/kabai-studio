@@ -82,8 +82,29 @@ jobs:
         run: |
           docker run -d --name studio --network host -e HOST=127.0.0.1 -e PORT=3311 studio-ci
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3311/api/health; then exit 0; fi
+            if health=$(curl -fsS http://127.0.0.1:3311/api/health); then echo "$health"; exit 0; fi
             sleep 1
           done
           docker logs studio
           exit 1
+      # The running container's /api/health bakes STUDIO_VERSION in at build time (vite's `define`);
+      # --version re-reads it at runtime from the image (#982) — both must agree on the same build.
+      - name: --version matches /api/health, and the legacy CLI subcommands resolve
+        run: |
+          health_version=$(curl -fsS http://127.0.0.1:3311/api/health | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).version')
+          cli_version=$(docker run --rm studio-ci node server.ts --version)
+          [ "$cli_version" = "ci" ] || { echo "FAIL: --version printed '$cli_version', expected the build's STUDIO_VERSION 'ci'"; exit 1; }
+          [ "$health_version" = "$cli_version" ] || { echo "FAIL: /api/health reports '$health_version', --version reports '$cli_version'"; exit 1; }
+          echo "ok: --version -> $cli_version (matches /api/health)"
+          # restore.ts/reset-password.ts dynamically import files the runtime stage must also ship (server.ts's
+          # runLegacyScript); a fresh container with no backup file/database still exercises their full static
+          # import closure and exits 1 on their own usage/error message — ERR_MODULE_NOT_FOUND means a COPY line
+          # in the Dockerfile's runtime stage is missing a file.
+          for cmd in restore reset-password; do
+            out=$(docker run --rm studio-ci node server.ts "$cmd" 2>&1) && rc=0 || rc=$?
+            if echo "$out" | grep -q ERR_MODULE_NOT_FOUND; then
+              echo "FAIL: $cmd hit ERR_MODULE_NOT_FOUND:"; echo "$out"; exit 1
+            fi
+            [ "$rc" -eq 1 ] || { echo "FAIL: $cmd exited $rc, expected its usage/error exit code 1"; exit 1; }
+            echo "ok: $cmd usage path -> exit 1, no ERR_MODULE_NOT_FOUND"
+          done
