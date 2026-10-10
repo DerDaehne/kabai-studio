@@ -22,7 +22,7 @@ const renderPivot = (active?: string) =>
 const tags = (body: string, pattern: RegExp) => body.match(pattern) ?? [];
 const tabs = (body: string) => tags(body, /<button[^>]*role="tab"[^>]*>/g);
 const panels = (body: string) => tags(body, /<section[^>]*>/g);
-const idOf = (tag: string) => tag.match(/ id="([^"]+)"/)?.[1];
+const idOf = (tag = '') => tag.match(/ id="([^"]+)"/)?.[1];
 
 describe('Pivot', () => {
 	it('renders a named tab list whose tabs control the panels of their facets', () => {
