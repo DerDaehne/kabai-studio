@@ -65,6 +65,12 @@ const runningAnimations = (page: Page) =>
 		(selector) => document.querySelector(selector)!.getAnimations({ subtree: true }).length,
 		SHOWCASE
 	);
+const panelAnimations = (page: Page) =>
+	page.evaluate(
+		(selector) =>
+			document.querySelector(`${selector} [role="tabpanel"]:not([hidden])`)!.getAnimations().length,
+		SHOWCASE
+	);
 const twoFrames = (page: Page) =>
 	page.evaluate(
 		() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
@@ -170,16 +176,18 @@ test('the active title stands large at the left edge, the one before it has scro
 	await tabOf(page, 'Angehalten').click();
 	const after = await settledTitles(page, 'angehalten');
 	expect(after.row.height).toBe(start.row.height);
+	const active = after.tabs.angehalten;
+	expect(active.top, 'the large title fits the bar').toBeGreaterThanOrEqual(after.row.top);
+	expect(active.bottom).toBeLessThanOrEqual(after.row.bottom);
 	expect(after.tabs.laeuft.right, 'the title before has scrolled out').toBeLessThanOrEqual(
 		after.edge
 	);
 	expect(after.tabs.angehalten.height).toBeGreaterThan(start.tabs.angehalten.height * 1.3);
 	expect(start.tabs.fragen.height).toBeGreaterThan(after.tabs.fragen.height * 1.3);
-	expect(after.tabs.fertig.width, 'an uninvolved title keeps its size').toBeCloseTo(
-		start.tabs.fertig.width,
-		0
-	);
-	expect(after.tabs.fertig.height).toBeCloseTo(start.tabs.fertig.height, 0);
+	for (const uninvolved of ['laeuft', 'fertig']) {
+		expect(after.tabs[uninvolved].width, uninvolved).toBeCloseTo(start.tabs[uninvolved].width, 0);
+		expect(after.tabs[uninvolved].height, uninvolved).toBeCloseTo(start.tabs[uninvolved].height, 0);
+	}
 
 	await tabOf(page, 'Fertig').click();
 	expect(
@@ -195,7 +203,7 @@ test('a switch slides the panel in; with reduced motion title and panel jump wit
 	await page.setViewportSize(PHONE);
 	await open(page, '/dev/ui');
 	await tabOf(page, 'Läuft').click();
-	expect(await runningAnimations(page), 'full motion animates the switch').toBeGreaterThan(0);
+	expect(await panelAnimations(page), 'full motion slides the panel in').toBe(1);
 	await settledTitles(page, 'laeuft');
 
 	await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -203,6 +211,7 @@ test('a switch slides the panel in; with reduced motion title and panel jump wit
 	await twoFrames(page);
 	const { tabs, edge } = await measureTitles(page);
 	expect(Math.abs(tabs.fertig.left - edge), 'the title jumps to the edge').toBeLessThanOrEqual(1);
+	expect(await panelAnimations(page), 'the panel does not slide').toBe(0);
 	expect(await runningAnimations(page), 'nothing slides or scales over time').toBe(0);
 });
 
