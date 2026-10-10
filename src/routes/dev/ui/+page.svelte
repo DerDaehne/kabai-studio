@@ -17,6 +17,7 @@
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { announceSignal, shell, type AgentChip } from '$lib/shell/shell.svelte';
 	import { undoStack } from '$lib/shell/undo.svelte';
+	import PivotShowcase from './PivotShowcase.svelte';
 	import RektaShowcase from './RektaShowcase.svelte';
 
 	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
@@ -339,6 +340,11 @@
 		<RektaShowcase />
 	</section>
 
+	<section class="wide" aria-labelledby="h-pivot">
+		<h2 id="h-pivot">Pivot</h2>
+		<PivotShowcase />
+	</section>
+
 	<section aria-labelledby="h-shell">
 		<h2 id="h-shell">Shell</h2>
 		<p class="muted">Füttert Kopf-Dock, Tastenleiste und Suche (/) mit Beispieldaten.</p>
@@ -607,6 +613,9 @@
 	.page {
 		display: grid;
 		gap: var(--space-6);
+	}
+	/* a reading width, except for the pivot, whose panorama spans the stage as it does in a view */
+	.page > :not(.wide) {
 		max-width: 960px;
 	}
 	header {

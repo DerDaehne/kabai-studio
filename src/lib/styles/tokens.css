@@ -216,6 +216,7 @@
 	--motion-moderate: var(--rekta-motion-duration-moderate);
 	--motion-long: var(--rekta-motion-duration-long);
 	--motion-turnstile: var(--rekta-motion-turnstile-angle);
+	--motion-slide: var(--rekta-motion-slide-distance);
 	--ease-base: var(--rekta-motion-easing-base);
 
 	/* Shell: the window scrolls under a sticky head and above a fixed app bar, whose height the page keeps free */
@@ -223,6 +224,10 @@
 	--appbar-h: 64px;
 	--head-h: calc(var(--type-nav-active) * 1.25 + var(--space-2) + var(--space-1));
 	--sheet-max-w: var(--rekta-breakpoint-sideways-scroll-min);
+	/* What a panorama fills between head and app bar; its sections scroll down inside themselves */
+	--stage-h: calc(100dvh - var(--head-h) - var(--appbar-h) - env(safe-area-inset-bottom));
+	/* A pivot facet's width side by side in the panorama, unless the facet brings its own */
+	--facet-w: 440px;
 }
 
 :root[data-glass='frosted'] {
