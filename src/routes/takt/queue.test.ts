@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arranged, decisionKey, deferred, queueKey, restored, taktAurae } from './queue';
+import { arranged, deferred, restored } from './queue';
 import type { QueuedQuestion } from './queue';
 
 const question = (id: number): QueuedQuestion => ({
@@ -47,25 +47,5 @@ describe('the Takt queue', () => {
 		const queue = [question(2), question(3)];
 		const order = restored(queue, 1);
 		expect(ids(arranged([question(1), ...queue], order, none))).toEqual([1, 2, 3]);
-	});
-});
-
-describe('auras in Takt', () => {
-	it('the decision card carries the only strong aura, in the colour of its kind; the light cone in the queue is weak', () => {
-		const visible = [question(1), question(2), question(3)];
-		const aurae = taktAurae(visible);
-
-		const strong = [...aurae].filter(([, aura]) => aura.strength === 'strong');
-		expect(strong).toEqual([[decisionKey, { strength: 'strong', color: 'var(--aura-waiting)' }]]);
-		expect(aurae.get(queueKey(visible[0]))).toEqual({
-			strength: 'weak',
-			color: 'var(--aura-accent)'
-		});
-		expect(aurae.has(queueKey(visible[1]))).toBe(false);
-		expect(aurae.has(queueKey(visible[2]))).toBe(false);
-	});
-
-	it('hands out no aura without a question', () => {
-		expect(taktAurae([]).size).toBe(0);
 	});
 });

@@ -119,6 +119,7 @@
 	</div>
 	<div
 		class="facets"
+		data-panorama
 		class:switched
 		style:--slide-from={slideFrom}
 		bind:this={facetRow}

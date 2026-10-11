@@ -71,28 +71,6 @@ export function travel(
 	};
 }
 
-const tiltDegrees = 12;
-const tiltOffset = 40;
-
-/**
- * Card advance with a 3D tilt: the leaving card turns away to the left, the next one turns in from the right;
- * `reverse` mirrors both for undo. Only with full motion, otherwise a crossfade.
- */
-export function tilt(
-	_node: Element,
-	{ reverse = false }: { reverse?: boolean } = {},
-	{ direction }: { direction: 'in' | 'out' | 'both' } = { direction: 'both' }
-): TransitionConfig {
-	if (motionMode() === 'reduced') return crossfade();
-	const side = (direction === 'out' ? -1 : 1) * (reverse ? -1 : 1);
-	return {
-		duration: duration.slow,
-		easing: easing.out,
-		css: (t, u) =>
-			`opacity: ${t}; transform: perspective(900px) translateX(${u * tiltOffset * side}px) rotateY(${-u * tiltDegrees * side}deg) scale(${1 - u * 0.03})`
-	};
-}
-
 const ignore = () => {};
 
 /**

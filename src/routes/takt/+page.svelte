@@ -1,36 +1,38 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { tick } from 'svelte';
+	import { MediaQuery, SvelteSet } from 'svelte/reactivity';
 	import { leadText, plainText, splitLead } from '$lib/markdown';
 	import { failureOf, postAction } from '$lib/form-action';
-	import { SvelteSet } from 'svelte/reactivity';
-	import { focusSummary } from '$lib/shell/focus';
-	import { invalidateLive, openQuestionsLabel } from '$lib/shell/live.svelte';
+	import type { MessageKey } from '$lib/i18n';
+	import { t } from '$lib/i18n/t';
+	import { focusSummary, inFocus } from '$lib/shell/focus';
+	import { resumeAll, resumeRun } from '$lib/shell/halt';
+	import { invalidateLive } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
-	import { auraOpacity } from '$lib/ui/aura';
 	import AgentText from '$lib/ui/AgentText.svelte';
-	import AuraList from '$lib/ui/AuraList.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
-	import { tilt } from '$lib/ui/motion';
+	import Pivot, { type Facet } from '$lib/ui/Pivot.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
+	import Tag from '$lib/ui/rekta/Tag.svelte';
 	import { dismiss, toast } from '$lib/ui/toast.svelte';
 	import type { PageProps } from './$types';
-	import {
-		arranged,
-		decisionKey,
-		deferred,
-		queueKey,
-		restored,
-		taktAurae,
-		type QueuedQuestion
-	} from './queue';
+	import FinishedRuns from './FinishedRuns.svelte';
+	import LiveRuns from './LiveRuns.svelte';
+	import { arranged, deferred, restored, type QueuedQuestion } from './queue';
+	import { runHref } from '../start';
 
 	type Answer = { option: number } | { text: string };
 
 	let { data }: PageProps = $props();
+
+	const locale = $derived(page.data.locale);
+	const panorama = new MediaQuery('min-width: 1300px', false);
+	let active = $state('questions');
 
 	let order = $state<number[]>([]);
 	const answered = new SvelteSet<number>();
@@ -38,25 +40,53 @@
 	const view = $derived(focusSummary(queue, shell.focus, (question) => question.project.id));
 	const card = $derived(view.visible[0]);
 	const cardQuestion = $derived(card ? splitLead(card.question) : undefined);
-	const aurae = $derived(taktAurae(view.visible));
-	const decisionAura = $derived(aurae.get(decisionKey));
-	const queueItems = $derived(
-		view.visible.map((question) => ({ key: queueKey(question), question }))
-	);
-	/** A card that comes back through undo turns in from the side it left to. */
+	const upcoming = $derived(view.visible.slice(1));
+	/** A card that comes back through undo slides in from the side it left to. */
 	let mirrored = $state(false);
+
+	const liveRuns = $derived(
+		(data.live?.runs ?? []).filter((run) => inFocus(shell.focus, run.project.id))
+	);
+	const working = $derived(
+		liveRuns.filter((run) => run.state !== 'paused' && run.state !== 'queued')
+	);
+	const paused = $derived(liveRuns.filter((run) => run.state === 'paused'));
+	const finished = $derived(data.finished.filter((run) => inFocus(shell.focus, run.project.id)));
+
+	const facets = $derived<Facet[]>([
+		{
+			id: 'questions',
+			label: t('takt.facet.questions'),
+			count: view.visible.length,
+			width: '720px'
+		},
+		{ id: 'running', label: t('takt.facet.running'), count: working.length },
+		{ id: 'paused', label: t('takt.facet.paused'), count: paused.length },
+		{ id: 'finished', label: t('takt.facet.finished'), count: finished.length }
+	]);
+
+	const plural = $derived(new Intl.PluralRules(locale));
+	const countLabel = $derived(
+		t(`takt.open.${plural.select(view.visible.length) === 'one' ? 'one' : 'other'}`, {
+			count: view.visible.length
+		})
+	);
+	const hiddenLine = $derived.by(() => {
+		const hidden = queue.filter((question) => !view.visible.includes(question));
+		if (!hidden.length) return '';
+		const projects = new Set(hidden.map((question) => question.project.id)).size;
+		const key: MessageKey =
+			plural.select(projects) === 'one' ? 'start.hidden.one' : 'start.hidden.other';
+		return t(key, { count: hidden.length, projects });
+	});
+	const asked = $derived(
+		new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' })
+	);
 
 	let ownOpen = $state(false);
 	let ownText = $state('');
 	let ownField = $state<HTMLTextAreaElement>();
 	let ownButton = $state<HTMLButtonElement>();
-
-	// With the asking run's id the link opens its own trace, not just the ticket's newest run.
-	const runRecordHref = (question: QueuedQuestion) =>
-		`/p/${question.project.code}/t/${question.ticket.number}` +
-		(question.runId ? `?run=${question.runId}` : '');
-	const askedLabel = (iso: string) =>
-		new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
 
 	const post = (action: 'answer' | 'retract', fields: Record<string, string>) =>
 		postAction(`/takt?/${action}`, fields);
@@ -66,8 +96,9 @@
 
 	function sentNotice(question: QueuedQuestion, resumesRun: boolean) {
 		const ref = question.ticket.ref;
-		if (resumesRun) return `Antwort gesendet · ${ref} setzt in ${data.undoWindowMs / 1000} s fort`;
-		return `Antwort gesendet · kein Run setzt ${ref} fort, starte einen für das Ticket`;
+		return resumesRun
+			? t('takt.sent', { ref, seconds: data.undoWindowMs / 1000 })
+			: t('takt.sentNoRun', { ref });
 	}
 
 	/** Moves on to the next card at once; returns the notice that offers to take the answer back. */
@@ -82,7 +113,7 @@
 			return undefined;
 		}
 		const resumesRun = result.type === 'success' && result.data?.resumesRun === true;
-		const action = { label: 'Rückgängig', run: undo, countdown: true };
+		const action = { label: t('takt.undo'), run: undo, countdown: true };
 		return toast(sentNotice(question, resumesRun), 'success', data.undoWindowMs, action);
 	}
 
@@ -99,7 +130,7 @@
 	function answer(question: QueuedQuestion, given: Answer) {
 		let notice: number | undefined;
 		const action: Undoable = {
-			label: `Antwort auf ${question.ticket.ref}`,
+			label: t('takt.answerLabel', { ref: question.ticket.ref }),
 			perform: () =>
 				void send(question, given, () => undoStack.revert(action)).then((id) => (notice = id)),
 			revert: () => {
@@ -150,140 +181,185 @@
 		}
 	}
 
+	const cardInFront = $derived(panorama.current || active === 'questions');
+
 	$effect(() => {
 		const current = card;
-		if (!current) return;
+		if (!current || !cardInFront) return;
 		return bindKeys({
 			answer: current.options.length ? (_count, key) => choose(current, Number(key)) : undefined,
 			answerOwn: () => void openOwnAnswer(),
 			later: () => later(current),
-			open: () => void goto(runRecordHref(current)),
+			open: () => void goto(runHref(current.project.code, current.ticket.number, current.runId)),
 			focusHere: () => (shell.focus = current.project)
 		});
 	});
 </script>
 
+<svelte:head><title>{t('takt.title')}</title></svelte:head>
+
 <div class="takt">
-	<nav class="queue" aria-label="Warteschlange">
-		<h1>Takt <span class="status">{openQuestionsLabel(view.visible.length)}</span></h1>
-		{#if queueItems.length}
-			<AuraList items={queueItems} {aurae} label="Offene Fragen">
-				{#snippet item({ question })}
-					<div class="entry" aria-current={question === card ? 'true' : undefined}>
+	<h1>{t('takt.heading')} <span class="status">{countLabel}</span></h1>
+	{#if hiddenLine}<p class="hidden-line">{hiddenLine}</p>{/if}
+
+	<Pivot {facets} bind:active label={t('takt.facets')}>
+		{#snippet panel(facet)}
+			{#if facet.id === 'questions'}
+				{@render questions()}
+			{:else if facet.id === 'running'}
+				<div class="live" data-testid="live-column">
+					<LiveRuns runs={working} tracks={data.tracks} />
+				</div>
+			{:else if facet.id === 'paused'}
+				{@render pausedRuns()}
+			{:else}
+				<FinishedRuns runs={finished} />
+			{/if}
+		{/snippet}
+	</Pivot>
+</div>
+
+{#snippet questions()}
+	<p class="visually-hidden" aria-live="polite">
+		{card ? `${card.ticket.ref}: ${leadText(card.question)}` : t('takt.nothing')}
+	</p>
+	{#if card}
+		{#key card.id}
+			<article
+				class="decision"
+				class:back={mirrored}
+				aria-labelledby="question-{card.id}"
+				data-testid="decision"
+			>
+				<p class="meta">
+					<ProjectTag code={card.project.code} palette={card.project.palette} />
+					<span class="ref">{card.ticket.ref}</span>
+					<span class="title">{card.project.name} · {card.ticket.title}</span>
+					{#if card.profile}<span class="who">{t('takt.asks', { profile: card.profile })}</span
+						>{/if}
+					<time datetime={card.askedAt}
+						>{t('takt.waitingSince', { time: asked.format(new Date(card.askedAt)) })}</time
+					>
+				</p>
+				<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
+				{#if cardQuestion?.rest}<div class="question-rest">
+						<AgentText text={cardQuestion.rest} />
+					</div>{/if}
+				<div class="options" role="group" aria-label={t('takt.answers')}>
+					{#each card.options as option, index (index)}
+						<button
+							type="button"
+							class="option"
+							onclick={() => answer(card, { option: index + 1 })}
+						>
+							<Kbd key={String(index + 1)} />
+							<span class="label">{plainText(option.label)}</span>
+							{#if option.effect}<span class="effect">{option.effect}</span>{/if}
+						</button>
+					{/each}
+					{#if ownOpen}
+						<form
+							class="own"
+							onsubmit={(event) => {
+								event.preventDefault();
+								sendOwnAnswer();
+							}}
+						>
+							<label class="visually-hidden" for="own-answer">{t('takt.ownAnswerLabel')}</label>
+							<textarea
+								id="own-answer"
+								rows="3"
+								bind:this={ownField}
+								bind:value={ownText}
+								onkeydown={ownAnswerKeys}></textarea>
+							<div class="own-row">
+								<span class="muted">
+									<Kbd key="Enter" />
+									{t('takt.keySend')} · <Kbd key="Escape" />
+									{t('takt.keyDiscard')}
+								</span>
+								<button type="button" class="btn" onclick={closeOwnAnswer}
+									>{t('takt.discard')}</button
+								>
+								<button class="btn btn-primary" disabled={!ownText.trim()}>{t('takt.send')}</button>
+							</div>
+						</form>
+					{:else}
+						<button
+							type="button"
+							class="option own-open"
+							bind:this={ownButton}
+							onclick={openOwnAnswer}
+						>
+							<Kbd key="i" />
+							<span class="label">{t('takt.ownAnswer')}</span>
+							<span class="effect">{t('takt.ownAnswerHint')}</span>
+						</button>
+					{/if}
+				</div>
+				<p class="actions">
+					<button type="button" class="btn btn-ghost" onclick={() => later(card)}
+						>{t('takt.later')} <Kbd key="s" /></button
+					>
+					<a class="btn btn-ghost" href={runHref(card.project.code, card.ticket.number, card.runId)}
+						>{t('takt.runRecord')} <Kbd key="Enter" /></a
+					>
+				</p>
+			</article>
+		{/key}
+		{#if upcoming.length}
+			<h3 class="next">{t('takt.next')}</h3>
+			<ol class="upcoming" aria-label={t('takt.next')}>
+				{#each upcoming as question (question.id)}
+					<li>
 						<ProjectTag code={question.project.code} palette={question.project.palette} />
 						<span class="ref">{question.ticket.ref}</span>
 						<span class="text">{leadText(question.question)}</span>
-					</div>
-				{/snippet}
-			</AuraList>
+					</li>
+				{/each}
+			</ol>
 		{/if}
-		{#if view.hiddenLabel}<p class="hidden-line">{view.hiddenLabel}</p>{/if}
-	</nav>
+	{:else}
+		<EmptyState title={t('takt.nothing')}>
+			{t('takt.nothingHint')}
+			{#snippet action()}
+				<a class="btn" href="/">{t('takt.toStart')} <Kbd key="g" /><Kbd key="s" /></a>
+			{/snippet}
+		</EmptyState>
+	{/if}
+{/snippet}
 
-	<section class="stage" aria-label="Entscheidung">
-		<p class="visually-hidden" aria-live="polite">
-			{card ? `${card.ticket.ref}: ${leadText(card.question)}` : 'Nichts wartet auf dich'}
+{#snippet pausedRuns()}
+	{#if paused.length}
+		<p class="detail">{t('takt.paused.hint')}</p>
+		<p>
+			<button type="button" class="btn" onclick={() => void resumeAll()}
+				>{t('takt.resumeAll')}</button
+			>
 		</p>
-		{#if card}
-			{#key card.id}
-				<div class="decision" in:tilt={{ reverse: mirrored }} out:tilt={{ reverse: mirrored }}>
-					<div
-						class="glow"
-						aria-hidden="true"
-						data-strength={decisionAura?.strength}
-						style:opacity={decisionAura ? auraOpacity[decisionAura.strength] : 0}
-						style:background-color={decisionAura?.color}
-					></div>
-					<article class="card" aria-labelledby="question-{card.id}">
-						<p class="meta">
-							<ProjectTag code={card.project.code} palette={card.project.palette} />
-							<span class="ref">{card.ticket.ref}</span>
-							<span class="title">{card.project.name} · {card.ticket.title}</span>
-							{#if card.profile}<span class="who">{card.profile} fragt</span>{/if}
-							<span
-								>wartet seit <time datetime={card.askedAt}>{askedLabel(card.askedAt)}</time></span
-							>
-						</p>
-						<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
-						{#if cardQuestion?.rest}<div class="question-rest">
-								<AgentText text={cardQuestion.rest} />
-							</div>{/if}
-						<div class="options" role="group" aria-label="Antworten">
-							{#each card.options as option, index (index)}
-								<button
-									type="button"
-									class="option"
-									onclick={() => answer(card, { option: index + 1 })}
-								>
-									<Kbd key={String(index + 1)} />
-									<span class="label">{plainText(option.label)}</span>
-									{#if option.effect}<span class="effect">{plainText(option.effect)}</span>{/if}
-								</button>
-							{/each}
-							{#if ownOpen}
-								<form
-									class="own"
-									onsubmit={(event) => {
-										event.preventDefault();
-										sendOwnAnswer();
-									}}
-								>
-									<label class="visually-hidden" for="own-answer">Eigene Antwort an den Agent</label
-									>
-									<textarea
-										id="own-answer"
-										rows="3"
-										bind:this={ownField}
-										bind:value={ownText}
-										onkeydown={ownAnswerKeys}></textarea>
-									<div class="own-row">
-										<span class="muted"
-											><Kbd key="Enter" /> senden · <Kbd key="Escape" /> verwerfen</span
-										>
-										<button type="button" class="btn" onclick={closeOwnAnswer}>Verwerfen</button>
-										<button class="btn btn-primary" disabled={!ownText.trim()}>Senden</button>
-									</div>
-								</form>
-							{:else}
-								<button
-									type="button"
-									class="option own-open"
-									bind:this={ownButton}
-									onclick={openOwnAnswer}
-								>
-									<Kbd key="i" />
-									<span class="label">Eigene Antwort</span>
-									<span class="effect">Freitext, kommt beim Agent strukturiert an</span>
-								</button>
-							{/if}
-						</div>
-						<p class="actions">
-							<button type="button" class="btn btn-ghost" onclick={() => later(card)}
-								>Später <Kbd key="s" /></button
-							>
-							<a class="btn btn-ghost" href={runRecordHref(card)}>Run-Akte <Kbd key="Enter" /></a>
-						</p>
-					</article>
-				</div>
-			{/key}
-		{:else}
-			<EmptyState title="Nichts wartet auf dich">
-				Die Agents arbeiten weiter; fragt einer, erscheint seine Frage hier.
-				{#snippet action()}
-					<a class="btn" href="/">Zum kabai studio <Kbd key="g" /><Kbd key="s" /></a>
-				{/snippet}
-			</EmptyState>
-		{/if}
-	</section>
-</div>
+		<ul class="rows" data-testid="paused-runs">
+			{#each paused as run (run.id)}
+				<li class="row">
+					<ProjectTag code={run.project.code} palette={run.project.palette} />
+					<a href={runHref(run.project.code, run.ticket.split('-').at(-1) ?? '', run.id)}
+						>{run.ticket}</a
+					>
+					<Tag tone="warning">{t('start.state.paused')}</Tag>
+					<button
+						type="button"
+						class="btn"
+						aria-label={t('takt.resumeRun', { ticket: run.ticket })}
+						onclick={() => void resumeRun(run.id)}>{t('takt.resume')}</button
+					>
+				</li>
+			{/each}
+		</ul>
+	{:else}
+		<p class="detail">{t('takt.paused.empty')}</p>
+	{/if}
+{/snippet}
 
 <style>
-	.takt {
-		display: grid;
-		grid-template-columns: minmax(200px, 300px) minmax(0, 720px);
-		gap: var(--space-6);
-		align-items: start;
-	}
 	h1 {
 		display: flex;
 		align-items: baseline;
@@ -291,66 +367,38 @@
 		margin-bottom: var(--space-3);
 	}
 	.status,
-	.hidden-line {
+	.hidden-line,
+	.detail {
 		color: var(--text-muted);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 		font-weight: 400;
 	}
 	.hidden-line {
-		margin-top: var(--space-3);
-	}
-	.entry {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-height: 36px;
-		padding: var(--space-1) var(--space-2);
-		border-radius: 10px;
-	}
-	.entry[aria-current='true'] {
-		background: var(--fill-sel);
-	}
-	.entry .text {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		margin: 0 0 var(--space-3);
 	}
 	.ref {
 		font-family: var(--font-mono);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 		white-space: nowrap;
 	}
-
-	/* A tilting card never scrolls the page sideways; the glow stays within the card width, so no edge shows */
-	.stage {
-		display: grid;
-		overflow-x: clip;
-		overflow-clip-margin: 24px;
-	}
 	.decision {
-		position: relative;
-		isolation: isolate;
-		grid-area: 1 / 1;
-		min-width: 0;
-		backface-visibility: hidden;
+		padding: var(--space-4) 0;
+		animation: card-in calc(var(--motion-moderate) * 0.75) var(--ease-out);
 	}
-	.glow {
-		position: absolute;
-		z-index: -1;
-		inset: 20% 16px -12px;
-		border-radius: 40px;
-		filter: blur(28px);
-		pointer-events: none;
-		transition:
-			opacity var(--dur-slow) var(--ease-out),
-			background-color var(--dur-slow) var(--ease-out);
+	.decision.back {
+		animation-name: card-back;
 	}
-	.card {
-		padding: var(--space-6);
-		border-radius: var(--radius-xl);
-		background: var(--glass-card);
-		backdrop-filter: blur(var(--blur-card)) saturate(var(--glass-sat));
-		box-shadow: var(--shadow-card);
+	@keyframes card-in {
+		from {
+			opacity: 0;
+			translate: var(--motion-slide) 0;
+		}
+	}
+	@keyframes card-back {
+		from {
+			opacity: 0;
+			translate: calc(var(--motion-slide) * -1) 0;
+		}
 	}
 	.meta {
 		display: flex;
@@ -358,14 +406,15 @@
 		align-items: center;
 		gap: var(--space-1) var(--space-3);
 		color: var(--text-muted);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 	}
 	.who {
 		color: var(--text);
 	}
 	.question {
 		margin-top: var(--space-3);
-		font-size: var(--text-display);
+		font-size: var(--type-title);
+		font-weight: var(--weight-light);
 		line-height: 1.25;
 		overflow-wrap: anywhere;
 		white-space: pre-line;
@@ -385,16 +434,16 @@
 		column-gap: var(--space-3);
 		min-height: 52px;
 		padding: var(--space-2) var(--space-3);
-		border: 0;
-		border-radius: var(--radius-lg);
-		background: var(--fill-soft);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-tile);
+		background: var(--surface);
 		color: var(--text);
 		font: inherit;
 		text-align: left;
 		cursor: pointer;
 	}
 	.option:hover {
-		background: var(--fill-sel);
+		background: var(--surface-hover);
 	}
 	.option :global(kbd) {
 		grid-row: span 2;
@@ -406,7 +455,7 @@
 	}
 	.effect {
 		color: var(--text-muted);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 	}
 	.own {
 		display: grid;
@@ -417,10 +466,11 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 	}
 	.own-row .muted {
 		margin-right: auto;
+		color: var(--text-muted);
 	}
 	.actions {
 		display: flex;
@@ -428,25 +478,29 @@
 		gap: var(--space-2);
 		margin-top: var(--space-4);
 	}
+	.next {
+		margin: var(--space-4) 0 var(--space-2);
+		font-size: var(--type-body);
+		font-weight: var(--weight-medium);
+	}
+	.upcoming,
+	.rows {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.upcoming li,
+	.rows .row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) 0;
+		border-bottom: 1px solid var(--rule);
+		overflow-wrap: anywhere;
+	}
 
-	/* Phones: the card first and alone; the queue shrinks to its count and the line about hidden projects */
-	@media (max-width: 719px) {
-		.takt {
-			grid-template-columns: minmax(0, 1fr);
-			gap: var(--space-3);
-		}
-		.queue :global(.aura-list) {
-			display: none;
-		}
-		h1 {
-			margin-bottom: 0;
-		}
-		.stage {
-			overflow-clip-margin: 12px;
-		}
-		.card {
-			padding: var(--space-4);
-		}
+	@media (max-width: 759px) {
 		.option {
 			min-height: 56px;
 		}

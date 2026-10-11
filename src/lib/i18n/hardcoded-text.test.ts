@@ -29,8 +29,7 @@ const NOT_YET_MIGRATED = new Set([
 	'src/routes/settings/profiles/+page.svelte',
 	'src/routes/settings/profiles/[id]/+page.svelte',
 	'src/routes/settings/profiles/[id]/ProfileForm.svelte',
-	'src/routes/settings/secrets/+page.svelte',
-	'src/routes/takt/+page.svelte'
+	'src/routes/settings/secrets/+page.svelte'
 ]);
 
 const USER_FACING_ATTRIBUTES = new Set([
@@ -134,7 +133,7 @@ describe('hard-coded text in components', () => {
 
 	it('the list of unmigrated components only shrinks', () => {
 		// Raising this number needs a visible edit here, not just one more entry in the list above.
-		expect(NOT_YET_MIGRATED.size).toBeLessThanOrEqual(26);
+		expect(NOT_YET_MIGRATED.size).toBeLessThanOrEqual(25);
 	});
 
 	it.each(components.filter((file) => !NOT_YET_MIGRATED.has(file)))(

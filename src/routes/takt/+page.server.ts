@@ -8,7 +8,7 @@ import {
 	retractAnswer,
 	type Answer
 } from '$lib/server/domain/questions';
-import { openQuestions } from '$lib/server/live';
+import { taktView } from '$lib/server/takt-view';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };
@@ -16,7 +16,7 @@ const HUMAN: Actor = { kind: 'user' };
 // The layout reloads LIVE_DEPENDENCY on every question event, so new questions arrive without a reload of their own.
 export const load: PageServerLoad = ({ depends }) => {
 	depends(LIVE_DEPENDENCY);
-	return { questions: openQuestions(db()), undoWindowMs: ANSWER_UNDO_WINDOW_MS };
+	return { ...taktView(db()), undoWindowMs: ANSWER_UNDO_WINDOW_MS };
 };
 
 function answerFrom(form: FormData): Answer {

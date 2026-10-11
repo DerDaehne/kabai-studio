@@ -10,7 +10,6 @@ import {
 	reducedCrossfadeMs,
 	shift,
 	spring,
-	tilt,
 	transitionPage,
 	travel
 } from './motion';
@@ -26,9 +25,7 @@ vi.mock('svelte/motion', () => ({
 
 const node = {} as Element;
 const transitions = {
-	travel: () => travel(node, { y: shift.lg, delay: 80 }),
-	'tilt in': () => tilt(node, {}, { direction: 'in' }),
-	'tilt out': () => tilt(node, { reverse: true }, { direction: 'out' })
+	travel: () => travel(node, { y: shift.lg, delay: 80 })
 };
 const navigation = (from: string, to: string) =>
 	({
@@ -76,15 +73,6 @@ describe('with full motion', () => {
 	it('travel moves along the offset while fading', () => {
 		expect(travel(node, { x: 10, y: 20 }).css?.(0.5, 0.5)).toBe(
 			'opacity: 0.5; transform: translate(5px, 10px)'
-		);
-	});
-
-	it('tilt turns the leaving card away to the left and brings the next one in from the right', () => {
-		expect(tilt(node, {}, { direction: 'out' }).css?.(0, 1)).toContain(
-			'translateX(-40px) rotateY(12deg)'
-		);
-		expect(tilt(node, {}, { direction: 'in' }).css?.(0, 1)).toContain(
-			'translateX(40px) rotateY(-12deg)'
 		);
 	});
 

@@ -118,7 +118,7 @@ function tailEvents(db: DatabaseSync, runIds: number[]): Map<number, TraceEvent[
 	return byRun;
 }
 
-function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
+export function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
 	const runs = db.prepare(TRACKED_RUNS).all() as {
 		id: number;
 		startedAt: string;
@@ -149,7 +149,7 @@ function localMidnight(now: Date): string {
 	return midnight.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function withWayOuts(db: DatabaseSync, finished: FinishedRun[]): FinishedRunWithWayOut[] {
+export function withWayOuts(db: DatabaseSync, finished: FinishedRun[]): FinishedRunWithWayOut[] {
 	const wayOuts = wayOutsOf(
 		db,
 		finished.filter((run) => run.state === 'failed').map((run) => run.id)

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from 'svelte/server';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -17,6 +17,9 @@ import { shell } from '$lib/shell/shell.svelte';
 import { actions, load } from './+page.server';
 import Page from './+page.svelte';
 import type { QueuedQuestion } from './queue';
+
+const pageData = vi.hoisted(() => ({ locale: 'de' }));
+vi.mock('$app/state', () => ({ page: { data: pageData } }));
 
 const dir = mkdtempSync(join(tmpdir(), 'studio-takt-route-'));
 process.env.STUDIO_DATA_DIR = dir;
@@ -68,6 +71,8 @@ async function loaded() {
 	const data = (await load({ depends: (d: string) => dependencies.push(d) } as never)) as {
 		questions: QueuedQuestion[];
 		undoWindowMs: number;
+		tracks: unknown[];
+		finished: unknown[];
 	};
 	return { data, dependencies };
 }
@@ -80,7 +85,10 @@ async function post(action: 'answer' | 'retract', fields: Record<string, string 
 }
 
 const html = (data: Awaited<ReturnType<typeof loaded>>['data']) =>
-	render(Page as never, { props: { data } as never }).body.replace(/<!--[\s\S]*?-->/g, '');
+	render(Page as never, { props: { data: { live: { runs: [] }, ...data } } as never }).body.replace(
+		/<!--[\s\S]*?-->/g,
+		''
+	);
 const text = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const followUp = (pausedRun: number) =>
 	db()
@@ -207,7 +215,6 @@ describe('the Takt page', () => {
 		expect(card).toContain('1 Blau ruhig');
 		expect(card).toContain('2 Rot');
 		expect(card).not.toContain('Welcher Port?');
-		expect(markup).toContain('data-strength="strong"');
 	});
 
 	it('under a project focus shows only that project and names the hidden questions in one line', async () => {

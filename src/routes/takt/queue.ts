@@ -1,5 +1,4 @@
 import type { QueuedQuestion } from '$lib/live';
-import { assignAurae, type Aura } from '$lib/ui/aura';
 
 export type { QueuedQuestion };
 
@@ -27,15 +26,3 @@ export const deferred = (queue: QueuedQuestion[], id: number) => [...idsWithout(
 
 /** The order once the answer to `id` is taken back: its question returns to the front. */
 export const restored = (queue: QueuedQuestion[], id: number) => [id, ...idsWithout(queue, id)];
-
-export const decisionKey = 'decision';
-export const queueKey = (question: QueuedQuestion) => `q${question.id}`;
-
-/** The decision card is the one strong signal; in the queue only a weak light cone marks the question it shows. */
-export function taktAurae(visible: QueuedQuestion[]): Map<string, Aura> {
-	if (!visible.length) return new Map();
-	return assignAurae([
-		{ key: decisionKey, tone: 'waiting', focused: true },
-		...visible.map((question, index) => ({ key: queueKey(question), focused: index === 0 }))
-	]);
-}

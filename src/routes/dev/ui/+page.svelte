@@ -8,7 +8,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
-	import { tilt, travel } from '$lib/ui/motion';
+	import { travel } from '$lib/ui/motion';
 	import Nebula from '$lib/ui/Nebula.svelte';
 	import ProjectTag, { type ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 	import Spinner from '$lib/ui/Spinner.svelte';
@@ -457,7 +457,11 @@
 		</div>
 		<div class="queue">
 			{#key question}
-				<article class="decision" in:tilt={{ reverse: undoing }} out:tilt={{ reverse: undoing }}>
+				<article
+					class="decision"
+					in:travel={{ x: undoing ? -24 : 24 }}
+					out:travel={{ x: undoing ? 24 : -24 }}
+				>
 					<Badge tone="waiting">Frage {question + 1} von {questions.length}</Badge>
 					<p>{questions[question]}</p>
 					<div class="row">
