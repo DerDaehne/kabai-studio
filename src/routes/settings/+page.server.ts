@@ -4,7 +4,8 @@ import { isPrerelease } from '$lib/version';
 import type { PageServerLoad } from './$types';
 
 // ponytail: the backup status is read right here until a system check takes it over as one of its checks.
-export const load: PageServerLoad = () => ({
+export const load: PageServerLoad = ({ locals }) => ({
+	user: locals.user!, // the guard in hooks.server.ts guarantees the session
 	backup: backupStatus(backupDir()),
 	retention: RETENTION,
 	version: __STUDIO_VERSION__,

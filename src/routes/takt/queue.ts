@@ -1,20 +1,7 @@
-import type { ProjectRef } from '$lib/shell/shell.svelte';
+import type { QueuedQuestion } from '$lib/live';
 import { assignAurae, type Aura } from '$lib/ui/aura';
 
-export type QueuedQuestion = {
-	id: number;
-	/** `ref` such as `STU-12`; `number` addresses the ticket within its project. */
-	ticket: { ref: string; number: number; title: string };
-	project: ProjectRef;
-	/** The profile of the asking run; null for a question without a run or with a deleted profile. */
-	profile: string | null;
-	/** The asking run, so its Run-Akte link opens that run's trace instead of the ticket's newest. */
-	runId: number | null;
-	/** ISO timestamp. */
-	askedAt: string;
-	question: string;
-	options: { label: string; effect?: string }[];
-};
+export type { QueuedQuestion };
 
 /**
  * The queue in the order the human arranged it: what they deferred or took back keeps its place, questions that

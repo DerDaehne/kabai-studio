@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/t';
 	import Badge from '$lib/ui/Badge.svelte';
 	import type { PageProps } from './$types';
 
@@ -63,6 +64,10 @@
 	Version <code>{data.version}</code> · Build <code>{data.buildDate}</code>
 	{#if data.prerelease}<Badge tone="accent">Vorabversion</Badge>{/if}
 </p>
+
+<form class="sign-out" method="POST" action="/logout">
+	{t('settings.signedInAs', { name: data.user.name })} · <button>{t('settings.signOut')}</button>
+</form>
 
 <style>
 	.sections {

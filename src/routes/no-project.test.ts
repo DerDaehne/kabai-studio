@@ -1,9 +1,11 @@
 // Renders the views a fresh instance opens on: no tickets yet, the rest comes from the root layout's live state.
 import { render } from 'svelte/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { LiveState } from '$lib/live';
-import Board from './board/+page.svelte';
-import Stellwerk from './+page.svelte';
+
+vi.mock('$app/state', () => ({ page: { data: { locale: 'de' } } }));
+const { default: Board } = await import('./board/+page.svelte');
+const { default: Stellwerk } = await import('./+page.svelte');
 
 const live = (projects: LiveState['projects']): LiveState => ({
 	projects,
@@ -15,7 +17,19 @@ const live = (projects: LiveState['projects']): LiveState => ({
 const studio = { id: 1, code: 'STU', name: 'Studio', palette: 1 as const };
 const html = (view: unknown, data: object) =>
 	render(view as never, {
-		props: { data: { user: { name: 'owner' }, tickets: [], roles: {}, ...data } } as never
+		props: {
+			data: {
+				user: { name: 'owner' },
+				tickets: [],
+				roles: {},
+				questions: [],
+				queued: [],
+				finished: [],
+				tracks: [],
+				today: { tokens: 0, cost: 0 },
+				...data
+			}
+		} as never
 	}).body;
 const text = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 

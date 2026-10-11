@@ -60,7 +60,7 @@ export type Limits = { global: number; pools: Record<string, number> };
 /** Claim order of queued runs, most urgent first; equal priorities are claimed oldest first. Running runs are never preempted. */
 export const PRIORITIES = ['human', 'blocker', 'review', 'normal'] as const;
 export type Priority = (typeof PRIORITIES)[number];
-const rank = (column: string) =>
+export const rank = (column: string) =>
 	`CASE ${column} ${PRIORITIES.map((p, i) => `WHEN '${p}' THEN ${i}`).join(' ')} END`;
 
 type Emit = (event: StudioEvent) => void;

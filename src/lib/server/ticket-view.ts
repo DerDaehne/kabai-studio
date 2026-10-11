@@ -179,7 +179,7 @@ function continuingRun(db: DatabaseSync, runId: number): number | undefined {
 const ERROR_FORMAT = /^\[([^\]]+)\] ([\s\S]*)$/;
 const WAY_OUT = '\nAusweg: ';
 
-function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['failure'] {
+export function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['failure'] {
 	const [, code = '', message = error] = ERROR_FORMAT.exec(error) ?? [];
 	const comment = db
 		.prepare(

@@ -80,7 +80,7 @@ test.describe('WCAG 2.1 A/AA, light/dark × phone/desktop', () => {
 		const ticket = seedTicket('Axe gate: an active run holding on a question');
 		await open(page, '/');
 		await queueRun(db, page, ticket.id, fakeModel);
-		await expect(page.getByRole('listitem').filter({ hasText: ticket.ref })).toContainText('hält');
+		await expect(page.getByRole('listitem').filter({ hasText: ticket.ref })).toContainText('fragt');
 
 		await checkEveryCombination(page, 'start');
 	});

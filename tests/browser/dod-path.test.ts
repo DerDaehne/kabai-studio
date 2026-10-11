@@ -222,7 +222,7 @@ async function expectStuckRunRecovers(
 
 	await goToOverview();
 	const row = page
-		.getByRole('region', { name: 'Zuletzt beendet' })
+		.getByRole('region', { name: 'betrieb', exact: true })
 		.getByRole('listitem')
 		.filter({ hasText: ticket.ref });
 	const link = row.getByRole('link', { name: ticket.ref });

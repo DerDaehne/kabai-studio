@@ -21,7 +21,6 @@ const NOT_YET_MIGRATED = new Set([
 	'src/lib/ui/Toaster.svelte',
 	'src/routes/+error.svelte',
 	'src/routes/+layout.svelte',
-	'src/routes/+page.svelte',
 	'src/routes/board/+page.svelte',
 	'src/routes/dev/ui/+page.svelte',
 	'src/routes/dev/ui/PivotShowcase.svelte',
@@ -134,7 +133,7 @@ describe('hard-coded text in components', () => {
 
 	it('the list of unmigrated components only shrinks', () => {
 		// Raising this number needs a visible edit here, not just one more entry in the list above.
-		expect(NOT_YET_MIGRATED.size).toBeLessThanOrEqual(28);
+		expect(NOT_YET_MIGRATED.size).toBeLessThanOrEqual(27);
 	});
 
 	it.each(components.filter((file) => !NOT_YET_MIGRATED.has(file)))(

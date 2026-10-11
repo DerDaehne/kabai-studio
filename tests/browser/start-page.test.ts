@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import type { Page } from '@playwright/test';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import { haltRuns, releaseHalt } from '../../src/lib/server/domain/halt.ts';
+import { latestOpenQuestion } from '../../src/lib/server/domain/questions.ts';
 import {
 	createProfile,
 	createRun,
@@ -12,158 +15,320 @@ import { expect, open, queueRun, sidewaysScrollers, test } from './fixtures.ts';
 
 const HUMAN: Actor = { kind: 'user' };
 
-/** Seeds a run of `ticketId` that already ended with `end`, via a throwaway profile on an unreachable host. */
-function finishedRun(db: DatabaseSync, ticketId: number, end: RunEnd): number {
-	const profile = createProfile(db, HUMAN, {
+function profileOnUnreachableHost(db: DatabaseSync): number {
+	return createProfile(db, HUMAN, {
 		name: `Fake ${randomUUID()}`,
 		executor: 'builtin',
 		provider: 'openai-compatible',
 		base_url: 'http://127.0.0.1:1',
 		model: 'fake'
-	});
-	const run = createRun(db, HUMAN, { ticketId, profileId: profile.id }).id;
-	startRun(db, HUMAN, run); // a run only ends from "running" — finishRun rejects "queued" -> "failed"/"succeeded" directly
+	}).id;
+}
+
+/** Seeds a run of `ticketId` that already ended with `end`. */
+function finishedRun(db: DatabaseSync, ticketId: number, end: RunEnd): number {
+	const run = createRun(db, HUMAN, { ticketId, profileId: profileOnUnreachableHost(db) }).id;
+	startRun(db, HUMAN, run); // a run only ends from "running"
 	finishRun(db, HUMAN, run, end);
 	return run;
 }
 
-const finishedSection = (page: import('@playwright/test').Page) =>
-	page.getByRole('region', { name: 'Zuletzt beendet' });
+const section = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
+const tileOf = (page: Page, ref: string) =>
+	section(page, 'jetzt').locator('.slot').filter({ hasText: ref });
+const runIdOf = (db: DatabaseSync, ticketId: number) =>
+	(db.prepare('SELECT max(id) AS id FROM runs WHERE ticket_id = ?').get(ticketId) as { id: number })
+		.id;
 
-test('without an active run the Stellwerk says no agent is at work and leads to the board', async ({
+test('without an active run the status line says no agent is at work and leads to the board', async ({
 	page
 }) => {
 	await open(page, '/');
-	await expect(page.getByText('Kein Agent arbeitet.')).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'Kein Agent arbeitet.' })).toBeVisible();
 
 	await page.getByRole('link', { name: 'Zum Board' }).click();
 	await expect(page).toHaveURL('/board');
 });
 
-test('an active run that asks a question shows up live, holding, and the open-question count follows it to Takt', async ({
+test.describe('at 1440 px', () => {
+	test.use({ viewport: { width: 1440, height: 900 } });
+
+	test('a question is a 2×2 tile, answered with 1 in place, taken back with u, and arrives live in a second tab too', async ({
+		page,
+		context,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		const question = 'Ship it now or after the review?';
+		fakeModel.reply({
+			call: {
+				name: 'request_human',
+				args: { question, options: [{ label: 'Jetzt' }, { label: 'Später' }] }
+			}
+		});
+		const ticket = seedTicket('Decide in a tile');
+		const second = await context.newPage();
+		await open(second, '/');
+		await open(page, '/');
+
+		await queueRun(db, page, ticket.id, fakeModel);
+		const tile = tileOf(page, ticket.ref).filter({ hasText: question });
+		await expect(tile).toHaveAttribute('data-size', '2x2');
+		await expect(tile).toContainText(question);
+		await expect(tileOf(second, ticket.ref)).toHaveAttribute('data-size', '2x2');
+		const box = (await tile.boundingBox())!;
+		expect(Math.round(box.width)).toBe(308); // two units of 150 px and one gap
+		expect(Math.round(box.height)).toBe(308);
+		await expect(page.getByRole('status').filter({ hasText: ticket.ref })).toBeVisible();
+
+		await page.keyboard.press('1');
+		await expect(page.getByText(`Antwort gesendet · ${ticket.ref}`)).toBeVisible();
+		await expect(tile).toBeHidden();
+		await page.keyboard.press('u');
+		await expect(tile).toContainText(question);
+		expect(latestOpenQuestion(db, ticket.id)).toMatchObject({ question, answer: null });
+
+		fakeModel.reply({ text: 'Erledigt.' });
+		await tile.getByRole('button', { name: 'Antwort 2: Später' }).click();
+		await expect(tileOf(second, ticket.ref).filter({ hasText: question })).toBeHidden();
+		const finished = section(page, 'betrieb').getByRole('listitem').filter({ hasText: ticket.ref });
+		await expect(finished.filter({ hasText: 'wartet' })).toBeVisible(); // the follow-up run waits out the undo window
+		await expect(finished.filter({ hasText: 'fertig' })).toBeVisible({ timeout: 30_000 });
+		await second.close();
+	});
+
+	test('the panorama fills the stage: three sections fit, the fourth begins, the wheel scrolls sideways and the window stays', async ({
+		page
+	}) => {
+		await open(page, '/');
+		const lefts = await page
+			.locator('.panorama > section')
+			.evaluateAll((sections) =>
+				sections.map((s) => [s.getBoundingClientRect().left, s.getBoundingClientRect().right])
+			);
+		expect(lefts).toHaveLength(4);
+		for (const [, right] of lefts.slice(0, 3)) expect(right).toBeLessThanOrEqual(1440);
+		expect(lefts[3][0]).toBeLessThan(1440);
+		await expect(page.getByText('← → oder seitlich scrollen')).toBeVisible();
+
+		const panorama = page.locator('.panorama');
+		const bottom = await panorama.evaluate((el) => el.getBoundingClientRect().bottom);
+		const appBarTop = await page
+			.locator('footer.appbar')
+			.evaluate((el) => el.getBoundingClientRect().top);
+		expect(Math.abs(bottom - appBarTop)).toBeLessThanOrEqual(1);
+
+		await page.mouse.move(700, 600);
+		await page.mouse.wheel(0, 300);
+		await expect.poll(() => panorama.evaluate((el) => el.scrollLeft)).toBe(300);
+		expect(await page.evaluate(() => window.scrollY)).toBe(0);
+	});
+
+	test('keys: → and ← change the section, j moves within it, * focuses its project, gt opens the Takt', async ({
+		page,
+		db,
+		seedTicket
+	}) => {
+		const ticket = seedTicket('Reach me by keys');
+		finishedRun(db, ticket.id, { state: 'succeeded' });
+		finishedRun(db, ticket.id, { state: 'cancelled' }); // two rows in operations, so j has somewhere to go
+		await open(page, '/');
+
+		await page.keyboard.press('ArrowRight');
+		await expect(section(page, 'projekte').locator('[data-item]').first()).toBeFocused();
+		await page.keyboard.press('l');
+		const operations = section(page, 'betrieb');
+		await expect(operations.locator('[data-item]').first()).toBeFocused();
+		await page.keyboard.press('j');
+		await expect(operations.locator('[data-item]').nth(1)).toBeFocused();
+		await page.keyboard.press('ArrowLeft');
+		await expect(section(page, 'projekte').locator('[data-item]').first()).toBeFocused();
+
+		const name = await section(page, 'projekte').locator('[data-item] .name').first().textContent();
+		await page.keyboard.press('*');
+		await expect(page.locator('main .focus')).toContainText(name ?? '');
+		await page.keyboard.press(' ');
+		await page.keyboard.press(' ');
+
+		await page.keyboard.press('g');
+		await page.keyboard.press('t');
+		await expect(page).toHaveURL('/takt');
+	});
+
+	test('x on a run tile asks in a sheet, y cancels the run', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply('hang');
+		const ticket = seedTicket('Cancel me from the start view');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+		const tile = tileOf(page, ticket.ref);
+		await expect(tile).toHaveAttribute('data-size', '2x1');
+
+		await tile.locator('[data-item]').focus();
+		await page.keyboard.press('x');
+		const sheet = page.getByRole('dialog', { name: `Run ${runIdOf(db, ticket.id)} abbrechen?` });
+		await expect(sheet).toBeVisible();
+		await expect(sheet).toHaveClass(/sheet/);
+		await page.keyboard.press('y');
+		await expect(sheet).toBeHidden();
+		await expect(
+			section(page, 'betrieb').getByRole('listitem').filter({ hasText: ticket.ref })
+		).toContainText('abgebrochen');
+	});
+
+	test('the trace shows a running run with its phase, run time and newest steps, live', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply({ call: { name: 'no_such_tool', args: {} } }, 'hang');
+		const ticket = seedTicket('Watch my trace');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+
+		const track = section(page, 'spur').locator('article').filter({ hasText: ticket.ref });
+		await expect(track).toContainText('läuft seit');
+		await expect(track.locator('.steps li').first()).toContainText('no_such_tool');
+		await expect(
+			tileOf(page, ticket.ref).getByRole('img', { name: /Tokens je Minute/ })
+		).toBeAttached();
+		const stop = await page.request.post('/?/stop', {
+			form: { runId: String(runIdOf(db, ticket.id)) },
+			headers: { 'x-sveltekit-action': 'true', origin: new URL(page.url()).origin }
+		});
+		expect(stop.ok()).toBe(true);
+	});
+
+	test('operations lists a waiting run with its reason and a failed one with code, way out, duration and cost', async ({
+		page,
+		db,
+		seedTicket
+	}) => {
+		const failedTicket = seedTicket('A ticket whose run failed');
+		const failed = finishedRun(db, failedTicket.id, {
+			state: 'failed',
+			error: '[provider_unreachable] Timeout talking to the model'
+		});
+		db.prepare(
+			"INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (?, 'system', 'studio', ?, ?)"
+		).run(failedTicket.id, 'Run fehlgeschlagen.\nAusweg: Modellserver starten.', failed);
+		const waiting = seedTicket('A ticket whose run waits');
+		haltRuns(db, HUMAN);
+		createRun(db, HUMAN, { ticketId: waiting.id, profileId: profileOnUnreachableHost(db) });
+		try {
+			await open(page, '/');
+			const operations = section(page, 'betrieb');
+			await expect(operations.getByRole('listitem').filter({ hasText: waiting.ref })).toContainText(
+				'Not-Aus aktiv'
+			);
+			const row = operations.getByRole('listitem').filter({ hasText: failedTicket.ref });
+			await expect(row).toContainText('fehlgeschlagen');
+			await expect(row).toContainText('[provider_unreachable] Timeout talking to the model');
+			await expect(row).toContainText('Ausweg: Modellserver starten.');
+			await expect(row).toContainText(/\d+:\d\d · keine/);
+			await expect(row.getByRole('link', { name: failedTicket.ref })).toHaveAttribute(
+				'href',
+				`${failedTicket.path}?run=${failed}`
+			);
+			await expect(tileOf(page, failedTicket.ref)).toHaveAttribute('data-size', '2x1');
+		} finally {
+			releaseHalt(db, HUMAN);
+		}
+	});
+});
+
+test('at 1920 px all four sections fit, at 2560 px the tiles take six columns and running runs a second graph', async ({
 	page,
 	db,
 	seedTicket,
 	fakeModel
 }) => {
-	const question = 'Deploy now or wait for the next window?';
-	fakeModel.reply({
-		call: { name: 'request_human', args: { question, options: [{ label: 'Jetzt' }] } }
-	});
-	const ticket = seedTicket('Decide the deploy window');
+	fakeModel.reply('hang');
+	const ticket = seedTicket('Run on a wide screen');
+	await page.setViewportSize({ width: 1920, height: 1080 });
 	await open(page, '/');
-	// Scoped to its own section: the nav's Takt link also names its open-question count.
-	const questionLink = page.getByRole('region', { name: 'Offene Fragen' }).getByRole('link');
-	const before = await questionLink.textContent();
-
 	await queueRun(db, page, ticket.id, fakeModel);
-	const runId = (
-		db.prepare('SELECT id FROM runs WHERE ticket_id = ?').get(ticket.id) as { id: number }
-	).id;
+	const tile = tileOf(page, ticket.ref);
+	await expect(tile).toHaveAttribute('data-size', '2x1');
+	const rights = await page
+		.locator('.panorama > section')
+		.evaluateAll((sections) => sections.map((s) => s.getBoundingClientRect().right));
+	for (const right of rights) expect(right).toBeLessThanOrEqual(1920);
+	await expect(page.getByText('← → oder seitlich scrollen')).toBeHidden();
+	await expect(tile.getByRole('img', { name: /Schritte je Minute/ })).toBeHidden();
 
-	const row = page.getByRole('listitem').filter({ hasText: ticket.ref });
-	await expect(row).toContainText('hält');
-	await expect(row).toContainText('Fake model'); // the profile
-	await expect(row.locator('.tag')).toHaveText('WEB'); // the project tag; the ticket ref alone already contains it
-	await expect(row.getByRole('link', { name: ticket.ref })).toHaveAttribute(
-		'href',
-		`${ticket.path}?run=${runId}`
-	);
-	await expect(questionLink).not.toHaveText(before ?? '');
-
-	await questionLink.click();
-	await expect(page).toHaveURL('/takt');
-});
-
-test('a finished run shows its outcome under "Zuletzt beendet" and links to the Run-Akte', async ({
-	page,
-	db,
-	seedTicket
-}) => {
-	const ticket = seedTicket('A ticket whose run will fail');
-	const run = finishedRun(db, ticket.id, {
-		state: 'failed',
-		error: 'Timeout talking to the model'
+	await page.setViewportSize({ width: 2560, height: 1440 });
+	const columns = await page
+		.locator('.tiles')
+		.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' '));
+	expect(columns).toEqual(Array(6).fill('170px'));
+	await expect(tile.getByRole('img', { name: /Schritte je Minute/ })).toBeVisible();
+	await page.request.post('/?/stop', {
+		form: { runId: String(runIdOf(db, ticket.id)) },
+		headers: { 'x-sveltekit-action': 'true', origin: new URL(page.url()).origin }
 	});
-
-	await open(page, '/');
-	const row = page.getByRole('listitem').filter({ hasText: ticket.ref });
-	await expect(row).toContainText('fehlgeschlagen');
-	await expect(row).toContainText('Timeout talking to the model');
-	await expect(row.getByRole('link', { name: ticket.ref })).toHaveAttribute(
-		'href',
-		`${ticket.path}?run=${run}`
-	);
-});
-
-test('the link of a finished run opens that run in the Run-Akte, even when its ticket has a newer run', async ({
-	page,
-	db,
-	seedTicket
-}) => {
-	const ticket = seedTicket('A ticket retried after a failure');
-	finishedRun(db, ticket.id, { state: 'failed', error: 'Timeout talking to the model' });
-	finishedRun(db, ticket.id, { state: 'cancelled' });
-
-	await open(page, '/');
-	const failedRow = finishedSection(page)
-		.getByRole('listitem')
-		.filter({ hasText: 'fehlgeschlagen' });
-	await failedRow.getByRole('link', { name: ticket.ref }).click();
-
-	await expect(page.locator('.failure')).toContainText('Timeout talking to the model');
-});
-
-test('a run that finishes while the Stellwerk is open moves into "Zuletzt beendet" live', async ({
-	page,
-	db,
-	seedTicket,
-	fakeModel
-}) => {
-	fakeModel.reply({ text: 'Erledigt.' });
-	const ticket = seedTicket('Finish while watched');
-	await open(page, '/');
-	await expect(finishedSection(page)).not.toContainText(ticket.ref);
-
-	await queueRun(db, page, ticket.id, fakeModel);
-
-	await expect(
-		finishedSection(page).getByRole('listitem').filter({ hasText: ticket.ref })
-	).toContainText('fertig');
-});
-
-test('the finished-run link is reachable by keyboard and opens with Enter', async ({
-	page,
-	db,
-	seedTicket
-}) => {
-	const ticket = seedTicket('Reach me by keyboard');
-	finishedRun(db, ticket.id, { state: 'succeeded' });
-	await open(page, '/');
-	const link = finishedSection(page).getByRole('link', { name: ticket.ref });
-
-	for (let i = 0; i < 60 && !(await link.evaluate((el) => el === document.activeElement)); i++)
-		await page.keyboard.press('Tab');
-	await expect(link).toBeFocused();
-	await page.keyboard.press('Enter');
-	await expect(page).toHaveURL(new RegExp(ticket.path));
 });
 
 test.describe('on a phone', () => {
 	test.use({ viewport: { width: 375, height: 667 } });
 
-	test('a long unbroken error line and a long profile name wrap instead of scrolling sideways', async ({
+	test('sections stack, nothing scrolls sideways, a question tile is 2×1 without options and leads to the Run-Akte', async ({
 		page,
 		db,
-		seedTicket
+		seedTicket,
+		fakeModel
 	}) => {
+		const question = 'Phone question?';
+		fakeModel.reply({
+			call: { name: 'request_human', args: { question, options: [{ label: 'Ja' }] } }
+		});
 		const ticket = seedTicket('A ticket with a long error');
 		finishedRun(db, ticket.id, {
 			state: 'failed',
 			error: `[provider_unreachable] ${'https://example.invalid/'.repeat(12)}`
 		});
 		await open(page, '/');
-		await expect(finishedSection(page)).toContainText('provider_unreachable');
+		await queueRun(db, page, ticket.id, fakeModel);
+		const tile = tileOf(page, ticket.ref).filter({ hasText: question });
+		await expect(tile).toBeVisible();
+		await expect(tile.getByRole('button', { name: /Antwort 1/ })).toBeHidden();
+		const box = (await tile.boundingBox())!;
+		expect(box.height).toBeLessThan(box.width); // one row, not two
+		await expect(tile.getByRole('link', { name: ticket.ref })).toHaveAttribute(
+			'href',
+			new RegExp(`${ticket.path}\\?run=`)
+		);
+
+		const tops = await page
+			.locator('.panorama > section')
+			.evaluateAll((sections) => sections.map((s) => s.getBoundingClientRect().top));
+		expect(tops).toEqual([...tops].sort((a, b) => a - b));
 		expect(await sidewaysScrollers(page)).toEqual([]);
 	});
+});
+
+test('with reduced motion no animation runs on the start view', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	const ticket = seedTicket('A failed run tile');
+	finishedRun(db, ticket.id, { state: 'failed', error: 'boom' });
+	await open(page, '/');
+	await expect(tileOf(page, ticket.ref)).toBeVisible();
+	expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+});
+
+test('signing out moved to the settings and still works', async ({ page }) => {
+	await open(page, '/settings');
+	await expect(page.getByText(/Angemeldet als /)).toBeVisible();
+	await page.goto('/');
+	await expect(page.getByRole('button', { name: 'Abmelden' })).toHaveCount(0);
 });

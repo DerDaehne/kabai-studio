@@ -1,9 +1,11 @@
 // Renders the page server-side, so a missing +page.svelte fails at import ("Cannot find module")
 // instead of only as a 404 in the browser.
 import { render } from 'svelte/server';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { BackupStatus } from '$lib/server/backup';
-import Page from './+page.svelte';
+
+vi.mock('$app/state', () => ({ page: { data: { locale: 'de' } } }));
+const { default: Page } = await import('./+page.svelte');
 
 const retention = { daily: 7, weekly: 4 };
 const ok: BackupStatus = {
@@ -16,7 +18,7 @@ const ok: BackupStatus = {
 	error: null
 };
 const page = (backup: BackupStatus) =>
-	render(Page, { props: { data: { backup, retention } } as any }).body;
+	render(Page, { props: { data: { backup, retention, user: { name: 'owner' } } } as any }).body;
 
 it('shows an overview that links agent profiles and secrets and no pages that do not exist yet', () => {
 	const body = page(ok);
@@ -54,4 +56,11 @@ it('marks a backup problem visibly, with cause and way out', () => {
 	expect(body).toContain('fehlgeschlagen (ENOSPC). Freien Speicherplatz und Schreibrechte prüfen.');
 	expect(body).toMatch(/Verzeichnis.*\/daten\/backups/s);
 	expect(body).not.toMatch(/aktuell/);
+});
+
+it('offers signing out, which moved here from the start view', () => {
+	const body = page(ok);
+	expect(body).toMatch(/<form[^>]*method="POST"[^>]*action="\/logout"/);
+	expect(body).toContain('Angemeldet als owner');
+	expect(body).toMatch(/<button>Abmelden<\/button>/);
 });

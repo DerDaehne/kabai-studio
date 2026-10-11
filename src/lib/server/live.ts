@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { LiveRun, LiveState, ProjectRef } from '$lib/live';
+import type { LiveRun, LiveState, ProjectRef, QueuedQuestion } from '$lib/live';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 import { OPEN_QUESTION } from './domain/core';
 import { haltKind } from './domain/halt';
@@ -97,6 +97,11 @@ export type FinishedRun = {
 	ticket: string;
 	number: number;
 	state: FinishedRunState;
+	/** ISO timestamps; `startedAt` is null for a run cancelled before it started. */
+	startedAt: string | null;
+	finishedAt: string;
+	/** In US dollars; 0 for a profile without a price. */
+	cost: number;
 	/** The first line of the stored error; only set for a failed run. */
 	summary: string | null;
 };
@@ -106,13 +111,17 @@ type FinishedRunRow = ProjectRow & {
 	state: FinishedRunState;
 	number: number;
 	error: string | null;
+	cost: number;
+	startedAt: string | null;
+	finishedAt: string;
 };
 
 // 'paused' ends a run too (it can still resume), so it stays out: it belongs with the active runs above, not here.
 // INDEXED BY pins the plan to runs_by_finished_at: without ANALYZE statistics SQLite sometimes prefers the broader
 // runs_by_state index here and re-sorts the result instead.
 export const FINISHED_RUNS = `
-	SELECT r.id AS runId, r.state, r.error, p.id, p.key, p.name, t.number
+	SELECT r.id AS runId, r.state, r.error, r.cost, p.id, p.key, p.name, t.number,
+		strftime('%Y-%m-%dT%H:%M:%SZ', r.started_at) AS startedAt, strftime('%Y-%m-%dT%H:%M:%SZ', r.finished_at) AS finishedAt
 	FROM runs r INDEXED BY runs_by_finished_at
 	JOIN tickets t ON t.id = r.ticket_id
 	JOIN projects p ON p.id = t.project_id
@@ -132,6 +141,49 @@ function finishedRun(row: FinishedRunRow): FinishedRun {
 		ticket: `${row.key}-${row.number}`,
 		number: row.number,
 		state: row.state,
+		startedAt: row.startedAt,
+		finishedAt: row.finishedAt,
+		cost: row.cost,
 		summary: row.state === 'failed' ? (row.error ?? '').split('\n')[0] : null
 	};
+}
+
+type QuestionRow = {
+	id: number;
+	question: string;
+	options: string;
+	createdAt: string;
+	number: number;
+	title: string;
+	projectId: number;
+	key: string;
+	name: string;
+	profile: string | null;
+	runId: number | null;
+};
+
+// The same open questions the head's Takt title counts, so the queue and the count never disagree.
+const OPEN_QUESTION_LIST = `
+	SELECT q.id, q.question, q.options, q.created_at AS createdAt, t.number, t.title,
+		p.id AS projectId, p.key, p.name, ap.name AS profile, q.run_id AS runId
+	FROM questions q
+	JOIN tickets t ON t.id = q.ticket_id
+	JOIN projects p ON p.id = t.project_id
+	LEFT JOIN runs r ON r.id = q.run_id
+	LEFT JOIN agent_profiles ap ON ap.id = r.agent_profile_id
+	WHERE p.archived = 0 AND ${OPEN_QUESTION}
+	ORDER BY q.id`;
+
+/** Every open question across the active projects, oldest first. */
+export function openQuestions(db: DatabaseSync): QueuedQuestion[] {
+	return (db.prepare(OPEN_QUESTION_LIST).all() as QuestionRow[]).map((row) => ({
+		id: row.id,
+		ticket: { ref: `${row.key}-${row.number}`, number: row.number, title: row.title },
+		project: projectRef({ id: row.projectId, key: row.key, name: row.name }),
+		profile: row.profile,
+		runId: row.runId,
+		askedAt: new Date(`${row.createdAt.replace(' ', 'T')}Z`).toISOString(), // SQLite stores UTC without a zone
+		question: row.question,
+		options: JSON.parse(row.options)
+	}));
 }
