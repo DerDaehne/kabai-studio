@@ -212,6 +212,20 @@ test('the next card slides in, without a tilt, and with reduced motion nothing m
 test.describe('from 1300 px', () => {
 	test.use({ viewport: { width: 1440, height: 900 } });
 
+	test('a card sliding in gives no facet a sideways scrollbar', async ({
+		page,
+		db,
+		seedTicket
+	}) => {
+		asked(db, seedTicket('Clip one'), 'Clip first?', ['A']);
+		asked(db, seedTicket('Clip two'), 'Clip second?', ['A']);
+		await open(page, '/takt');
+		await page.keyboard.press('s');
+
+		expect(await decision(page).evaluate((card) => card.getAnimations().length)).toBeGreaterThan(0);
+		expect(await sidewaysScrollers(page)).toEqual([]);
+	});
+
 	test('the live column stands beside the question with running runs, their ticker line and sparkline', async ({
 		page,
 		db,

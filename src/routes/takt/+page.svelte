@@ -220,113 +220,119 @@
 </div>
 
 {#snippet questions()}
-	<p class="visually-hidden" aria-live="polite">
-		{card ? `${card.ticket.ref}: ${leadText(card.question)}` : t('takt.nothing')}
-	</p>
-	{#if card}
-		{#key card.id}
-			<article
-				class="decision"
-				class:back={mirrored}
-				aria-labelledby="question-{card.id}"
-				data-testid="decision"
-			>
-				<p class="meta">
-					<ProjectTag code={card.project.code} palette={card.project.palette} />
-					<span class="ref">{card.ticket.ref}</span>
-					<span class="title">{card.project.name} · {card.ticket.title}</span>
-					{#if card.profile}<span class="who">{t('takt.asks', { profile: card.profile })}</span
-						>{/if}
-					<time datetime={card.askedAt}
-						>{t('takt.waitingSince', { time: asked.format(new Date(card.askedAt)) })}</time
-					>
-				</p>
-				<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
-				{#if cardQuestion?.rest}<div class="question-rest">
-						<AgentText text={cardQuestion.rest} />
-					</div>{/if}
-				<div class="options" role="group" aria-label={t('takt.answers')}>
-					{#each card.options as option, index (index)}
-						<button
-							type="button"
-							class="option"
-							onclick={() => answer(card, { option: index + 1 })}
+	<div class="questions">
+		<p class="visually-hidden" aria-live="polite">
+			{card ? `${card.ticket.ref}: ${leadText(card.question)}` : t('takt.nothing')}
+		</p>
+		{#if card}
+			{#key card.id}
+				<article
+					class="decision"
+					class:back={mirrored}
+					aria-labelledby="question-{card.id}"
+					data-testid="decision"
+				>
+					<p class="meta">
+						<ProjectTag code={card.project.code} palette={card.project.palette} />
+						<span class="ref">{card.ticket.ref}</span>
+						<span class="title">{card.project.name} · {card.ticket.title}</span>
+						{#if card.profile}<span class="who">{t('takt.asks', { profile: card.profile })}</span
+							>{/if}
+						<time datetime={card.askedAt}
+							>{t('takt.waitingSince', { time: asked.format(new Date(card.askedAt)) })}</time
 						>
-							<Kbd key={String(index + 1)} />
-							<span class="label">{plainText(option.label)}</span>
-							{#if option.effect}<span class="effect">{option.effect}</span>{/if}
-						</button>
+					</p>
+					<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
+					{#if cardQuestion?.rest}<div class="question-rest">
+							<AgentText text={cardQuestion.rest} />
+						</div>{/if}
+					<div class="options" role="group" aria-label={t('takt.answers')}>
+						{#each card.options as option, index (index)}
+							<button
+								type="button"
+								class="option"
+								onclick={() => answer(card, { option: index + 1 })}
+							>
+								<Kbd key={String(index + 1)} />
+								<span class="label">{plainText(option.label)}</span>
+								{#if option.effect}<span class="effect">{option.effect}</span>{/if}
+							</button>
+						{/each}
+						{#if ownOpen}
+							<form
+								class="own"
+								onsubmit={(event) => {
+									event.preventDefault();
+									sendOwnAnswer();
+								}}
+							>
+								<label class="visually-hidden" for="own-answer">{t('takt.ownAnswerLabel')}</label>
+								<textarea
+									id="own-answer"
+									rows="3"
+									bind:this={ownField}
+									bind:value={ownText}
+									onkeydown={ownAnswerKeys}></textarea>
+								<div class="own-row">
+									<span class="muted">
+										<Kbd key="Enter" />
+										{t('takt.keySend')} · <Kbd key="Escape" />
+										{t('takt.keyDiscard')}
+									</span>
+									<button type="button" class="btn" onclick={closeOwnAnswer}
+										>{t('takt.discard')}</button
+									>
+									<button class="btn btn-primary" disabled={!ownText.trim()}
+										>{t('takt.send')}</button
+									>
+								</div>
+							</form>
+						{:else}
+							<button
+								type="button"
+								class="option own-open"
+								bind:this={ownButton}
+								onclick={openOwnAnswer}
+							>
+								<Kbd key="i" />
+								<span class="label">{t('takt.ownAnswer')}</span>
+								<span class="effect">{t('takt.ownAnswerHint')}</span>
+							</button>
+						{/if}
+					</div>
+					<p class="actions">
+						<button type="button" class="btn btn-ghost" onclick={() => later(card)}
+							>{t('takt.later')} <Kbd key="s" /></button
+						>
+						<a
+							class="btn btn-ghost"
+							href={runHref(card.project.code, card.ticket.number, card.runId)}
+							>{t('takt.runRecord')} <Kbd key="Enter" /></a
+						>
+					</p>
+				</article>
+			{/key}
+			{#if upcoming.length}
+				<h3 class="next">{t('takt.next')}</h3>
+				<ol class="upcoming" aria-label={t('takt.next')}>
+					{#each upcoming as question (question.id)}
+						<li>
+							<ProjectTag code={question.project.code} palette={question.project.palette} />
+							<span class="ref">{question.ticket.ref}</span>
+							<span class="text">{leadText(question.question)}</span>
+						</li>
 					{/each}
-					{#if ownOpen}
-						<form
-							class="own"
-							onsubmit={(event) => {
-								event.preventDefault();
-								sendOwnAnswer();
-							}}
-						>
-							<label class="visually-hidden" for="own-answer">{t('takt.ownAnswerLabel')}</label>
-							<textarea
-								id="own-answer"
-								rows="3"
-								bind:this={ownField}
-								bind:value={ownText}
-								onkeydown={ownAnswerKeys}></textarea>
-							<div class="own-row">
-								<span class="muted">
-									<Kbd key="Enter" />
-									{t('takt.keySend')} · <Kbd key="Escape" />
-									{t('takt.keyDiscard')}
-								</span>
-								<button type="button" class="btn" onclick={closeOwnAnswer}
-									>{t('takt.discard')}</button
-								>
-								<button class="btn btn-primary" disabled={!ownText.trim()}>{t('takt.send')}</button>
-							</div>
-						</form>
-					{:else}
-						<button
-							type="button"
-							class="option own-open"
-							bind:this={ownButton}
-							onclick={openOwnAnswer}
-						>
-							<Kbd key="i" />
-							<span class="label">{t('takt.ownAnswer')}</span>
-							<span class="effect">{t('takt.ownAnswerHint')}</span>
-						</button>
-					{/if}
-				</div>
-				<p class="actions">
-					<button type="button" class="btn btn-ghost" onclick={() => later(card)}
-						>{t('takt.later')} <Kbd key="s" /></button
-					>
-					<a class="btn btn-ghost" href={runHref(card.project.code, card.ticket.number, card.runId)}
-						>{t('takt.runRecord')} <Kbd key="Enter" /></a
-					>
-				</p>
-			</article>
-		{/key}
-		{#if upcoming.length}
-			<h3 class="next">{t('takt.next')}</h3>
-			<ol class="upcoming" aria-label={t('takt.next')}>
-				{#each upcoming as question (question.id)}
-					<li>
-						<ProjectTag code={question.project.code} palette={question.project.palette} />
-						<span class="ref">{question.ticket.ref}</span>
-						<span class="text">{leadText(question.question)}</span>
-					</li>
-				{/each}
-			</ol>
+				</ol>
+			{/if}
+		{:else}
+			<EmptyState title={t('takt.nothing')}>
+				{t('takt.nothingHint')}
+				{#snippet action()}
+					<a class="btn" href="/">{t('takt.toStart')} <Kbd key="g" /><Kbd key="s" /></a>
+				{/snippet}
+			</EmptyState>
 		{/if}
-	{:else}
-		<EmptyState title={t('takt.nothing')}>
-			{t('takt.nothingHint')}
-			{#snippet action()}
-				<a class="btn" href="/">{t('takt.toStart')} <Kbd key="g" /><Kbd key="s" /></a>
-			{/snippet}
-		</EmptyState>
-	{/if}
+	</div>
 {/snippet}
 
 {#snippet pausedRuns()}
@@ -380,6 +386,11 @@
 		font-family: var(--font-mono);
 		font-size: var(--type-meta);
 		white-space: nowrap;
+	}
+	/* a card sliding in must not give its facet a sideways scrollbar for a moment */
+	.questions {
+		overflow-x: clip;
+		overflow-clip-margin: 8px;
 	}
 	.decision {
 		padding: var(--space-4) 0;
