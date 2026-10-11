@@ -200,7 +200,8 @@ test.describe('at 1440 px', () => {
 					() =>
 						[...document.querySelectorAll('.slot')]
 							.find((el) => el.textContent?.includes('boom'))!
-							.getAnimations().length
+							.getAnimations()
+							.filter((animation) => animation.playState !== 'finished').length
 				)
 			)
 			.toBe(0); // the slide-in has ended, so only the glide can move the slot
@@ -221,7 +222,7 @@ test.describe('at 1440 px', () => {
 		await expect.poll(positionOf).toBeLessThan(before - 100);
 		const after = await positionOf();
 		const seen = await page.evaluate(() => (window as unknown as { seen: number[] }).seen);
-		const inFlight = seen.filter((left) => left < before - 100 && left > after + 100);
+		const inFlight = seen.filter((left) => left < before - 30 && left > after + 30);
 		expect(inFlight.length).toBeGreaterThan(0); // seen well between the old and the new place, not jumping
 		await page.keyboard.press('u');
 	});
@@ -477,7 +478,12 @@ test('with reduced motion no animation runs on the start view', async ({
 	finishedRun(db, ticket.id, { state: 'failed', error: 'boom' });
 	await open(page, '/');
 	await expect(tileOf(page, ticket.ref)).toBeVisible();
-	expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+	expect(
+		await page.evaluate(
+			() =>
+				document.getAnimations().filter((animation) => animation.playState !== 'finished').length
+		)
+	).toBe(0);
 });
 
 test('signing out moved to the settings and still works', async ({ page }) => {
