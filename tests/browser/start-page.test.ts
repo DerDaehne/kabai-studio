@@ -194,6 +194,16 @@ test.describe('at 1440 px', () => {
 		const positionOf = () => moving.evaluate((el) => el.getBoundingClientRect().left);
 		await expect.poll(positionOf).toBeGreaterThan(300); // beside the 2×2 question
 		const before = await positionOf();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						[...document.querySelectorAll('.slot')]
+							.find((el) => el.textContent?.includes('boom'))!
+							.getAnimations().length
+				)
+			)
+			.toBe(0); // the slide-in has ended, so only the glide can move the slot
 		await page.evaluate(() => {
 			const slot = [...document.querySelectorAll('.slot')].find((el) =>
 				el.textContent?.includes('boom')
@@ -211,8 +221,8 @@ test.describe('at 1440 px', () => {
 		await expect.poll(positionOf).toBeLessThan(before - 100);
 		const after = await positionOf();
 		const seen = await page.evaluate(() => (window as unknown as { seen: number[] }).seen);
-		const inFlight = seen.filter((left) => left < before - 1 && left > after + 1);
-		expect(inFlight.length).toBeGreaterThan(0); // seen between the old and the new place, not jumping
+		const inFlight = seen.filter((left) => left < before - 100 && left > after + 100);
+		expect(inFlight.length).toBeGreaterThan(0); // seen well between the old and the new place, not jumping
 		await page.keyboard.press('u');
 	});
 
