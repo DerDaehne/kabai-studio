@@ -35,8 +35,6 @@ export const de: Catalogue = {
 		'Unbekanntes service-Unterkommando „{action}“. Verfügbar: install, uninstall, status.',
 
 	'start.heading': 'kabai studio',
-	'start.brand': 'kabai',
-	'start.product': 'studio',
 	'start.lage.none': 'Kein Agent arbeitet.',
 	'start.lage.toBoard': 'Zum Board',
 	'start.lage.run': '{profile} ({location}) an {project} {ticket}',

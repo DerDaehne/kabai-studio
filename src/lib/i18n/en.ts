@@ -34,8 +34,6 @@ export const en = {
 		'Unknown service subcommand “{action}”. Available: install, uninstall, status.',
 
 	'start.heading': 'kabai studio',
-	'start.brand': 'kabai',
-	'start.product': 'studio',
 	'start.lage.none': 'No agent is working.',
 	'start.lage.toBoard': 'To the board',
 	'start.lage.run': '{profile} ({location}) on {project} {ticket}',

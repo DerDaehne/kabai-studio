@@ -288,10 +288,6 @@
 				{#if lageLine}{lageLine}{:else}{t('start.lage.none')}
 					<a href="/board">{t('start.lage.toBoard')}</a>{/if}
 			</p>
-			<p class="brand" aria-hidden="true">
-				<b>{t('start.brand')}</b>
-				{t('start.product')}
-			</p>
 			<p class="today">
 				<span>{t('start.today.tokens')}: {numbers.format(data.today.tokens)}</span>
 				<span>{t('start.today.cost')}: {costText(data.today.cost)}</span>
@@ -573,14 +569,6 @@
 		color: var(--text-muted);
 		font-size: var(--type-meta);
 	}
-	.brand {
-		font-size: var(--type-title);
-		font-weight: var(--weight-light);
-		line-height: 1.1;
-	}
-	.brand b {
-		font-weight: var(--weight-semibold);
-	}
 	.today {
 		display: flex;
 		flex-wrap: wrap;
@@ -615,6 +603,7 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
+		overflow-x: clip; /* a tile sliding in must not widen the page */
 	}
 	.slot {
 		display: grid;
