@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from 'svelte/server';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -17,7 +17,12 @@ process.env.STUDIO_DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const user: Actor = { kind: 'user' };
-const studio = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
+let studio: number;
+
+beforeEach(() => {
+	db().exec('DELETE FROM projects');
+	studio = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
+});
 
 async function loaded() {
 	const dependencies: string[] = [];
@@ -53,12 +58,15 @@ const inputNamed = (markup: string, name: string) =>
 	markup.match(new RegExp(`<input [^>]*name="${name}"[^>]*>`))?.[0] ?? '';
 
 describe('the project list', () => {
-	it('lists every project with key, name, column count and open questions, archived ones marked', async () => {
+	/** Studio with one open question, next to an archived project. */
+	beforeEach(() => {
 		const ticketId = board.createTicket(db(), user, studio, { title: 'Frage' }).id;
 		requestHuman(db(), user, ticketId, { question: 'Welcher Port?' });
 		const old = board.createProject(db(), user, { key: 'ALT', name: 'Altlast' }).id;
 		db().prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(old);
+	});
 
+	it('lists every project with key, name, column count and open questions, archived ones marked', async () => {
 		const { data, dependencies } = await loaded();
 		expect(data.projects).toEqual([
 			expect.objectContaining({

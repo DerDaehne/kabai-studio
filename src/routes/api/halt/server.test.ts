@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -24,15 +24,22 @@ const untilAborted: Executor = {
 		new Promise((_done, fail) => io.signal.addEventListener('abort', () => fail(io.signal.reason)))
 };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-const stops: (() => void)[] = [];
-afterEach(() => stops.splice(0).forEach((stop) => stop()));
-
 const projectId = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
 let profiles = 0;
+const stops: (() => void)[] = [];
 
-/** A started runner and two runs of a fresh profile in a pool of its own: the first runs, the second waits. */
-async function runningAndWaiting() {
+beforeEach(() => {
 	stops.push(startRunner(db(), { builtin: untilAborted }).stop);
+});
+
+afterEach(async () => {
+	stops.splice(0).forEach((stop) => stop());
+	await flush();
+	db().exec('DELETE FROM runs; DELETE FROM runner_halt'); // what a test leaves behind must not reach the next one
+});
+
+/** Two runs of a fresh profile in a pool of its own: the first runs, the second waits. */
+async function runningAndWaiting() {
 	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
 	profiles += 1;
 	const profileId = runs.createProfile(db(), user, {

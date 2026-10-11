@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from 'svelte/server';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import { createRun, finishRun, getProfile, listProfiles } from '$lib/server/domain/runs';
@@ -33,6 +33,10 @@ beforeAll(async () => {
 afterAll(async () => {
 	await new Promise((resolve) => endpoint.close(resolve));
 	rmSync(dir, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+	db().exec('DELETE FROM projects; DELETE FROM agent_profiles; DELETE FROM secrets'); // projects take their runs along
 });
 
 type Actions = Record<string, (event: never) => unknown>;

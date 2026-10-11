@@ -1,5 +1,5 @@
 import { createHash, scryptSync, timingSafeEqual } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	checkLogin,
 	checkSetupToken,
@@ -69,26 +69,39 @@ describe('password (scrypt)', () => {
 });
 
 describe('owner and sessions', () => {
-	const db = openDb(':memory:');
-	migrate(db);
+	let db: ReturnType<typeof openDb>;
+	let passwordHash: string;
+
+	beforeAll(async () => {
+		passwordHash = await hashPassword(PW);
+	});
+
+	beforeEach(() => {
+		db = openDb(':memory:');
+		migrate(db);
+	});
+
+	const signUpOwner = () => createOwner(db, 'owner', passwordHash);
 	const now = Date.parse('2026-01-01T00:00:00Z');
 	const expiresAt = (token: string) =>
 		db
 			.prepare('SELECT expires_at FROM sessions WHERE token_hash = ?')
 			.get(createHash('sha256').update(token).digest('hex'))?.expires_at;
 
-	it('creates exactly one owner', async () => {
-		expect(createOwner(db, 'owner', await hashPassword(PW))).toEqual({ id: 1, name: 'owner' });
-		expect(createOwner(db, 'zweiter', await hashPassword(PW))).toBeNull();
+	it('creates exactly one owner', () => {
+		expect(signUpOwner()).toEqual({ id: 1, name: 'owner' });
+		expect(createOwner(db, 'zweiter', passwordHash)).toBeNull();
 	});
 
 	it('checks name and password', async () => {
+		signUpOwner();
 		expect(await checkLogin(db, 'owner', PW)).toEqual({ id: 1, name: 'owner' });
 		expect(await checkLogin(db, 'owner', 'falsches-passwort')).toBeNull();
 		expect(await checkLogin(db, 'jemand', PW)).toBeNull();
 	});
 
 	it('stores the session token only as a SHA-256 hash', () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(token).toMatch(/^[\w-]{43}$/); // 32 random bytes
 		const rows = db.prepare('SELECT * FROM sessions').all();
@@ -105,6 +118,7 @@ describe('owner and sessions', () => {
 	});
 
 	it('accepts valid sessions and extends them sliding, at most once per day', () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 3_600_000)).toEqual({
 			user: { id: 1, name: 'owner' },
@@ -116,6 +130,7 @@ describe('owner and sessions', () => {
 	});
 
 	it('only checks with renew: false and never extends, leaving the renewal to the next request', () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 2 * DAY, { renew: false })).toEqual({
 			user: { id: 1, name: 'owner' },
@@ -128,6 +143,7 @@ describe('owner and sessions', () => {
 	});
 
 	it('rejects expired sessions and deletes them', () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, token, now + 30 * DAY - 1000)).not.toBeNull(); // extended to +60 days
 		expect(validateSession(db, token, now + 59 * DAY)).not.toBeNull();
@@ -137,6 +153,7 @@ describe('owner and sessions', () => {
 	});
 
 	it('rejects unknown and logged-out tokens', () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(validateSession(db, 'erfunden', now)).toBeNull();
 		deleteSession(db, token);
@@ -144,6 +161,7 @@ describe('owner and sessions', () => {
 	});
 
 	it('sets the password and ends all sessions on reset-password', async () => {
+		signUpOwner();
 		const token = createSession(db, 1, now);
 		expect(resetPassword(db, await hashPassword('neues-passwort-1'))).toBe(true);
 		expect(validateSession(db, token, now)).toBeNull();

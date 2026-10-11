@@ -246,6 +246,7 @@ describe('references', () => {
 describe('masking', () => {
 	const db = setup();
 	setSecret(db, 'anthropic', MASKED, false, KEY);
+	const PEM = '-----BEGIN TEST-----\nnot-a-real-key\n-----END TEST-----';
 
 	it('replaces secret values in an event payload (nested, arrays, keys) and leaves the original unchanged', () => {
 		const payload = {
@@ -275,9 +276,8 @@ describe('masking', () => {
 		expect(mask('Authorization: Bearer env-token-abcdef')).toBe(
 			'Authorization: Bearer [env:TEST_API_TOKEN]'
 		);
-		const pem = '-----BEGIN TEST-----\nnot-a-real-key\n-----END TEST-----';
-		setSecret(db, 'pem', pem, false, KEY);
-		expect(mask(JSON.stringify({ pem }))).toBe('{"pem":"[secret:pem]"}');
+		setSecret(db, 'pem', PEM, true, KEY);
+		expect(mask(JSON.stringify({ pem: PEM }))).toBe('{"pem":"[secret:pem]"}');
 	});
 
 	it('masks the longest values first, so nothing of a longer secret that contains another one remains', () => {
@@ -343,13 +343,14 @@ describe('masking', () => {
 	});
 
 	it('masks log lines: console.* formats first and then masks (objects, errors, multi-line values included)', () => {
+		setSecret(db, 'pem', PEM, true, KEY);
 		const out: string[] = [];
 		const sink = (...args: unknown[]) => out.push(args.join('|'));
 		const fake = { log: sink, info: sink, warn: sink, error: sink, debug: sink };
 		maskConsole(fake);
 		fake.error('Fehler:', new Error(`kaputt ${MASKED}`), { headers: { authorization: MASKED } });
 		fake.log('%s und %d%%', MASKED, 5);
-		fake.warn({ pem: '-----BEGIN TEST-----\nnot-a-real-key\n-----END TEST-----' });
+		fake.warn({ pem: PEM });
 		expect(out.join('\n')).not.toContain(MASKED);
 		expect(out.join('\n')).not.toContain('not-a-real-key');
 		expect(out[0]).toMatch(/^%s\|Fehler: Error: kaputt \[secret:anthropic\]/);

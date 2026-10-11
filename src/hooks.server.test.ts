@@ -6,12 +6,14 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { format } from 'node:util';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	SESSION_COOKIE,
 	checkLogin,
+	createOwner,
 	createSession,
 	hasOwner,
+	hashPassword,
 	issueSetupToken
 } from '$lib/server/auth';
 import { db, migrate, openDb } from '$lib/server/db';
@@ -98,6 +100,13 @@ const login = (
 describe('auth flow', () => {
 	let token = '';
 
+	beforeEach(() => {
+		db().exec('DELETE FROM users'); // takes the sessions with it
+		token = issueSetupToken(); // like the init hook on a start without owner
+	});
+
+	const withOwner = async () => createOwner(db(), 'owner', await hashPassword(PW));
+
 	it('on first start sends pages to /setup, answers the API with 401 JSON and keeps /setup and /login public', async () => {
 		expect(await guard('/')).toEqual({ redirect: '/setup', status: 303 });
 		const api = (await guard('/api/tickets')) as Response;
@@ -110,7 +119,6 @@ describe('auth flow', () => {
 		expect(await guard('/setup')).toBeInstanceOf(Response);
 		expect(await guard('/login')).toBeInstanceOf(Response);
 		expect(await guard('/_app/remote/abc')).toEqual({ redirect: '/setup', status: 303 }); // remote functions are not public
-		token = issueSetupToken(); // like the init hook on a start without owner
 	});
 
 	it('lets /mcp through without a session, but not sub-paths or foreign origins', async () => {
@@ -187,6 +195,7 @@ describe('auth flow', () => {
 	});
 
 	it('treats __data.json of public pages as public and keeps it protected for protected pages', async () => {
+		await withOwner();
 		expect(await guard('/login/__data.json')).toBeInstanceOf(Response); // no redirect: client-side navigation to /login loads its data
 		expect(await guard('/setup/__data.json')).toBeInstanceOf(Response);
 		expect(await guard('/settings/secrets/__data.json')).toEqual({
@@ -196,6 +205,7 @@ describe('auth flow', () => {
 	});
 
 	it('sets a cookie with Secure outside localhost on login, and the guard lets it through', async () => {
+		await withOwner();
 		const cookies = jar();
 		expect(
 			await login(
@@ -219,6 +229,7 @@ describe('auth flow', () => {
 	});
 
 	it('answers 429 after 5 failed logins per minute, even with the right password', async () => {
+		await withOwner();
 		for (let i = 0; i < 5; i++) {
 			const res = await login({ name: 'owner', password: 'falsches-passwort' }, { ip: '10.0.0.5' });
 			expect(isActionFailure(res) && res.status).toBe(400);
@@ -232,6 +243,7 @@ describe('auth flow', () => {
 	});
 
 	it('does not count successful logins against the rate limit: 6 logins per minute from one IP succeed', async () => {
+		await withOwner();
 		for (let i = 0; i < 6; i++)
 			expect(await login({ name: 'owner', password: PW }, { ip: '10.0.0.7' })).toEqual({
 				redirect: '/',
@@ -249,6 +261,7 @@ describe('auth flow', () => {
 	});
 
 	it('rejects a cross-origin POST without a form content type (CSRF) and keeps the session', async () => {
+		await withOwner();
 		const sessionToken = createSession(db(), 1);
 		const cookies = () => jar({ [SESSION_COOKIE]: sessionToken });
 		const post = (origin?: string): Init => ({
@@ -266,6 +279,7 @@ describe('auth flow', () => {
 	});
 
 	it('deletes session and cookie on logout, and the old token leads back to /login', async () => {
+		await withOwner();
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		expect(await run(() => logout(event('/logout', cookies, { form: {} })))).toEqual({
@@ -285,6 +299,7 @@ describe('auth flow', () => {
 	});
 
 	it('ends an open event stream on logout: no more events, stream closed, listener removed', async () => {
+		await withOwner();
 		const sessionToken = createSession(db(), 1);
 		const cookies = jar({ [SESSION_COOKIE]: sessionToken });
 		const before = listenerCount();
@@ -301,6 +316,7 @@ describe('auth flow', () => {
 	});
 
 	it('streams the events of every project without a project parameter and only its own with one, and logout ends both', async () => {
+		await withOwner();
 		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
 		const open = async (path: string) => {
 			const reader = ((await events(event(path, cookies))) as Response).body!.getReader();
@@ -327,6 +343,7 @@ describe('auth flow', () => {
 	});
 
 	it('delivers an event that concerns every project, such as the kill switch, to streams with and without a project', async () => {
+		await withOwner();
 		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
 		const readers = await Promise.all(
 			['/api/events', '/api/events?project=1'].map(async (path) => {
@@ -353,13 +370,15 @@ describe('auth flow', () => {
 			expect(((await guard(path)) as Response).status).toBe(401);
 	});
 
-	it('rejects a project parameter that is no positive integer with 400', () => {
+	it('rejects a project parameter that is no positive integer with 400', async () => {
+		await withOwner();
 		const cookies = jar({ [SESSION_COOKIE]: createSession(db(), 1) });
 		for (const path of ['/api/events?project=', '/api/events?project=0', '/api/events?project=x'])
 			expect(() => events(event(path, cookies))).toThrow(expect.objectContaining({ status: 400 }));
 	});
 
 	it('does not extend the session from the event stream (the guard does that with the cookie), and expiry ends the stream', async () => {
+		await withOwner();
 		const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 		const expiresAt = (token: string) =>
 			(
@@ -396,6 +415,7 @@ describe('auth flow', () => {
 	});
 
 	it('sets the password with npm run reset-password while another connection is open', async () => {
+		await withOwner();
 		const sessionToken = createSession(db(), 1);
 		const cli = spawnSync(process.execPath, ['src/lib/server/reset-password.ts'], {
 			input: 'neues-test-passwort\n',
@@ -413,7 +433,8 @@ describe('auth flow', () => {
 		});
 	});
 
-	it('rejects a too short password in reset-password', () => {
+	it('rejects a too short password in reset-password', async () => {
+		await withOwner();
 		const cli = spawnSync(process.execPath, ['src/lib/server/reset-password.ts'], {
 			input: 'kurz\n',
 			env: { ...process.env, STUDIO_DATA_DIR: tmp },

@@ -218,9 +218,14 @@ describe('end to end', () => {
 	it('starts a run from the Run-Akte that the builtin executor works to the end, and the tab shows the result', async () => {
 		const fetch = fakeModel('Export gebaut.', [1500, 42]);
 		stops.push(startRunner(db(), { builtin: builtinExecutor(db(), { fetch }) }).stop);
+		const { id: ticketId, number } = newTicket();
 		const states: string[] = [];
-		stops.push(subscribe((e) => e.type === 'run.state_changed' && states.push(e.to as string)));
-		const { number } = newTicket();
+		stops.push(
+			subscribe(
+				(e) =>
+					e.type === 'run.state_changed' && e.ticketId === ticketId && states.push(e.to as string)
+			)
+		);
 		const profileId = newProfile({ base_url: 'http://model.test/v1' });
 
 		await post('start', number, { profileId: String(profileId) }).catch(() => {});

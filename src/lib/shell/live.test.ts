@@ -71,7 +71,10 @@ class RouteEventSource {
 vi.stubGlobal('EventSource', RouteEventSource);
 vi.stubGlobal('window', new EventTarget());
 const tabs: { close(): void }[] = [];
-afterEach(() => tabs.splice(0).forEach((connection) => connection.close()));
+afterEach(() => {
+	tabs.splice(0).forEach((connection) => connection.close());
+	db().exec('DELETE FROM tickets'); // the runs and questions of a test must not show up in the next one
+});
 
 /** Loads the page in a new tab: fresh client modules, the layout load, then the tab's one connection. */
 async function openTab() {

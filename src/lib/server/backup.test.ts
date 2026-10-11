@@ -16,7 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { backup, backupIfDue, backupStatus, listBackups, prune } from './backup';
 import { migrate, openDb } from './db';
 
@@ -405,9 +405,12 @@ describe('backupStatus', () => {
 });
 
 describe('restore (CLI)', () => {
-	const data = join(tmp, 'data');
-	const file = join(data, 'studio.db');
-	const backups = join(data, 'backups');
+	let data: string;
+	let file: string;
+	let backups: string;
+	let saved: string;
+	let atBackup: ReturnType<typeof dump>;
+	let changed: ReturnType<typeof dump>;
 	const restore = (...args: string[]) =>
 		spawnSync(process.execPath, ['src/lib/server/restore.ts', ...args], {
 			env: { ...process.env, STUDIO_DATA_DIR: data },
@@ -421,13 +424,18 @@ describe('restore (CLI)', () => {
 		return d;
 	};
 
-	mkdirSync(data, { recursive: true });
-	const db = seed(file);
-	const saved = backup(db, backups, new Date('2026-01-01T00:00:00Z'));
-	const atBackup = dump(db);
-	db.exec(`UPDATE projects SET name = 'geändert'; DELETE FROM notes; DELETE FROM secrets;`);
-	const changed = dump(db);
-	db.close();
+	beforeEach(() => {
+		data = join(mkdtempSync(join(tmp, 'restore-')), 'data');
+		mkdirSync(data);
+		file = join(data, 'studio.db');
+		backups = join(data, 'backups');
+		const db = seed(file);
+		saved = backup(db, backups, new Date('2026-01-01T00:00:00Z'));
+		atBackup = dump(db);
+		db.exec(`UPDATE projects SET name = 'geändert'; DELETE FROM notes; DELETE FROM secrets;`);
+		changed = dump(db);
+		db.close();
+	});
 
 	it('aborts while the server runs, without changing or backing up anything', async () => {
 		const server = await holdLock(data);

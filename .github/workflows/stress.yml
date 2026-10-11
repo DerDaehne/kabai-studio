@@ -24,12 +24,14 @@ jobs:
       - run: npm ci
       # A separate process per repeat, not vitest's --repeats: that reruns suites inside one
       # worker process, and several suites keep state across repeats there (e.g. an owner row
-      # that only the first repeat may create). --sequence.shuffle stays out for the same class of
-      # reason: several suites depend on their own test order and fail under shuffle on main.
-      # ponytail: unit stress is only repeat-without-shuffle until those order dependencies are
-      # fixed; add --sequence.shuffle back once they are.
+      # that only the first repeat may create). Each repeat shuffles with its own printed seed,
+      # so a failure can be replayed with --sequence.seed.
       - run: |
-          for _ in 1 2 3; do npm test; done
+          for _ in 1 2 3; do
+            seed=$RANDOM
+            echo "shuffle seed $seed"
+            npm test -- --sequence.shuffle --sequence.seed=$seed
+          done
       - run: npm run build
       - id: playwright
         run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"

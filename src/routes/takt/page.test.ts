@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from 'svelte/server';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -22,19 +22,18 @@ const dir = mkdtempSync(join(tmpdir(), 'studio-takt-route-'));
 process.env.STUDIO_DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => (shell.focus = null));
+beforeEach(() => {
+	db().exec('DELETE FROM projects; DELETE FROM agent_profiles'); // projects take their questions along
+});
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 let projects = 0;
-const usedNames = new Set<string>();
 
-/** Project names are unique, so a name an earlier test already used gets the project key appended. */
 function project(name: string) {
 	projects += 1;
 	const key = `P${projects}`;
-	const uniqueName = usedNames.has(name) ? `${name} ${key}` : name;
-	usedNames.add(name);
-	const id = board.createProject(db(), user, { key, name: uniqueName }).id;
+	const id = board.createProject(db(), user, { key, name }).id;
 	const column = db()
 		.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'In Arbeit'")
 		.get(id)!.id as number;
@@ -89,14 +88,9 @@ const followUp = (pausedRun: number) =>
 		.get(pausedRun)?.state;
 const storedAnswer = (id: number) =>
 	db().prepare('SELECT answer FROM questions WHERE id = ?').get(id)!.answer;
-const clearQueue = () =>
-	db().exec(
-		`UPDATE questions SET answer = '{"text":"x"}', answered_at = CURRENT_TIMESTAMP WHERE answer IS NULL`
-	);
 
 describe('the Takt queue', () => {
 	it('shows the open questions of all projects, oldest first, with ticket, project, asking profile and options', async () => {
-		clearQueue();
 		const studio = project('Studio');
 		const web = project('Webseite');
 		const first = asks(web, 'Welche Farbe?', [
@@ -120,7 +114,6 @@ describe('the Takt queue', () => {
 	});
 
 	it('picks up a question asked later on the next load, at the end of the queue', async () => {
-		clearQueue();
 		const p = project('Studio');
 		const first = asks(p, 'Zuerst?');
 		expect((await loaded()).data.questions.map((q) => q.id)).toEqual([first.id]);
@@ -130,7 +123,6 @@ describe('the Takt queue', () => {
 	});
 
 	it('leaves out answered questions and projects in the archive', async () => {
-		clearQueue();
 		const p = project('Studio');
 		const answered = asks(p, 'Erledigt?');
 		await post('answer', { question: answered.id, option: 1 });
@@ -202,7 +194,6 @@ describe('taking an answer back in Takt', () => {
 
 describe('the Takt page', () => {
 	it('shows the oldest question as the card in focus, with its options and keys', async () => {
-		clearQueue();
 		const p = project('Studio');
 		asks(p, 'Welche Farbe?', [{ label: 'Blau', effect: 'ruhig' }, { label: 'Rot' }]);
 		asks(p, 'Welcher Port?');
@@ -220,7 +211,6 @@ describe('the Takt page', () => {
 	});
 
 	it('under a project focus shows only that project and names the hidden questions in one line', async () => {
-		clearQueue();
 		const studio = project('Studio');
 		const web = project('Webseite');
 		asks(web, 'Ausgeblendet?');
@@ -235,7 +225,6 @@ describe('the Takt page', () => {
 	});
 
 	it('with an empty queue says that nothing waits and leads to the start view', async () => {
-		clearQueue();
 		const markup = html((await loaded()).data);
 		expect(text(markup)).toContain('Nichts wartet auf dich');
 		expect(markup).toMatch(/<a [^>]*href="\/"[^>]*>[^<]*Zum kabai studio/);

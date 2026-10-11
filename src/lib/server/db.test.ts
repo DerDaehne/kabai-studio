@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultDataDir } from './data-dir';
 import { latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
@@ -662,9 +662,12 @@ describe('migrate with foreign keys', () => {
 });
 
 describe('core schema', () => {
-	const db = openDb(':memory:');
-	migrate(db);
-	db.exec(`
+	let db: ReturnType<typeof openDb>;
+
+	beforeEach(() => {
+		db = openDb(':memory:');
+		migrate(db);
+		db.exec(`
 		INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio'), (2, 'OTH', 'Anderes');
 		INSERT INTO columns (id, project_id, name, kind) VALUES (10, 1, 'Ready', 'normal'), (11, 1, 'Done', 'done'), (20, 2, 'Fremd', 'normal');
 		INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (1, 10, 11, 1);
@@ -677,6 +680,7 @@ describe('core schema', () => {
 		INSERT INTO run_events (run_id, seq, type) VALUES (1, 1, 'log');
 		INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (100, 'agent', 'agent (Run 1)', 'y', 1);
 	`);
+	});
 
 	it.each([
 		['duplicate project key', "INSERT INTO projects (key, name) VALUES ('STU', 'x')", /UNIQUE/],
@@ -878,9 +882,12 @@ describe('core schema', () => {
 });
 
 describe('notes schema', () => {
-	const db = openDb(':memory:');
-	migrate(db);
-	db.exec(`
+	let db: ReturnType<typeof openDb>;
+
+	beforeEach(() => {
+		db = openDb(':memory:');
+		migrate(db);
+		db.exec(`
 		INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
 		INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
 		INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Ticket');
@@ -889,6 +896,7 @@ describe('notes schema', () => {
 		INSERT INTO note_links (from_note_id, to_note_id, type) VALUES (2, 1, 'references');
 		INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 100, 'documents');
 	`);
+	});
 
 	it.each([
 		['slug not kebab-case', "INSERT INTO notes (slug, title) VALUES ('Adr-A', 'x')", /CHECK/],
