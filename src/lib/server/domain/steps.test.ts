@@ -154,6 +154,16 @@ describe('the chain', () => {
 		board.moveTicket(c.db, user, predecessor, c.columnOf('done'));
 		expect(queueNextStep(c.db, finished)).toMatchObject({ id: expect.any(Number) });
 	});
+
+	it('queues no run after a back into a work step while a blocks predecessor is not done', () => {
+		const c = chain('software', 'critique');
+		const predecessor = board.createTicket(c.db, user, c.projectId, { title: 'Davor' }).id;
+		board.linkRelation(c.db, user, predecessor, c.ticketId, 'blocks');
+		const { outcome, next } = c.work('back', 'Befund');
+		expect(outcome).toMatchObject({ next: 'implement', then: 'run' });
+		expect(next).toBeUndefined();
+		expect(c.runCount()).toBe(1);
+	});
 });
 
 describe('the round limit between author and critique', () => {
