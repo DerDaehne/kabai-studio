@@ -113,5 +113,11 @@ export const en = {
 	'lage.reason.predecessors': 'Waiting for {refs}',
 	'lage.reason.paused': 'Paused, resume with :fortsetzen',
 	'lage.reason.not_prioritized': 'Not prioritized yet',
-	'lage.reason.ready': 'Ready to start'
+	'lage.reason.ready': 'Ready to start',
+	'lage.wait.halt_stop': 'Emergency stop active',
+	'lage.wait.halt_pause': 'All runs paused',
+	'lage.wait.claim': 'Waiting for the next claim',
+	'lage.wait.pool_full': 'Pool "{pool}" is full ({active} of {limit} active)',
+	'lage.wait.global_full': 'Global limit reached ({active} of {limit} active)',
+	'lage.wait.ahead': '{count} ahead in the queue'
 };

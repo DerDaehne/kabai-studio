@@ -386,6 +386,14 @@ test.describe('on a phone', () => {
 			await expect(row(page, second.title)).toBeVisible();
 			expect(await sidewaysScrollers(page)).toEqual([]);
 
+			const label = row(page, ticket.ref).locator('.lage-text');
+			await label.evaluate(
+				(el) => (el.textContent = 'Open · ' + 'a very long capacity reason '.repeat(8))
+			);
+			expect(await sidewaysScrollers(page)).toEqual([]);
+			expect(await label.evaluate((el) => getComputedStyle(el).textOverflow)).toBe('ellipsis');
+			expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+
 			await page.getByRole('button', { name: `${second.key} ${second.name}` }).tap();
 			await expect(row(page, ticket.ref)).toBeHidden();
 			await expect(row(page, second.title)).toBeVisible();

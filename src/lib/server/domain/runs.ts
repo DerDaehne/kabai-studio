@@ -1,3 +1,4 @@
+import type { WaitCause } from '$lib/lage';
 import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
@@ -310,9 +311,11 @@ export type WaitReason = {
 	globalLimit: number;
 	/** Queued runs of the same pool that will be claimed first. */
 	ahead: number;
+	/** Why it waits, as codes with parameters for the UI to translate. */
+	causes: WaitCause[];
 	text: string;
 };
-type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> & {
+type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text' | 'causes'> & {
 	halt: 'stop' | 'pause' | null;
 };
 
@@ -340,7 +343,8 @@ export function waitReasons(
 				poolLimit: limits.pools[counts.pool] ?? 1,
 				globalLimit: limits.global
 			};
-			return [id, { ...reason, text: halt ? HALTED_TEXT[halt] : waitText(reason) }];
+			const causes: WaitCause[] = halt ? [{ code: `halt_${halt}` }] : waitCauses(reason);
+			return [id, { ...reason, causes, text: causesText(causes) }];
 		})
 	);
 }
@@ -349,23 +353,38 @@ export function waitReasons(
 export const waitReason = (db: DatabaseSync, runId: number, limits: Limits) =>
 	waitReasons(db, limits, runId).get(runId);
 
-const HALTED_TEXT = {
-	stop: 'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen all.',
-	pause: 'wartet: alle Runs angehalten — Fortsetzen mit :fortsetzen all.'
-};
-
-function waitText(r: Omit<WaitReason, 'text'>) {
-	const causes = [
-		r.activeInPool >= r.poolLimit &&
-			`Pool „${r.pool}“ ist voll (${r.activeInPool} von ${r.poolLimit} aktiv)`,
-		r.active >= r.globalLimit &&
-			`das globale Limit ist erreicht (${r.active} von ${r.globalLimit} aktiv)`,
-		r.ahead > 0 && `vor ihm in der Queue: ${r.ahead} ${r.ahead === 1 ? 'Run' : 'Runs'}`
-	].filter(Boolean);
-	return causes.length
-		? `wartet: ${causes.join(', ')}.`
-		: 'wartet auf den nächsten Claim des Runners.';
+function waitCauses(r: Omit<WaitReason, 'text' | 'causes'>): WaitCause[] {
+	const causes: WaitCause[] = [];
+	if (r.activeInPool >= r.poolLimit)
+		causes.push({ code: 'pool_full', pool: r.pool, active: r.activeInPool, limit: r.poolLimit });
+	if (r.active >= r.globalLimit)
+		causes.push({ code: 'global_full', active: r.active, limit: r.globalLimit });
+	if (r.ahead > 0) causes.push({ code: 'ahead', count: r.ahead });
+	return causes.length ? causes : [{ code: 'claim' }];
 }
+
+function causeText(c: WaitCause): string {
+	switch (c.code) {
+		case 'halt_stop':
+			return 'Not-Aus aktiv — Fortsetzen mit :fortsetzen all';
+		case 'halt_pause':
+			return 'alle Runs angehalten — Fortsetzen mit :fortsetzen all';
+		case 'claim':
+			return 'auf den nächsten Claim des Runners';
+		case 'pool_full':
+			return `Pool „${c.pool}“ ist voll (${c.active} von ${c.limit} aktiv)`;
+		case 'global_full':
+			return `das globale Limit ist erreicht (${c.active} von ${c.limit} aktiv)`;
+		case 'ahead':
+			return `vor ihm in der Queue: ${c.count} ${c.count === 1 ? 'Run' : 'Runs'}`;
+	}
+}
+
+/** The German sentence for the agent's context and the run panel; the board translates the codes instead. */
+const causesText = (causes: WaitCause[]) =>
+	causes[0].code === 'claim'
+		? 'wartet auf den nächsten Claim des Runners.'
+		: `wartet: ${causes.map(causeText).join(', ')}.`;
 
 /**
  * queued → running. Creates the run token and returns it in plain text exactly once, here; only its hash is stored.

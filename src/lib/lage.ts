@@ -2,9 +2,16 @@ export type Lage = 'waiting' | 'working' | 'open' | 'acceptance' | 'done';
 export type LagePhase = 'open' | 'work' | 'acceptance' | 'done';
 export type LageRun = 'queued' | 'running' | 'paused' | 'failed';
 
+/** Why a queued run does not start yet, as a code with parameters; the UI translates it. */
+export type WaitCause =
+	| { code: 'halt_stop' | 'halt_pause' | 'claim' }
+	| { code: 'pool_full'; pool: string; active: number; limit: number }
+	| { code: 'global_full'; active: number; limit: number }
+	| { code: 'ahead'; count: number };
+
 export type LageInput = {
 	phase: LagePhase;
-	/** The state of the newest run; successful and cancelled runs count as `null`. */
+	/** The state that counts of the ticket's runs; successful and cancelled runs count as `null`. */
 	run: LageRun | null;
 	openQuestions: number;
 	pendingApproval: boolean;
@@ -13,14 +20,14 @@ export type LageInput = {
 	openPredecessors: string[];
 	autoAccepted: boolean;
 	/** Why the queued run does not start yet; set when `run` is `queued`. */
-	capacityText: string | null;
+	capacity: WaitCause[] | null;
 };
 
 export type LageReason =
 	| { kind: 'done' | 'auto_accepted' | 'acceptance' | 'working' }
 	| { kind: 'question' | 'approval' | 'proposal' | 'failure' }
 	| { kind: 'predecessors'; refs: string[] }
-	| { kind: 'capacity'; text: string }
+	| { kind: 'capacity'; causes: WaitCause[] }
 	| { kind: 'paused' | 'not_prioritized' | 'ready' };
 
 export type LageResult = { lage: Lage; reason: LageReason };
@@ -35,7 +42,8 @@ const waitingFor = (input: LageInput): LageReason['kind'] | null => {
 
 function whyOpen(input: LageInput): LageReason {
 	if (input.openPredecessors.length) return { kind: 'predecessors', refs: input.openPredecessors };
-	if (input.run === 'queued') return { kind: 'capacity', text: input.capacityText ?? 'queued' };
+	if (input.run === 'queued')
+		return { kind: 'capacity', causes: input.capacity ?? [{ code: 'claim' }] };
 	if (input.run === 'paused') return { kind: 'paused' };
 	if (input.phase === 'open') return { kind: 'not_prioritized' };
 	return { kind: 'ready' };

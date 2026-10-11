@@ -114,5 +114,11 @@ export const de: Catalogue = {
 	'lage.reason.predecessors': 'Wartet auf {refs}',
 	'lage.reason.paused': 'Angehalten, weiter mit :fortsetzen',
 	'lage.reason.not_prioritized': 'Noch nicht priorisiert',
-	'lage.reason.ready': 'Bereit zum Start'
+	'lage.reason.ready': 'Bereit zum Start',
+	'lage.wait.halt_stop': 'Not-Aus aktiv',
+	'lage.wait.halt_pause': 'Alle Runs angehalten',
+	'lage.wait.claim': 'Wartet auf den nächsten Claim',
+	'lage.wait.pool_full': 'Pool „{pool}“ ist voll ({active} von {limit} aktiv)',
+	'lage.wait.global_full': 'Globales Limit erreicht ({active} von {limit} aktiv)',
+	'lage.wait.ahead': '{count} vor ihm in der Queue'
 };

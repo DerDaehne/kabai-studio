@@ -477,6 +477,38 @@ export function writeMove(
 		from: t.column_id,
 		to: to.id
 	});
+	if (to.phase === 'done') retractOpenQuestions(db, emit, t);
+}
+
+/** Done means nothing waits any more: a question still open then is closed by the system, so Lage and inbox agree. */
+function retractOpenQuestions(db: DatabaseSync, emit: Emit, t: Ticket) {
+	const open = db
+		.prepare(`SELECT q.id FROM questions q WHERE q.ticket_id = ? AND ${OPEN_QUESTION}`)
+		.all(t.id) as { id: number }[];
+	if (!open.length) return;
+	const system: Actor = { kind: 'system' };
+	const note = 'Das Ticket wurde nach „fertig“ verschoben; die Frage wurde zurückgezogen.';
+	const close = db.prepare(
+		"UPDATE questions SET answer = json_object('text', ?), answered_at = CURRENT_TIMESTAMP, collected_at = CURRENT_TIMESTAMP WHERE id = ?"
+	);
+	for (const { id } of open) {
+		close.run(note, id);
+		emit({
+			type: 'question.retracted',
+			projectId: t.project_id,
+			ticketId: t.id,
+			actor: system,
+			questionId: id
+		});
+	}
+	appendComment(
+		db,
+		emit,
+		system,
+		t,
+		`${note} (${open.length === 1 ? 'Frage' : 'Fragen'} ${open.map((q) => q.id).join(', ')})`,
+		true
+	);
 }
 
 function assertMoveAllowed(db: DatabaseSync, actor: Actor, t: Ticket, to: Column) {

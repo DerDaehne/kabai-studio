@@ -13,7 +13,8 @@ import { actions, load, type BoardPage } from './+page.server';
 import { BOARD_DEPENDENCY } from './list';
 import Page from './+page.svelte';
 
-vi.mock('$app/state', () => ({ page: { data: { locale: 'de' } } }));
+const pageData = vi.hoisted(() => ({ locale: 'de' }));
+vi.mock('$app/state', () => ({ page: { data: pageData } }));
 
 const dir = mkdtempSync(join(tmpdir(), 'studio-board-route-'));
 process.env.STUDIO_DATA_DIR = dir;
@@ -263,6 +264,35 @@ describe('the board view', () => {
 		expect(text(html({ ...data, live: live() }))).toContain(
 			'Tasks halb erledigt Offen · Bereit zum Start'
 		);
+	});
+
+	it('translates the capacity reason into the page locale and offers the full text as title', async () => {
+		const { data } = await loaded();
+		const queued = {
+			...data.tickets[0],
+			lage: 'open' as const,
+			reason: {
+				kind: 'capacity' as const,
+				causes: [
+					{ code: 'pool_full' as const, pool: 'local', active: 1, limit: 1 },
+					{ code: 'ahead' as const, count: 2 }
+				]
+			}
+		};
+		const markup = html({ tickets: [queued], live: live() });
+		expect(text(markup)).toContain(
+			'Offen · Pool „local“ ist voll (1 von 1 aktiv), 2 vor ihm in der Queue'
+		);
+		pageData.locale = 'en';
+		try {
+			const english = html({ tickets: [queued], live: live() });
+			expect(text(english)).toContain(
+				'Open · Pool "local" is full (1 of 1 active), 2 ahead in the queue'
+			);
+			expect(english).toContain('title="Open · Pool &quot;local&quot; is full');
+		} finally {
+			pageData.locale = 'de';
+		}
 	});
 
 	it('shows "Noch kein Ticket" with the hint on o while a project has no tickets', () => {

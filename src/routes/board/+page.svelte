@@ -45,7 +45,8 @@
 	/** The Lage and, where it has one, the reason, so colour never carries the state alone. */
 	function lageText({ lage, reason }: BoardTicket) {
 		const name = t(`lage.${lage}`);
-		if (reason.kind === 'capacity') return `${name} · ${reason.text}`;
+		if (reason.kind === 'capacity')
+			return `${name} · ${reason.causes.map(({ code, ...params }) => t(`lage.wait.${code}` as MessageKey, params)).join(', ')}`;
 		if (lage !== 'waiting' && lage !== 'open') return name;
 		const refs = reason.kind === 'predecessors' ? reason.refs.join(', ') : '';
 		return `${name} · ${t(`lage.reason.${reason.kind}` as MessageKey, { refs })}`;
@@ -345,7 +346,10 @@
 		{:else}
 			<a class="title" href={href(row)}>{row.title}</a>
 		{/if}
-		<span class="run"><Badge tone={LAGE_TONES[row.lage]}>{lageText(row)}</Badge></span>
+		<span class="run" title={lageText(row)}
+			><Badge tone={LAGE_TONES[row.lage]}><span class="lage-text">{lageText(row)}</span></Badge
+			></span
+		>
 		<span class="tasks"
 			>{#if row.tasks.total}{row.tasks.done}/{row.tasks.total}<span class="visually-hidden">
 					Tasks erledigt</span
@@ -599,6 +603,14 @@
 		}
 		.run:empty {
 			display: none;
+		}
+		.run :global(.badge) {
+			max-width: 100%;
+		}
+		.lage-text {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 		.epic,
 		.project,

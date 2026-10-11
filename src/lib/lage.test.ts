@@ -9,7 +9,7 @@ const base: LageInput = {
 	openProposals: 0,
 	openPredecessors: [],
 	autoAccepted: false,
-	capacityText: null
+	capacity: null
 };
 const lage = (input: Partial<LageInput>) => lageOf({ ...base, ...input });
 
@@ -98,18 +98,17 @@ describe('lageOf, precedence', () => {
 describe('the reason a ticket is „Offen“', () => {
 	it('names the open predecessors by ref, before anything else', () => {
 		expect(
-			lage({ run: 'queued', capacityText: 'x', openPredecessors: ['STU-1', 'STU-2'] }).reason
+			lage({ run: 'queued', capacity: [{ code: 'claim' }], openPredecessors: ['STU-1', 'STU-2'] })
+				.reason
 		).toEqual({
 			kind: 'predecessors',
 			refs: ['STU-1', 'STU-2']
 		});
 	});
 
-	it('takes the capacity text of a queued run from waitReason', () => {
-		expect(lage({ run: 'queued', capacityText: 'wartet: Pool voll.' }).reason).toEqual({
-			kind: 'capacity',
-			text: 'wartet: Pool voll.'
-		});
+	it('takes the capacity causes of a queued run from the read model', () => {
+		const causes = [{ code: 'ahead' as const, count: 2 }];
+		expect(lage({ run: 'queued', capacity: causes }).reason).toEqual({ kind: 'capacity', causes });
 	});
 
 	it('says paused for a run the human halted', () => {
@@ -161,7 +160,7 @@ describe('every combination of inputs', () => {
 				openProposals: openProposals as number,
 				openPredecessors: refs as string[],
 				autoAccepted: autoAccepted as boolean,
-				capacityText: run === 'queued' ? 'wartet' : null
+				capacity: run === 'queued' ? [{ code: 'claim' }] : null
 			})
 		);
 	}
@@ -172,7 +171,7 @@ describe('every combination of inputs', () => {
 			const { lage: result, reason } = lageOf(input);
 			expect(reason.kind).toBeTruthy();
 			if (reason.kind === 'predecessors') expect(reason.refs.length).toBeGreaterThan(0);
-			if (reason.kind === 'capacity') expect(reason.text).not.toBe('');
+			if (reason.kind === 'capacity') expect(reason.causes.length).toBeGreaterThan(0);
 			if (result === 'open')
 				expect(['predecessors', 'capacity', 'paused', 'not_prioritized', 'ready']).toContain(
 					reason.kind

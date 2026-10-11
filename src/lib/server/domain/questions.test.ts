@@ -91,6 +91,28 @@ describe('requestHuman', () => {
 	});
 });
 
+describe('a ticket moved to done', () => {
+	it('has no open question any more: the system retracts it and says so in a comment', () => {
+		const { db, ticketId, ask, columnId, comments } = setup('implement');
+		const id = ask();
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
+		board.moveTicket(db, user, ticketId, columnId('done'));
+		off();
+		expect(questions.latestOpenQuestion(db, ticketId)).toBeUndefined();
+		expect(events.map((e) => e.type)).toContain('question.retracted');
+		expect(comments().at(-1)).toMatchObject({ author_kind: 'system', author: 'system' });
+		expect(comments().at(-1)!.body).toContain(String(id));
+	});
+
+	it('keeps the open question of a ticket that moves anywhere else', () => {
+		const { db, ticketId, ask, columnId } = setup('implement');
+		ask();
+		board.moveTicket(db, user, ticketId, columnId('backlog'));
+		expect(questions.latestOpenQuestion(db, ticketId)).toBeDefined();
+	});
+});
+
 describe('latestOpenQuestion', () => {
 	it('is undefined without a question, and reports the newest one while it has no answer yet', () => {
 		const { db, ticketId, ask } = setup();

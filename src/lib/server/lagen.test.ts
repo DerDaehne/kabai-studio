@@ -58,32 +58,32 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(second).reason).toEqual({ kind: 'ready' });
 	});
 
-	it('gives a queued run the capacity text of waitReason', () => {
+	it('gives a queued run the capacity causes of waitReason', () => {
 		const s = setup();
 		const id = s.ticket(s.project('STU'));
 		const run = s.run(id);
-		const expected = runs.waitReason(s.db, run, { global: 4, pools: { local: 1 } })!.text;
+		const expected = runs.waitReason(s.db, run, { global: 4, pools: { local: 1 } })!.causes;
 		expect(s.lageOfTicket(id)).toMatchObject({
 			lage: 'open',
-			reason: { kind: 'capacity', text: expected }
+			reason: { kind: 'capacity', causes: expected }
 		});
 	});
 
-	it('gives every ticket with a queued run its own capacity text', () => {
+	it('gives every ticket with a queued run its own capacity causes', () => {
 		const s = setup();
 		const stu = s.project('STU');
 		const [first, second] = [s.ticket(stu), s.ticket(stu)];
 		const [firstRun, secondRun] = [s.run(first), s.run(second)];
 		const limits = { global: 4, pools: { local: 1 } };
 		const reasons = runs.waitReasons(s.db, limits);
-		expect(reasons.get(firstRun)!.text).not.toBe(reasons.get(secondRun)!.text);
+		expect(reasons.get(firstRun)!.causes).not.toEqual(reasons.get(secondRun)!.causes);
 		expect(s.lageOfTicket(first).reason).toEqual({
 			kind: 'capacity',
-			text: reasons.get(firstRun)!.text
+			causes: reasons.get(firstRun)!.causes
 		});
 		expect(s.lageOfTicket(second).reason).toEqual({
 			kind: 'capacity',
-			text: reasons.get(secondRun)!.text
+			causes: reasons.get(secondRun)!.causes
 		});
 	});
 
@@ -114,6 +114,49 @@ describe('ticketLagen', () => {
 		runs.startRun(s.db, user, succeeded);
 		runs.finishRun(s.db, user, succeeded, { state: 'succeeded' });
 		expect(s.lageOfTicket(id).reason).toEqual({ kind: 'ready' });
+	});
+
+	it('shows a run that holds for the human before a newer queued run', () => {
+		const s = setup();
+		const id = s.ticket(s.project('STU'));
+		const holding = s.run(id);
+		runs.startRun(s.db, user, holding);
+		runs.setRunState(s.db, user, holding, 'waiting_approval');
+		s.run(id);
+		expect(s.lageOfTicket(id)).toMatchObject({ lage: 'waiting', reason: { kind: 'approval' } });
+	});
+
+	it('shows a ticket as in progress while an older run works and a newer one queues', () => {
+		const s = setup();
+		const id = s.ticket(s.project('STU'));
+		runs.startRun(s.db, user, s.run(id));
+		s.run(id);
+		expect(s.lageOfTicket(id).lage).toBe('working');
+	});
+
+	it('counts a failed run only while the ticket is still in the step it failed in', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu);
+		const failed = s.run(id);
+		runs.startRun(s.db, user, failed);
+		runs.finishRun(s.db, user, failed, { state: 'failed', error: 'boom' });
+		const next = s.db
+			.prepare(
+				'SELECT id FROM columns WHERE project_id = ? AND position > (SELECT position FROM columns WHERE step = ? AND project_id = ?) ORDER BY position LIMIT 1'
+			)
+			.get(stu, 'implement', stu)!.id as number;
+		board.moveTicket(s.db, user, id, next);
+		expect(s.lageOfTicket(id).reason.kind).not.toBe('failure');
+	});
+
+	it('shows a ticket moved to done as done even though it had an open question', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu);
+		requestHuman(s.db, user, id, { question: 'Which one?' });
+		board.moveTicket(s.db, user, id, s.columnId(stu, 'done'));
+		expect(s.lageOfTicket(id).lage).toBe('done');
 	});
 
 	it('puts a ticket whose run the human halted under „Offen“, paused', () => {

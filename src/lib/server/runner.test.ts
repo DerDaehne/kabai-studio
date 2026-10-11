@@ -555,6 +555,10 @@ describe('priority queue', () => {
 			active: 1,
 			globalLimit: 4,
 			ahead: 2,
+			causes: [
+				{ code: 'pool_full', pool: 'local', active: 1, limit: 1 },
+				{ code: 'ahead', count: 2 }
+			],
 			text: 'wartet: Pool „local“ ist voll (1 von 1 aktiv), vor ihm in der Queue: 2 Runs.'
 		});
 		expect(runs.waitReason(s.db, human, limits)).toMatchObject({
