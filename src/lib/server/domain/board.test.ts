@@ -5,6 +5,7 @@ import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
 import { DomainError, tx, type Actor } from './core';
 import * as notes from './notes';
+import * as questions from './questions';
 import * as runs from './runs';
 import { ROLES, type Step } from './variants';
 
@@ -555,6 +556,20 @@ describe('workableTickets', () => {
 		place(a, 'done');
 		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-2']);
 		expect(refs(board.workableTickets(db, projectId, col.implement))).toEqual([]);
+	});
+
+	it('hides a ticket while it waits for the human: from the question until the answer, again after the answer is retracted', () => {
+		const { db, projectId, ticket, place } = setup();
+		const [asking, other] = [ticket(), ticket()];
+		place(asking, 'implement');
+		place(other, 'implement');
+		const { id } = questions.requestHuman(db, dev, asking, { question: 'A oder B?' });
+		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-2']);
+
+		questions.answerQuestion(db, user, id, { text: 'A' });
+		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-1', 'STU-2']);
+		questions.retractAnswer(db, user, id);
+		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-2']);
 	});
 
 	it('respects blocks_satisfied_at: done versus review_ok', () => {

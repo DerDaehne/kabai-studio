@@ -646,6 +646,7 @@ describe('016 on a database at 015 with both template generations in real use', 
 				(101, 1, 1, 1, 'OLD Backlog', 3, 'h'), (102, 1, 2, 2, 'OLD In Arbeit', NULL, NULL),
 				(103, 1, 3, 3, 'OLD Review', NULL, NULL), (104, 1, 4, 4, 'OLD Done', NULL, NULL),
 				(105, 1, 5, 5, 'OLD fragt aus der Arbeit', NULL, NULL), (106, 1, 6, 6, 'OLD beantwortet ohne Run', NULL, NULL),
+				(107, 1, 7, 5, 'OLD Runs in zwei Schritten', NULL, NULL),
 				(111, 2, 1, 11, 'CUR Backlog', NULL, NULL), (112, 2, 2, 12, 'CUR Refine', NULL, NULL),
 				(113, 2, 3, 13, 'CUR Ready', NULL, NULL), (114, 2, 4, 14, 'CUR In Arbeit', NULL, NULL),
 				(115, 2, 5, 15, 'CUR Review', NULL, NULL), (116, 2, 6, 16, 'CUR Abnahme', NULL, NULL),
@@ -665,7 +666,10 @@ describe('016 on a database at 015 with both template generations in real use', 
 				(4, 118, 15, 1, 'on_enter', 'succeeded', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:30:00', NULL),
 				(5, 118, 18, 1, 'resume', 'paused', NULL, '2026-10-01 11:00:00', '2026-10-01 11:00:01', '2026-10-01 11:05:00', NULL),
 				(6, 119, 16, 1, 'manual', 'succeeded', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', NULL),
-				(7, 120, 20, 1, 'manual', 'failed', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', '[x] kaputt');
+				(7, 120, 20, 1, 'manual', 'failed', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', '[x] kaputt'),
+				(9, 107, 3, 1, 'manual', 'succeeded', NULL, '2026-10-01 08:00:00', '2026-10-01 08:00:01', '2026-10-01 08:10:00', NULL),
+				(10, 107, 2, 1, 'manual', 'succeeded', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', NULL),
+				(11, 107, 5, 1, 'manual', 'failed', NULL, '2026-10-01 10:00:00', '2026-10-01 10:00:01', '2026-10-01 10:10:00', '[x] kaputt');
 			INSERT INTO run_events (run_id, seq, type, payload) VALUES
 				(1, 1, 'message', '{"text":"Stand"}'), (3, 1, 'permission_request', '{"tool":"shell","command":"npm test"}');
 			INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES
@@ -715,8 +719,8 @@ describe('016 on a database at 015 with both template generations in real use', 
 		expect(migrate(db)).toEqual(['016_variants.sql']);
 
 		expect(before).toMatchObject({
-			tickets: 17,
-			runs: 7,
+			tickets: 18,
+			runs: 10,
 			comments: 4,
 			questions: 3,
 			tasks: 2,
@@ -737,6 +741,11 @@ describe('016 on a database at 015 with both template generations in real use', 
 				.prepare('SELECT id, step, phase, name FROM columns WHERE project_id = ? ORDER BY position')
 				.all(projectId)
 				.map((c) => `${c.step}:${c.phase}:${c.name}`);
+		const positionsOf = (projectId: number) =>
+			db
+				.prepare('SELECT position, step FROM columns WHERE project_id = ? ORDER BY position')
+				.all(projectId)
+				.map((c) => [c.position, c.step]);
 		const software = [
 			'backlog:open:Backlog',
 			'refine:work:Präzisieren',
@@ -747,6 +756,10 @@ describe('016 on a database at 015 with both template generations in real use', 
 			'done:done:Fertig'
 		];
 		expect(columnsOf(1)).toEqual(software);
+		expect(positionsOf(1)).toEqual(positionsOf(2));
+		expect(positionsOf(1)).toEqual(
+			software.map((_, position) => [position, software[position].split(':')[0]])
+		);
 		expect(columnsOf(2)).toEqual(software);
 		expect(db.prepare('SELECT id, step FROM columns WHERE id < 21 ORDER BY id').all()).toEqual(
 			[
@@ -784,6 +797,7 @@ describe('016 on a database at 015 with both template generations in real use', 
 			104: 'done',
 			105: 'implement', // asked from a run in In Arbeit
 			106: 'backlog', // answered, but never worked by a run
+			107: 'implement', // older run in Review, newer one in In Arbeit, newest in the human column
 			111: 'backlog',
 			112: 'refine',
 			113: 'plan',
@@ -841,7 +855,9 @@ describe('016 on a database at 015 with both template generations in real use', 
 		expect(rows(RUN_EVENTS)).toEqual(before.events);
 		expect(rows(TICKETS)).toEqual(before.tickets);
 		expect(rows(RUNS)).toEqual(
-			before.runs.map((run) => (run.id === 5 || run.id === 7 ? { ...run, column_id: null } : run))
+			before.runs.map((run) =>
+				run.id === 5 || run.id === 7 || run.id === 11 ? { ...run, column_id: null } : run
+			)
 		);
 	});
 
@@ -857,7 +873,7 @@ describe('016 on a database at 015 with both template generations in real use', 
 		expect(board.workableTickets(db, 1).map((t) => t.ref)).toEqual([
 			'OLD-1',
 			'OLD-6',
-			'OLD-5',
+			'OLD-7',
 			'OLD-3'
 		]);
 		expect(questions.latestOpenQuestion(db, 118)).toMatchObject({ id: 2, question: 'Wie streng?' });
@@ -865,7 +881,7 @@ describe('016 on a database at 015 with both template generations in real use', 
 
 		expect(questions.answerQuestion(db, human, 1, { option: 2 })).toEqual({ resumesRun: true });
 		expect(
-			db.prepare('SELECT state, column_id, resumed_from_run_id FROM runs WHERE id = 8').get()
+			db.prepare('SELECT state, column_id, resumed_from_run_id FROM runs WHERE id = 12').get()
 		).toEqual({ state: 'queued', column_id: 2, resumed_from_run_id: 1 });
 		expect(db.prepare('SELECT state FROM runs WHERE id = 3').get()).toEqual({
 			state: 'waiting_approval'

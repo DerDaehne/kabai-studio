@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
-import { actorLabel as label, DomainError, tx, type Actor } from './core';
+import { actorLabel as label, DomainError, OPEN_QUESTION, tx, type Actor } from './core';
 import { STEP_LABELS, VARIANTS, type Phase, type Step, type Variant } from './variants';
 
 type Column = { id: number; name: string; step: Step; phase: Phase };
@@ -513,7 +513,7 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 const PREDECESSOR_OPEN = `bc.phase <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
 
 /**
- * Tickets without unfinished blocks predecessors, excluding done ones. A predecessor is unfinished until it is done —
+ * Tickets without unfinished blocks predecessors and without an open question, excluding done ones. A predecessor is unfinished until it is done —
  * with `blocks_satisfied_at = 'review_ok'` its review approval suffices.
  */
 export function workableTickets(db: DatabaseSync, projectId: number, columnId?: number) {
@@ -522,6 +522,7 @@ export function workableTickets(db: DatabaseSync, projectId: number, columnId?: 
 			`SELECT t.id, p.key || '-' || t.number AS ref, t.title, t.type, t.column_id, t.assignee
 			FROM tickets t JOIN columns c ON c.id = t.column_id JOIN projects p ON p.id = t.project_id
 			WHERE t.project_id = ?1 AND (?2 IS NULL OR t.column_id = ?2) AND c.phase <> 'done'
+				AND NOT EXISTS (SELECT 1 FROM questions q WHERE q.ticket_id = t.id AND ${OPEN_QUESTION})
 				AND NOT EXISTS (
 					SELECT 1 FROM ticket_relations r JOIN tickets b ON b.id = r.from_ticket_id JOIN columns bc ON bc.id = b.column_id
 					WHERE r.to_ticket_id = t.id AND r.type = 'blocks' AND ${PREDECESSOR_OPEN})

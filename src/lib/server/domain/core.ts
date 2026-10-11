@@ -47,3 +47,6 @@ export function tx<T>(db: DatabaseSync, fn: (emit: (event: StudioEvent) => void)
 	else events.forEach(publish);
 	return result;
 }
+
+// Only the newest question of a ticket can still be answered meaningfully; collectAnswer reads no other.
+export const OPEN_QUESTION = `q.answer IS NULL AND q.id = (SELECT max(id) FROM questions WHERE ticket_id = q.ticket_id)`;

@@ -463,6 +463,16 @@ describe('priority queue', () => {
 		expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('normal');
 	});
 
+	it.each(['implement', 'critique', 'acceptance'] as const)(
+		'gives a ticket whose blocks successor waits in %s the blocker priority',
+		(step) => {
+			const s = withPriorities();
+			const [predecessor, successor] = [s.ticketIn(), s.ticketIn(s.column(step))];
+			board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+			expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('blocker');
+		}
+	);
+
 	it('rejects prioritizing a run that already runs with run_not_queued and keeps its priority', () => {
 		const s = withPriorities();
 		const run = s.queue(s.local);

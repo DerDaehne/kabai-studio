@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { LiveRun, LiveState, ProjectRef } from '$lib/live';
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
+import { OPEN_QUESTION } from './domain/core';
 import { haltKind } from './domain/halt';
 import { awaitsResume, type RunState } from './domain/runs';
 
@@ -25,8 +26,7 @@ export const projectRef = ({ id, key, name }: ProjectRow): ProjectRef => ({
 	palette: (((id - 1) % PALETTE_SLOTS) + 1) as ProjectPalette
 });
 
-// Only the newest question of a ticket can still be answered meaningfully; collectAnswer reads no other.
-export const OPEN_QUESTION = `q.answer IS NULL AND q.id = (SELECT max(id) FROM questions WHERE ticket_id = q.ticket_id)`;
+export { OPEN_QUESTION };
 
 export const ACTIVE_RUNS = `
 	WITH candidates AS (
