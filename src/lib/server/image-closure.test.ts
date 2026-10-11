@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
-const entryPoints = [
-	'server.ts',
-	'src/lib/server/cli.ts',
-	'src/lib/server/reset-password.ts',
-	'src/lib/server/restore.ts'
-];
+const fixedEntryPoints = ['server.ts', 'src/lib/server/cli.ts'];
+
+// server.ts loads the legacy CLI scripts through a dynamic import, so they are entry points of their own.
+function legacyScripts(server: string): string[] {
+	return [...server.matchAll(/runLegacyScript\('\.\/([^']+)'/g)].map(([, path]) => path);
+}
 
 type ReadSource = (file: string) => string;
 
@@ -18,7 +18,7 @@ function copiedPaths(dockerfile: string): string[] {
 		.split('\n')
 		.filter((line) => line.startsWith('COPY --from=build '))
 		.flatMap((line) => line.split(/\s+/).slice(2, -1))
-		.map((source) => source.replace(/^\/app\//, ''));
+		.map((source) => source.replace(/^\/app\//, '').replace(/\/$/, ''));
 }
 
 function isCopied(file: string, copied: string[]): boolean {
@@ -37,6 +37,8 @@ function runtimeImports(file: string, source: string): string[] {
 /** Files the image needs at runtime but does not copy, each with the file that imports it. */
 function missingFromImage(dockerfile: string, readSource: ReadSource): string[] {
 	const copied = copiedPaths(dockerfile);
+	const entryPoints = [...fixedEntryPoints, ...legacyScripts(readSource('server.ts'))];
+	const uncopiedEntries = entryPoints.filter((entry) => !isCopied(entry, copied));
 	const importers = new Map<string, string>();
 	const queue = [...entryPoints];
 	const seen = new Set(queue);
@@ -48,10 +50,16 @@ function missingFromImage(dockerfile: string, readSource: ReadSource): string[] 
 			queue.push(imported);
 		}
 	}
-	return [...importers].map(
-		([imported, importer]) =>
-			`${imported} is imported by ${importer} but no COPY --from=build line in the Dockerfile covers it; add it to the runtime stage's COPY lines`
-	);
+	return [
+		...uncopiedEntries.map(
+			(entry) =>
+				`${entry} is a runtime entry point but no COPY --from=build line in the Dockerfile covers it; add it to the runtime stage's COPY lines`
+		),
+		...[...importers].map(
+			([imported, importer]) =>
+				`${imported} is imported by ${importer} but no COPY --from=build line in the Dockerfile covers it; add it to the runtime stage's COPY lines`
+		)
+	];
 }
 
 describe('runtime image closure', () => {
@@ -63,7 +71,8 @@ describe('runtime image closure', () => {
 	});
 
 	describe('detection', () => {
-		const dockerfile = 'COPY --from=build /app/server.ts ./server.ts';
+		const dockerfile =
+			'COPY --from=build /app/server.ts ./server.ts\nCOPY --from=build /app/src/lib/server/cli.ts ./src/lib/server/';
 		const reading =
 			(sources: Record<string, string>): ReadSource =>
 			(file) =>
@@ -102,11 +111,23 @@ describe('runtime image closure', () => {
 			expect(missingFromImage(dockerfile, read)).toEqual([]);
 		});
 
-		it('accepts files covered through a copied directory', () => {
-			const copying = `${dockerfile}\nCOPY --from=build /app/src/lib ./src/lib`;
+		it('accepts files covered through a copied directory, with or without a trailing slash', () => {
 			const read = reading({ 'server.ts': "import { a } from './src/lib/a.ts';" });
 
-			expect(missingFromImage(copying, read)).toEqual([]);
+			for (const source of ['/app/src/lib', '/app/src/lib/'])
+				expect(
+					missingFromImage(`${dockerfile}\nCOPY --from=build ${source} ./src/lib/`, read)
+				).toEqual([]);
+		});
+
+		it('names a legacy CLI script that server.ts loads dynamically but the image does not copy', () => {
+			const read = reading({
+				'server.ts': "return runLegacyScript('./src/lib/server/restore.ts', []);"
+			});
+
+			expect(missingFromImage(dockerfile, read)).toEqual([
+				expect.stringContaining('src/lib/server/restore.ts is a runtime entry point')
+			]);
 		});
 	});
 });
