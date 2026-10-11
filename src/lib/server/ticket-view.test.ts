@@ -325,6 +325,23 @@ describe('runTabs', () => {
 		expect(running.waitText).toBeUndefined();
 	});
 
+	it('reads the wait reasons of all queued runs at once, however many there are', () => {
+		const { db, ticketId, profileId } = withProfile();
+		const statements = () => {
+			const prepare = db.prepare.bind(db);
+			let count = 0;
+			db.prepare = ((sql: string) => (count++, prepare(sql))) as typeof db.prepare;
+			const tabs = runTabs(db, ticketId);
+			db.prepare = prepare;
+			expect(tabs.every((tab) => tab.waitText)).toBe(true);
+			return count;
+		};
+		createRun(db, user, { ticketId, profileId });
+		const one = statements();
+		for (let i = 0; i < 5; i++) createRun(db, user, { ticketId, profileId });
+		expect(statements()).toBe(one);
+	});
+
 	it('names the run a continuation comes from and why', () => {
 		const { db, ticketId, profileId } = withProfile();
 		const first = createRun(db, user, { ticketId, profileId }).id;

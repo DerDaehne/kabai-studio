@@ -25,6 +25,18 @@ function board() {
 }
 
 describe('UndoStack', () => {
+	it('records an action that already happened without performing it again, and can take it back', () => {
+		const stack = new UndoStack();
+		let performed = 0;
+		let reverted = 0;
+		stack.record({ label: 'moved', perform: () => performed++, revert: () => reverted++ });
+		expect(performed).toBe(0);
+		stack.undo();
+		expect(reverted).toBe(1);
+		stack.redo();
+		expect(performed).toBe(1);
+	});
+
 	it('takes back actions of different kinds, newest first', () => {
 		const { rows, columns, stack, remove, move } = board();
 		remove('STU-2');

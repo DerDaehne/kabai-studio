@@ -60,7 +60,11 @@ const keymapTable = {
 	focusHere: { group: 'Suchen und Befehle', keys: [['*']], label: 'Fokus auf dieses Projekt' },
 	diffView: { group: 'Suchen und Befehle', keys: [['v']], label: 'Diff-Darstellung' },
 	focusAll: { group: 'Projekte und Übersicht', keys: [[leader, leader]], label: 'alle Projekte' },
-	groupBy: { group: 'Projekte und Übersicht', keys: [[leader, 'g']], label: 'gruppieren' },
+	groupBy: {
+		group: 'Projekte und Übersicht',
+		keys: [[leader, 'g']],
+		label: 'Ablauf zeigen/verbergen'
+	},
 	focusProject: {
 		group: 'Projekte und Übersicht',
 		keys: [[leader, anyLetter]],

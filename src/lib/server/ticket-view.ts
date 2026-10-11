@@ -8,7 +8,13 @@ import type { Phase } from './domain/variants';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
 import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
-import { awaitsResume, listProfiles, waitReason, type RunState } from './domain/runs';
+import {
+	awaitsResume,
+	listProfiles,
+	waitReasons,
+	type RunState,
+	type WaitReason
+} from './domain/runs';
 import { LIMITS } from './runner';
 
 export type TicketComment = {
@@ -218,11 +224,12 @@ export function runTabs(db: DatabaseSync, ticketId: number): RunTab[] {
 			WHERE r.ticket_id = ? ORDER BY r.id DESC`
 		)
 		.all(ticketId) as RunTabRow[];
+	const waiting = rows.some((row) => row.state === 'queued')
+		? waitReasons(db, LIMITS)
+		: new Map<number, WaitReason>();
 	return rows.map((row) => {
 		const tab = { ...row, halted: row.halted === 1, resumable: row.resumable === 1 };
-		return tab.state === 'queued'
-			? { ...tab, waitText: waitReason(db, tab.id, LIMITS)?.text }
-			: tab;
+		return tab.state === 'queued' ? { ...tab, waitText: waiting.get(tab.id)?.text } : tab;
 	});
 }
 

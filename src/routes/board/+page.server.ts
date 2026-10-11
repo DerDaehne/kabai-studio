@@ -1,4 +1,3 @@
-import type { DatabaseSync } from 'node:sqlite';
 import { BOARD_DEPENDENCY, LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
@@ -6,18 +5,19 @@ import type { Actor } from '$lib/server/domain/core';
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketLagen, type TicketLage } from '$lib/server/lagen';
-import { ticketMoves, type TicketMove } from '$lib/server/ticket-view';
-import { nextMove } from '$lib/ticket-move';
-import { ROLES, type Step } from '$lib/server/domain/variants';
-import { type BoardTicket, type ColumnPhase, type StepTarget } from './list';
+import { STEP_LABELS, type Step } from '$lib/server/domain/variants';
+import { FLOW_COOKIE, type BoardColumn, type BoardTicket, type ColumnPhase } from './list';
+import type { RunTraceState } from '$lib/trace/trace';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };
 
 export type BoardPage = {
 	tickets: BoardTicket[];
-	/** The role prompt of every column, by column id. */
-	roles: Record<number, string>;
+	/** Every column of every active project, in step order; the expert view shows them and moves along them. */
+	columns: BoardColumn[];
+	/** The browser's choice: the expert view with the columns instead of the Lagen. */
+	flow: boolean;
 };
 
 type TicketRow = {
@@ -34,6 +34,9 @@ type TicketRow = {
 	tasksDone: number;
 	tasksTotal: number;
 	epic: string | null;
+	runState: RunTraceState | null;
+	profile: string | null;
+	updatedAt: string;
 };
 
 const TICKETS = `
@@ -44,16 +47,22 @@ const TICKETS = `
 		(SELECT ep.key || '-' || e.number FROM ticket_relations r
 			JOIN tickets e ON e.id = r.from_ticket_id JOIN projects ep ON ep.id = e.project_id
 			WHERE r.to_ticket_id = t.id AND r.type = 'parent_of' AND e.type = 'epic'
-			ORDER BY e.id LIMIT 1) AS epic
+			ORDER BY e.id LIMIT 1) AS epic,
+		r.state AS runState, a.name AS profile, t.updated_at AS updatedAt
 	FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id
+	LEFT JOIN runs r ON r.id = (SELECT max(id) FROM runs WHERE ticket_id = t.id)
+	LEFT JOIN agent_profiles a ON a.id = r.agent_profile_id
 	WHERE p.archived = 0
 	ORDER BY t.id`;
 
-const stepTarget = (move: TicketMove | undefined): StepTarget | undefined =>
-	move && { columnId: move.columnId, name: move.name, blockers: move.blockers };
+const COLUMNS = `
+	SELECT c.id, c.project_id AS projectId, c.step, c.name, c.phase, c.position
+	FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.archived = 0`;
 
-function boardTicket(db: DatabaseSync, row: TicketRow, lage: TicketLage): BoardTicket {
-	const moves = ticketMoves(db, HUMAN, row.id, row.projectId);
+const STEP_ORDER = Object.keys(STEP_LABELS) as Step[];
+const stepIndex = (column: BoardColumn) => STEP_ORDER.indexOf(column.step as Step);
+
+function boardTicket(row: TicketRow, lage: TicketLage): BoardTicket {
 	return {
 		id: row.id,
 		ref: `${row.key}-${row.number}`,
@@ -72,30 +81,26 @@ function boardTicket(db: DatabaseSync, row: TicketRow, lage: TicketLage): BoardT
 		reason: lage.reason,
 		step: lage.step,
 		progress: lage.progress,
-		next: {
-			forward: stepTarget(nextMove(moves, row.columnPosition, true)),
-			back: stepTarget(nextMove(moves, row.columnPosition, false))
-		}
+		run: row.runState ? { state: row.runState, profile: row.profile } : null,
+		updatedAt: row.updatedAt
 	};
 }
 
-function roles(db: DatabaseSync): Record<number, string> {
-	const rows = db
-		.prepare(
-			'SELECT c.id, c.step FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.archived = 0'
-		)
-		.all() as { id: number; step: Step }[];
-	return Object.fromEntries(rows.map((row) => [row.id, ROLES[row.step] ?? '']));
-}
+/** Every column once, so the human's moves follow from the columns, not from a lookup per ticket. */
+const boardColumns = () =>
+	(db().prepare(COLUMNS).all() as BoardColumn[]).sort(
+		(a, b) => stepIndex(a) - stepIndex(b) || a.projectId - b.projectId
+	);
 
 // A reconnect reloads the live state; the board reloads with it, as it has no replay of the events it missed.
-export const load: PageServerLoad = ({ depends }): BoardPage => {
+export const load: PageServerLoad = ({ depends, cookies }): BoardPage => {
 	depends(LIVE_DEPENDENCY, BOARD_DEPENDENCY);
 	const rows = db().prepare(TICKETS).all() as TicketRow[];
 	const lagen = new Map(ticketLagen(db()).map((lage) => [lage.ticketId, lage]));
 	return {
-		tickets: rows.map((row) => boardTicket(db(), row, lagen.get(row.id)!)),
-		roles: roles(db())
+		tickets: rows.map((row) => boardTicket(row, lagen.get(row.id)!)),
+		columns: boardColumns(),
+		flow: cookies.get(FLOW_COOKIE) === 'flow'
 	};
 };
 

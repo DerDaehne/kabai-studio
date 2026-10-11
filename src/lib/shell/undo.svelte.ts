@@ -10,6 +10,11 @@ export class UndoStack {
 
 	perform(action: Undoable): void {
 		action.perform();
+		this.record(action);
+	}
+
+	/** Takes an action that already happened onto the stack, e.g. once the server accepted it. */
+	record(action: Undoable): void {
 		this.done = [...this.done, action];
 		this.undone = [];
 	}

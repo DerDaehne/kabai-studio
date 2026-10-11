@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { t } from '$lib/i18n/t';
 	import type { MessageKey } from '$lib/i18n';
 	import type { Lage } from '$lib/lage';
@@ -12,45 +13,72 @@
 	import { focusSummary } from '$lib/shell/focus';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys, type KeyHandlers } from '$lib/shell/router.svelte';
-	import { shell, type ProjectRef } from '$lib/shell/shell.svelte';
+	import { bindCommands, shell, type ProjectRef } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import { reloadsBoard } from '$lib/ticket-live';
-	import Badge, { type Tone } from '$lib/ui/Badge.svelte';
+	import { nextMove } from '$lib/ticket-move';
 	import Button from '$lib/ui/Button.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
 	import { duration, easing, motionMode } from '$lib/ui/motion';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
+	import Tag from '$lib/ui/rekta/Tag.svelte';
+	import type { Tone } from '$lib/ui/rekta/tone';
+	import { sideways } from '$lib/ui/sideways';
 	import { dismiss, toast } from '$lib/ui/toast.svelte';
 	import type { PageProps } from './$types';
 	import {
 		BOARD_DEPENDENCY,
+		FLOW_COOKIE,
 		edgeIndex,
 		groupByColumn,
+		groupByLage,
 		groupJump,
-		startRule,
+		sideJump,
 		stepped,
-		type BoardTicket,
-		type StepTarget
+		type BoardTicket
 	} from './list';
 
 	const LAGE_TONES: Record<Lage, Tone> = {
-		waiting: 'waiting',
-		working: 'running',
+		waiting: 'warning',
+		working: 'info',
 		open: 'neutral',
-		acceptance: 'accent',
-		done: 'succeeded'
+		acceptance: 'neutral',
+		done: 'success'
 	};
 
-	/** The Lage and, where it has one, the reason, so colour never carries the state alone. */
-	function lageText({ lage, reason }: BoardTicket) {
-		const name = t(`lage.${lage}`);
+	/** The waiting reason of an open ticket, or what a waiting one needs from the human; empty for the other Lagen. */
+	function reasonText({ lage, reason }: BoardTicket) {
 		if (reason.kind === 'capacity')
-			return `${name} · ${reason.causes.map(({ code, ...params }) => t(`lage.wait.${code}` as MessageKey, params)).join(', ')}`;
-		if (lage !== 'waiting' && lage !== 'open') return name;
+			return reason.causes
+				.map(({ code, ...params }) => t(`lage.wait.${code}` as MessageKey, params))
+				.join(', ');
+		if (lage !== 'waiting' && lage !== 'open') return '';
 		const refs = reason.kind === 'predecessors' ? reason.refs.join(', ') : '';
-		return `${name} · ${t(`lage.reason.${reason.kind}` as MessageKey, { refs })}`;
+		return t(`lage.reason.${reason.kind}` as MessageKey, { refs });
 	}
+
+	/** The Lage as a word with its reason, so colour never carries the state alone. */
+	function lageText(row: BoardTicket) {
+		const reason = reasonText(row);
+		return reason ? `${t(`lage.${row.lage}`)} · ${reason}` : t(`lage.${row.lage}`);
+	}
+
+	/** Where the ticket stands, in everyday words; a step with a working agent says so. */
+	const stepText = (row: BoardTicket) =>
+		row.lage === 'working' && row.column.phase === 'work'
+			? t(`board.step.${row.step}.working` as MessageKey)
+			: t(`board.step.${row.step}` as MessageKey);
+
+	const RUN_WORDS: Record<NonNullable<BoardTicket['run']>['state'], MessageKey> = {
+		queued: 'start.state.queued',
+		running: 'start.state.running',
+		waiting_approval: 'start.state.waiting',
+		paused: 'start.state.paused',
+		succeeded: 'start.state.succeeded',
+		failed: 'start.state.failed',
+		cancelled: 'start.state.cancelled'
+	};
 
 	/** How long a deleted ticket can come back with u before it is deleted for good. */
 	const DELETE_UNDO_MS = 10_000;
@@ -58,18 +86,34 @@
 	let { data }: PageProps = $props();
 
 	const projects = $derived(data.live?.projects ?? []);
+	const plural = $derived(new Intl.PluralRules(page.data.locale));
+
+	/** The expert view with the flow's columns; the browser remembers the choice in a cookie. */
+	let flowChoice = $state<boolean>();
+	const flow = $derived(flowChoice ?? data.flow);
+
 	/** Deleted on the board, but still inside the undo window. */
 	const deleting = new SvelteSet<number>();
-	const view = $derived(
-		focusSummary(
-			data.tickets.filter((ticket) => !deleting.has(ticket.id)),
-			shell.focus,
-			(ticket) => ticket.project.id
-		)
+	const present = $derived(data.tickets.filter((ticket) => !deleting.has(ticket.id)));
+	const view = $derived(focusSummary(present, shell.focus, (ticket) => ticket.project.id));
+	const groups = $derived(
+		flow
+			? groupByColumn(view.visible, data.columns)
+			: groupByLage(view.visible, (lage) => t(`lage.${lage}`))
 	);
-	const groups = $derived(groupByColumn(view.visible));
 	const rows = $derived(groups.flatMap((group) => group.rows));
-	const groupStarts = $derived(groups.map((group) => rows.indexOf(group.rows[0])));
+	const groupStarts = $derived(
+		groups.filter((group) => group.rows.length).map((group) => rows.indexOf(group.rows[0]))
+	);
+
+	const hiddenLine = $derived.by(() => {
+		const shown = new Set(view.visible);
+		const hidden = present.filter((ticket) => !shown.has(ticket));
+		if (!hidden.length) return '';
+		const others = new Set(hidden.map((ticket) => ticket.project.id)).size;
+		const key = plural.select(others) === 'one' ? 'start.hidden.one' : 'start.hidden.other';
+		return t(key, { count: hidden.length, projects: others });
+	});
 
 	/** The selected row; when it disappears, the row now at its place takes over. */
 	let cursor = $state({ id: 0, index: 0 });
@@ -77,6 +121,18 @@
 		rows.find((row) => row.id === cursor.id) ?? rows[Math.min(cursor.index, rows.length - 1)]
 	);
 	const currentIndex = $derived(current ? rows.indexOf(current) : -1);
+
+	/** A move the domain refused, shown at its row with the way out. */
+	let refusal = $state<{ id: number; text: string } | null>(null);
+
+	/** A new ticket takes the selection as soon as the load that carries it has arrived. */
+	let selectWhenShown = $state<string>();
+	$effect(() => {
+		const index = rows.findIndex((row) => row.ref === selectWhenShown);
+		if (index < 0) return;
+		selectWhenShown = undefined;
+		select(index);
+	});
 
 	type Draft = { anchor?: number; below: boolean; project: ProjectRef; columnId?: number };
 	let draft = $state<Draft | null>(null);
@@ -91,11 +147,11 @@
 
 	async function focusRow(id: number | undefined) {
 		await tick();
-		// a row that slides to another column leaves an inert copy behind until the slide ends
+		// a row that slides to another group leaves an inert copy behind until the slide ends
 		document.querySelector<HTMLElement>(`[data-ticket="${id}"]:not([inert])`)?.focus();
 	}
 
-	/** A row re-rendered into another column is a new element; the old one went inert or away with the focus. */
+	/** A row re-rendered into another group is a new element; the old one went inert or away with the focus. */
 	const focusDropped = () =>
 		!document.activeElement ||
 		document.activeElement === document.body ||
@@ -113,32 +169,46 @@
 		const row = rows[index];
 		if (!row) return;
 		cursor = { id: row.id, index };
+		refusal = null;
 		void focusRow(row.id);
 	}
 
-	async function moveTo(
-		row: BoardTicket,
-		target: Pick<StepTarget, 'columnId' | 'name'>,
-		notice = ''
-	) {
-		const fields = { ticketId: String(row.id), columnId: String(target.columnId) };
-		const failure = failureOf(await postAction('/board?/move', fields));
-		if (failure) return void toast(failure, 'error');
-		if (notice) toast(notice);
-		await reload();
+	function toggleFlow() {
+		flowChoice = !flow;
+		document.cookie = `${FLOW_COOKIE}=${flowChoice ? 'flow' : 'lage'}; path=/board; max-age=31536000; samesite=lax`;
+		void focusRow(current?.id);
 	}
 
-	/** `>`/`<`: one allowed column on; a closed one says why and what to do instead. */
-	function shift(row: BoardTicket, forward: boolean) {
-		const target = forward ? row.next.forward : row.next.back;
-		if (!target) return void toast(`Keine ${forward ? 'nächste' : 'vorige'} Spalte erreichbar.`);
-		const [blocker] = target.blockers;
-		if (blocker) return void toast(`${blocker.message} ${blocker.hint}`, 'error');
-		const from = { columnId: row.column.id, name: row.column.name };
-		undoStack.perform({
-			label: `${row.ref} nach ${target.name}`,
-			perform: () => void moveTo(row, target, `${row.ref} nach ${target.name}`),
-			revert: () => void moveTo(row, from)
+	/** Moves the ticket; returns the domain's refusal with its way out, if there is one. */
+	async function moveTo(row: BoardTicket, columnId: number): Promise<string | undefined> {
+		const fields = { ticketId: String(row.id), columnId: String(columnId) };
+		const failure = failureOf(await postAction('/board?/move', fields));
+		if (!failure) await reload();
+		return failure;
+	}
+
+	const moveOrSay = (row: BoardTicket, columnId: number) =>
+		void moveTo(row, columnId).then((failure) => failure && toast(failure, 'error'));
+
+	/** `>`/`<` in the expert view: the next column of the ticket's project; a refusal shows at the row. */
+	async function shift(row: BoardTicket, forward: boolean) {
+		refusal = null;
+		const columns = data.columns.filter((column) => column.projectId === row.project.id);
+		const candidates = columns.map((column) => ({ ...column, columnId: column.id }));
+		const target = nextMove(candidates, row.column.position, forward);
+		if (!target)
+			return void toast(
+				t(forward ? 'board.flow.noNext' : 'board.flow.noPrevious', { ref: row.ref })
+			);
+		const failure = await moveTo(row, target.id);
+		if (failure) return void (refusal = { id: row.id, text: failure });
+		const label = t('board.flow.moved', { ref: row.ref, column: target.name });
+		toast(label);
+		const from = row.column.id;
+		undoStack.record({
+			label,
+			perform: () => moveOrSay(row, target.id),
+			revert: () => moveOrSay(row, from)
 		});
 	}
 
@@ -146,7 +216,8 @@
 		const row = current;
 		const project = shell.focus ?? row?.project ?? projects[0];
 		if (!project) return;
-		const sameColumn = row && row.project.id === project.id && row.column.phase !== 'done';
+		// only the expert view names a column; the Lagen create in the first step
+		const sameColumn = flow && row && row.project.id === project.id && row.column.phase !== 'done';
 		draft = { anchor: row?.id, below, project, columnId: sameColumn ? row.column.id : undefined };
 		draftTitle = '';
 	}
@@ -168,9 +239,9 @@
 		if (failure) return void toast(failure, 'error');
 		const ref = result.type === 'success' ? String(result.data?.ref) : '';
 		draft = null;
-		toast(`${ref} angelegt`, 'success');
+		toast(t('board.created', { ref }), 'success');
 		await reload();
-		select(rows.findIndex((row) => row.ref === ref));
+		selectWhenShown = ref;
 	}
 
 	async function retitle(row: BoardTicket, title: string) {
@@ -198,18 +269,15 @@
 		if (!title.trim() || title === row.title) return void focusRow(row.id);
 		const before = row.title;
 		undoStack.perform({
-			label: `${row.ref} umbenannt`,
+			label: t('board.renamed', { ref: row.ref }),
 			perform: () => void retitle(row, title),
 			revert: () => void retitle(row, before)
 		});
 	}
 
-	const finalNotice = (row: BoardTicket) =>
-		`${row.ref} ist schon endgültig gelöscht; Rückgängig geht nur in den ersten ${DELETE_UNDO_MS / 1000} s.`;
-
 	async function deleteForGood(row: BoardTicket) {
 		const failure = failureOf(await postAction('/board?/delete', { ticketId: String(row.id) }));
-		if (failure) toast(`Löschen ging nicht: ${failure}`, 'error');
+		if (failure) toast(t('board.deleteFailed', { reason: failure }), 'error');
 		else await reload();
 		deleting.delete(row.id);
 	}
@@ -221,21 +289,26 @@
 	function remove(row: BoardTicket) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let notice: number | undefined;
+		const deleted = t('board.deleted', { ref: row.ref });
 		const action: Undoable = {
-			label: `${row.ref} gelöscht`,
+			label: deleted,
 			perform: () => {
 				deleting.add(row.id);
 				timer = setTimeout(() => {
 					timer = undefined;
 					void deleteForGood(row);
 				}, DELETE_UNDO_MS);
-				const undo = { label: 'Rückgängig', run: () => undoStack.revert(action) };
-				notice = toast(`${row.ref} gelöscht`, 'success', DELETE_UNDO_MS, undo);
+				const undo = { label: t('board.undo'), run: () => undoStack.revert(action) };
+				notice = toast(deleted, 'success', DELETE_UNDO_MS, undo);
 				void focusRow(current?.id);
 			},
 			revert: () => {
 				if (notice !== undefined) dismiss(notice);
-				if (timer === undefined) return void toast(finalNotice(row), 'error');
+				if (timer === undefined)
+					return void toast(
+						t('board.deleteFinal', { ref: row.ref, seconds: DELETE_UNDO_MS / 1000 }),
+						'error'
+					);
 				clearTimeout(timer);
 				timer = undefined;
 				deleting.delete(row.id);
@@ -248,20 +321,24 @@
 	async function copyRef(row: BoardTicket) {
 		try {
 			await navigator.clipboard.writeText(row.ref);
-			toast(`${row.ref} kopiert`, 'success');
+			toast(t('board.copied', { ref: row.ref }), 'success');
 		} catch {
-			toast(`Kopieren erlaubt der Browser hier nicht. Die ID zum Abschreiben: ${row.ref}`, 'error');
+			toast(t('board.copyFailed', { ref: row.ref }), 'error');
 		}
 	}
+
+	const goSide = (count: number, forward: boolean) =>
+		select(sideJump(groupStarts, currentIndex, forward, count));
 
 	function rowKeys(row: BoardTicket): KeyHandlers {
 		return {
 			move: (count, key) =>
 				select(stepped(currentIndex, key === 'j' ? count : -count, rows.length)),
+			side: (count, key) => goSide(count, key === 'l'),
 			edge: (count, key) => select(edgeIndex(key, count, rows.length)),
 			group: (count, key) => select(groupJump(groupStarts, currentIndex, key === '}', count)),
 			open: () => void goto(href(row)),
-			shiftColumn: (_count, key) => shift(row, key === '>'),
+			shiftColumn: flow ? (_count, key) => void shift(row, key === '>') : undefined,
 			editText: () => startRenaming(row),
 			remove: () => remove(row),
 			copy: () => void copyRef(row),
@@ -273,15 +350,31 @@
 		const row = current;
 		return bindKeys({
 			add: projects.length ? (_count, key) => openDraft(key === 'o') : undefined,
+			groupBy: toggleFlow,
 			...(row ? rowKeys(row) : {})
 		});
 	});
+
+	$effect(() =>
+		bindCommands([
+			{ id: 'ablauf', label: ':ablauf', detail: t('board.flow.command'), run: toggleFlow }
+		])
+	);
 
 	$effect(() =>
 		onLiveEvent((event) => {
 			if (reloadsBoard(event)) void reload();
 		})
 	);
+
+	// Arrows are not part of the keymap (a pivot's tabs use them natively), so the panorama takes them itself.
+	function arrows(event: KeyboardEvent) {
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !current) return;
+		if ((event.target as Element | null)?.closest('input, textarea, select, dialog[open]')) return;
+		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+		event.preventDefault();
+		goSide(1, event.key === 'ArrowRight');
+	}
 
 	/** Escape leaves the field, so the board's keys work again. */
 	const escapeTo = (leave: () => void) => (event: KeyboardEvent) => {
@@ -295,6 +388,8 @@
 	};
 </script>
 
+<svelte:window onkeydown={arrows} />
+
 {#snippet draftForm(target: Draft)}
 	<form
 		class="field-row"
@@ -305,15 +400,19 @@
 	>
 		<ProjectTag code={target.project.code} palette={target.project.palette} />
 		<input
-			aria-label="Titel des neuen Tickets in {target.project.name}"
-			placeholder="Titel des neuen Tickets"
+			aria-label={t('board.draft.label', { project: target.project.name })}
+			placeholder={t('board.draft.placeholder')}
 			autocomplete="off"
 			bind:value={draftTitle}
 			onkeydown={escapeTo(closeDraft)}
 			{@attach focusField}
 		/>
-		<Button type="submit" size="sm">Anlegen</Button>
-		<span class="hint"><Kbd key="Enter" /> anlegen · <Kbd key="Escape" /> verwerfen</span>
+		<Button type="submit" size="sm">{t('board.draft.create')}</Button>
+		<span class="hint"
+			><Kbd key="Enter" />
+			{t('board.draft.hintCreate')} · <Kbd key="Escape" />
+			{t('board.draft.hintDiscard')}</span
+		>
 	</form>
 {/snippet}
 
@@ -326,14 +425,46 @@
 		}}
 	>
 		<input
-			aria-label="Neuer Titel für {row.ref}"
+			aria-label={t('board.rename.label', { ref: row.ref })}
 			autocomplete="off"
 			bind:value={renameTitle}
 			onkeydown={escapeTo(() => cancelRenaming(row))}
 			{@attach focusField}
 		/>
-		<Button type="submit" size="sm">Speichern</Button>
+		<Button type="submit" size="sm">{t('board.rename.save')}</Button>
 	</form>
+{/snippet}
+
+{#snippet lageMeta(row: BoardTicket)}
+	<span class="track" role="img" aria-label={t('board.progress', row.progress)}>
+		{#each { length: row.progress.total }, step}<span
+				class="dot"
+				class:filled={step < row.progress.index}
+			></span>{/each}
+	</span>
+	<span class="step">{stepText(row)}</span>
+	{#if reasonText(row)}
+		<Tag tone={row.reason.kind === 'failure' ? 'error' : LAGE_TONES[row.lage]}
+			><span class="reason">{reasonText(row)}</span></Tag
+		>
+	{/if}
+{/snippet}
+
+{#snippet flowMeta(row: BoardTicket)}
+	<Tag tone={LAGE_TONES[row.lage]}><span class="reason">{lageText(row)}</span></Tag>
+	{#if row.run}
+		<span class="run"
+			>{row.run.profile
+				? t('board.run.profile', { state: t(RUN_WORDS[row.run.state]), profile: row.run.profile })
+				: t(RUN_WORDS[row.run.state])}</span
+		>
+	{/if}
+	{#if row.tasks.total}<span class="tasks"
+			>{row.tasks.done}/{row.tasks.total}<span class="visually-hidden">
+				{t('board.tasksDone')}</span
+			></span
+		>{/if}
+	{#if row.epic}<span>{t('board.epic', { ref: row.epic })}</span>{/if}
 {/snippet}
 
 {#snippet ticketRow(row: BoardTicket)}
@@ -346,95 +477,98 @@
 		{:else}
 			<a class="title" href={href(row)}>{row.title}</a>
 		{/if}
-		<span class="run" title={lageText(row)}
-			><Badge tone={LAGE_TONES[row.lage]}><span class="lage-text">{lageText(row)}</span></Badge
-			></span
-		>
-		<span class="tasks"
-			>{#if row.tasks.total}{row.tasks.done}/{row.tasks.total}<span class="visually-hidden">
-					Tasks erledigt</span
-				>{/if}</span
-		>
-		<span class="epic"
-			>{#if row.epic}Epic {row.epic}{/if}</span
-		>
-		<span class="project">{row.project.name}</span>
+		<p class="meta">
+			{#if flow}{@render flowMeta(row)}{:else}{@render lageMeta(row)}{/if}
+		</p>
+		{#if refusal?.id === row.id}<p class="refusal" role="alert">{refusal.text}</p>{/if}
 	</div>
 {/snippet}
 
-<svelte:head><title>Board – kabai studio</title></svelte:head>
+<svelte:head><title>{t('board.title')}</title></svelte:head>
 
-<header class="board-head">
-	<h1>Board</h1>
-	{#if projects.length}
-		<p class="summary">{rows.length} Tickets · je Spalte nach Nummer</p>
-		<Button size="sm" onclick={() => openDraft(true)}>Neues Ticket <Kbd key="o" /></Button>
-	{/if}
-</header>
+<div class="board">
+	<header class="board-head">
+		<h1>{t('board.heading')}</h1>
+		{#if projects.length}
+			<p class="summary">{t('board.summary', { count: rows.length })}</p>
+			<Button size="sm" aria-pressed={flow} onclick={toggleFlow}>{t('board.flow.show')}</Button>
+			<Button size="sm" onclick={() => openDraft(true)}>{t('board.new')} <Kbd key="o" /></Button>
+		{/if}
+	</header>
 
-{#if !projects.length}
-	<NoProject />
-{:else}
-	{#if projects.length > 1}
-		<div class="chips" role="group" aria-label="Projekt-Fokus">
-			<button class="chip" aria-pressed={shell.focus === null} onclick={() => (shell.focus = null)}
-				>Alle</button
-			>
-			{#each projects as project (project.id)}
+	{#if !projects.length}
+		<NoProject />
+	{:else}
+		{#if projects.length > 1}
+			<div class="chips" role="group" aria-label={t('board.focus.label')}>
 				<button
 					class="chip"
-					aria-pressed={shell.focus?.id === project.id}
-					onclick={() => (shell.focus = project)}
-					><ProjectTag code={project.code} palette={project.palette} /> {project.name}</button
+					aria-pressed={shell.focus === null}
+					onclick={() => (shell.focus = null)}>{t('board.focus.all')}</button
 				>
-			{/each}
-		</div>
-	{/if}
-
-	<!-- without its row (none selected, or the row went away meanwhile) a draft stands on its own -->
-	{#if draft && !rows.some((row) => row.id === draft?.anchor)}{@render draftForm(draft)}{/if}
-
-	{#each groups as group (group.column.name)}
-		{@const role = data.roles[group.column.id]}
-		<section class="group" aria-labelledby="group-{group.column.id}">
-			<header>
-				<h2 id="group-{group.column.id}">
-					{group.column.name} <span class="count">{group.rows.length}</span>
-				</h2>
-				<p class="rule">
-					{startRule(group.column.phase)}{#if role}{' · '}<span class="role">{role}</span>{/if}
-				</p>
-			</header>
-			<ul class="rows">
-				{#each group.rows as row (row.id)}
-					<li
-						data-ticket={row.id}
-						tabindex="-1"
-						aria-current={row === current ? 'true' : undefined}
-						in:receive|global={{ key: row.id }}
-						out:send|global={{ key: row.id }}
-						animate:flip={{ duration: glide }}
+				{#each projects as project (project.id)}
+					<button
+						class="chip"
+						aria-pressed={shell.focus?.id === project.id}
+						onclick={() => (shell.focus = project)}
+						><ProjectTag code={project.code} palette={project.palette} /> {project.name}</button
 					>
-						{#if draft?.anchor === row.id && !draft.below}{@render draftForm(draft)}{/if}
-						{@render ticketRow(row)}
-						{#if draft?.anchor === row.id && draft.below}{@render draftForm(draft)}{/if}
-					</li>
 				{/each}
-			</ul>
-		</section>
-	{/each}
+			</div>
+		{/if}
 
-	{#if !rows.length && !draft}
-		<EmptyState title="Noch kein Ticket">
-			<Kbd key="o" /> legt eins an{shell.focus ? ` in ${shell.focus.name}` : ''}.
-			{#snippet action()}<Button variant="primary" onclick={() => openDraft(true)}
-					>Ticket anlegen</Button
-				>{/snippet}
-		</EmptyState>
+		<!-- without its row (none selected, or the row went away meanwhile) a draft stands on its own -->
+		{#if draft && !rows.some((row) => row.id === draft?.anchor)}{@render draftForm(draft)}{/if}
+
+		{#if !rows.length && !draft}
+			<EmptyState title={t('board.empty.title')}>
+				<Kbd key="o" />
+				{shell.focus
+					? t('board.empty.hintIn', { project: shell.focus.name })
+					: t('board.empty.hint')}
+				{#snippet action()}<Button variant="primary" onclick={() => openDraft(true)}
+						>{t('board.empty.action')}</Button
+					>{/snippet}
+			</EmptyState>
+		{:else}
+			{#key flow}
+				<div class="panorama" data-panorama use:sideways>
+					{#each groups as group (group.id)}
+						<section aria-labelledby="group-{group.id}" data-group={group.id}>
+							<h2 id="group-{group.id}">
+								{group.title} <span class="count">{group.total}</span>
+							</h2>
+							<ul class="rows">
+								{#each group.rows as row (row.id)}
+									<li
+										data-ticket={row.id}
+										tabindex="-1"
+										aria-current={row === current ? 'true' : undefined}
+										in:receive|global={{ key: row.id }}
+										out:send|global={{ key: row.id }}
+										animate:flip={{ duration: glide }}
+									>
+										{#if draft?.anchor === row.id && !draft.below}{@render draftForm(draft)}{/if}
+										{@render ticketRow(row)}
+										{#if draft?.anchor === row.id && draft.below}{@render draftForm(draft)}{/if}
+									</li>
+								{/each}
+							</ul>
+							{#if !group.rows.length}<p class="muted">{t('board.group.empty')}</p>{/if}
+							{#if group.total > group.rows.length}
+								<p class="muted">
+									{t('board.done.more', { shown: group.rows.length, total: group.total })}
+								</p>
+							{/if}
+						</section>
+					{/each}
+				</div>
+			{/key}
+		{/if}
+
+		{#if hiddenLine}<p class="hidden-line">{hiddenLine}</p>{/if}
 	{/if}
-
-	{#if view.hiddenLabel}<p class="hidden-line">{view.hiddenLabel}</p>{/if}
-{/if}
+</div>
 
 <style>
 	.board-head {
@@ -451,7 +585,7 @@
 		flex: 1;
 		margin: 0;
 		color: var(--text-muted);
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 	}
 	.chips {
 		display: flex;
@@ -470,91 +604,111 @@
 		background: var(--fill-soft);
 		color: inherit;
 		font: inherit;
-		font-size: var(--text-sm);
+		font-size: var(--type-meta);
 	}
 	.chip[aria-pressed='true'] {
 		background: var(--fill-sel);
-		font-weight: 650;
+		font-weight: var(--weight-medium);
 	}
-	.group {
-		margin-bottom: var(--space-4);
-		padding: var(--space-2);
-		border-radius: var(--radius-lg);
-		background: var(--glass-card);
-		backdrop-filter: blur(var(--blur-card)) saturate(var(--glass-sat));
-		box-shadow: var(--shadow-card);
+	.panorama {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-6);
 	}
-	.group header {
-		padding: var(--space-1) var(--space-2) var(--space-2);
+	.panorama > section {
+		min-width: 0;
 	}
-	.group h2 {
-		margin: 0;
-		font-size: var(--text-lg);
+	h2 {
+		margin: 0 0 var(--space-2);
+		font-size: var(--type-group);
+		font-weight: var(--weight-light);
+	}
+	.count,
+	.muted,
+	.meta,
+	.hint,
+	.hidden-line {
+		color: var(--text-muted);
+		font-size: var(--type-meta);
 	}
 	.count {
-		color: var(--text-muted);
-		font: 500 var(--text-sm) var(--font-mono);
-	}
-	.rule {
-		display: -webkit-box;
-		margin: 0;
-		overflow: hidden;
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 1;
-		line-clamp: 1;
+		font-variant-numeric: tabular-nums;
 	}
 	.rows {
-		display: grid;
-		gap: 2px;
 		margin: 0;
 		padding: 0;
 		list-style: none;
+		overflow-x: clip; /* a row sliding in must not widen the page */
 	}
 	.rows li {
-		border-radius: var(--radius-base);
+		border-bottom: 1px solid var(--rule);
 	}
 	.rows li[aria-current='true'] {
 		background: var(--fill-sel);
 	}
+	.rows li:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+	}
 	.row {
 		display: grid;
-		grid-template-columns: 7.5rem minmax(0, 1fr) auto 3.5rem minmax(0, 7rem) minmax(0, 8rem);
-		align-items: center;
-		gap: var(--space-3);
-		min-height: 36px;
-		padding: 0 var(--space-2);
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: baseline;
+		gap: var(--space-1) var(--space-3);
+		padding: var(--space-2);
 	}
 	.id {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		font: 500 var(--text-sm) var(--font-mono);
+		font: var(--weight-medium) var(--type-meta) var(--font-mono);
 		white-space: nowrap;
 	}
 	.title {
-		overflow: hidden;
 		color: inherit;
+		overflow-wrap: anywhere;
 		text-decoration: none;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.title:hover {
 		text-decoration: underline;
 	}
-	.tasks {
-		color: var(--text-muted);
-		font: var(--text-sm) var(--font-mono);
-		text-align: right;
+	.meta,
+	.refusal {
+		display: flex;
+		flex-wrap: wrap;
+		grid-column: 1 / -1;
+		align-items: center;
+		gap: var(--space-1) var(--space-3);
+		min-width: 0;
+		margin: 0;
 	}
-	.epic,
-	.project {
-		overflow: hidden;
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.meta > *,
+	.reason {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		white-space: normal;
+	}
+	.refusal {
+		padding: var(--space-1) var(--space-2);
+		background: var(--status-failed-tint);
+		color: var(--status-failed);
+		font-size: var(--type-meta);
+	}
+	.track {
+		display: inline-flex;
+		gap: 3px;
+	}
+	.dot {
+		width: 8px;
+		height: 8px;
+		border: 1px solid currentColor;
+		border-radius: 50%;
+	}
+	.dot.filled {
+		background: currentColor;
+	}
+	.tasks {
+		font-variant-numeric: tabular-nums;
 	}
 	.field-row {
 		display: flex;
@@ -577,45 +731,31 @@
 	.field-row.rename {
 		padding: 0;
 	}
-	.hint {
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-	.hidden-line {
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
 
-	@media (max-width: 719px) {
-		.row {
-			grid-template-columns: auto minmax(0, 1fr) auto;
-			padding: var(--space-1) var(--space-2);
+	@media (min-width: 760px) {
+		/* The board is a stage like the start view: the panorama fills the room between head and app bar */
+		.board {
+			display: flex;
+			flex-direction: column;
+			height: var(--stage-h);
+			margin: calc(-1 * var(--space-6)) calc(-1 * var(--gutter));
+			padding-top: var(--space-4);
 		}
-		.title {
-			white-space: normal;
-			overflow-wrap: anywhere;
+		.board > :not(.panorama) {
+			padding-inline: var(--gutter);
 		}
-		.run {
-			grid-column: 2 / -1;
-			grid-row: 2;
-			min-width: 0;
-			overflow: hidden;
+		.panorama {
+			flex: 1;
+			flex-direction: row;
+			gap: 40px;
+			min-height: 0;
+			padding: 0 var(--gutter) var(--space-3);
+			overflow: auto hidden;
+			scrollbar-width: thin;
 		}
-		.run:empty {
-			display: none;
-		}
-		.run :global(.badge) {
-			max-width: 100%;
-		}
-		.lage-text {
-			min-width: 0;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-		.epic,
-		.project,
-		.hint {
-			display: none;
+		.panorama > section {
+			flex: 0 0 var(--facet-w);
+			overflow-y: auto;
 		}
 	}
 </style>

@@ -3,19 +3,27 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Page } from '@playwright/test';
 import * as board from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import { createProfile, createRun, finishRun, startRun } from '../../src/lib/server/domain/runs.ts';
 import { expect, open, sidewaysScrollers, test } from './fixtures.ts';
 import { PROJECT } from './global-setup.ts';
 
 const HUMAN: Actor = { kind: 'user' };
 
+const LAGEN = ['Wartet auf dich', 'In Arbeit', 'Offen', 'Zur Abnahme', 'Fertig'];
+const COLUMNS = ['Backlog', 'Präzisieren', 'Planen', 'Umsetzen', 'Kritik', 'Abnahme', 'Fertig'];
+/** Column names that are no Lage as well; the default view must not show one. */
+const ONLY_COLUMN_NAMES = ['Backlog', 'Präzisieren', 'Planen', 'Umsetzen', 'Kritik'];
+
 const row = (page: Page, title: string) =>
 	page.locator('[data-ticket]:not([inert])', { hasText: title });
 const selected = (page: Page) => page.locator('[data-ticket][aria-current="true"]:not([inert])');
-const group = (page: Page, column: string) =>
-	page.getByRole('region', { name: new RegExp(`^${column} \\d+$`) });
-/** A row in the group of `column`, leaving out the copy a row slides out of another column with. */
-const rowIn = (page: Page, column: string, text: string) =>
-	group(page, column).locator('[data-ticket]:not([inert])', { hasText: text });
+const group = (page: Page, name: string) =>
+	page.getByRole('region', { name: new RegExp(`^${name} \\d+$`) });
+const headings = (page: Page) => page.locator('[data-panorama] > section > h2');
+const named = (names: string[]) => names.map((name) => new RegExp(`^${name} \\d+$`));
+/** A row in the group `name`, leaving out the copy a row slides out of another group with. */
+const rowIn = (page: Page, name: string, text: string) =>
+	group(page, name).locator('[data-ticket]:not([inert])', { hasText: text });
 
 async function press(page: Page, ...keys: string[]) {
 	for (const key of keys) await page.keyboard.press(key);
@@ -25,6 +33,12 @@ async function press(page: Page, ...keys: string[]) {
 async function focusSeededProject(page: Page) {
 	await press(page, ' ', PROJECT.key[0].toLowerCase());
 	await expect(page.getByRole('main')).toContainText(`Fokus ${PROJECT.key}`);
+}
+
+/** The expert view with the columns of the flow, through its key. */
+async function showFlow(page: Page) {
+	await press(page, ' ', 'g');
+	await expect(headings(page)).toHaveText(named(COLUMNS));
 }
 
 /** Walks the selection down from the top with j until the row with `title` is selected. */
@@ -64,6 +78,22 @@ function deleteByTitle(db: DatabaseSync, title: string) {
 	for (const { id } of rows) board.deleteTicket(db, HUMAN, id as number);
 }
 
+/** A run of the ticket that works right now, or that failed; returns the name of its profile. */
+function runOn(db: DatabaseSync, ticketId: number, outcome: 'running' | 'failed'): string {
+	const name = `Board agent ${randomUUID().slice(0, 8)}`;
+	const profile = createProfile(db, HUMAN, {
+		name,
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		model: 'none'
+	});
+	const run = createRun(db, HUMAN, { ticketId, profileId: profile.id }).id;
+	startRun(db, HUMAN, run);
+	if (outcome === 'failed')
+		finishRun(db, HUMAN, run, { state: 'failed', error: '[provider_unreachable] Timeout' });
+	return name;
+}
+
 /** A second project with one ticket; projects cannot be deleted, so the clean-up archives it. */
 function secondProject(db: DatabaseSync) {
 	// 10 hex characters (hyphens stripped first) keep collisions astronomically unlikely (16^10 possibilities).
@@ -81,38 +111,146 @@ function secondProject(db: DatabaseSync) {
 	};
 }
 
-test('gb opens the board, which groups tickets by column and binds its keys to the selected row', async ({
+test('the board shows the five Lagen side by side, what waits for you first, and no column name', async ({
+	page,
+	seedTicket
+}) => {
+	seedTicket('Sketch the onboarding');
+	await open(page, '/board');
+	await focusSeededProject(page);
+
+	await expect(headings(page)).toHaveText(named(LAGEN));
+	for (const name of ONLY_COLUMN_NAMES)
+		await expect(page.locator('.board')).not.toContainText(name);
+
+	const [first, second] = await headings(page).evaluateAll((titles) =>
+		titles.map((title) => title.getBoundingClientRect())
+	);
+	expect(second.x).toBeGreaterThan(first.x);
+	expect(second.y).toBe(first.y);
+	expect(await sidewaysScrollers(page)).toEqual([]);
+});
+
+test('each row shows its progress track in everyday words, an open one why it waits, a waiting one what it needs', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	const failed = seedTicket('Lage: the run failed', 'Umsetzen');
+	const working = seedTicket('Lage: an agent works', 'Umsetzen');
+	const predecessor = seedTicket('Lage: the predecessor');
+	const blocked = seedTicket('Lage: waits for its predecessor', 'Umsetzen');
+	board.linkRelation(db, HUMAN, predecessor.id, blocked.id, 'blocks');
+	seedTicket('Lage: ready for acceptance', 'Abnahme');
+	seedTicket('Lage: finished', 'Fertig');
+	runOn(db, failed.id, 'failed');
+	runOn(db, working.id, 'running');
+	await open(page, '/board');
+	await focusSeededProject(page);
+
+	const waiting = rowIn(page, 'Wartet auf dich', 'Lage: the run failed');
+	await expect(waiting).toContainText('Umsetzung');
+	await expect(waiting).toContainText('Run fehlgeschlagen');
+	await expect(waiting.getByRole('img', { name: 'Schritt 3 von 5' })).toBeVisible();
+	await expect(rowIn(page, 'In Arbeit', 'Lage: an agent works')).toContainText(
+		'wird gerade umgesetzt'
+	);
+	await expect(rowIn(page, 'Offen', 'Lage: waits for its predecessor')).toContainText(
+		`Wartet auf ${predecessor.ref}`
+	);
+	const backlog = rowIn(page, 'Offen', 'Lage: the predecessor');
+	await expect(backlog).toContainText('noch nicht eingeplant');
+	await expect(backlog).toContainText('Noch nicht priorisiert');
+	await expect(backlog.getByRole('img', { name: 'Schritt 0 von 5' })).toBeVisible();
+	const acceptance = rowIn(page, 'Zur Abnahme', 'Lage: ready for acceptance');
+	await expect(acceptance).toContainText('bereit für deine Abnahme');
+	await expect(acceptance.getByRole('img', { name: 'Schritt 5 von 5' })).toBeVisible();
+	await expect(rowIn(page, 'Fertig', 'Lage: finished')).toContainText('abgeschlossen');
+});
+
+test('h, l and the arrows move between the Lagen, the focused row shows its ring, and the keys of the view head the overview', async ({
+	page,
+	seedTicket
+}) => {
+	seedTicket('Walk: first open one');
+	seedTicket('Walk: second open one');
+	seedTicket('Walk: waits for acceptance', 'Abnahme');
+	await open(page, '/board');
+	await focusSeededProject(page);
+
+	await press(page, '?');
+	const keyBar = page.getByRole('list', { name: 'Gültige Tasten' });
+	for (const label of ['nächstes/voriges', 'links/rechts', 'Ablauf zeigen/verbergen', 'öffnen'])
+		await expect(keyBar).toContainText(label);
+	await expect(keyBar).not.toContainText('Spalte weiter/zurück');
+	await page.keyboard.press('Escape');
+
+	await select(page, 'Walk: second open one');
+	const selectedIn = (name: string) => group(page, name).locator('[aria-current="true"]');
+	await press(page, 'l');
+	await expect(selectedIn('Zur Abnahme')).toHaveCount(1);
+	await expect(selected(page)).toBeFocused();
+	expect(await selected(page).evaluate((li) => getComputedStyle(li).outlineStyle)).toBe('solid');
+	await press(page, 'h');
+	await expect(selectedIn('Offen')).toHaveCount(1);
+	await press(page, 'ArrowRight');
+	await expect(selectedIn('Zur Abnahme')).toHaveCount(1);
+	await press(page, 'ArrowLeft');
+	await expect(selectedIn('Offen')).toHaveCount(1);
+});
+
+test('␣g and :ablauf switch to the flow with its columns, run state and profile, and the browser keeps the choice', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	const working = seedTicket('Flow: an agent works', 'Umsetzen');
+	const profile = runOn(db, working.id, 'running');
+	await open(page, '/board');
+	await focusSeededProject(page);
+	await expect(page.getByRole('button', { name: 'Ablauf zeigen' })).toHaveAttribute(
+		'aria-pressed',
+		'false'
+	);
+
+	await showFlow(page);
+	await expect(rowIn(page, 'Umsetzen', 'Flow: an agent works')).toContainText(
+		`arbeitet · ${profile}`
+	);
+	await expect(rowIn(page, 'Umsetzen', 'Flow: an agent works')).toContainText('In Arbeit');
+	await expect(page.getByRole('button', { name: 'Ablauf zeigen' })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
+
+	await open(page, '/board');
+	await expect(headings(page)).toHaveText(named(COLUMNS));
+
+	await press(page, ':');
+	await page.keyboard.type('ablauf');
+	await press(page, 'Enter');
+	await expect(headings(page)).toHaveText(named(LAGEN));
+	await open(page, '/board');
+	await expect(headings(page)).toHaveText(named(LAGEN));
+});
+
+test('in the flow the keys move along the columns and the overview offers > and <', async ({
 	page,
 	seedTicket
 }) => {
 	const first = seedTicket('Sketch the onboarding');
 	const second = seedTicket('Write the release notes');
 	const refined = seedTicket('Split the importer', 'Präzisieren');
-	await open(page, '/');
-	await press(page, 'g', 'b');
-	await expect(page).toHaveURL('/board');
+	await open(page, '/board');
 	await focusSeededProject(page);
+	await showFlow(page);
 
-	// the keys valid here head the overview of all keys
 	await press(page, '?');
-	const keyBar = page.getByRole('list', { name: 'Gültige Tasten' });
-	for (const label of [
-		'nächstes/voriges',
-		'Anfang/Ende',
-		'Gruppe bzw. Datei',
-		'öffnen',
-		'Spalte weiter/zurück',
-		'neu darunter/darüber',
-		'Text bearbeiten',
-		'löschen',
-		'ID/Pfad kopieren',
-		'Fokus auf dieses Projekt'
-	])
-		await expect(keyBar).toContainText(label);
+	await expect(page.getByRole('list', { name: 'Gültige Tasten' })).toContainText(
+		'Spalte weiter/zurück'
+	);
 	await page.keyboard.press('Escape');
-	expect(await sidewaysScrollers(page)).toEqual([]);
 
-	await expect(group(page, 'Backlog')).toContainText('Start per :run');
 	await expect(group(page, 'Backlog').locator('[data-ticket]')).toHaveText([
 		new RegExp(`${PROJECT.key}\\s*${first.ref}\\s*Sketch the onboarding`),
 		new RegExp(`${second.ref}\\s*Write the release notes`)
@@ -124,8 +262,6 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 	await press(page, 'j');
 	await expect(selected(page)).toContainText(second.ref);
 	await expect(selected(page)).toBeFocused();
-	await press(page, 'k');
-	await expect(selected(page)).toContainText(first.ref);
 	await press(page, 'G');
 	await expect(selected(page)).toContainText(refined.ref);
 	await press(page, '{');
@@ -137,13 +273,14 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 	await expect(page).toHaveURL(second.path);
 });
 
-test('> moves the selected ticket one allowed column on and the row slides there; u moves it back', async ({
+test('> moves the selected ticket one column on and the row slides there; u moves it back', async ({
 	page,
 	seedTicket
 }) => {
 	const ticket = seedTicket('Review the copy');
 	await open(page, '/board');
 	await focusSeededProject(page);
+	await showFlow(page);
 	await select(page, ticket.ref);
 
 	const slides = page.waitForFunction(slidingCopies, ticket.id);
@@ -171,11 +308,13 @@ test('another tab moving my selected ticket keeps its row focused once it lands'
 		await open(page, '/board');
 		await open(other, '/board');
 		await focusSeededProject(page);
+		await showFlow(page);
 		await select(page, ticket.ref);
 		await expect(selected(page)).toBeFocused();
 
 		// This tab moves nothing itself: only the reload its live event triggers can bring the focus back.
 		await focusSeededProject(other);
+		await showFlow(other);
 		await select(other, ticket.ref);
 		await press(other, '>');
 
@@ -193,6 +332,7 @@ test('a reload that lands after the focus left the list does not pull the focus 
 	const ticket = seedTicket('Review the copy');
 	await open(page, '/board');
 	await focusSeededProject(page);
+	await showFlow(page);
 	await select(page, ticket.ref);
 
 	let release = () => {};
@@ -214,7 +354,7 @@ test('a reload that lands after the focus left the list does not pull the focus 
 	await expect(commandLine).toBeFocused();
 });
 
-test('a closed column refuses > with the reason and the way out, and the ticket stays', async ({
+test('moving into done with an open task shows the refusal with the way out at the row, and the ticket stays', async ({
 	page,
 	db
 }) => {
@@ -224,13 +364,14 @@ test('a closed column refuses > with the reason and the way out, and the ticket 
 	try {
 		await open(page, '/board');
 		await focusSeededProject(page);
+		await showFlow(page);
 		await select(page, title);
 		await press(page, '>');
-		await expect(page.getByText(`${ticket.ref} hat 1 offene Tasks`)).toContainText(
-			'Erledige die Tasks'
-		);
-		await expect(group(page, 'Abnahme')).toContainText(ticket.ref);
-		// refused before anything happened, so there is nothing to take back
+		const refusal = rowIn(page, 'Abnahme', title).getByRole('alert');
+		await expect(refusal).toContainText(`${ticket.ref} hat 1 offene Tasks`);
+		await expect(refusal).toContainText('Erledige die Tasks');
+		await expect(group(page, 'Fertig')).not.toContainText(ticket.ref);
+		// refused, so there is nothing to take back
 		await press(page, '?');
 		await expect(page.getByRole('list', { name: 'Gültige Tasten' })).not.toContainText(
 			'rückgängig'
@@ -249,6 +390,7 @@ test('with reduced motion a moved row shows up in its new column at once, withou
 	const ticket = seedTicket('Fix the typo');
 	await open(page, '/board');
 	await focusSeededProject(page);
+	await showFlow(page);
 	await select(page, ticket.ref);
 
 	await press(page, '>');
@@ -271,6 +413,8 @@ test('o creates a ticket in the column of the selected row, and a second tab sho
 		await open(page, '/board');
 		await open(other, '/board');
 		await focusSeededProject(page);
+		await showFlow(page);
+		await showFlow(other);
 		await select(page, anchor.ref);
 
 		await press(page, 'o');
@@ -373,7 +517,7 @@ test('the project focus collapses other projects into one line; * focuses the ro
 test.describe('on a phone', () => {
 	test.use({ viewport: { width: 375, height: 667 }, hasTouch: true });
 
-	test('shows the same list without sideways scrolling, and the project chips set the focus', async ({
+	test('stacks the Lagen and the flow, only vertically, and the project chips set the focus', async ({
 		page,
 		db,
 		seedTicket
@@ -384,19 +528,25 @@ test.describe('on a phone', () => {
 			await open(page, '/board');
 			await expect(row(page, ticket.ref)).toBeVisible();
 			await expect(row(page, second.title)).toBeVisible();
-			expect(await sidewaysScrollers(page)).toEqual([]);
-
-			const label = row(page, ticket.ref).locator('.lage-text');
-			await label.evaluate(
-				(el) => (el.textContent = 'Open · ' + 'a very long capacity reason '.repeat(8))
+			const [first, next] = await headings(page).evaluateAll((titles) =>
+				titles.map((title) => title.getBoundingClientRect())
 			);
+			expect(next.y).toBeGreaterThan(first.y);
+			expect(next.x).toBe(first.x);
+
+			const reason = row(page, ticket.ref).locator('.reason');
+			await reason.evaluate((el) => (el.textContent = 'a very long waiting reason '.repeat(8)));
 			expect(await sidewaysScrollers(page)).toEqual([]);
-			expect(await label.evaluate((el) => getComputedStyle(el).textOverflow)).toBe('ellipsis');
-			expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+				375
+			);
 
 			await page.getByRole('button', { name: `${second.key} ${second.name}` }).tap();
 			await expect(row(page, ticket.ref)).toBeHidden();
 			await expect(row(page, second.title)).toBeVisible();
+
+			await page.getByRole('button', { name: 'Ablauf zeigen' }).tap();
+			await expect(headings(page)).toHaveText(named(COLUMNS));
 			expect(await sidewaysScrollers(page)).toEqual([]);
 		} finally {
 			deleteByTitle(db, second.title);

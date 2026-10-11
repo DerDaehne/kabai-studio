@@ -10,7 +10,7 @@ import type { Actor } from '$lib/server/domain/core';
 import * as runs from '$lib/server/domain/runs';
 import { requestHuman } from '$lib/server/domain/questions';
 import { actions, load, type BoardPage } from './+page.server';
-import { BOARD_DEPENDENCY } from './list';
+import { BOARD_DEPENDENCY, FLOW_COOKIE } from './list';
 import Page from './+page.svelte';
 
 const pageData = vi.hoisted(() => ({ locale: 'de' }));
@@ -45,10 +45,11 @@ const shopTicket = create(shop, 'Warenkorb', 'Planen');
 create(archive, 'Archiviert');
 db().prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archive);
 
-async function loaded() {
+async function loaded(cookie?: string) {
 	const dependencies: string[] = [];
 	const data = (await load({
-		depends: (...d: string[]) => dependencies.push(...d)
+		depends: (...d: string[]) => dependencies.push(...d),
+		cookies: { get: (name: string) => (name === FLOW_COOKIE ? cookie : undefined) }
 	} as never)) as BoardPage;
 	return { data, dependencies };
 }
@@ -74,7 +75,7 @@ const live = (
 });
 const html = (data: Partial<BoardPage> & { live: LiveState }) =>
 	render(Page as never, {
-		props: { data: { tickets: [], roles: {}, ...data } } as never
+		props: { data: { tickets: [], columns: [], flow: false, ...data } } as never
 	}).body.replace(/<!--[\s\S]*?-->/g, '');
 const text = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
@@ -100,30 +101,75 @@ describe('the board load', () => {
 		expect((await loadedTicket(shopTicket.id)).epic).toBeNull();
 	});
 
-	it('names the role of every column by its step, none for backlog and done', async () => {
-		const { data } = await loaded();
-		expect(data.roles[columnId(studio, 'Präzisieren')]).toMatch(/^Do: propose the scope/);
-		expect(data.roles[columnId(studio, 'Backlog')]).toBe('');
-		expect(data.roles[columnId(shop, 'Fertig')]).toBe('');
+	it('opens the expert view only when the browser chose it', async () => {
+		expect((await loaded()).data.flow).toBe(false);
+		expect((await loaded('lage')).data.flow).toBe(false);
+		expect((await loaded('flow')).data.flow).toBe(true);
 	});
 
-	it('names the column > and < lead to, and why a blocked one is closed, with the way out', async () => {
-		const { next } = await loadedTicket(tasks.id);
-		expect(next.forward).toMatchObject({
-			columnId: columnId(studio, 'Umsetzen'),
-			name: 'Umsetzen',
-			blockers: []
-		});
-		expect(next.back).toMatchObject({
-			columnId: columnId(studio, 'Präzisieren'),
-			name: 'Präzisieren'
-		});
+	it('lists every column of every active project once, in step order, with its project and step', async () => {
+		const { data } = await loaded();
+		const studioColumns = data.columns.filter((column) => column.projectId === studio);
+		expect(studioColumns.map((column) => column.step)).toEqual([
+			'backlog',
+			'refine',
+			'plan',
+			'implement',
+			'critique',
+			'acceptance',
+			'done'
+		]);
+		expect(studioColumns[3]).toMatchObject({ name: 'Umsetzen', phase: 'work', position: 3 });
+		expect(data.columns.some((column) => column.projectId === archive)).toBe(false);
+	});
 
-		const done = (await loadedTicket(accepted.id)).next.forward!;
-		expect(done.name).toBe('Fertig');
-		expect(done.blockers[0]).toMatchObject({ code: 'open_tasks' });
-		expect(done.blockers[0].message).toContain('STU-3');
-		expect(done.blockers[0].hint).not.toBe('');
+	it('gives each ticket the state and profile of its newest run', async () => {
+		const ticket = create(shop, 'Mit Run', 'Umsetzen');
+		expect((await loadedTicket(ticket.id)).run).toBeNull();
+		const profile = runs.createProfile(db(), user, {
+			name: 'newest-run',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		runs.createRun(db(), user, { ticketId: ticket.id, profileId: profile });
+		expect((await loadedTicket(ticket.id)).run).toEqual({ state: 'queued', profile: 'newest-run' });
+	});
+
+	it('reads the board in the same few statements however many tickets, runs and questions there are', async () => {
+		const statements = async () => {
+			const database = db();
+			const prepare = database.prepare.bind(database);
+			let count = 0;
+			database.prepare = ((sql: string) => (count++, prepare(sql))) as typeof database.prepare;
+			try {
+				await loaded();
+			} finally {
+				database.prepare = prepare;
+			}
+			return count;
+		};
+		const profile = runs.createProfile(db(), user, {
+			name: 'many',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const queued = (title: string) => {
+			const ticket = create(studio, title, 'Umsetzen');
+			const run = runs.createRun(db(), user, { ticketId: ticket.id, profileId: profile }).id;
+			return { ticket, run };
+		};
+		queued('Einer wartet');
+		const few = await statements();
+		for (let i = 0; i < 20; i++) {
+			const { ticket, run } = queued(`Viele ${i}`);
+			board.addTask(db(), user, ticket.id, 'Offen');
+			runs.startRun(db(), user, run);
+			requestHuman(db(), { kind: 'agent', runId: run }, ticket.id, { question: 'Weiter?' });
+		}
+		expect(await statements()).toBe(few);
+		expect(few).toBeLessThanOrEqual(4);
 	});
 });
 
@@ -243,32 +289,57 @@ describe('the board actions', () => {
 });
 
 describe('the board view', () => {
-	it('shows a group per column with its name, how a run starts there and its role', async () => {
-		const { data } = await loaded();
-		const markup = text(html({ ...data, live: live() }));
-		expect(markup).toMatch(
-			/Planen \d+ Start per :run · Do: plan the work; do not refine the ticket/
+	const headings = (markup: string) =>
+		[...markup.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/g)].map((match) =>
+			text(match[1]).trim().replace(/ \d+$/, '')
 		);
-		expect(markup).toMatch(/Abnahme \d+ Start per :run STU/); // acceptance has no agent role
+	const COLUMN_NAMES = ['Backlog', 'Präzisieren', 'Planen', 'Umsetzen', 'Kritik'];
+
+	it('shows the five Lagen in fixed order, what waits for the human first, and no column name', async () => {
+		const { data } = await loaded();
+		const markup = html({ ...data, live: live() });
+		expect(headings(markup)).toEqual([
+			'Wartet auf dich',
+			'In Arbeit',
+			'Offen',
+			'Zur Abnahme',
+			'Fertig'
+		]);
+		for (const name of COLUMN_NAMES) expect(text(markup)).not.toContain(name);
 	});
 
-	it('shows each ticket with project code and number, title, task progress, epic and project', async () => {
+	it('shows each ticket with project code and number, title, its progress track and where it stands in everyday words', async () => {
 		const { data } = await loaded();
 		const markup = html({ ...data, live: live() });
 		expect(markup).toMatch(/<a [^>]*href="\/p\/STU\/t\/2"[^>]*>Tasks halb erledigt<\/a>/);
 		expect(text(markup)).toMatch(
-			/STU STU-2 Tasks halb erledigt .*1\/2 Tasks erledigt Epic STU-1 Studio/
+			/STU STU-2 Tasks halb erledigt Vorgehen festlegen Bereit zum Start/
 		);
+		const track =
+			markup.match(
+				/aria-label="Schritt 2 von 5"[^>]*>([\s\S]*?)<\/span>\s*<span class="step/
+			)?.[1] ?? '';
+		expect(track.match(/class="dot/g)).toHaveLength(5);
+		expect(track.match(/filled/g)).toHaveLength(2);
 	});
 
-	it('shows the Lage of a ticket and, where it has one, the reason', async () => {
+	it('names the kind of what waits for the human and says a step works right now', async () => {
 		const { data } = await loaded();
-		expect(text(html({ ...data, live: live() }))).toContain(
-			'Tasks halb erledigt Offen · Bereit zum Start'
-		);
+		const base = data.tickets[0];
+		const asking = { ...base, lage: 'waiting' as const, reason: { kind: 'question' as const } };
+		const checked = {
+			...base,
+			id: base.id + 1000,
+			lage: 'working' as const,
+			reason: { kind: 'working' as const },
+			step: 'critique',
+			column: { ...base.column, phase: 'work' as const }
+		};
+		const markup = text(html({ tickets: [asking, checked], live: live() }));
+		expect(markup).toMatch(/Wartet auf dich 1 .*Offene Frage .*In Arbeit 1 .*wird gerade geprüft/);
 	});
 
-	it('translates the capacity reason into the page locale and offers the full text as title', async () => {
+	it('translates the capacity reason into the page locale', async () => {
 		const { data } = await loaded();
 		const queued = {
 			...data.tickets[0],
@@ -282,19 +353,39 @@ describe('the board view', () => {
 			}
 		};
 		const markup = html({ tickets: [queued], live: live() });
-		expect(text(markup)).toContain(
-			'Offen · Pool „local“ ist voll (1 von 1 aktiv), 2 vor ihm in der Queue'
-		);
+		expect(text(markup)).toContain('Pool „local“ ist voll (1 von 1 aktiv), 2 vor ihm in der Queue');
 		pageData.locale = 'en';
 		try {
 			const english = html({ tickets: [queued], live: live() });
-			expect(text(english)).toContain(
-				'Open · Pool "local" is full (1 of 1 active), 2 ahead in the queue'
-			);
-			expect(english).toContain('title="Open · Pool &quot;local&quot; is full');
+			expect(text(english)).toContain('Pool "local" is full (1 of 1 active), 2 ahead in the queue');
+			expect(headings(english)).toEqual([
+				'Waiting for you',
+				'In progress',
+				'Open',
+				'For acceptance',
+				'Done'
+			]);
 		} finally {
 			pageData.locale = 'de';
 		}
+	});
+
+	it('shows the expert view with the columns, the Lage, the newest run with its profile, task progress and epic', async () => {
+		const { data } = await loaded();
+		const markup = html({ ...data, flow: true, live: live() });
+		expect(headings(markup)).toEqual([
+			'Backlog',
+			'Präzisieren',
+			'Planen',
+			'Umsetzen',
+			'Kritik',
+			'Abnahme',
+			'Fertig'
+		]);
+		expect(text(markup)).toMatch(
+			/STU-2 Tasks halb erledigt Offen · Bereit zum Start 1\/2 Tasks erledigt Epic STU-1/
+		);
+		expect(text(markup)).toMatch(/Mit Run Offen · .* in der Queue · newest-run/);
 	});
 
 	it('shows "Noch kein Ticket" with the hint on o while a project has no tickets', () => {
