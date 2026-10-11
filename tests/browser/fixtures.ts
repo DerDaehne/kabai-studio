@@ -82,6 +82,7 @@ export async function queueRun(db: DatabaseSync, page: Page, ticketId: number, m
 		base_url: model.baseUrl,
 		model: 'fake'
 	});
+	intoWorkStep(db, ticketId);
 	createRun(db, HUMAN, { ticketId, profileId: profile.id });
 	expect((await page.request.delete('/api/halt')).ok()).toBe(true);
 }
@@ -99,4 +100,11 @@ export function sidewaysScrollers(page: Page): Promise<string[]> {
 			.filter((element) => element.scrollWidth > element.clientWidth && scrolls(element))
 			.map((element) => [element.tagName.toLowerCase(), ...element.classList].join('.'));
 	});
+}
+
+/** Runs exist only in the work steps, so a seeded backlog ticket moves into one before it gets a run. */
+export function intoWorkStep(db: DatabaseSync, ticketId: number): void {
+	const t = board.ticket(db, ticketId);
+	const step = board.columns(db, t.project_id).find((c) => c.step === 'implement')!;
+	if (t.column_id !== step.id) board.moveTicket(db, HUMAN, ticketId, step.id);
 }

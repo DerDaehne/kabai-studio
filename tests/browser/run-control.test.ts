@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
 import { createProfile, createRun, finishRun } from '../../src/lib/server/domain/runs.ts';
 import type { FakeModel } from './fake-model.ts';
-import { expect, open, test, type SeededTicket } from './fixtures.ts';
+import { expect, intoWorkStep, open, test, type SeededTicket } from './fixtures.ts';
 
 const HUMAN: Actor = { kind: 'user' };
 
@@ -34,6 +34,7 @@ function seedProfiles(db: DatabaseSync, model: FakeModel, ticket: SeededTicket) 
 	const other = { name: `Anderes ${suffix}` };
 	profile(other.name);
 	const lastUsed = { name: `Zuletzt ${suffix}`, id: profile(`Zuletzt ${suffix}`) };
+	intoWorkStep(db, ticket.id);
 	const earlier = createRun(db, HUMAN, { ticketId: ticket.id, profileId: lastUsed.id }).id;
 	finishRun(db, HUMAN, earlier, { state: 'cancelled' });
 	return { pool, lastUsed, other };
@@ -56,7 +57,7 @@ async function stopWithConfirmation(page: Page) {
 	await expect(confirmationOf(page)).toBeHidden();
 	await expect(tabs.first()).toContainText('wartet auf Start');
 	// x targets the run the trace shows (the waiting one), then the newest one still active
-	for (const stopped of [tabs.nth(0), tabs.nth(1)]) {
+	for (const stopped of [tabs.nth(0)]) {
 		await page.keyboard.press('x');
 		await expect(confirmationOf(page)).toBeVisible();
 		await page.keyboard.press('y');
@@ -86,17 +87,26 @@ test('a run starts from the Run-Akte with the preselected profile, waits for its
 	await open(page, ticket.path);
 	await expect(page.getByLabel('Agent-Profil')).toHaveValue(String(lastUsed.id));
 
+	// one run per ticket: another ticket's run holds the pool, so this ticket's run has to wait for it
+	const blocker = seedTicket('Holds the pool');
+	intoWorkStep(db, blocker.id);
 	fakeModel.reply('hang');
+	const blockerRun = createRun(db, HUMAN, { ticketId: blocker.id, profileId: lastUsed.id }).id;
+	expect((await page.request.delete('/api/halt')).ok()).toBe(true);
+	await expect.poll(() => runningRunOf(db, blocker.id)).toBeTruthy();
+
 	await runCommand(page, `Run starten mit „${lastUsed.name}“`);
-	await expect(tabsOf(page).first()).toContainText(/Run \d+\s*läuft/);
-	await expect(tabsOf(phone).first()).toContainText(/Run \d+\s*läuft/);
-	await page.getByRole('button', { name: 'Run starten (:run)' }).click();
 	await expect(tabsOf(page).first()).toContainText(
 		`wartet: Pool „${pool}“ ist voll (1 von 1 aktiv).`
 	);
+	await expect(tabsOf(phone).first()).toContainText('wartet');
+	await page.getByRole('button', { name: 'Run starten (:run)' }).click();
+	await expect(page.getByText(/hat schon Run \d+/)).toBeVisible(); // a second start is refused, not queued
 
 	await stopWithConfirmation(page);
-	await expect(tabsOf(phone).nth(1)).toContainText('abgebrochen');
+	await expect(tabsOf(phone).first()).toContainText('abgebrochen');
+	expect((await page.request.post(`/api/runs/${blockerRun}/pause`)).ok()).toBe(true);
+	await expect.poll(() => runningRunOf(db, blocker.id)).toBeFalsy();
 
 	fakeModel.reply({ text: 'Export gebaut.' });
 	await runCommand(page, ':run');
@@ -140,6 +150,7 @@ async function workingRun(db: DatabaseSync, page: Page, model: FakeModel, ticket
 		model: 'fake',
 		pool: `browser-${suffix}`
 	}).id;
+	intoWorkStep(db, ticket.id);
 	createRun(db, HUMAN, { ticketId: ticket.id, profileId });
 	// the server's runner wakes only on events of its own process; releasing the (unset) halt wakes it
 	expect((await page.request.delete('/api/halt')).ok()).toBe(true);

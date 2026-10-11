@@ -12,7 +12,7 @@ import {
 	startRun,
 	type RunEnd
 } from '../../src/lib/server/domain/runs.ts';
-import { expect, open, queueRun, sidewaysScrollers, test } from './fixtures.ts';
+import { expect, intoWorkStep, open, queueRun, sidewaysScrollers, test } from './fixtures.ts';
 
 const HUMAN: Actor = { kind: 'user' };
 
@@ -28,6 +28,7 @@ function profileOnUnreachableHost(db: DatabaseSync): number {
 
 /** Seeds a run of `ticketId` that already ended with `end`. */
 function finishedRun(db: DatabaseSync, ticketId: number, end: RunEnd): number {
+	intoWorkStep(db, ticketId);
 	const run = createRun(db, HUMAN, { ticketId, profileId: profileOnUnreachableHost(db) }).id;
 	startRun(db, HUMAN, run); // a run only ends from "running"
 	finishRun(db, HUMAN, run, end);
@@ -230,6 +231,7 @@ test.describe('at 1440 px', () => {
 	test('operations shows the earliest start of a queued run', async ({ page, db, seedTicket }) => {
 		const ticket = seedTicket('A run that starts later');
 		const startsAt = new Date(Date.now() + 3 * 3_600_000);
+		intoWorkStep(db, ticket.id);
 		createRun(db, HUMAN, {
 			ticketId: ticket.id,
 			profileId: profileOnUnreachableHost(db),
@@ -374,6 +376,7 @@ test.describe('at 1440 px', () => {
 		).run(failedTicket.id, 'Run fehlgeschlagen.\nAusweg: Modellserver starten.', failed);
 		const waiting = seedTicket('A ticket whose run waits');
 		haltRuns(db, HUMAN);
+		intoWorkStep(db, waiting.id);
 		createRun(db, HUMAN, { ticketId: waiting.id, profileId: profileOnUnreachableHost(db) });
 		try {
 			await open(page, '/');
