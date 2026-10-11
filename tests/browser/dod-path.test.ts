@@ -32,7 +32,9 @@ import { expect, open, sidewaysScrollers, test, type SeededTicket } from './fixt
 
 const HUMAN: Actor = { kind: 'user' };
 // Always refused (there is no column -1), so three of these in a row trip the loop guard's "failing calls" rule.
-const FAILING_CALL = { call: { name: 'move_ticket', args: { column_id: -1 } } } as const;
+const FAILING_CALL = {
+	call: { name: 'finish_step', args: { result: 'done', summary: ' ' } }
+} as const;
 const QUESTION = 'Ship now or wait for review?';
 // Measured 0.2–1.1 s for the live updates this walk waits for; well above that to stay clear of a loaded machine.
 const LIVE = { timeout: 15_000 };
