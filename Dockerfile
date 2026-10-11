@@ -31,6 +31,7 @@ COPY --from=build /app/server.ts ./server.ts
 COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts ./src/lib/server/
 COPY --from=build /app/src/lib/server/domain/error.ts ./src/lib/server/domain/
 COPY --from=build /app/src/lib/version.ts ./src/lib/version.ts
+COPY --from=build /app/src/lib/i18n/index.ts /app/src/lib/i18n/de.ts /app/src/lib/i18n/en.ts ./src/lib/i18n/
 # restore.ts reads this directly off disk (assertKnownMigrations) — it cannot use the Vite-only
 # import.meta.glob that db.ts's migrate() relies on for the bundled server.
 COPY --from=build /app/migrations ./migrations
