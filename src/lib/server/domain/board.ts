@@ -1,6 +1,13 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
-import { actorLabel as label, DomainError, OPEN_QUESTION, tx, type Actor } from './core';
+import {
+	actorLabel as label,
+	chainRootOf,
+	DomainError,
+	OPEN_QUESTION,
+	tx,
+	type Actor
+} from './core';
 import { STEP_LABELS, VARIANTS, type Phase, type Step, type Variant } from './variants';
 
 export type Column = { id: number; name: string; step: Step; phase: Phase };
@@ -528,11 +535,14 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 	});
 }
 
-/** Writes the review approval inside an open transaction; an agent never approves a ticket it moved last. */
+/**
+ * Writes the review approval inside an open transaction; an agent never approves a ticket it moved last, also not in a
+ * run that resumes the one that moved it.
+ */
 export function writeApproval(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket) {
 	const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
 	// ponytail: "author of the last work" ≈ whoever moved the ticket last; compare the last working run or its profile once that distinction matters
-	if (actor.kind !== 'user' && last?.kind === actor.kind && last.runId === actor.runId)
+	if (actor.kind !== 'user' && last?.kind === actor.kind && sameRunChain(db, last, actor))
 		throw new DomainError(
 			'self_approval',
 			`${t.ref} wurde zuletzt von dir (${label(actor)}) verschoben — eigene Arbeit darfst du nicht freigeben.`,
@@ -543,6 +553,11 @@ export function writeApproval(db: DatabaseSync, emit: Emit, actor: Actor, t: Tic
 	).run(JSON.stringify(actor), t.id);
 	emit({ type: 'ticket.review_approved', projectId: t.project_id, ticketId: t.id, actor });
 }
+
+const sameRunChain = (db: DatabaseSync, a: Actor, b: Actor) =>
+	a.runId === undefined || b.runId === undefined
+		? a.runId === b.runId
+		: chainRootOf(db, a.runId) === chainRootOf(db, b.runId);
 
 /** SQL condition for an unfinished `blocks` predecessor `b` in column `bc`, judged by the successor's project `p`. */
 export const PREDECESSOR_OPEN = `bc.phase <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;

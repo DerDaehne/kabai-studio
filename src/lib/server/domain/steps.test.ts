@@ -166,6 +166,34 @@ describe('the chain', () => {
 	});
 });
 
+describe('approval in critique', () => {
+	it('refuses a run that resumes the author run, since it is still the author', () => {
+		const c = chain('software', 'implement');
+		const author = c.current();
+		runs.startRun(c.db, system, author);
+		finishStep(c.db, { kind: 'agent', runId: author }, c.ticketId, {
+			result: 'done',
+			summary: 'Fertig'
+		});
+		runs.finishRun(c.db, system, author, { state: 'paused' });
+		const resumed = runs.createRun(c.db, system, {
+			ticketId: c.ticketId,
+			profileId: c.profileId,
+			resumedFromRunId: author,
+			resumeReason: 'quota'
+		}).id;
+		runs.startRun(c.db, system, resumed);
+
+		expect(() =>
+			finishStep(c.db, { kind: 'agent', runId: resumed }, c.ticketId, {
+				result: 'done',
+				summary: 'Passt'
+			})
+		).toThrow(expect.objectContaining({ code: 'self_approval' }));
+		expect(c.stepOf()).toBe('critique');
+	});
+});
+
 describe('the round limit on going back', () => {
 	/** Implement and critique alternate; each critique sends findings `n` back. */
 	function rounds(c: ReturnType<typeof chain>, findings: string[]) {

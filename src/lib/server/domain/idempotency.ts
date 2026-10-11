@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { DomainError, tx, type Actor } from './core';
-import { chainRootOf } from './runs';
+import { chainRootOf, DomainError, tx, type Actor } from './core';
 
 type EarlierCall = { request_hash: string; result: string; fresh: 0 | 1 };
 

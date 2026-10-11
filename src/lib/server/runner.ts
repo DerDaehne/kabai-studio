@@ -300,12 +300,19 @@ function finishExecutedRun(
 	result: Exclude<ExecutorResult, void>
 ) {
 	tx(db, () => {
-		const state = result.state ?? 'succeeded';
+		const resume = result.state === 'paused' ? result.resume : undefined;
+		// a park after finish_step changes nothing: the next step starts in a fresh run, not in the author's resume
+		const parkedAfterStep = resume !== undefined && finishedStep(db, run.id);
+		const state = parkedAfterStep ? 'succeeded' : (result.state ?? 'succeeded');
 		finishRun(db, SYSTEM, run.id, { state, usage: result.usage });
-		if (result.state === 'paused' && result.resume) continuePausedRun(db, run, result.resume);
+		if (resume && !parkedAfterStep) continuePausedRun(db, run, resume);
 		if (state === 'succeeded') queueNextStep(db, run.id);
 	});
 }
+
+const finishedStep = (db: DatabaseSync, runId: number) =>
+	db.prepare("SELECT 1 FROM runs WHERE id = ? AND step_result IN ('done', 'back')").get(runId) !==
+	undefined;
 
 function nextNotBefore(db: DatabaseSync, now: Date) {
 	const { next } = db

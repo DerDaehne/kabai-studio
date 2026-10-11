@@ -566,6 +566,26 @@ describe('builtin executor', () => {
 		]);
 	});
 
+	it('ends succeeded when parked in the same step as finish_step, so the next step gets a fresh run instead of a resume', async () => {
+		const { db, queue, run } = setup();
+		let park = () => {};
+		const provider = fakeProvider({
+			chunks: [
+				{ pause: () => park() },
+				call('call-1', 'finish_step', { result: 'done', summary: 'Planned' })
+			]
+		});
+		const { runner } = startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		park = () => runner.park(runId, 'quota', '2099-01-01T00:00:00Z');
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(
+			db.prepare('SELECT trigger, resumed_from_run_id FROM runs WHERE id <> ?').all(runId)
+		).toEqual([{ trigger: 'on_enter', resumed_from_run_id: null }]);
+	});
+
 	it('fails with step_limit when the only move of the run was rejected', async () => {
 		const { db, queue, run } = setup({ max_steps: 2 });
 		const provider = fakeProvider(
