@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { translate, type MessageKey } from '$lib/i18n';
 import {
-	TOO_MANY,
 	authLimiter,
 	checkSetupToken,
 	clearSetupToken,
@@ -20,30 +20,26 @@ export const load: PageServerLoad = ({ url }) => {
 };
 
 export const actions: Actions = {
-	default: async ({ request, cookies, url, getClientAddress }) => {
+	default: async ({ request, cookies, url, getClientAddress, locals }) => {
 		const form = await request.formData();
 		const [token, name, password, confirm] = ['token', 'name', 'password', 'confirm'].map((k) =>
 			String(form.get(k) ?? '')
 		);
-		const locked = () =>
-			fail(403, { name, error: 'Studio ist bereits eingerichtet — bitte unter /login anmelden.' });
+		const message = (key: MessageKey) => translate(locals.locale, key);
+		const locked = () => fail(403, { name, error: message('setup.alreadyDone') });
 		if (hasOwner(db())) return locked();
 
 		const ip = getClientAddress();
-		if (!authLimiter.attempt(ip)) return fail(429, { name, error: TOO_MANY });
-		if (!checkSetupToken(token))
-			return fail(403, {
-				name,
-				error:
-					'Setup-Token falsch. Den gültigen zeigt die Server-Konsole beim Start (Zeile „Setup-Token“); nach einem Neustart gilt ein neuer.'
-			});
+		if (!authLimiter.attempt(ip))
+			return fail(429, { name, error: message('auth.tooManyAttempts') });
+		if (!checkSetupToken(token)) return fail(403, { name, error: message('setup.wrongToken') });
 		authLimiter.succeed(ip);
 
 		const problem = !name.trim()
-			? 'Bitte einen Namen eingeben.'
+			? message('setup.nameMissing')
 			: password !== confirm
-				? 'Die beiden Passwörter stimmen nicht überein — bitte beide Felder gleich ausfüllen.'
-				: passwordProblem(password);
+				? message('setup.passwordsDiffer')
+				: passwordProblem(password, locals.locale);
 		if (problem) return fail(400, { name, error: problem });
 
 		const user = createOwner(db(), name.trim(), await hashPassword(password));

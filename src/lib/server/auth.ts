@@ -1,8 +1,9 @@
-// Auth for the single owner. node: and type imports only: the reset-password CLI
+// Auth for the single owner. node:, type and relative .ts imports only: the reset-password CLI
 // loads this file directly under Node, without Vite.
 import { createHash, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Cookies } from '@sveltejs/kit';
+import { translate, type Locale } from '../i18n/index.ts';
 
 export type User = { id: number; name: string };
 
@@ -31,11 +32,13 @@ function derive(
 	);
 }
 
-export function passwordProblem(password: string): string | null {
+// ponytail: German by default because reset-password's own texts are not in the catalogue yet; drop the
+// default once they are and the CLI passes localeFromEnv(process.env).
+export function passwordProblem(password: string, locale: Locale = 'de'): string | null {
 	if (password.length < PASSWORD_MIN)
-		return `Das Passwort braucht mindestens ${PASSWORD_MIN} Zeichen.`;
+		return translate(locale, 'auth.passwordTooShort', { min: PASSWORD_MIN });
 	if (password.length > PASSWORD_MAX)
-		return `Das Passwort darf höchstens ${PASSWORD_MAX} Zeichen haben.`;
+		return translate(locale, 'auth.passwordTooLong', { max: PASSWORD_MAX });
 	return null;
 }
 
@@ -208,5 +211,3 @@ export function rateLimiter(max = 5, windowMs = 60_000) {
 
 /** Shared limit for /login and /setup: 5 failed attempts per minute and IP. */
 export const authLimiter = rateLimiter();
-export const TOO_MANY =
-	'Zu viele Fehlversuche von dieser Adresse. Bitte eine Minute warten und dann erneut versuchen.';

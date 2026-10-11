@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	CliUsageError,
@@ -208,5 +210,25 @@ describe('runServiceCommand', () => {
 		const result = runServiceCommand('install', false, 'win32', ctx(dir));
 		expect(result.exitCode).toBe(1);
 		expect(result.message).toContain('win32');
+	});
+});
+
+describe('CLI language', () => {
+	const SERVER_ENTRY = fileURLToPath(new URL('../../../server.ts', import.meta.url));
+	const cli = (args: string[], env: Record<string, string>) =>
+		spawnSync(process.execPath, [SERVER_ENTRY, ...args], {
+			env: { ...process.env, LC_ALL: undefined, LC_MESSAGES: undefined, LANG: undefined, ...env },
+			encoding: 'utf8'
+		});
+
+	it('speaks English with LANG=en_US.UTF-8, in the help and in a usage error', () => {
+		expect(cli(['--help'], { LANG: 'en_US.UTF-8' }).stdout).toMatch(/^Usage: kabai-studio \[/);
+		const unknown = cli(['bogus'], { LANG: 'en_US.UTF-8' });
+		expect(unknown.status).toBe(1);
+		expect(unknown.stderr).toMatch(/^Unknown subcommand “bogus”\. Usage: kabai-studio \[/);
+	});
+
+	it('speaks German with LANG=de_DE.UTF-8', () => {
+		expect(cli(['--help'], { LANG: 'de_DE.UTF-8' }).stdout).toMatch(/^Verwendung: kabai-studio \[/);
 	});
 });

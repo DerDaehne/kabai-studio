@@ -5,7 +5,7 @@ import type { LayoutServerLoad } from './$types';
 
 // /login and /setup run without a session and without the shell, so they get no live state.
 export const load: LayoutServerLoad = ({ locals, depends }) => {
-	if (!locals.user) return {};
+	if (!locals.user) return { locale: locals.locale };
 	depends(LIVE_DEPENDENCY);
-	return { live: liveState(db()) };
+	return { locale: locals.locale, live: liveState(db()) };
 };

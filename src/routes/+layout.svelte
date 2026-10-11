@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import favicon from '$lib/assets/favicon.svg';
+	import { t } from '$lib/i18n/t';
 	import AppBar from '$lib/shell/AppBar.svelte';
 	import CommandLine from '$lib/shell/CommandLine.svelte';
 	import {
@@ -179,8 +180,8 @@
 <!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
 {#snippet attribution()}
 	<p class="attribution">
-		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a> von DerDaehne · Freie Software,
-		AGPL-3.0
+		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a>
+		{t('layout.attribution', { author: 'DerDaehne', licence: 'AGPL-3.0' })}
 	</p>
 {/snippet}
 

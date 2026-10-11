@@ -9,6 +9,7 @@ import {
 	type RequestEvent,
 	type ServerInit
 } from '@sveltejs/kit';
+import { LOCALE_COOKIE, resolveLocale } from '$lib/i18n';
 import {
 	SESSION_COOKIE,
 	clearSessionCookie,
@@ -77,6 +78,11 @@ const HEALTH_PATH = '/api/health';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const handle: Handle = async ({ event, resolve }) => {
+	const locale = resolveLocale(
+		event.cookies.get(LOCALE_COOKIE),
+		event.request.headers.get('accept-language')
+	);
+	event.locals.locale = locale;
 	if (isCrossOriginWrite(event))
 		return text(
 			`Anfrage von fremder Herkunft abgewiesen. Studio nur direkt über ${event.url.origin} aufrufen.`,
@@ -87,7 +93,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const hasSession = !!token && restoreSession(event, token);
 	const path = event.url.pathname;
 	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH || path === HEALTH_PATH)
-		return resolve(event);
+		return resolve(event, { transformPageChunk: ({ html }) => html.replace('%lang%', locale) });
 	if (path === '/api' || path.startsWith('/api/')) return unauthorizedApiResponse(event, !!token);
 	redirect(303, hasOwner(db()) ? '/login' : '/setup');
 };

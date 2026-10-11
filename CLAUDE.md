@@ -96,6 +96,24 @@ People should understand intent and behaviour by reading the code.
   process you started (servers, test children) before finishing.
 - A decision changes? New ADR + `supersedes` link; never rewrite the old ADR.
 
+## Localization
+
+Every text a human reads (UI, aria-labels, error messages with their way out, CLI output) comes from a
+catalogue in `src/lib/i18n/`; studio ships English (`en.ts`, the reference) and German (`de.ts`). Texts for
+agents (role prompts, MCP tool descriptions, agent error codes) stay English and are not localized.
+
+- **Add a text:** add the key to `en.ts` and every other catalogue, with the same `{placeholders}`. In a
+  component use `t('area.key', { name })` from `$lib/i18n/t`; on the server use
+  `translate(locals.locale, 'area.key')`; in the CLI `translate(localeFromEnv(process.env), …)` from
+  `src/lib/i18n/index.ts`. Numbers, dates and plurals go through `Intl`, never hand-made formatting.
+- **Add a language:** copy `de.ts` to `<code>.ts`, translate it and register it in `CATALOGUES` in
+  `src/lib/i18n/index.ts`. The catalogue test fails until it has every key and placeholder.
+- **Language choice:** the `studio-locale` cookie (the language setting) wins, then the browser's
+  `Accept-Language`, then English. `<html lang>` follows it. The CLI uses `LC_ALL`, `LC_MESSAGES`, `LANG`.
+- **Ratchet:** `src/lib/i18n/hardcoded-text.test.ts` fails on hard-coded text in component markup. Its list
+  of not-yet-migrated components only shrinks: remove a file once it is migrated, never add one.
+- Tests that assert German texts pin German (Playwright `locale: 'de-DE'`).
+
 ## Architecture guardrails
 
 Deviations only with a new ADR:

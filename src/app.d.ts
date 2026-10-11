@@ -13,8 +13,11 @@ declare global {
 		}
 		interface Locals {
 			user?: import('$lib/server/auth').User;
+			locale: import('$lib/i18n').Locale;
 		}
-		// interface PageData {}
+		interface PageData {
+			locale: import('$lib/i18n').Locale;
+		}
 		// interface PageState {}
 		// interface Platform {}
 	}

@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { localeFromEnv, translate } from '../i18n/index.ts';
 
 export class CliUsageError extends Error {}
 
@@ -20,8 +21,8 @@ export type Command =
 	| { kind: 'help' };
 
 const SERVICE_ACTIONS = new Set<string>(['install', 'uninstall', 'status']);
-export const HELP =
-	'Verwendung: kabai-studio [start|service <install|uninstall|status>|reset-password|restore <datei>|--version]';
+const locale = localeFromEnv(process.env);
+export const HELP = translate(locale, 'cli.usage');
 
 /** Pure so the error contract (unknown command/subcommand) is testable without spawning a process. */
 export function parseCliArgs(argv: string[]): Command {
@@ -32,7 +33,7 @@ export function parseCliArgs(argv: string[]): Command {
 	if (sub === 'reset-password') return { kind: 'reset-password' };
 	if (sub === 'restore') return { kind: 'restore', file: rest[0] };
 	if (sub === 'service') return parseServiceArgs(rest);
-	throw new CliUsageError(`Unbekanntes Unterkommando „${sub}“. ${HELP}`);
+	throw new CliUsageError(translate(locale, 'cli.unknownCommand', { command: sub, usage: HELP }));
 }
 
 function parseServiceArgs(rest: string[]): Command {
@@ -44,7 +45,7 @@ function parseServiceArgs(rest: string[]): Command {
 	const action = positionals[0];
 	if (!action || !SERVICE_ACTIONS.has(action))
 		throw new CliUsageError(
-			`Unbekanntes service-Unterkommando „${action ?? ''}“. Verfügbar: install, uninstall, status.`
+			translate(locale, 'cli.unknownServiceCommand', { action: action ?? '' })
 		);
 	return { kind: 'service', action: action as ServiceAction, print: values.print === true };
 }

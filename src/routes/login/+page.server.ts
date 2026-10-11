@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { translate } from '$lib/i18n';
 import {
-	TOO_MANY,
 	authLimiter,
 	checkLogin,
 	createSession,
@@ -16,19 +16,16 @@ export const load: PageServerLoad = ({ locals }) => {
 };
 
 export const actions: Actions = {
-	default: async ({ request, cookies, url, getClientAddress }) => {
+	default: async ({ request, cookies, url, getClientAddress, locals }) => {
 		const form = await request.formData();
 		const name = String(form.get('name') ?? '');
 		const ip = getClientAddress();
-		if (!authLimiter.attempt(ip)) return fail(429, { name, error: TOO_MANY });
+		if (!authLimiter.attempt(ip))
+			return fail(429, { name, error: translate(locals.locale, 'auth.tooManyAttempts') });
 
 		const user = await checkLogin(db(), name, String(form.get('password') ?? ''));
 		if (!user)
-			return fail(400, {
-				name,
-				error:
-					'Name oder Passwort falsch. Passwort vergessen? Auf dem Server „npm run reset-password“ ausführen.'
-			});
+			return fail(400, { name, error: translate(locals.locale, 'login.wrongCredentials') });
 		authLimiter.succeed(ip);
 		setSessionCookie(cookies, url, createSession(db(), user.id));
 		redirect(303, '/');

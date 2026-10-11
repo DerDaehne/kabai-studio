@@ -23,6 +23,8 @@ export default defineConfig({
 	globalSetup: './tests/browser/global-setup.ts',
 	use: {
 		baseURL: ORIGIN,
+		// The suite asserts German texts; the browser's language decides the UI language.
+		locale: 'de-DE',
 		storageState: join(dataDir, 'owner-session.json'),
 		trace: 'retain-on-failure',
 		screenshot: 'only-on-failure'
