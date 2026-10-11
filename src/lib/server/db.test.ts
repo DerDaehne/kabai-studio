@@ -716,7 +716,7 @@ describe('016 on a database at 015 with both template generations in real use', 
 			db.prepare('SELECT project_id, count(*) AS n FROM tickets GROUP BY project_id').all();
 		const perProjectBefore = ticketsPerProject();
 
-		expect(migrate(db)).toEqual(['016_variants.sql']);
+		expect(migrate(db)[0]).toBe('016_variants.sql');
 
 		expect(before).toMatchObject({
 			tickets: 18,

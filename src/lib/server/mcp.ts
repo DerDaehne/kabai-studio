@@ -14,6 +14,7 @@ import { once } from './domain/idempotency';
 import * as notes from './domain/notes';
 import { collectAnswer, requestHuman, type QuestionOption } from './domain/questions';
 import { runForToken } from './domain/runs';
+import { finishStep, type StepResult } from './domain/steps';
 import { mask } from './secrets';
 
 /** Who calls the tools and what they may touch. Each endpoint builds it per request from its own authentication. */
@@ -41,6 +42,7 @@ const MAX_TITLE = 200;
 const MAX_ITEMS = 50;
 const MAX_REF = 20;
 const MAX_SLUG = 100;
+const MAX_SUMMARY = 4000;
 const UNAUTHORIZED = {
 	error: 'unauthorized',
 	hint: 'Sende den Run-Token als „Authorization: Bearer <token>“. Ein Token gilt nur, solange sein Run läuft.'
@@ -204,17 +206,33 @@ const TOOLS = {
 			['slug', 'relation']
 		)
 	),
-	update_ticket: define<{ title?: string; description?: string; docs_required?: boolean }>(
-		'Change title, description or docs_required (a linked note is needed before done) of your ticket.',
+	update_ticket: define<{
+		title?: string;
+		description?: string;
+		docs_required?: boolean;
+		size?: board.TicketFields['size'];
+	}>(
+		'Change title, description, docs_required (a linked note is needed before done) or size of your ticket.',
 		object({
 			title: text(MAX_TITLE),
 			description: { type: 'string', maxLength: MAX_TEXT },
-			docs_required: { type: 'boolean' }
+			docs_required: { type: 'boolean' },
+			size: { type: 'string', maxLength: 10, description: 'XS, S, M, L or XL' }
 		})
 	),
-	add_tasks: define<{ titles: string[] } & Idempotent>(
+	add_tasks: define<{ titles: string[]; owner?: board.TaskOwner } & Idempotent>(
 		'Add acceptance criteria as tasks to your ticket.',
-		object({ titles: list(text(MAX_TITLE)), idempotency_key: idempotencyKey }, ['titles'])
+		object(
+			{
+				titles: list(text(MAX_TITLE)),
+				owner: {
+					enum: ['agent', 'system', 'human'],
+					description: 'who can fulfil them; default agent'
+				},
+				idempotency_key: idempotencyKey
+			},
+			['titles']
+		)
 	),
 	complete_tasks: define<{ task_ids: number[] }>(
 		'Mark tasks of your ticket done. Returns the ids still open.',
@@ -223,6 +241,17 @@ const TOOLS = {
 	add_comment: define<{ text: string } & Idempotent>(
 		'Add a work-log comment to your ticket.',
 		object({ text: text(MAX_TEXT), idempotency_key: idempotencyKey }, ['text'])
+	),
+	finish_step: define<{ result: StepResult; summary: string } & Idempotent>(
+		'End your step; summary is your handoff. done: checks the exit conditions, then the next step follows. back: to the previous step, summary = your findings. blocked: summary becomes your question to the human. End your turn afterwards.',
+		object(
+			{
+				result: { enum: ['done', 'back', 'blocked'] },
+				summary: text(MAX_SUMMARY),
+				idempotency_key: idempotencyKey
+			},
+			['result', 'summary']
+		)
 	),
 	move_ticket: define<{ column_id: number }>(
 		'Move your ticket to a column from allowed_moves.',
@@ -339,11 +368,12 @@ function registerTicketTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolCont
 		comment === undefined ? ticketView(db, ctx, ticket) : fullComment(db, ctx, comment)
 	);
 
-	tool('update_ticket', ({ title, description, docs_required }) => {
+	tool('update_ticket', ({ title, description, docs_required, size }) => {
 		board.updateTicket(db, ctx.actor, ctx.ticketId, {
 			title,
 			description,
-			docs_required: docs_required === undefined ? undefined : docs_required ? 1 : 0
+			docs_required: docs_required === undefined ? undefined : docs_required ? 1 : 0,
+			size
 		});
 		return { ref: board.ticket(db, ctx.ticketId).ref };
 	});
@@ -401,8 +431,8 @@ function registerNoteTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContex
 }
 
 function registerWorkTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
-	tool('add_tasks', ({ titles }) => ({
-		task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles).ids
+	tool('add_tasks', ({ titles, owner }) => ({
+		task_ids: board.addTasks(db, ctx.actor, ctx.ticketId, titles, owner).ids
 	}));
 
 	tool('complete_tasks', ({ task_ids }) => {
@@ -412,6 +442,11 @@ function registerWorkTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContex
 
 	tool('add_comment', ({ text }) => ({
 		comment_id: board.addComment(db, ctx.actor, ctx.ticketId, text).id
+	}));
+
+	tool('finish_step', (input) => ({
+		...finishStep(db, ctx.actor, ctx.ticketId, input),
+		note: 'End your turn now.'
 	}));
 
 	tool('move_ticket', ({ column_id }) => moveOwnTicket(db, ctx, column_id));
@@ -828,10 +863,15 @@ export const tasksOf = (db: DatabaseSync, ticketId: number) =>
 	(
 		db
 			.prepare(
-				'SELECT id, title, done_at IS NOT NULL AS done FROM tasks WHERE ticket_id = ? ORDER BY position, id'
+				'SELECT id, title, done_at IS NOT NULL AS done, owner FROM tasks WHERE ticket_id = ? ORDER BY position, id'
 			)
-			.all(ticketId) as { id: number; title: string; done: 0 | 1 }[]
-	).map((k) => ({ id: k.id, title: k.title, done: k.done === 1 }));
+			.all(ticketId) as { id: number; title: string; done: 0 | 1; owner: board.TaskOwner }[]
+	).map((k) => ({
+		id: k.id,
+		title: k.title,
+		done: k.done === 1,
+		...(k.owner !== 'agent' && { owner: k.owner })
+	}));
 
 type CommentRow = { id: number; by: string; at: string; text: string };
 

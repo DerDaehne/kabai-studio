@@ -3,7 +3,7 @@ import type { StudioEvent } from '../events';
 import { actorLabel as label, DomainError, OPEN_QUESTION, tx, type Actor } from './core';
 import { STEP_LABELS, VARIANTS, type Phase, type Step, type Variant } from './variants';
 
-type Column = { id: number; name: string; step: Step; phase: Phase };
+export type Column = { id: number; name: string; step: Step; phase: Phase };
 export type Ticket = {
 	id: number;
 	project_id: number;
@@ -18,6 +18,8 @@ export type Ticket = {
 };
 type Emit = (event: StudioEvent) => void;
 export type RelationType = 'parent_of' | 'blocks' | 'relates_to' | 'duplicate_of';
+/** Who can fulfil a task; finishing a step requires only the agent's tasks. */
+export type TaskOwner = 'agent' | 'system' | 'human';
 export type Blocker = { code: string; message: string; hint: string };
 /** A reachable target; empty `blockers` = this actor may make the move now. */
 export type Move = {
@@ -44,8 +46,9 @@ export type TicketFields = {
 	docs_required: 0 | 1;
 	assignee: string | null;
 	position: number;
-	size: 'XS' | 'S' | 'M' | 'L' | 'XL' | null;
+	size: (typeof SIZES)[number] | null;
 };
+const SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
 
 const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ') || 'keine';
 
@@ -78,7 +81,7 @@ function task(db: DatabaseSync, id: number) {
 	return { ...k, t: ticket(db, k.ticket_id) };
 }
 
-const columns = (db: DatabaseSync, projectId: number) =>
+export const columns = (db: DatabaseSync, projectId: number) =>
 	db
 		.prepare('SELECT id, name, step, phase FROM columns WHERE project_id = ? ORDER BY position, id')
 		.all(projectId) as Column[];
@@ -152,14 +155,15 @@ function openChildrenBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 	};
 }
 
-function missingNoteBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
-	if (!t.docs_required) return undefined;
-	const hasNote = db
+export const hasLinkedNote = (db: DatabaseSync, ticketId: number) =>
+	db
 		.prepare(
 			'SELECT 1 FROM note_tickets nt JOIN notes n ON n.id = nt.note_id WHERE nt.ticket_id = ? AND n.archived = 0'
 		)
-		.get(t.id);
-	if (hasNote) return undefined;
+		.get(ticketId) !== undefined;
+
+function missingNoteBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
+	if (!t.docs_required || hasLinkedNote(db, t.id)) return undefined;
 	return {
 		code: 'docs_required',
 		message: `${t.ref} verlangt vor dem Abschluss eine verknüpfte Note, hat aber keine.`,
@@ -204,6 +208,12 @@ function fieldsOf(input: object): [string, SQLInputValue][] {
 					'empty_title',
 					'Ein Ticket braucht einen Titel.',
 					'Gib einen Titel an, der sagt, worum es im Ticket geht.'
+				);
+			if (k === 'size' && v !== null && !(SIZES as readonly unknown[]).includes(v))
+				throw new DomainError(
+					'invalid_size',
+					`„${String(v)}“ ist keine Größe.`,
+					`Erlaubt: ${SIZES.join(', ')}.`
 				);
 			return [k, v];
 		});
@@ -442,7 +452,8 @@ function targetColumn(t: Ticket, cols: Column[], columnId: number): Column {
 	return to;
 }
 
-function writeMove(
+/** Writes a move inside an open transaction without the reachability rules; callers check their own. */
+export function writeMove(
 	db: DatabaseSync,
 	emit: Emit,
 	actor: Actor,
@@ -494,19 +505,24 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 				`${t.ref} liegt in „${t.column_name}“, nicht in der Kritik; ein Agent gibt nur in der Kritik frei.`,
 				'Freigeben gehört zur Review-Rolle. Halte dein Ergebnis als Kommentar fest; freigeben kann ein Review-Run oder der Mensch.'
 			);
-		const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
-		// ponytail: "author of the last work" ≈ whoever moved the ticket last; compare the last working run or its profile once that distinction matters
-		if (actor.kind !== 'user' && last?.kind === actor.kind && last.runId === actor.runId)
-			throw new DomainError(
-				'self_approval',
-				`${t.ref} wurde zuletzt von dir (${label(actor)}) verschoben — eigene Arbeit darfst du nicht freigeben.`,
-				'Die Freigabe erteilt ein anderer Agent (Review-Run) oder der Mensch. Halte dein Ergebnis als Kommentar fest.'
-			);
-		db.prepare(
-			'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP, review_approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-		).run(JSON.stringify(actor), t.id);
-		emit({ type: 'ticket.review_approved', projectId: t.project_id, ticketId: t.id, actor });
+		writeApproval(db, emit, actor, t);
 	});
+}
+
+/** Writes the review approval inside an open transaction; an agent never approves a ticket it moved last. */
+export function writeApproval(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket) {
+	const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
+	// ponytail: "author of the last work" ≈ whoever moved the ticket last; compare the last working run or its profile once that distinction matters
+	if (actor.kind !== 'user' && last?.kind === actor.kind && last.runId === actor.runId)
+		throw new DomainError(
+			'self_approval',
+			`${t.ref} wurde zuletzt von dir (${label(actor)}) verschoben — eigene Arbeit darfst du nicht freigeben.`,
+			'Die Freigabe erteilt ein anderer Agent (Review-Run) oder der Mensch. Halte dein Ergebnis als Kommentar fest.'
+		);
+	db.prepare(
+		'UPDATE tickets SET review_approved_at = CURRENT_TIMESTAMP, review_approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+	).run(JSON.stringify(actor), t.id);
+	emit({ type: 'ticket.review_approved', projectId: t.project_id, ticketId: t.id, actor });
 }
 
 /** SQL condition for an unfinished `blocks` predecessor `b` in column `bc`, judged by the successor's project `p`. */
@@ -568,7 +584,8 @@ export function addTasks(
 	db: DatabaseSync,
 	actor: Actor,
 	ticketId: number,
-	titles: string[]
+	titles: string[],
+	owner: TaskOwner = 'agent'
 ): { ids: number[] } {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
@@ -578,9 +595,11 @@ export function addTasks(
 				`Ein Task für ${t.ref} hat keinen Titel.`,
 				'Gib jedem Task einen Titel, der das Akzeptanzkriterium nennt.'
 			);
-		const insert = db.prepare('INSERT INTO tasks (ticket_id, title) VALUES (?, ?) RETURNING id');
+		const insert = db.prepare(
+			'INSERT INTO tasks (ticket_id, title, owner) VALUES (?, ?, ?) RETURNING id'
+		);
 		const ids = titles.map((title) => {
-			const { id } = insert.get(t.id, title) as { id: number };
+			const { id } = insert.get(t.id, title, owner) as { id: number };
 			emit({ type: 'task.added', projectId: t.project_id, ticketId: t.id, actor, taskId: id });
 			return id;
 		});

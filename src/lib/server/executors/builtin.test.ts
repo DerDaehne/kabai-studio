@@ -454,6 +454,38 @@ describe('builtin executor', () => {
 		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
 	});
 
+	it('pauses once the agent finishes its step as blocked, with the ticket left in its step', async () => {
+		const { db, queue, run, ticketId, columns } = setup();
+		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(columns['Umsetzen'], ticketId);
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'finish_step', { result: 'blocked', summary: 'Which format?' })] },
+			{ chunks: [{ text: 'never asked for' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('paused');
+		expect(provider.requests).toHaveLength(1);
+		expect(board.ticket(db, ticketId).column_step).toBe('implement');
+	});
+
+	it('ends the turn and succeeds once the agent finishes its step as done', async () => {
+		const { db, queue, run, ticketId, columns } = setup();
+		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(columns['Planen'], ticketId);
+		const provider = fakeProvider(
+			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: 'Plan: one writer.' })] },
+			{ chunks: [{ text: 'never asked for' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).state).toBe('succeeded');
+		expect(provider.requests).toHaveLength(1);
+		expect(board.ticket(db, ticketId).column_step).toBe('implement');
+	});
+
 	it('fails with provider_error and a way out when the model server rejects the request', async () => {
 		const { db, queue, run, comments } = setup();
 		const provider = fakeProvider({

@@ -30,7 +30,7 @@ import {
 } from '../agents/prompt';
 import { callTarget, deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
 import * as board from '../domain/board';
-import { DomainError } from '../domain/core';
+import { DomainError, type Actor } from '../domain/core';
 import { collectAnswer } from '../domain/questions';
 import { freshRunsInChain, type Intervention } from '../domain/runs';
 import { mcpEndpoint, tasksOf } from '../mcp';
@@ -197,7 +197,7 @@ async function streamSteps(
 		// The timer keeps running while a tool executes, so a tool slower than the limit also ends as provider_inactive
 		// (pause it between tool call and result if that becomes a problem)
 		timeout: { chunkMs: inactivityMs, ...(cloud ? { firstChunkMs } : {}) },
-		stopWhen: [() => log.records.length >= maxSteps(run), askedHuman, () => io.park.aborted, stuck],
+		stopWhen: [() => log.records.length >= maxSteps(run), endedTurn, () => io.park.aborted, stuck],
 		onChunk: ({ chunk }) => log.countChunk(chunk),
 		onStepFinish: (step) => log.recordStep(step),
 		onError: () => {} // errors arrive as stream parts and end the run there
@@ -208,9 +208,19 @@ async function streamSteps(
 
 /** Only a run ended by the step limit or the guard, or by a step at the output limit, can be stuck; one that ended its last step on its own is done. */
 function endedStuck(log: StepLog, io: ExecutorIo): boolean {
-	if (io.signal.aborted || io.park.aborted || log.succeeded('request_human')) return false;
+	if (io.signal.aborted || io.park.aborted || TURN_ENDING_TOOLS.some((tool) => log.succeeded(tool)))
+		return false;
 	return log.endedWithToolCalls() || log.records.at(-1)?.finishReason === 'length';
 }
+
+const waitsForAnswer = (db: DatabaseSync, runId: number) =>
+	db.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NULL').get(runId) !==
+	undefined;
+
+const movedByRun = (db: DatabaseSync, run: RunContext) => {
+	const movedBy = board.ticket(db, run.ticketId).moved_by;
+	return movedBy !== null && (JSON.parse(movedBy) as Actor).runId === run.id;
+};
 
 const interventionOf = (stall: Stall, attempt: number, max: number, reason = stall.reason) =>
 	({
@@ -234,10 +244,13 @@ const freshRunIntervention = (db: DatabaseSync, run: RunContext, stall: Stall) =
 const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS;
 const isErrorResult = (output: unknown) =>
 	(output as { isError?: unknown } | undefined)?.isError === true;
-const askedHuman: StopCondition<ToolSet> = ({ steps }) =>
+/** After these the step waits for the human or for the next run, so the agent's turn ends. */
+const TURN_ENDING_TOOLS = ['request_human', 'finish_step'];
+const endedTurn: StopCondition<ToolSet> = ({ steps }) =>
 	steps
 		.at(-1)
-		?.toolResults.some((r) => r.toolName === 'request_human' && !isErrorResult(r.output)) ?? false;
+		?.toolResults.some((r) => TURN_ENDING_TOOLS.includes(r.toolName) && !isErrorResult(r.output)) ??
+	false;
 
 /** Calls `sent` once the first request to the model server has gone out. */
 function afterFirstRequest(
@@ -261,12 +274,12 @@ function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLo
 		? { text: log.lastMessage }
 		: { text: generatedHandoff(db, run, log), generated: true };
 	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: handoff }).seq;
-	if (log.succeeded('request_human')) return { state: 'paused' };
+	if (log.succeeded('request_human') || waitsForAnswer(db, run.id)) return { state: 'paused' };
 	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
 	if (io.park.aborted && log.endedWithToolCalls())
 		return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
 	if (log.stall) return { state: 'paused', resume: { reason: 'recovery', handoffSeq } };
-	if (log.endedWithToolCalls() && !log.succeeded('move_ticket'))
+	if (log.endedWithToolCalls() && !movedByRun(db, run))
 		throw new DomainError(
 			'step_limit',
 			`Der Run hat nach ${maxSteps(run)} Schritten aufgehört, ohne das Ticket zu verschieben.`,
@@ -282,7 +295,7 @@ function generatedHandoff(db: DatabaseSync, run: RunContext, log: StepLog): stri
 	return [
 		"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
 		`Tools: ${toolUse(log.records) || 'none'}`,
-		`Ticket: ${log.succeeded('move_ticket') ? `moved to ${column}` : `not moved, still in ${column}`}`,
+		`Ticket: ${movedByRun(db, run) ? `moved to ${column}` : `not moved, still in ${column}`}`,
 		`Open tasks:${openTasks.length ? '' : ' none'}`,
 		...openTasks.map((task) => `- ${task.id}: ${task.title}`)
 	].join('\n');

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
+import type { Step, Variant } from './domain/variants';
 import * as notes from './domain/notes';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
@@ -1241,6 +1242,7 @@ describe('token budget', () => {
 			'approve_review',
 			'complete_tasks',
 			'create_child_tickets',
+			'finish_step',
 			'get_ticket',
 			'link_note_to_ticket',
 			'link_tickets',
@@ -1523,5 +1525,294 @@ describe('tool schemas', () => {
 		} finally {
 			registerTool.mockRestore();
 		}
+	});
+});
+
+/** A ticket placed in `step` of a project of `variant`, with a run started there and its finish_step at hand. */
+function inStep(variant: Variant, step: Step, fields: Partial<board.TicketFields> = {}) {
+	const s = setup();
+	const projectId = board.createProject(s.db, user, { key: 'VAR', name: 'Variante' }, variant).id;
+	const columnOf = (wanted: Step) =>
+		(
+			s.db
+				.prepare('SELECT id FROM columns WHERE project_id = ? AND step = ?')
+				.get(projectId, wanted) as { id: number }
+		).id;
+	const id = board.createTicket(s.db, user, projectId, { title: 'T', ...fields }).id;
+	s.db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(columnOf(step), id);
+	const { runId, token } = s.startRun(id);
+	const finish = (result: string, summary = 'Handoff of the step') =>
+		s.call(token, 'finish_step', { result, summary });
+	const stepOf = () => board.ticket(s.db, id).column_step;
+	const linkNote = () =>
+		notes.linkTicket(
+			s.db,
+			user,
+			notes.createNote(s.db, user, {
+				slug: `n-${id}`,
+				title: 'N',
+				body: 'x',
+				projectIds: [projectId]
+			}).id,
+			id,
+			'documents'
+		);
+	return { ...s, id, runId, token, finish, stepOf, linkNote };
+}
+
+describe('finish_step with done checks the exit conditions of the step', () => {
+	it('refine needs a task, a size and a description, and names every missing one in one error', async () => {
+		const w = inStep('software', 'refine');
+		const refused = await w.finish('done');
+		expect(refused.isError).toBe(true);
+		expect(refused.body.error).toBe('step_incomplete');
+		expect(refused.body.message).toMatch(/keine Tasks; keine Größe; keine Beschreibung/);
+		expect(w.stepOf()).toBe('refine');
+
+		board.addTasks(w.db, user, w.id, ['Criterion']);
+		board.updateTicket(w.db, user, w.id, { size: 'S', description: 'Scope' });
+		expect((await w.finish('done')).body).toMatchObject({ next: 'plan', then: 'run' });
+		expect(w.stepOf()).toBe('plan');
+	});
+
+	it('plan needs nothing but the summary', async () => {
+		const w = inStep('software', 'plan');
+		expect((await w.finish('done')).body).toMatchObject({ next: 'implement', then: 'run' });
+	});
+
+	it.each(['software', 'direct'] as const)(
+		'implement in %s needs every agent task done and, with docs_required, a linked note',
+		async (variant) => {
+			const w = inStep(variant, 'implement', { docs_required: 1 });
+			const [a, b] = board.addTasks(w.db, user, w.id, ['A', 'B']).ids;
+			const refused = await w.finish('done');
+			expect(refused.body.error).toBe('step_incomplete');
+			expect(refused.body.message).toContain(`offene Tasks ${a}, ${b}; keine verknüpfte Note`);
+			expect(w.stepOf()).toBe('implement');
+
+			board.completeTasks(w.db, user, w.id, [a, b]);
+			w.linkNote();
+			expect((await w.finish('done')).body).toMatchObject({ next: 'critique', then: 'run' });
+		}
+	);
+
+	it('implement does not wait for tasks the human or the system fulfils', async () => {
+		const w = inStep('software', 'implement');
+		board.addTasks(w.db, user, w.id, ['Check it on a phone'], 'human');
+		board.addTasks(w.db, user, w.id, ['Run the stress workflow after the merge'], 'system');
+		expect((await w.finish('done')).body).toMatchObject({ next: 'critique' });
+	});
+
+	it('research needs at least one task', async () => {
+		const w = inStep('knowledge', 'research');
+		expect((await w.finish('done')).body).toMatchObject({
+			error: 'step_incomplete',
+			message: expect.stringContaining('keine Tasks')
+		});
+		board.addTasks(w.db, user, w.id, ['Criterion for the draft']);
+		expect((await w.finish('done')).body).toMatchObject({ next: 'draft', then: 'run' });
+	});
+
+	it('draft needs every agent task done and a linked note, docs_required or not', async () => {
+		const w = inStep('knowledge', 'draft');
+		const [a] = board.addTasks(w.db, user, w.id, ['A']).ids;
+		expect((await w.finish('done')).body.message).toContain(
+			`offene Tasks ${a}; keine verknüpfte Note`
+		);
+		board.completeTasks(w.db, user, w.id, [a]);
+		w.linkNote();
+		expect((await w.finish('done')).body).toMatchObject({ next: 'critique', then: 'run' });
+	});
+
+	it.each(['software', 'knowledge', 'direct'] as const)(
+		'critique in %s approves the review and hands the ticket to the human for acceptance',
+		async (variant) => {
+			const w = inStep(variant, 'critique');
+			expect((await w.finish('done')).body).toMatchObject({ next: 'acceptance', then: 'human' });
+			expect(w.stepOf()).toBe('acceptance');
+			expect(
+				w.db.prepare('SELECT review_approved_by FROM tickets WHERE id = ?').get(w.id)
+					?.review_approved_by
+			).toBe(JSON.stringify({ kind: 'agent', runId: w.runId }));
+		}
+	);
+
+	it('critique refuses the run that moved the ticket last with self_approval', async () => {
+		const w = inStep('software', 'critique');
+		w.db
+			.prepare('UPDATE tickets SET moved_by = ? WHERE id = ?')
+			.run(JSON.stringify({ kind: 'agent', runId: w.runId }), w.id);
+		const before = writableRows(w.db);
+		const refused = await w.finish('done');
+		expect(refused.body.error).toBe('self_approval');
+		expect(writableRows(w.db)).toBe(before);
+		expect(w.stepOf()).toBe('critique');
+	});
+});
+
+describe('step_incomplete names the tools and ids that fix it', () => {
+	it('lists the open task ids for complete_tasks and the note tools', async () => {
+		const w = inStep('software', 'implement', { docs_required: 1 });
+		const [a, b] = board.addTasks(w.db, user, w.id, ['A', 'B']).ids;
+		const { hint } = (await w.finish('done')).body;
+		expect(hint).toContain(`complete_tasks mit task_ids [${a}, ${b}]`);
+		expect(hint).toContain('finish_step result blocked');
+		expect(hint).toContain('notes_create, dann link_note_to_ticket');
+		expect(hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+	});
+
+	it('names add_tasks and update_ticket with size and description in refine', async () => {
+		const { hint } = (await inStep('software', 'refine').finish('done')).body;
+		expect(hint).toContain('add_tasks');
+		expect(hint).toContain('update_ticket mit size (XS, S, M, L oder XL)');
+		expect(hint).toContain('update_ticket mit description');
+	});
+});
+
+describe('finish_step with back', () => {
+	it.each([
+		['software', 'critique', 'implement'],
+		['knowledge', 'critique', 'draft'],
+		['direct', 'critique', 'implement'],
+		['software', 'plan', 'refine'],
+		['software', 'implement', 'refine'],
+		['knowledge', 'draft', 'research']
+	] as const)('in %s leads from %s to %s', async (variant, from, to) => {
+		const w = inStep(variant, from);
+		expect((await w.finish('back', 'Findings')).body).toMatchObject({ next: to, then: 'run' });
+		expect(w.stepOf()).toBe(to);
+	});
+
+	it('clears the review approval and leaves the findings as the run’s comment', async () => {
+		const w = inStep('software', 'critique');
+		board.approveReview(w.db, user, w.id);
+		await w.finish('back', 'Finding: the export drops the header row.');
+		expect(
+			w.db.prepare('SELECT review_approved_at FROM tickets WHERE id = ?').get(w.id)
+				?.review_approved_at
+		).toBeNull();
+		expect(w.db.prepare('SELECT body, run_id FROM comments WHERE ticket_id = ?').all(w.id)).toEqual(
+			[{ body: 'Finding: the export drops the header row.', run_id: w.runId }]
+		);
+	});
+
+	it.each([
+		['software', 'refine'],
+		['knowledge', 'research'],
+		['direct', 'implement']
+	] as const)('in %s from %s is back_not_possible with blocked as the way out', async (v, step) => {
+		const w = inStep(v, step);
+		const before = writableRows(w.db);
+		const refused = await w.finish('back');
+		expect(refused.body).toMatchObject({
+			error: 'back_not_possible',
+			hint: expect.stringContaining('finish_step mit result blocked')
+		});
+		expect(writableRows(w.db)).toBe(before);
+	});
+});
+
+describe('finish_step with blocked', () => {
+	it('turns the summary into an open question without options and leaves the ticket in its step', async () => {
+		const w = inStep('software', 'implement');
+		const { body } = await w.finish('blocked', 'Which date format does the export use?');
+		expect(body).toMatchObject({ next: 'implement', then: 'human' });
+		expect(w.stepOf()).toBe('implement');
+		expect(questions.latestOpenQuestion(w.db, w.id)).toEqual({
+			id: body.question_id,
+			question: 'Which date format does the export use?',
+			options: [],
+			answer: null
+		});
+	});
+
+	it('resumes the paused run once the human answers', async () => {
+		const w = inStep('software', 'implement');
+		const { body } = await w.finish('blocked', 'Which date format?');
+		runs.finishRun(w.db, system, w.runId, { state: 'paused' });
+		expect(questions.answerQuestion(w.db, user, body.question_id, { text: 'ISO 8601' })).toEqual({
+			resumesRun: true
+		});
+		expect(
+			w.db.prepare("SELECT resumed_from_run_id FROM runs WHERE state = 'queued'").all()
+		).toEqual([{ resumed_from_run_id: w.runId }]);
+	});
+});
+
+describe('finish_step hands off and is safe to repeat', () => {
+	it('writes the summary as the run’s comment and answers with next, then and the end of the turn', async () => {
+		const w = inStep('software', 'plan');
+		expect((await w.finish('done', 'Plan: one CSV writer.')).body).toEqual({
+			next: 'implement',
+			then: 'run',
+			note: 'End your turn now.'
+		});
+		expect(
+			w.db.prepare('SELECT author_kind, run_id, body FROM comments WHERE ticket_id = ?').all(w.id)
+		).toEqual([{ author_kind: 'agent', run_id: w.runId, body: 'Plan: one CSV writer.' }]);
+	});
+
+	it.each(['done', 'back'] as const)(
+		'a second %s after the step has ended writes nothing and reports where the ticket stands',
+		async (result) => {
+			const w = inStep('software', 'implement');
+			const first = (await w.finish(result)).body;
+			const before = writableRows(w.db);
+			expect((await w.finish(result, 'Once more')).body).toEqual(first);
+			expect(writableRows(w.db)).toBe(before);
+		}
+	);
+
+	it('a second blocked asks nothing twice', async () => {
+		const w = inStep('software', 'implement');
+		const first = (await w.finish('blocked', 'Which format?')).body;
+		const before = writableRows(w.db);
+		expect((await w.finish('blocked', 'Which format?')).body).toEqual(first);
+		expect(writableRows(w.db)).toBe(before);
+	});
+
+	it('a repeat with the same idempotency_key returns the first result', async () => {
+		const w = inStep('software', 'plan');
+		const args = { result: 'done', summary: 'Plan', idempotency_key: 'finish-1' };
+		const first = await w.call(w.token, 'finish_step', args);
+		expect((await w.call(w.token, 'finish_step', args)).body).toEqual(first.body);
+		expect(w.db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(1);
+	});
+});
+
+describe('update_ticket with size', () => {
+	it('sets the size', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const { token } = startRun(own);
+		expect((await call(token, 'update_ticket', { size: 'M' })).isError).toBe(false);
+		expect(db.prepare('SELECT size FROM tickets WHERE id = ?').get(own)?.size).toBe('M');
+	});
+
+	it('refuses an unknown size and names the allowed ones', async () => {
+		const { db, call, startRun, ticket } = setup();
+		const own = ticket();
+		const { token } = startRun(own);
+		const refused = await call(token, 'update_ticket', { size: 'XXL' });
+		expect(refused.isError).toBe(true);
+		expect(refused.body).toMatchObject({
+			error: 'invalid_size',
+			hint: 'Erlaubt: XS, S, M, L, XL.'
+		});
+		expect(db.prepare('SELECT size FROM tickets WHERE id = ?').get(own)?.size).toBeNull();
+	});
+});
+
+describe('task owner', () => {
+	it('add_tasks records who fulfils the tasks and get_ticket shows it for tasks that are not the agent’s', async () => {
+		const { call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		await call(token, 'add_tasks', { titles: ['Code'] });
+		await call(token, 'add_tasks', { titles: ['Try it on a phone'], owner: 'human' });
+		const { tasks } = (await call(token, 'get_ticket')).body;
+		expect(tasks.map((k: { title: string; owner?: string }) => [k.title, k.owner])).toEqual([
+			['Code', undefined],
+			['Try it on a phone', 'human']
+		]);
 	});
 });
