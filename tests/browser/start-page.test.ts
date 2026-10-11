@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Page } from '@playwright/test';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import { createProject, createTicket, deleteTicket } from '../../src/lib/server/domain/board.ts';
 import { haltRuns, releaseHalt } from '../../src/lib/server/domain/halt.ts';
 import { latestOpenQuestion } from '../../src/lib/server/domain/questions.ts';
 import {
@@ -31,6 +32,24 @@ function finishedRun(db: DatabaseSync, ticketId: number, end: RunEnd): number {
 	startRun(db, HUMAN, run); // a run only ends from "running"
 	finishRun(db, HUMAN, run, end);
 	return run;
+}
+
+/** A second project with one ticket whose run failed; `remove` takes both away again. */
+function otherProjectWithFailedRun(db: DatabaseSync) {
+	const key = `Z${randomUUID()
+		.replace(/\W/g, '')
+		.slice(0, 6)
+		.toUpperCase()
+		.replace(/[^A-Z0-9]/g, 'X')}`;
+	const project = createProject(db, HUMAN, { key, name: `Other ${key}` }).id;
+	const ticket = createTicket(db, HUMAN, project, { title: 'Failed elsewhere' }).id;
+	finishedRun(db, ticket, { state: 'failed', error: 'boom' });
+	return {
+		remove: () => {
+			deleteTicket(db, HUMAN, ticket);
+			db.prepare('DELETE FROM projects WHERE id = ?').run(project);
+		}
+	};
 }
 
 const section = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
@@ -154,6 +173,115 @@ test.describe('at 1440 px', () => {
 		await page.keyboard.press('g');
 		await page.keyboard.press('t');
 		await expect(page).toHaveURL('/takt');
+	});
+
+	test('answering a question lifts the tile out and the tile behind it glides into its place', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply({
+			call: { name: 'request_human', args: { question: 'Glide?', options: [{ label: 'Ja' }] } }
+		});
+		const behind = seedTicket('A failed run behind the question');
+		finishedRun(db, behind.id, { state: 'failed', error: 'boom' });
+		const asking = seedTicket('A run that asks');
+		await open(page, '/');
+		await queueRun(db, page, asking.id, fakeModel);
+		await expect(tileOf(page, asking.ref).filter({ hasText: 'Glide?' })).toBeVisible();
+		const moving = tileOf(page, behind.ref);
+		const positionOf = () => moving.evaluate((el) => el.getBoundingClientRect().left);
+		await expect.poll(positionOf).toBeGreaterThan(300); // beside the 2×2 question
+		const before = await positionOf();
+		await page.evaluate(() => {
+			const slot = [...document.querySelectorAll('.slot')].find((el) =>
+				el.textContent?.includes('boom')
+			);
+			const seen: number[] = [];
+			(window as unknown as { seen: number[] }).seen = seen;
+			const sample = () => {
+				seen.push(slot!.getBoundingClientRect().left);
+				if (seen.length < 120) requestAnimationFrame(sample);
+			};
+			sample();
+		});
+
+		await page.keyboard.press('1');
+		await expect.poll(positionOf).toBeLessThan(before - 100);
+		const after = await positionOf();
+		const seen = await page.evaluate(() => (window as unknown as { seen: number[] }).seen);
+		const inFlight = seen.filter((left) => left < before - 1 && left > after + 1);
+		expect(inFlight.length).toBeGreaterThan(0); // seen between the old and the new place, not jumping
+		await page.keyboard.press('u');
+	});
+
+	test('operations shows the earliest start of a queued run', async ({ page, db, seedTicket }) => {
+		const ticket = seedTicket('A run that starts later');
+		const startsAt = new Date(Date.now() + 3 * 3_600_000);
+		createRun(db, HUMAN, {
+			ticketId: ticket.id,
+			profileId: profileOnUnreachableHost(db),
+			notBefore: startsAt.toISOString()
+		});
+		await open(page, '/');
+		const expected = await page.evaluate(
+			(iso) =>
+				new Intl.DateTimeFormat(navigator.language, { timeStyle: 'short' }).format(new Date(iso)),
+			startsAt.toISOString()
+		);
+
+		const row = section(page, 'betrieb').getByRole('listitem').filter({ hasText: ticket.ref });
+		await expect(row).toContainText(`frühester Start ${expected}`);
+	});
+
+	test('Enter opens the Run-Akte of the focused tile and k moves back up a tile', async ({
+		page,
+		db,
+		seedTicket
+	}) => {
+		const older = seedTicket('First failed run');
+		const newer = seedTicket('Second failed run');
+		finishedRun(db, older.id, { state: 'failed', error: 'boom' });
+		const newest = finishedRun(db, newer.id, { state: 'failed', error: 'boom' });
+		await open(page, '/');
+		const tiles = section(page, 'jetzt').locator('[data-item]');
+		await tiles.first().focus();
+		await page.keyboard.press('j');
+		await expect(tiles.nth(1)).toBeFocused();
+		await page.keyboard.press('k');
+		await expect(tiles.first()).toBeFocused();
+
+		const focused = await tiles.first().textContent();
+		const expected = focused?.includes(newer.ref) ? newer : older;
+		await page.keyboard.press('Enter');
+		const runId = expected === newer ? newest : runIdOf(db, older.id);
+		await expect(page).toHaveURL(`${expected.path}?run=${runId}`);
+	});
+
+	test('with a project focused, the other projects’ tiles fold into one line saying how many and in how many projects', async ({
+		page,
+		db,
+		seedTicket
+	}) => {
+		const own = seedTicket('Tile of the focused project');
+		finishedRun(db, own.id, { state: 'failed', error: 'boom' });
+		const others = [otherProjectWithFailedRun(db), otherProjectWithFailedRun(db)];
+		try {
+			await open(page, '/');
+			await expect(section(page, 'jetzt').locator('.slot')).toHaveCount(3);
+			const ownProject = section(page, 'projekte').locator('[data-item]').filter({
+				hasText: 'Browser-Suite'
+			});
+			await ownProject.focus();
+			await page.keyboard.press('*');
+
+			await expect(section(page, 'jetzt').locator('.slot')).toHaveCount(1);
+			await expect(tileOf(page, own.ref)).toBeVisible();
+			await expect(page.getByText('2 weitere in 2 anderen Projekten')).toBeVisible();
+		} finally {
+			for (const other of others) other.remove();
+		}
 	});
 
 	test('x on a run tile asks in a sheet, y cancels the run', async ({

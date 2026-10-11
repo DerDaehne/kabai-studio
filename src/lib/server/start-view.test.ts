@@ -49,6 +49,17 @@ describe('startView', () => {
 		expect(queued[1].waitText).toMatch(/Pool „local“ ist voll/);
 	});
 
+	it('gives a queued run its earliest start, and none to a run that may start now', () => {
+		const s = setup();
+		const later = s.queued();
+		const now = s.queued();
+		s.db.prepare('UPDATE runs SET not_before = ? WHERE id = ?').run('2099-01-02T03:04:05.000Z', later);
+
+		const { queued } = startView(s.db);
+		expect(queued.find((run) => run.id === later)?.notBefore).toBe('2099-01-02T03:04:05.000Z');
+		expect(queued.find((run) => run.id === now)?.notBefore).toBeNull();
+	});
+
 	it('gives a failed run its code and the way out of its failure comment', () => {
 		const s = setup();
 		const failed = s.running();
