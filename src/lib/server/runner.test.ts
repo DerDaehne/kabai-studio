@@ -21,6 +21,7 @@ import {
 } from './domain/halt';
 import { startTicket } from './domain/intents';
 import { finishStep } from './domain/steps';
+import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
 import { LIMITS, startRunner, type Executor, type Resume, type RunContext } from './runner';
 import { setSecret } from './secrets';
@@ -1660,6 +1661,9 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 });
 
 describe('the chain of runs', () => {
+	const lageOf = (db: ReturnType<typeof openDb>, ticketId: number) =>
+		ticketLagen(db).find((row) => row.ticketId === ticketId);
+
 	/** A run that finishes its step as done, as a well-behaved agent does, and ends. */
 	const finishingExecutor = (db: ReturnType<typeof openDb>): Executor => ({
 		execute: async (run) => {
@@ -1730,6 +1734,50 @@ describe('the chain of runs', () => {
 		await flush();
 		expect(board.ticket(s.db, s.ticketId).column_step).toBe('critique');
 		expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 1 });
+		expect(lageOf(s.db, s.ticketId)).toMatchObject({
+			lage: 'waiting',
+			reason: { kind: 'failure' }
+		});
+	});
+
+	it('lets a ticket wait for the human when the server stopped after finish_step but before the run ended', () => {
+		const s = setup();
+		const plan = board.columns(s.db, s.projectId).find((c) => c.step === 'plan')!.id;
+		const ticketId = board.createTicket(s.db, user, s.projectId, {
+			title: 'P',
+			column_id: plan
+		}).id;
+		const orphaned = s.queue(s.local, ticketId);
+		runs.startRun(s.db, system, orphaned);
+		finishStep(s.db, { kind: 'agent', runId: orphaned }, ticketId, {
+			result: 'done',
+			summary: 'Plan'
+		});
+
+		start(s.db, {});
+
+		expect(s.db.prepare('SELECT id, state FROM runs').all()).toEqual([
+			{ id: orphaned, state: 'failed' }
+		]);
+		expect(lageOf(s.db, ticketId)).toMatchObject({
+			step: 'implement',
+			lage: 'waiting',
+			reason: { kind: 'failure' }
+		});
+	});
+
+	it('lets a ticket wait for the human when its run ends without finish_step, instead of leaving it ready', async () => {
+		const s = setup();
+		start(s.db, { builtin: { execute: async () => {} } });
+		const silent = s.queue(s.local);
+		await vi.waitFor(() => expect(s.state(silent)).toBe('succeeded'));
+		await flush();
+
+		expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 1 });
+		expect(lageOf(s.db, s.ticketId)).toMatchObject({
+			lage: 'waiting',
+			reason: { kind: 'stalled' }
+		});
 	});
 
 	it.each(['stop', 'pause'] as const)(

@@ -164,6 +164,7 @@ export const en = {
 	'lage.reason.approval': 'Approval needed',
 	'lage.reason.proposal': 'Proposal to review',
 	'lage.reason.failure': 'Run failed',
+	'lage.reason.stalled': 'Run ended without finishing its step, start it again',
 	'lage.reason.predecessors': 'Waiting for {refs}',
 	'lage.reason.paused': 'Paused, resume with :fortsetzen',
 	'lage.reason.not_prioritized': 'Not prioritized yet',

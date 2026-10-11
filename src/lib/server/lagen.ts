@@ -32,16 +32,27 @@ type Row = {
 	variant: Variant;
 	runId: number | null;
 	runState: LageRun | 'waiting_approval' | 'succeeded' | 'cancelled' | null;
-	runInStep: number;
+	failureStands: number;
+	stepLeftOpen: number;
 	approving: number;
 	running: number;
 	openQuestions: number;
 	predecessors: string | null;
 };
 
+/**
+ * A failure stands while the ticket is still in the step the run failed in, or while the run's own finish_step moved it
+ * to the next work step last: then the chain stopped and nobody has acted since. A move by the human clears it.
+ */
+const FAILURE_STANDS = `(r.column_id IS t.column_id
+	OR (c.phase = 'work' AND t.moved_by ->> '$.runId' IS r.id))`;
+
+/** The run ended without finish_step and the ticket still stands in its step, so nothing carries it on. */
+const STEP_LEFT_OPEN = `(r.state = 'succeeded' AND r.step_result IS NULL AND r.column_id IS t.column_id)`;
+
 const LAGE_ROWS = `
 	SELECT t.id AS ticketId, t.project_id AS projectId, c.step, c.phase, p.variant,
-		r.id AS runId, r.state AS runState, r.column_id IS t.column_id AS runInStep,
+		r.id AS runId, r.state AS runState, ${FAILURE_STANDS} AS failureStands, ${STEP_LEFT_OPEN} AS stepLeftOpen,
 		EXISTS (SELECT 1 FROM runs a WHERE a.ticket_id = t.id AND a.state = 'waiting_approval') AS approving,
 		EXISTS (SELECT 1 FROM runs a WHERE a.ticket_id = t.id AND a.state = 'running') AS running,
 		(SELECT count(*) FROM questions q WHERE q.ticket_id = t.id AND ${OPEN_QUESTION}) AS openQuestions,
@@ -55,13 +66,14 @@ const LAGE_ROWS = `
 	ORDER BY t.id`;
 
 /**
- * A ticket can hold more than one run: a run that works counts even when a newer one waits, while a failed, paused or
- * queued run counts only as the newest, and a failure only while the ticket is still in the step it failed in.
+ * A ticket can hold more than one run: a run that works counts even when a newer one waits, while a failed, paused,
+ * queued or stalled run counts only as the newest, and a failure only while it stands.
  */
 function runInput(row: Row): LageRun | null {
 	const { runState: state } = row;
-	if (state === 'failed' && row.runInStep) return 'failed';
+	if (state === 'failed' && row.failureStands) return 'failed';
 	if (row.running) return 'running';
+	if (row.stepLeftOpen) return 'stalled';
 	return state === 'queued' || state === 'paused' ? state : null;
 }
 

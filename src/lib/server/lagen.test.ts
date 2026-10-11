@@ -4,6 +4,7 @@ import type { Actor } from './domain/core';
 import { pauseRun } from './domain/halt';
 import { answerQuestion, requestHuman } from './domain/questions';
 import * as runs from './domain/runs';
+import { finishStep } from './domain/steps';
 import type { Variant } from './domain/variants';
 import { migrate, openDb } from './db';
 import { ticketLagen } from './lagen';
@@ -118,7 +119,7 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(id)).toMatchObject({ lage: 'waiting', reason: { kind: 'approval' } });
 	});
 
-	it('puts a ticket whose newest run failed under „Wartet auf dich“, and a succeeded run counts as no run', () => {
+	it('puts a ticket whose newest run failed under „Wartet auf dich“, and a run that finished its step counts as no run', () => {
 		const s = setup();
 		const id = s.ticket(s.project('STU'));
 		const failed = s.run(id);
@@ -127,8 +128,51 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(id).reason).toEqual({ kind: 'failure' });
 		const succeeded = s.run(id);
 		runs.startRun(s.db, user, succeeded);
+		finishStep(s.db, { kind: 'agent', runId: succeeded }, id, { result: 'done', summary: 'S' });
 		runs.finishRun(s.db, user, succeeded, { state: 'succeeded' });
-		expect(s.lageOfTicket(id).reason).toEqual({ kind: 'ready' });
+		expect(s.lageOfTicket(id)).toMatchObject({ step: 'critique', reason: { kind: 'ready' } });
+	});
+
+	it('puts a ticket under „Wartet auf dich“ when its run succeeded without finishing its step, until the human acts', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu);
+		const silent = s.run(id);
+		runs.startRun(s.db, user, silent);
+		runs.finishRun(s.db, user, silent, { state: 'succeeded' });
+		expect(s.lageOfTicket(id)).toMatchObject({ lage: 'waiting', reason: { kind: 'stalled' } });
+
+		s.run(id);
+		expect(s.lageOfTicket(id).reason.kind).toBe('capacity');
+	});
+
+	it('clears the stall once the human moves the ticket on', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu);
+		const silent = s.run(id);
+		runs.startRun(s.db, user, silent);
+		runs.finishRun(s.db, user, silent, { state: 'succeeded' });
+		board.moveTicket(s.db, user, id, s.columnId(stu, 'critique'));
+		expect(s.lageOfTicket(id)).toMatchObject({ lage: 'open', reason: { kind: 'ready' } });
+	});
+
+	it('keeps a failure under „Wartet auf dich“ after the run moved the ticket on with finish_step, until the human moves it', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu, 'plan');
+		const failed = s.run(id);
+		runs.startRun(s.db, user, failed);
+		finishStep(s.db, { kind: 'agent', runId: failed }, id, { result: 'done', summary: 'Plan' });
+		runs.finishRun(s.db, user, failed, { state: 'failed', error: 'model gone' });
+		expect(s.lageOfTicket(id)).toMatchObject({
+			step: 'implement',
+			lage: 'waiting',
+			reason: { kind: 'failure' }
+		});
+
+		board.moveTicket(s.db, user, id, s.columnId(stu, 'critique'));
+		expect(s.lageOfTicket(id).reason.kind).not.toBe('failure');
 	});
 
 	it('shows a run that holds for the human before a newer queued run', () => {

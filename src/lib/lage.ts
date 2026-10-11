@@ -1,6 +1,6 @@
 export type Lage = 'waiting' | 'working' | 'open' | 'acceptance' | 'done';
 export type LagePhase = 'open' | 'work' | 'acceptance' | 'done';
-export type LageRun = 'queued' | 'running' | 'paused' | 'failed';
+export type LageRun = 'queued' | 'running' | 'paused' | 'failed' | 'stalled';
 
 /** Why a queued run does not start yet, as a code with parameters; the UI translates it. */
 export type WaitCause =
@@ -11,7 +11,7 @@ export type WaitCause =
 
 export type LageInput = {
 	phase: LagePhase;
-	/** The state that counts of the ticket's runs; successful and cancelled runs count as `null`. */
+	/** The state that counts of the ticket's runs; `stalled` is a run that ended without finishing its step, other successful and cancelled runs count as `null`. */
 	run: LageRun | null;
 	openQuestions: number;
 	pendingApproval: boolean;
@@ -25,7 +25,7 @@ export type LageInput = {
 
 export type LageReason =
 	| { kind: 'done' | 'auto_accepted' | 'acceptance' | 'working' }
-	| { kind: 'question' | 'approval' | 'proposal' | 'failure' }
+	| { kind: 'question' | 'approval' | 'proposal' | 'failure' | 'stalled' }
 	| { kind: 'predecessors'; refs: string[] }
 	| { kind: 'capacity'; causes: WaitCause[] }
 	| { kind: 'paused' | 'not_prioritized' | 'ready' };
@@ -37,6 +37,7 @@ const waitingFor = (input: LageInput): LageReason['kind'] | null => {
 	if (input.pendingApproval) return 'approval';
 	if (input.openProposals > 0) return 'proposal';
 	if (input.run === 'failed') return 'failure';
+	if (input.run === 'stalled') return 'stalled';
 	return null;
 };
 

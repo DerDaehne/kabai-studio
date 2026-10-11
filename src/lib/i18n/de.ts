@@ -165,6 +165,7 @@ export const de: Catalogue = {
 	'lage.reason.approval': 'Freigabe nötig',
 	'lage.reason.proposal': 'Vorschlag prüfen',
 	'lage.reason.failure': 'Run fehlgeschlagen',
+	'lage.reason.stalled': 'Run endete ohne Abschluss des Schritts, neu starten',
 	'lage.reason.predecessors': 'Wartet auf {refs}',
 	'lage.reason.paused': 'Angehalten, weiter mit :fortsetzen',
 	'lage.reason.not_prioritized': 'Noch nicht priorisiert',
