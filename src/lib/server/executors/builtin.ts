@@ -44,6 +44,7 @@ import type {
 	RunContext
 } from '../runner';
 import { mask } from '../secrets';
+import { localProviderFetch } from './local-fetch';
 import { modelFor, requestSettings, stepCostFor, type StepCost } from './provider';
 import { studioTools } from './studio-mcp-client';
 
@@ -79,7 +80,7 @@ const READING_TOOLS = new Set(['get_ticket', 'list_workable', 'notes_search', 'n
 export function builtinExecutor(
 	db: DatabaseSync,
 	{
-		fetch = globalThis.fetch,
+		fetch,
 		inactivityMs = INACTIVITY_LIMIT_MS,
 		firstChunkMs = FIRST_CHUNK_TIMEOUT_MS
 	}: BuiltinOptions = {}
@@ -90,10 +91,11 @@ export function builtinExecutor(
 			const cloud = !isLocalProvider(run.profile.provider);
 			const prompt = promptOf(db, run);
 			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
+			const providerFetch = fetch ?? (cloud ? globalThis.fetch : localProviderFetch);
 			const model = modelFor(
 				db,
 				run.profile,
-				prompt.showsHumanAnswer ? afterFirstRequest(fetch, collect) : fetch
+				prompt.showsHumanAnswer ? afterFirstRequest(providerFetch, collect) : providerFetch
 			);
 			const studio = await studioTools(endpoint, run.token, io.signal);
 			try {

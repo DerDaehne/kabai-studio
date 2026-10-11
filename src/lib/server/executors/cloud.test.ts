@@ -264,6 +264,7 @@ async function closedCloudPort() {
 const cleanups: (() => void)[] = [];
 afterEach(() => {
 	cleanups.splice(0).forEach((cleanup) => cleanup());
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 });
 
@@ -292,7 +293,10 @@ function setup(profile: Partial<runs.Profile>) {
 			.all(id)
 			.map((e) => ({ type: e.type as string, payload: JSON.parse(e.payload as string) }));
 	const comments = () => db.prepare('SELECT body FROM comments ORDER BY id').all();
-	const start = (fetch: typeof globalThis.fetch, options: Partial<BuiltinOptions> = {}) => {
+	const start = (
+		fetch: typeof globalThis.fetch | undefined,
+		options: Partial<BuiltinOptions> = {}
+	) => {
 		const runner = startRunner(db, { builtin: builtinExecutor(db, { ...options, fetch }) });
 		cleanups.push(runner.stop);
 		return runs.createRun(db, user, { ticketId, profileId }).id;
@@ -323,6 +327,15 @@ describe.each([
 	{ provider: 'anthropic', model: 'claude-sonnet-5', path: '/v1/messages' },
 	{ provider: 'openai', model: 'gpt-6-sol', path: '/v1/responses' }
 ])('builtin executor with $provider', ({ provider, model, path }) => {
+	it('sends the run through the process-wide fetch, not the local provider fetch', async () => {
+		const processFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('failed'));
+		const { run, start } = setup({ provider, model });
+		const runId = start(undefined);
+		await ended(() => run(runId).state);
+
+		expect(processFetch).toHaveBeenCalled();
+	});
+
 	it('works a run with a tool call and prices each step from the catalog, cache reads and writes at their own rates', async () => {
 		const { run, events, comments, start } = setup({ provider, model });
 		const cloud = await startCloud(

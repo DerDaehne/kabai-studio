@@ -117,6 +117,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
 	cleanups.splice(0).forEach((cleanup) => cleanup());
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	vi.useRealTimers();
 });
@@ -1447,6 +1448,18 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 		await ended(() => run(runId).state);
 
 		expect(run(runId).error).toMatch(/^\[model_loading_timeout\]/);
+	});
+
+	it('waits for a local model through the local provider fetch, not the process-wide one', async () => {
+		const processFetch = vi.spyOn(globalThis, 'fetch');
+		const { db, queue, run, comments } = setup({ base_url: await silentServer() });
+		startBuiltin(db, {}, { hintAfterMs: 50, failAfterMs: 300 });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		expect(run(runId).error).toMatch(/^\[model_loading_timeout\]/);
+		expect(JSON.stringify(comments())).not.toMatch(/provider_(error|unreachable)/);
+		expect(processFetch).not.toHaveBeenCalled();
 	});
 
 	it("fails with provider_rate_limited and a local way out once the SDK's own retries on a 429 are exhausted", async () => {
