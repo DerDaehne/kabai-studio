@@ -100,8 +100,8 @@ function errorOf(result: string): string {
 }
 
 function studioSummary(args: Record<string, unknown>, result: string): string {
-	const { column, open_task_ids: open, notes } = parsed(result);
-	if (typeof column === 'string') return `→ ${column}`;
+	const { next, open_task_ids: open, notes } = parsed(result);
+	if (typeof next === 'string') return `→ ${next}`;
 	if (Array.isArray(open) && Array.isArray(args.task_ids))
 		return `${args.task_ids.length} erledigt · ${open.length} offen`;
 	if (Array.isArray(notes)) return `${notes.length} Treffer`;

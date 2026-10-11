@@ -60,6 +60,11 @@ describe('runScenario expectation checks', () => {
 		); // code block missing
 		model.reply({ call: { name: 'add_tasks', args: { titles: ['x'] } } }, { text: 'done' }); // max steps violation (2 steps)
 		model.reply({ text: 'never asked' }); // request_human expected but not asked
+		model.reply(
+			{ call: { name: 'finish_step', args: { result: 'done', summary: 'Planned' } } },
+			{ text: 'done' }
+		); // finish result as expected
+		model.reply({ text: 'no finish' }); // finish result expected but the step never ended
 
 		const scenario: Scenario = {
 			baseUrl: model.baseUrl,
@@ -76,11 +81,13 @@ describe('runScenario expectation checks', () => {
 				},
 				{ title: 'forbidden tool case', expect: { forbiddenTools: ['add_tasks'] } },
 				{ title: 'execution claim case', expect: {} },
-				{ title: 'required tool missing case', expect: { requiredTools: ['move_ticket'] } },
+				{ title: 'required tool missing case', expect: { requiredTools: ['finish_step'] } },
 				{ title: 'end column violation case', expect: { endColumn: 'Planen' } },
 				{ title: 'code block missing case', expect: { commentHasCodeBlock: true } },
 				{ title: 'max steps violation case', expect: { maxSteps: 1 } },
-				{ title: 'request human asked violation case', expect: { requestHumanAsked: true } }
+				{ title: 'request human asked violation case', expect: { requestHumanAsked: true } },
+				{ title: 'finish ok case', column: 'Planen', expect: { finishResult: 'done' } },
+				{ title: 'finish missing case', column: 'Planen', expect: { finishResult: 'done' } }
 			]
 		};
 		dataRoot = mkdtempSync(join(tmpdir(), 'scenario-data-root-'));
@@ -112,7 +119,7 @@ describe('runScenario expectation checks', () => {
 
 	it('flags a required tool that was never called', () => {
 		expect(results[3].ok).toBe(false);
-		expect(results[3].reasons.some((reason) => reason.includes('move_ticket'))).toBe(true);
+		expect(results[3].reasons.some((reason) => reason.includes('finish_step'))).toBe(true);
 	});
 
 	it('flags the wrong end column', () => {
@@ -133,6 +140,17 @@ describe('runScenario expectation checks', () => {
 	it('flags a missing request_human call', () => {
 		expect(results[7].ok).toBe(false);
 		expect(results[7].reasons.some((reason) => reason.includes('request_human'))).toBe(true);
+	});
+
+	it('passes a ticket whose step ended with the expected finish_step result', () => {
+		expect(results[8].ok).toBe(true);
+	});
+
+	it('flags a step that never ended with finish_step', () => {
+		expect(results[9].ok).toBe(false);
+		expect(
+			results[9].reasons.some((reason) => reason.includes('finish_step endete gar nicht'))
+		).toBe(true);
 	});
 
 	it('cleans the temporary instance up afterwards', () => {

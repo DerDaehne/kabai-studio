@@ -33,7 +33,6 @@ type ChildTicket = {
 	tasks?: string[];
 	waits_for?: string[];
 };
-export type AgentMove = { columnId: number; name: string; refusals: ToolError[] };
 
 const RECENT_COMMENTS = 10;
 const COMMENT_PREVIEW = 1500;
@@ -93,7 +92,7 @@ const define = <Args>(description: string, schema: JsonSchemaType): ToolDefiniti
 // Built once per process: the SDK caches one compiled validator per schema object and never evicts it.
 const TOOLS = {
 	get_ticket: define<{ ticket?: string; comment?: number }>(
-		"Your ticket: tasks, recent comments, relations, allowed moves, the human's latest answer. Another ticket of your project by ref; one full comment by id.",
+		"Your ticket: tasks, recent comments, relations, the human's latest answer. Another ticket of your project by ref; one full comment by id.",
 		object({
 			ticket: {
 				type: 'string',
@@ -130,10 +129,6 @@ const TOOLS = {
 			waits_for: list({ type: 'string', maxLength: MAX_REF }),
 			blocks: list({ type: 'string', maxLength: MAX_REF })
 		})
-	),
-	approve_review: define<Record<string, never>>(
-		'Approve the review of your ticket: only in a review column, never your own work.',
-		object({})
 	),
 	list_workable: define<{ column_id?: number }>(
 		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
@@ -253,10 +248,6 @@ const TOOLS = {
 			},
 			['result', 'summary']
 		)
-	),
-	move_ticket: define<{ column_id: number }>(
-		'Move your ticket to a column from allowed_moves.',
-		object({ column_id: { type: 'integer' } }, ['column_id'])
 	),
 	request_human: define<{ question: string; options?: QuestionOption[] }>(
 		'Ask the human and wait: your ticket stays where it is until the answer comes. Offer 1-3 decidable options when possible. End your turn afterwards.',
@@ -386,11 +377,6 @@ function registerTicketTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolCont
 	);
 
 	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
-
-	tool('approve_review', () => {
-		board.approveReview(db, ctx.actor, ctx.ticketId);
-		return { review_approved: true };
-	});
 }
 
 function registerNoteTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
@@ -450,8 +436,6 @@ function registerWorkTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContex
 		note: 'End your turn now.'
 	}));
 
-	tool('move_ticket', ({ column_id }) => moveOwnTicket(db, ctx, column_id));
-
 	tool('request_human', (q) => ({
 		question_id: requestHuman(db, ctx.actor, ctx.ticketId, q).id
 	}));
@@ -496,10 +480,6 @@ function toolHint(code: string): string | undefined {
 	switch (code) {
 		case 'requires_human':
 			return 'Diesen Schritt macht nur der Mensch. Lass das Ticket, wo es ist; brauchst du eine Entscheidung, frag mit request_human.';
-		case 'transition_not_allowed':
-			return 'get_ticket zeigt die erreichbaren Spalten unter allowed_moves.';
-		case 'not_in_review':
-			return 'Freigeben gehört zur Review-Rolle; halte dein Ergebnis mit add_comment fest.';
 		case 'self_approval':
 			return 'Eigene Arbeit gibt ein anderer Run oder der Mensch frei; halte dein Ergebnis mit add_comment fest.';
 		case 'conflict':
@@ -514,62 +494,6 @@ const openTaskIds = (db: DatabaseSync, ticketId: number) =>
 		.prepare('SELECT id FROM tasks WHERE ticket_id = ? AND done_at IS NULL ORDER BY position, id')
 		.all(ticketId)
 		.map((r) => r.id as number);
-
-/** Domain moves plus the rule only agents get: a blocked ticket does not move on. */
-export function agentMoves(db: DatabaseSync, ctx: ToolContext): AgentMove[] {
-	const waitingFor = board.blockingPredecessors(db, ctx.ticketId);
-	return board.allowedMoves(db, ctx.ticketId, ctx.actor).map((m) => ({
-		columnId: m.columnId,
-		name: m.name,
-		refusals: [
-			...(waitingFor.length ? [blockedRefusal(db, ctx, waitingFor)] : []),
-			...m.blockers.map((b) => ({
-				error: b.code,
-				message: b.message,
-				hint: toolHint(b.code) ?? b.hint
-			}))
-		]
-	}));
-}
-
-function blockedRefusal(
-	db: DatabaseSync,
-	ctx: ToolContext,
-	waitingFor: board.Predecessor[]
-): ToolError {
-	const { setting } = db
-		.prepare('SELECT blocks_satisfied_at AS setting FROM projects WHERE id = ?')
-		.get(ctx.projectId) as { setting: 'done' | 'review_ok' };
-	const refs = waitingFor.map((p) => p.ref).join(', ');
-	return {
-		error: 'blocked',
-		message: `${board.ticket(db, ctx.ticketId).ref} wartet auf ${refs} (blocks_satisfied_at = ${setting}).`,
-		hint:
-			`Ein Vorgänger gilt als erledigt, sobald er in einer done-Spalte liegt${setting === 'review_ok' ? ' oder freigegeben ist' : ''}. ` +
-			`Agents starten keine blockierten Tickets: warte auf ${refs} oder frag mit request_human.`
-	};
-}
-
-function moveOwnTicket(db: DatabaseSync, ctx: ToolContext, columnId: number) {
-	const own = board.ticket(db, ctx.ticketId);
-	if (own.column_id === columnId) return { column: own.column_name };
-	const moves = agentMoves(db, ctx);
-	const move = moves.find((m) => m.columnId === columnId);
-	if (!move)
-		throw new Refusal({
-			error: 'transition_not_allowed',
-			message: `Spalte ${columnId} ist von „${own.column_name}“ aus nicht erreichbar.`,
-			hint: `Erreichbar: ${moves.map((m) => `column_id ${m.columnId} (${m.name})`).join(', ')}.`
-		});
-	if (move.refusals.length)
-		throw new Refusal({
-			error: move.refusals[0].error,
-			message: move.refusals.map((r) => r.message).join(' '),
-			hint: move.refusals.map((r) => r.hint).join(' ')
-		});
-	board.moveTicket(db, ctx.actor, ctx.ticketId, columnId);
-	return { column: move.name };
-}
 
 /** Creates all children with their tasks first, then the blocks relations, so a $ref may point to a later item. */
 function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTicket[]) {
@@ -909,7 +833,7 @@ function fullComment(db: DatabaseSync, ctx: ToolContext, commentId: number): Com
 	return comment;
 }
 
-/** Everything an agent needs about a ticket in one answer; for its own ticket also the allowed moves and the latest question. */
+/** Everything an agent needs about a ticket in one answer; for its own ticket also the latest question. */
 function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 	const id = ref === undefined ? ctx.ticketId : ticketIdOf(db, ctx, ref);
 	const t = db
@@ -949,15 +873,10 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 	return { ...view, ...ownTicketView(db, ctx) };
 }
 
-/** What only the agent's own ticket shows: the allowed moves and the latest question to the human. */
+/** What only the agent's own ticket shows: the latest question to the human. */
 function ownTicketView(db: DatabaseSync, ctx: ToolContext) {
 	const latest = collectAnswer(db, ctx.actor, ctx.ticketId);
 	return {
-		allowed_moves: agentMoves(db, ctx).map((m) => ({
-			column_id: m.columnId,
-			name: m.name,
-			...(m.refusals.length > 0 && { blocked: m.refusals.map((r) => r.message).join(' ') })
-		})),
 		...(latest &&
 			(latest.answer
 				? {

@@ -29,6 +29,8 @@ const EXECUTION_TOOLS = new Set<string>();
 
 export type ScenarioExpectations = {
 	endColumn?: string;
+	/** The result the run ended its step with: the last `finish_step` call's `result`. */
+	finishResult?: 'done' | 'back' | 'blocked';
 	requiredTools?: string[];
 	forbiddenTools?: string[];
 	commentHasCodeBlock?: boolean;
@@ -218,6 +220,12 @@ async function waitForOutcome(
 	return true;
 }
 
+const finishResultOf = (events: StoredEvent[]): string | undefined =>
+	events
+		.filter((e) => e.type === 'tool_call' && e.payload.tool === 'finish_step')
+		.map((e) => (e.payload.args as { result?: string } | undefined)?.result)
+		.at(-1);
+
 const toolCallsOf = (events: StoredEvent[]): string[] =>
 	events.filter((e) => e.type === 'tool_call').map((e) => String(e.payload.tool));
 
@@ -263,6 +271,7 @@ function executionClaim(comments: string[], tools: string[]): string | undefined
 
 type Actual = {
 	endColumn: string;
+	finishResult: string | undefined;
 	tools: string[];
 	steps: number;
 	comments: string[];
@@ -272,6 +281,12 @@ type Actual = {
 function endColumnReasons(expect: ScenarioExpectations, actual: Actual): string[] {
 	if (!expect.endColumn || actual.endColumn === expect.endColumn) return [];
 	return [`Endspalte „${actual.endColumn}“ statt „${expect.endColumn}“`];
+}
+
+function finishResultReasons(expect: ScenarioExpectations, actual: Actual): string[] {
+	if (!expect.finishResult || actual.finishResult === expect.finishResult) return [];
+	const ended = actual.finishResult ? `„${actual.finishResult}“` : 'gar nicht';
+	return [`finish_step endete ${ended} statt mit „${expect.finishResult}“`];
 }
 
 function requiredToolReasons(expect: ScenarioExpectations, actual: Actual): string[] {
@@ -300,6 +315,7 @@ function otherReasons(expect: ScenarioExpectations, actual: Actual): string[] {
 function expectationReasons(expect: ScenarioExpectations, actual: Actual): string[] {
 	const reasons = [
 		...endColumnReasons(expect, actual),
+		...finishResultReasons(expect, actual),
 		...requiredToolReasons(expect, actual),
 		...forbiddenToolReasons(expect, actual),
 		...otherReasons(expect, actual)
@@ -351,6 +367,7 @@ function buildResult(
 	const events = eventsByRun.flat();
 	const actual: Actual = {
 		endColumn: board.ticket(db, ticketId).column_name,
+		finishResult: finishResultOf(events),
 		tools: toolCallsOf(events),
 		steps: eventsByRun.reduce((sum, runEvents) => sum + stepCountOf(runEvents), 0),
 		comments: commentsOf(db, ticketId),

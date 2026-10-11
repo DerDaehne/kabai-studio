@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the phase contract of a step > in direct: critique shows goal, done-when and then 1`] = `
+"## Step: critique (2 of 3)
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Done when: your summary says what you did and what is open
+Then: a human accepts the result
+Finish with finish_step: done, back (to implement), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in direct: implement shows goal, done-when and then 1`] = `
+"## Step: implement (1 of 3)
+Goal: Do: carry out the task the ticket describes and write what it asks for as text: an answer, an analysis or code. Do not refine: leave the description and the tasks as they are. Deliver: the result itself in a comment, code in a fenced block, marked "Unverified: not compiled, run or tested."; then tick each task the result fulfils. Ask the human only if the task needs more than text, such as changing files in a repository. Stop: finish_step with done once the result is delivered.
+Done when: all tasks are ticked; if the ticket requires documentation, a note is linked to it
+Then: a fresh agent works the next step, critique
+Finish with finish_step: done, or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in knowledge: critique shows goal, done-when and then 1`] = `
+"## Step: critique (3 of 4)
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Done when: your summary says what you did and what is open
+Then: a human accepts the result
+Finish with finish_step: done, back (to draft), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in knowledge: draft shows goal, done-when and then 1`] = `
+"## Step: draft (2 of 4)
+Goal: Do: write the result of the ticket from the research, as a note. Do not research again: gaps that matter go back. Deliver: the note, linked to the ticket, and every task ticked that it fulfils. Stop: finish_step with done. If the research lacks something the draft needs, finish_step with back and name it in the summary.
+Done when: all tasks are ticked; a note is linked to the ticket (notes_create, then link_note_to_ticket)
+Then: a fresh agent works the next step, critique
+Finish with finish_step: done, back (to research), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in knowledge: research shows goal, done-when and then 1`] = `
+"## Step: research (1 of 4)
+Goal: Do: gather what the ticket asks about; search and read the notes first and keep to what the sources say. Do not write the final text yet. Deliver: your findings with their sources as the summary, and one task per criterion the draft must meet. Stop: finish_step with done. If a question stays open that you cannot answer, finish_step with blocked and ask it.
+Done when: the ticket has at least one task, one per acceptance criterion
+Then: a fresh agent works the next step, draft
+Finish with finish_step: done, or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in software: critique shows goal, done-when and then 1`] = `
+"## Step: critique (4 of 5)
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Done when: your summary says what you did and what is open
+Then: a human accepts the result
+Finish with finish_step: done, back (to implement), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in software: implement shows goal, done-when and then 1`] = `
+"## Step: implement (3 of 5)
+Goal: Do: carry out the task the ticket describes and write what it asks for as text: an answer, an analysis or code. Do not refine: leave the description and the tasks as they are. Deliver: the result itself in a comment, code in a fenced block, marked "Unverified: not compiled, run or tested."; then tick each task the result fulfils. Ask the human only if the task needs more than text, such as changing files in a repository. Stop: finish_step with done once the result is delivered.
+Done when: all tasks are ticked; if the ticket requires documentation, a note is linked to it
+Then: a fresh agent works the next step, critique
+Finish with finish_step: done, back (to refine), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in software: plan shows goal, done-when and then 1`] = `
+"## Step: plan (2 of 5)
+Goal: Do: plan the work; do not refine the ticket and do not implement it. Check that no blocker is still open and read the linked notes. Deliver: the plan as your summary, in a few lines: the steps in order, what each touches and the risks. Stop: finish_step with done. Only if the description no longer matches reality, finish_step with back and say why in the summary.
+Done when: your summary says what you did and what is open
+Then: a fresh agent works the next step, implement
+Finish with finish_step: done, back (to refine), or blocked (your question)."
+`;
+
+exports[`the phase contract of a step > in software: refine shows goal, done-when and then 1`] = `
+"## Step: refine (1 of 5)
+Goal: Do: propose the scope yourself from what the ticket says: what is in and out, a size and observable acceptance criteria. Fill gaps with sensible defaults and name them as assumptions. Ask the human only for a genuine product decision you cannot default, never as your first step. Deliver: an updated description, one task per acceptance criterion and the size. Stop: finish_step with done, naming your assumptions in the summary.
+Done when: the ticket has at least one task, one per acceptance criterion; the ticket has a size (XS, S, M, L or XL); the description is not empty
+Then: a fresh agent works the next step, plan
+Finish with finish_step: done, or blocked (your question)."
+`;

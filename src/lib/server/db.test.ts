@@ -8,7 +8,6 @@ import { latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import * as questions from './domain/questions';
-import { ROLES } from './domain/variants';
 import { liveState } from './live';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
@@ -591,11 +590,13 @@ describe('migrate', () => {
 				.all()
 				.map((r) => [r.name, r.role_prompt])
 		);
-		// Ready and In Arbeit carry the texts the plan and implement steps still have in the code.
+		// Ready and In Arbeit carry the texts the migration ships, which the later role texts in the code replace.
 		expect(rolePrompts).toMatchObject({
 			...EDITED,
-			Ready: ROLES.plan,
-			'In Arbeit': ROLES.implement,
+			Ready:
+				'Do: pick the ticket up; do not refine it. Check that no blocker is still open. Deliver: a pickup comment with your plan in one or two sentences. Stop: move the ticket to In Arbeit right away. Only if the description no longer matches reality, send it back to Refine with a comment saying why.',
+			'In Arbeit':
+				'Do: carry out the task the ticket describes and write what it asks for as text: an answer, an analysis or code. Do not refine: leave the description and the tasks as they are. Deliver: the result itself in a comment, code in a fenced block, marked "Unverified: not compiled, run or tested."; then tick each task the result fulfils. Ask the human only if the task needs more than text, such as changing files in a repository. Stop: move the ticket to Review once the result is delivered.',
 			Done: ''
 		});
 		for (const name of ['Backlog', 'Abnahme', 'Human Intervention', 'Human Answered']) {

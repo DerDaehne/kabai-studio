@@ -126,16 +126,17 @@ function setup(profile: Partial<runs.Profile> = {}) {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, {
-		title: 'Refine the export',
-		description: 'Export tickets as CSV.'
-	}).id;
 	const columns = Object.fromEntries(
 		db
 			.prepare('SELECT name, id FROM columns WHERE project_id = ?')
 			.all(projectId)
 			.map((c) => [c.name, c.id])
 	) as Record<string, number>;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'Refine the export',
+		description: 'Export tickets as CSV.',
+		column_id: columns['Planen']
+	}).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Local',
 		executor: 'builtin',
@@ -429,7 +430,7 @@ describe('builtin executor', () => {
 	it('succeeds when max_steps runs out after the run has moved its ticket', async () => {
 		const { db, queue, run, columns } = setup({ max_steps: 2 });
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Präzisieren'] })] },
+			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: 'Planned' })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'moved' })] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -450,7 +451,7 @@ describe('builtin executor', () => {
 
 		expect(run(runId).state).toBe('paused');
 		expect(provider.requests).toHaveLength(1);
-		expect(board.ticket(db, ticketId).column_name).toBe('Backlog');
+		expect(board.ticket(db, ticketId).column_name).toBe('Planen');
 		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
 	});
 
@@ -549,7 +550,7 @@ describe('builtin executor', () => {
 		const { db, queue, run, columns } = setup();
 		let park = () => {};
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Präzisieren'] })] },
+			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: 'Planned' })] },
 			{ chunks: [{ pause: () => park() }, { text: 'Moved the ticket, done.' }] }
 		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
@@ -564,7 +565,7 @@ describe('builtin executor', () => {
 	it('fails with step_limit when the only move of the run was rejected', async () => {
 		const { db, queue, run } = setup({ max_steps: 2 });
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
+			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: ' ' })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'two' })] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -585,9 +586,9 @@ describe('builtin executor', () => {
 		]).ids;
 		board.completeTask(db, user, headerRow);
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
+			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: ' ' })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'Header row done.' })] },
-			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['Präzisieren'] })] },
+			{ chunks: [call('call-3', 'finish_step', { result: 'done', summary: 'Planned' })] },
 			{ chunks: [] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -598,8 +599,8 @@ describe('builtin executor', () => {
 		expect(events(runId).find((e) => e.key === 'handoff')!.payload).toEqual({
 			text: [
 				"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
-				'Tools: move_ticket 2× (1 failed), add_comment 1×',
-				'Ticket: moved to Präzisieren',
+				'Tools: finish_step 2× (1 failed), add_comment 1×',
+				'Ticket: moved to Umsetzen',
 				'Open tasks:',
 				`- ${oneLinePerTicket}: Export one line per ticket`
 			].join('\n'),
@@ -877,12 +878,11 @@ describe('trace of the builtin executor', () => {
 			},
 			{
 				chunks: [
-					{ reasoning: 'The comment is there.\nI should move it to Refine.\n' },
-					call('call-2', 'move_ticket', { column_id: columns['Präzisieren'] })
+					{ reasoning: 'The comment is there.\nI should check the ticket.\n' },
+					call('call-2', 'get_ticket', { ticket: 'STU-1' })
 				]
 			},
-			{ chunks: [call('call-3', 'get_ticket', { ticket: 'STU-1' })] },
-			{ chunks: [{ text: 'Done.' }] }
+			{ chunks: [call('call-3', 'finish_step', { result: 'done', summary: 'Planned' })] }
 		);
 	const traceOf = (events: { key: string | null; payload: Record<string, unknown> }[]) =>
 		Object.fromEntries(
@@ -905,7 +905,7 @@ describe('trace of the builtin executor', () => {
 		expect(trace['call-1'].reason).toHaveLength(120);
 		expect(trace['call-1'].reason).toMatch(/^The export lacks a comment about the header row/);
 		expect(trace['call-2']).toMatchObject({
-			reason: 'I should move it to Refine.',
+			reason: 'I should check the ticket.',
 			reason_source: 'reasoning',
 			next_hint: ''
 		});
@@ -919,9 +919,9 @@ describe('trace of the builtin executor', () => {
 
 		expect(traceOf(events(runId))['call-3']).toEqual({
 			step: 3,
-			tool: 'get_ticket',
-			args: { ticket: 'STU-1' },
-			target: 'STU-1',
+			tool: 'finish_step',
+			args: { result: 'done', summary: 'Planned' },
+			target: '',
 			reason: '',
 			reason_source: '',
 			next_hint: ''
@@ -936,8 +936,8 @@ describe('trace of the builtin executor', () => {
 
 		const trace = traceOf(events(runId));
 		expect(trace['call-1:result']).toMatchObject({ result_summary: '' });
-		expect(trace['call-2:result']).toMatchObject({ result_summary: '→ Präzisieren' });
-		expect(trace['call-2:result']).not.toHaveProperty('diff_anchor');
+		expect(trace['call-3:result']).toMatchObject({ result_summary: '→ implement' });
+		expect(trace['call-3:result']).not.toHaveProperty('diff_anchor');
 	});
 
 	it('delivers the trace fields of tool calls and results to the browser over SSE', async () => {
@@ -956,8 +956,8 @@ describe('trace of the builtin executor', () => {
 			expect(Object.keys(payload as object)).toEqual(
 				expect.arrayContaining(['target', 'reason', 'reason_source', 'next_hint'])
 			);
-		expect(payloadOf('tool_call')[1]).toMatchObject({ reason: 'I should move it to Refine.' });
-		expect(payloadOf('tool_result')[1]).toMatchObject({ result_summary: '→ Präzisieren' });
+		expect(payloadOf('tool_call')[1]).toMatchObject({ reason: 'I should check the ticket.' });
+		expect(payloadOf('tool_result')[2]).toMatchObject({ result_summary: '→ implement' });
 	});
 
 	it('reports thinking and writing with the tokens so far and the tokens per second, at most once a second', async () => {
@@ -1112,7 +1112,7 @@ describe('loop guard of the builtin executor', () => {
 		expect(run(fresh.id).state).toBe('paused');
 		expect(interventions(events, fresh.id).at(-1)).toMatchObject({ attempt: 2, max: 1 });
 		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(2);
-		expect(board.ticket(db, ticketId).column_name).toBe('Backlog');
+		expect(board.ticket(db, ticketId).column_name).toBe('Planen');
 	});
 
 	it('hands off at once when the step limit leaves no step for a hint', async () => {
@@ -1131,7 +1131,7 @@ describe('loop guard of the builtin executor', () => {
 	it('gives a hint after three failed calls on the same target, such as a move the board rejects, and counts anew after it', async () => {
 		const { db, queue, run, events } = setup();
 		const rejected = (id: string): Reply => ({
-			chunks: [call(id, 'move_ticket', { column_id: 99999 })]
+			chunks: [call(id, 'finish_step', { result: 'done', summary: ' ' })]
 		});
 		const provider = fakeProvider(
 			rejected('call-1'),
@@ -1150,7 +1150,7 @@ describe('loop guard of the builtin executor', () => {
 				kind: 'stagnation',
 				attempt: 1,
 				max: 2,
-				reason: '3 failed calls in a row on "move_ticket".',
+				reason: '3 failed calls in a row on "finish_step".',
 				hint
 			}
 		]);

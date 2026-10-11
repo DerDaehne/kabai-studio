@@ -14,8 +14,8 @@
 			"description": "Nutzer wollen ihre Zeitbuchungen als CSV herunterladen können.",
 			"column": "Präzisieren",
 			"expect": {
-				"endColumn": "Planen",
-				"requiredTools": ["add_tasks"],
+				"finishResult": "done",
+				"requiredTools": ["add_tasks", "finish_step"],
 				"maxSteps": 10
 			}
 		},
@@ -24,7 +24,8 @@
 			"description": "Jede Spalte bekommt im Projekt-Switcher einen farbigen Punkt in ihrer Spaltenfarbe.\n\nAkzeptanz:\n1. Jede Spalte hat eine feste Farbe.\n2. Der Punkt ist auch bei reduzierter Bewegung sichtbar.",
 			"column": "Planen",
 			"expect": {
-				"endColumn": "Umsetzen",
+				"finishResult": "done",
+				"requiredTools": ["finish_step"],
 				"maxSteps": 8
 			}
 		},
@@ -33,7 +34,8 @@
 			"description": "Schreibe eine C-Funktion, die alle Fibonacci-Zahlen kleiner oder gleich 100 ausgibt.",
 			"column": "Umsetzen",
 			"expect": {
-				"endColumn": "Kritik",
+				"finishResult": "done",
+				"requiredTools": ["finish_step"],
 				"forbiddenTools": ["add_tasks"],
 				"commentHasCodeBlock": true,
 				"maxSteps": 10
@@ -44,6 +46,7 @@
 			"description": "Zu prüfen ist dieser Text: „Willkommen zurück! Deine letzten 3 Tickets warten in Review.“\n\nAkzeptanz:\n1. Der Text nennt eine konkrete Zahl.\n2. Der Text ist auf Deutsch.",
 			"column": "Kritik",
 			"expect": {
+				"requiredTools": ["finish_step"],
 				"maxSteps": 8
 			}
 		}

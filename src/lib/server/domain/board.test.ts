@@ -221,29 +221,54 @@ describe('createProject / createTicket', () => {
 	});
 
 	describe('default role prompts', () => {
-		// The test names keep the former column names, so the snapshots prove the texts moved into the code unchanged.
-		const ROLE_OF_FORMER_COLUMN: Record<string, Step> = {
-			Refine: 'refine',
-			Ready: 'plan',
-			'In Arbeit': 'implement',
-			Review: 'critique'
-		};
 		const role = (step: Step) => ROLES[step] ?? '';
 
-		it('gives refine, plan, implement and critique a role and backlog, acceptance and done none', () => {
-			expect(Object.keys(ROLES).sort()).toEqual(['critique', 'implement', 'plan', 'refine']);
+		it('gives every step an agent works a role and backlog, acceptance and done none', () => {
+			expect(Object.keys(ROLES).sort()).toEqual([
+				'critique',
+				'draft',
+				'implement',
+				'plan',
+				'refine',
+				'research'
+			]);
 		});
 
-		it.each(Object.keys(ROLE_OF_FORMER_COLUMN))(
+		it.each(Object.keys(ROLES))(
 			'the %s role says what to do, what to deliver and when to stop, in that order',
-			(name) => {
-				const prompt = role(ROLE_OF_FORMER_COLUMN[name]);
+			(step) => {
+				const prompt = role(step as Step);
 				expect(prompt).toMatchSnapshot();
 				const parts = ['Do: ', 'Deliver: ', 'Stop: '].map((label) => prompt.indexOf(label));
 				expect(parts.every((at) => at >= 0)).toBe(true);
 				expect(parts).toEqual([...parts].sort((a, b) => a - b));
 			}
 		);
+
+		it.each(Object.keys(ROLES))(
+			'the %s role names no column and no way to move the ticket, only finish_step',
+			(step) => {
+				const prompt = role(step as Step);
+				expect(prompt).not.toMatch(/Backlog|Refine|Ready|In Arbeit|Review|Abnahme|Done|move/);
+				expect(prompt).toContain('finish_step');
+			}
+		);
+
+		it('makes the critique role a critic: refute, evidence only, never ok, list what was and was not checked', () => {
+			const critique = role('critique');
+			expect(critique).toContain('critic, not a reviewer');
+			expect(critique).toContain('refute');
+			expect(critique).toContain('bugs and security holes');
+			expect(critique).toContain('test that fails, a mutation that survives or a probe');
+			expect(critique).toContain('Never write "ok"');
+			expect(critique).toContain('"Not refuted"');
+			expect(critique).toContain('what you checked and what you could not check');
+		});
+
+		it('keeps research from writing the final text and draft from researching again', () => {
+			expect(role('research')).toContain('Do not write the final text yet');
+			expect(role('draft')).toContain('Do not research again');
+		});
 
 		it('lets Refine propose scope and criteria itself and ask the human only for a genuine product decision', () => {
 			const refine = role('refine');
@@ -252,8 +277,8 @@ describe('createProject / createTicket', () => {
 			expect(refine).toContain('Ask the human only for a genuine product decision');
 		});
 
-		it('keeps Ready from refining: it picks the ticket up and moves it on', () => {
-			expect(role('plan')).toContain('do not refine');
+		it('keeps plan from refining and from implementing', () => {
+			expect(role('plan')).toContain('do not refine the ticket and do not implement it');
 		});
 
 		it('has In Arbeit carry out the task and deliver the result as an unverified comment, without demanding a test it cannot run', () => {
@@ -316,32 +341,26 @@ describe('moveTicket', () => {
 		expect(columnOf(id)).toBe('refine');
 	});
 
-	it('lets an agent step only to a neighbouring step and names the reachable ones when it tries more', () => {
+	it('lets an agent move a ticket nowhere, not even to a neighbouring step: it finishes its step instead', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		place(id, 'plan');
-		const err = caught(() => board.moveTicket(db, dev, id, col.critique));
-		expect(err.code).toBe('transition_not_allowed');
-		expect(err.message).toBe(
-			'STU-1 darf nicht von „Planen“ nach „Kritik“ wechseln. Erreichbar für dich: „Präzisieren“, „Umsetzen“.'
-		);
-		expect(err.hint).toContain('allowedMoves');
-		board.moveTicket(db, dev, id, col.implement);
-		board.moveTicket(db, dev, id, col.critique);
-		board.moveTicket(db, dev, id, col.acceptance);
-		expect(columnOf(id)).toBe('acceptance');
+		for (const target of [col.refine, col.implement, col.critique]) {
+			const err = caught(() => board.moveTicket(db, dev, id, target));
+			expect(err.code).toBe('requires_human');
+			expect(err.hint).toContain('finish_step');
+		}
+		expect(board.allowedMoves(db, id, dev)).toEqual([]);
+		expect(columnOf(id)).toBe('plan');
 	});
 
-	it('never lets an agent complete a ticket: done stays the human step, with the reachable step in the error', () => {
+	it('keeps the done step the human step and names the refused move', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
 		place(id, 'acceptance');
 		const err = caught(() => board.moveTicket(db, dev, id, col.done));
 		expect(err.code).toBe('requires_human');
-		expect(err.message).toBe(
-			'Nur ein Mensch darf STU-1 von „Abnahme“ nach „Fertig“ verschieben. Erreichbar für dich: „Kritik“.'
-		);
-		expect(err.hint).toContain('Abschließen');
+		expect(err.message).toBe('Nur ein Mensch darf STU-1 von „Abnahme“ nach „Fertig“ verschieben.');
 		expect(columnOf(id)).toBe('acceptance');
 	});
 
@@ -352,7 +371,6 @@ describe('moveTicket', () => {
 		expect(board.allowedMoves(db, id, dev)).toEqual([]);
 		const err = caught(() => board.moveTicket(db, dev, id, col.acceptance));
 		expect(err.code).toBe('requires_human');
-		expect(err.message).toContain('Erreichbar für dich: keine.');
 		expect(err.hint).toContain('Folgeticket');
 		board.moveTicket(db, user, id, col.acceptance);
 		expect(columnOf(id)).toBe('acceptance');
@@ -436,7 +454,7 @@ describe('linkRelation', () => {
 });
 
 describe('allowedMoves', () => {
-	it('lists every other column for the human and only the neighbouring steps short of done for an agent', () => {
+	it('lists every other column for the human and none for an agent', () => {
 		const { db, ticket, place } = setup();
 		const id = ticket();
 		place(id, 'acceptance');
@@ -445,7 +463,7 @@ describe('allowedMoves', () => {
 			board
 				.allowedMoves(db, id, actor)
 				.map((m) => [m.name, m.phase, m.blockers.map((b) => b.code)]);
-		expect(view(dev)).toEqual([['Kritik', 'work', []]]);
+		expect(view(dev)).toEqual([]);
 		expect(view(user)).toEqual([
 			['Backlog', 'open', []],
 			['Präzisieren', 'work', []],
@@ -455,10 +473,6 @@ describe('allowedMoves', () => {
 			['Fertig', 'done', ['open_tasks']]
 		]);
 		expect(board.allowedMoves(db, id, user)[5].blockers[0].hint).toContain('completeTask');
-		place(id, 'implement');
-		expect(view(dev).map(([name]) => name)).toEqual(['Planen', 'Kritik']);
-		place(id, 'backlog');
-		expect(view(dev).map(([name]) => name)).toEqual(['Präzisieren']);
 	});
 });
 
@@ -466,8 +480,8 @@ describe('review approval', () => {
 	it('rejects self-approval and allows another agent and the human to approve', () => {
 		const { db, ticket, place, col } = setup();
 		const id = ticket();
-		place(id, 'implement');
-		board.moveTicket(db, dev, id, col.critique);
+		place(id, 'critique');
+		db.prepare('UPDATE tickets SET moved_by = ? WHERE id = ?').run(JSON.stringify(dev), id);
 		const err = caught(() => board.approveReview(db, dev, id));
 		expect(err.code).toBe('self_approval');
 		expect(err.hint).toContain('anderer Agent');
@@ -507,12 +521,12 @@ describe('review approval', () => {
 		const id = ticket();
 		place(id, 'critique');
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, reviewer, id, col.implement);
+		board.moveTicket(db, user, id, col.implement);
 		expect(approved(id)).toBe(false);
 
-		board.moveTicket(db, dev, id, col.critique);
+		board.moveTicket(db, user, id, col.critique);
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, reviewer, id, col.acceptance);
+		board.moveTicket(db, user, id, col.acceptance);
 		expect(approved(id)).toBe(true);
 		board.moveTicket(db, user, id, col.done);
 		expect(approved(id)).toBe(true);
@@ -538,7 +552,7 @@ describe('review approval', () => {
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		place(a, 'critique');
 		board.approveReview(db, reviewer, a);
-		board.moveTicket(db, reviewer, a, col.acceptance);
+		board.moveTicket(db, user, a, col.acceptance);
 		expect(board.workableTickets(db, projectId, col.backlog).map((r) => r.ref)).toEqual(['STU-2']);
 	});
 });
@@ -583,7 +597,7 @@ describe('workableTickets', () => {
 		expect(workable()).toEqual([]); // default done: an approval is not enough
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		expect(workable()).toEqual(['STU-2']);
-		board.moveTicket(db, reviewer, a, col.implement); // the approval clears
+		board.moveTicket(db, user, a, col.implement); // the approval clears
 		expect(workable()).toEqual([]);
 	});
 });
@@ -633,8 +647,8 @@ describe('event bus', () => {
 		const a = board.createTicket(db, user, p, { title: 'A' }).id;
 		const b = board.createTicket(db, user, p, { title: 'B' }).id;
 		board.updateTicket(db, dev, a, { description: 'x' });
-		const inArbeit = board.allowedMoves(db, a, dev)[0].columnId;
-		board.moveTicket(db, dev, a, inArbeit);
+		const inArbeit = board.allowedMoves(db, a, user)[0].columnId;
+		board.moveTicket(db, user, a, inArbeit);
 		board.approveReview(db, user, a);
 		const task = board.addTask(db, dev, a, 'K').id;
 		board.completeTask(db, dev, task);
@@ -669,7 +683,7 @@ describe('event bus', () => {
 		]);
 		expect(events.every((e) => e.projectId === p && e.actor)).toBe(true);
 		expect(inTx.every((t) => t === false)).toBe(true); // published only after COMMIT
-		expect(events[5]).toMatchObject({ ticketId: a, actor: dev, to: inArbeit });
+		expect(events[5]).toMatchObject({ ticketId: a, actor: user, to: inArbeit });
 	});
 
 	it('reports nothing for a rolled back transaction, even if it had already emitted', () => {

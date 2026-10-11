@@ -3,22 +3,21 @@ import type { DatabaseSync } from 'node:sqlite';
 import { contextBudget } from '../../agents/model-catalog';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
+import type { Step } from '../domain/variants';
 import type { Answer, QuestionOption } from '../domain/questions';
 import type { Intervention, Profile, ResumeReason } from '../domain/runs';
-import { ROLES } from '../domain/variants';
 import {
-	agentMoves,
 	linkedNotes,
 	recentComments,
 	relationsOf,
 	tasksOf,
-	type AgentMove,
 	type NoteLink,
 	type RelatedTicket,
 	type ToolContext
 } from '../mcp';
 import { mask } from '../secrets';
 import { BASE_PROMPT, type PromptVariant } from './base-prompt';
+import { stepContract } from './step-contract';
 
 export type PromptRun = {
 	/** The run the prompt is for; one that continues another run gets that run's state. The prompt preview has no run. */
@@ -52,7 +51,7 @@ const CHARS_PER_TOKEN = 4;
 const PREVIOUS_STATE_LIMIT = 1500 * CHARS_PER_TOKEN;
 const HANDOFF_CUT = '\n[handoff cut to fit 1,500 tokens]';
 
-/** How much of the context is left out; tried in this order until the prompt fits the budget. Tasks and moves are never cut. */
+/** How much of the context is left out; tried in this order until the prompt fits the budget. Tasks are never cut. */
 type Cut = { noteBodies: boolean; comments: number; fullDescription: boolean };
 const CUTS: Cut[] = [
 	{ noteBodies: true, comments: Infinity, fullDescription: true },
@@ -91,14 +90,13 @@ type Context = {
 	ref: string;
 	title: string;
 	type: string;
-	column: string;
+	step: Step;
 	description: string;
 	docsRequired: boolean;
-	rolePrompt: string;
+	contract: string;
 	tasks: ReturnType<typeof tasksOf>;
 	relations: Record<string, RelatedTicket[]>;
 	comments: Comment[];
-	moves: AgentMove[];
 	notes: LinkedNote[];
 	previous?: PreviousState;
 };
@@ -144,15 +142,14 @@ function readContext(db: DatabaseSync, ticketId: number): Context {
 		.get(ticketId) as { title: string; description: string };
 	return {
 		...fields,
-		rolePrompt: ROLES[t.column_step] ?? '',
+		step: t.column_step,
+		contract: stepContract(t.column_step, board.columns(db, t.project_id)),
 		ref: t.ref,
 		type: t.type,
-		column: t.column_name,
 		docsRequired: t.docs_required === 1,
 		tasks: tasksOf(db, ticketId),
 		relations: relationsOf(db, scope, ticketId),
 		comments: recentComments(db, ticketId),
-		moves: agentMoves(db, scope),
 		notes: notesOf(linkedNotes(db, scope, ticketId))
 	};
 }
@@ -192,14 +189,13 @@ function joined(
 
 /** The override comes last, so that "the last instruction wins" holds for small models too. */
 function systemBlocks(context: Context, profile: PromptRun['profile'], runOverride = ''): Block[] {
-	const rolePrompt = context.rolePrompt.trim();
 	const override = [profile.extra_prompt, runOverride]
 		.map((text) => text.trim())
 		.filter(Boolean)
 		.join('\n\n');
 	return [
 		block('base', BASE_PROMPT[variantOf(profile)]),
-		block('role', rolePrompt && `## Role: ${context.column}\n${rolePrompt}`),
+		block('role', context.contract),
 		block('override', override && `## Override — takes precedence\n${override}`)
 	];
 }
@@ -216,7 +212,6 @@ function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Bloc
 		block('tasks', tasksText(context.tasks)),
 		block('relations', relationsText(context.relations)),
 		commentsBlock(context.comments, cut),
-		block('allowed_moves', movesText(context.moves)),
 		notesBlock(context.notes, cut),
 		previousStateBlock(context.previous),
 		block('assignment', assignmentText(context))
@@ -226,8 +221,8 @@ function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Bloc
 function assignmentText(context: Context): string {
 	return [
 		'## Assignment',
-		`Work ${context.ref} in the column "${context.column}": do what your role for this column says, deliver the result it names and stop where it says. ` +
-			'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. ' +
+		`Work ${context.ref} in the step "${context.step}": do what your goal for this step says, deliver the result it names and end the step with finish_step. ` +
+			'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the refine step or when your goal asks for it. ' +
 			'The internal context above is current: start with the work, not with `get_ticket`.'
 	].join('\n');
 }
@@ -243,7 +238,7 @@ function ticketBlock(context: Context, cut: Cut, publicRepository: boolean): Blo
 		...(publicRepository ? [publicRule] : []),
 		'',
 		`### Ticket ${context.ref}: ${context.title}`,
-		`Column: ${context.column} · type: ${context.type} · docs required: ${context.docsRequired ? 'yes, a linked note is needed before done' : 'no'}`,
+		`Step: ${context.step} · type: ${context.type} · docs required: ${context.docsRequired ? 'yes, a linked note is needed before done' : 'no'}`,
 		description
 	];
 	return block('ticket', lines.join('\n'), cutDescription);
@@ -268,7 +263,7 @@ function relationsText(relations: Context['relations']): string {
 function relatedTicket(t: RelatedTicket): string {
 	if (t.other_project) return `${t.ref} (other project)`;
 	const stillBlocking = t.blocking ? ', still blocking' : '';
-	return `${t.ref} "${t.title}" (${t.column})${stillBlocking}`;
+	return `${t.ref} "${t.title}"${stillBlocking}`;
 }
 
 function commentsBlock(comments: Comment[], cut: Cut): Block {
@@ -285,20 +280,6 @@ function commentText(c: Comment): string {
 	const header = `[${c.id}] ${c.by} · ${c.at}`;
 	const readMore = 'more' in c ? `\n(cut; ${c.more} reads it in full)` : '';
 	return `${header}\n${c.text}${readMore}`;
-}
-
-function movesText(moves: AgentMove[]): string {
-	const lines = moves.map(moveLine);
-	return [
-		'### Allowed moves — `move_ticket` with column_id',
-		...(lines.length ? lines : ['(none)'])
-	].join('\n');
-}
-
-function moveLine(m: AgentMove): string {
-	if (!m.refusals.length) return `- ${m.columnId}: ${m.name}`;
-	const reasons = m.refusals.map((r) => r.message).join(' ');
-	return `- ${m.columnId}: ${m.name} — blocked: ${reasons}`;
 }
 
 function notesBlock(notes: LinkedNote[], cut: Cut): Block {

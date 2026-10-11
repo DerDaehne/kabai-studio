@@ -148,7 +148,7 @@ describe('assemblePrompt is deterministic', () => {
 			markers.map((marker) => text.indexOf(marker));
 		const systemOrder = order(first.system, [
 			BASE_PROMPT.full,
-			'## Role',
+			'## Step',
 			'## Override — takes precedence'
 		]);
 		expect(systemOrder.every((at) => at >= 0)).toBe(true);
@@ -195,7 +195,8 @@ describe('base prompt', () => {
 			expect(base).toContain('think briefly; decide, change, verify — one small step at a time');
 			expect(base).toContain('`request_human`');
 			expect(base).toContain(HANDOFF_TEMPLATE);
-			expect(base).toContain('then `move_ticket` as your last action');
+			expect(base).toContain('`finish_step` as your last action');
+			expect(base).not.toMatch(/move_ticket|approve_review|allowed move/);
 		}
 	);
 
@@ -247,19 +248,19 @@ describe('base prompt', () => {
 });
 
 describe('assignment', () => {
-	it('names the ticket and its column, points to the result and the stop of its role, and keeps refining in the Refine column', () => {
+	it('names the ticket and its step, points to the result and the end of its goal, and keeps refining in the refine step', () => {
 		const { user } = assemble(world());
 		expect(user.slice(user.indexOf('## Assignment'))).toBe(
 			'## Assignment\n' +
-				'Work STU-1 in the column "Umsetzen": do what your role for this column says, deliver the result it names and stop where it says. ' +
-				'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. ' +
+				'Work STU-1 in the step "implement": do what your goal for this step says, deliver the result it names and end the step with finish_step. ' +
+				'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the refine step or when your goal asks for it. ' +
 				'The internal context above is current: start with the work, not with `get_ticket`.'
 		);
 	});
 });
 
 describe('internal context', () => {
-	it('lists tasks with ids, relations with their reading, comments, allowed moves and linked notes', () => {
+	it('lists tasks with ids, relations with their reading, comments and linked notes', () => {
 		const w = world();
 		const { user: text } = assemble(w);
 		const [done, open] = w.db
@@ -268,10 +269,9 @@ describe('internal context', () => {
 			.map((r) => r.id as number);
 		expect(text).toContain(`- [x] ${done}: Parser reads key=value lines`);
 		expect(text).toContain(`- [ ] ${open}: Parser rejects duplicate keys`);
-		expect(text).toContain('- waits for STU-2 "Define the config format" (Kritik), still blocking');
-		expect(text).toContain('- blocks STU-3 "Document the config file" (Backlog)');
+		expect(text).toContain('- waits for STU-2 "Define the config format", still blocking');
+		expect(text).toContain('- blocks STU-3 "Document the config file"');
 		expect(text).toContain('Duplicate keys are an error, not a warning.');
-		expect(text).toMatch(/- \d+: Kritik\b/);
 		expect(text).toContain('Lines are key=value; # starts a comment.');
 	});
 
@@ -346,7 +346,7 @@ describe('budget', () => {
 		expect(prompt.blocks.find((b) => b.name === 'ticket')?.truncated).toBe(true);
 	});
 
-	it('never cuts tasks or allowed moves', () => {
+	it('never cuts tasks', () => {
 		const w = world();
 		board.addTasks(
 			w.db,
@@ -357,12 +357,7 @@ describe('budget', () => {
 		w.setDescription(w.parser, 'd'.repeat(60_000));
 		const prompt = assemble(w, local);
 		expect(prompt.user).toContain('Criterion 39 ');
-		expect(prompt.user).toMatch(/- \d+: Kritik\b/);
-		expect(
-			prompt.blocks
-				.filter((b) => b.name === 'tasks' || b.name === 'allowed_moves')
-				.every((b) => !b.truncated)
-		).toBe(true);
+		expect(prompt.blocks.filter((b) => b.name === 'tasks').every((b) => !b.truncated)).toBe(true);
 	});
 
 	it('refuses with prompt_too_large and a way out when even the cut prompt exceeds the budget', () => {
@@ -395,27 +390,30 @@ describe('output nothing can produce', () => {
 	/** Every default role reaches the model through the prompt of a ticket in its column, in both variants. */
 	function promptsOfEveryDefaultRole() {
 		const w = world();
-		const projectId = board.createProject(w.db, user, { key: 'DEF', name: 'Defaults' }).id;
-		const columns = (
-			w.db.prepare('SELECT id, name, step FROM columns WHERE project_id = ?').all(projectId) as {
-				id: number;
-				name: string;
-				step: Step;
-			}[]
-		).filter(({ step }) => ROLES[step] !== undefined);
-		return columns.flatMap(({ id, name }) => {
-			const ticketId = board.createTicket(w.db, user, projectId, {
-				title: `Ticket in ${name}`,
-				column_id: id
-			}).id;
-			return [cloud, local].map((profile) => assemblePrompt(w.db, { ticketId, profile }));
+		const variants = { DEF: 'software', KNW: 'knowledge' } as const;
+		return Object.entries(variants).flatMap(([key, variant]) => {
+			const projectId = board.createProject(w.db, user, { key, name: key }, variant).id;
+			const columns = (
+				w.db.prepare('SELECT id, name, step FROM columns WHERE project_id = ?').all(projectId) as {
+					id: number;
+					name: string;
+					step: Step;
+				}[]
+			).filter(({ step }) => ROLES[step] !== undefined);
+			return columns.flatMap(({ id, name }) => {
+				const ticketId = board.createTicket(w.db, user, projectId, {
+					title: `Ticket in ${name}`,
+					column_id: id
+				}).id;
+				return [cloud, local].map((profile) => assemblePrompt(w.db, { ticketId, profile }));
+			});
 		});
 	}
 
 	it('is asked for by no part of any prompt: base prompts, handoff template, default roles or assignment', () => {
 		const prompts = promptsOfEveryDefaultRole();
-		expect(prompts).toHaveLength(8);
-		expect(prompts.every((prompt) => prompt.system.includes('## Role:'))).toBe(true);
+		expect(prompts).toHaveLength(14);
+		expect(prompts.every((prompt) => prompt.system.includes('## Step: '))).toBe(true);
 		const texts = [BASE_PROMPT.full, BASE_PROMPT.compact, HANDOFF_TEMPLATE].concat(
 			prompts.map((prompt) => `${prompt.system}\n${prompt.user}`)
 		);
@@ -462,7 +460,6 @@ describe('blocks and estimate', () => {
 			'tasks',
 			'relations',
 			'comments',
-			'allowed_moves',
 			'notes',
 			'assignment'
 		]);
@@ -545,25 +542,6 @@ describe('boundaries shared with get_ticket', () => {
 		notes.linkTicket(w.db, user, old, w.parser, 'references');
 		notes.archiveNote(w.db, user, old);
 		expect(assemble(w).user).not.toContain('old-plan');
-	});
-
-	it('lists the allowed moves as get_ticket shows them to the run, with blocked moves marked', async () => {
-		const w = world(); // STU-1 still waits for STU-2, so every move of it is blocked
-		const { content } = await asRunOf(w.db, w.parser, 'tools/call', {
-			name: 'get_ticket',
-			arguments: {}
-		});
-		const moves = JSON.parse(content[0].text).allowed_moves as {
-			column_id: number;
-			name: string;
-			blocked?: string;
-		}[];
-		const { user: context } = assemblePrompt(w.db, { ticketId: w.parser, profile: local });
-		expect(moves.some((m) => m.blocked)).toBe(true);
-		for (const m of moves)
-			expect(context).toContain(
-				`- ${m.column_id}: ${m.name}${m.blocked ? ` — blocked: ${m.blocked}` : ''}`
-			);
 	});
 
 	it('writes nothing and announces nothing', () => {

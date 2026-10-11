@@ -96,11 +96,9 @@ describe('deriveTrace', () => {
 
 describe('summarizeResult', () => {
 	it('summarizes studio results: a move, completed tasks and search hits', () => {
-		expect(summarizeResult({ tool: 'move_ticket', args: {} }, '{"column":"Ready"}', false)).toEqual(
-			{
-				result_summary: '→ Ready'
-			}
-		);
+		expect(
+			summarizeResult({ tool: 'finish_step', args: {} }, '{"next":"implement","then":"run"}', false)
+		).toEqual({ result_summary: '→ implement' });
 		expect(
 			summarizeResult(
 				{ tool: 'complete_tasks', args: { task_ids: [1, 2] } },

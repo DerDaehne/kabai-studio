@@ -87,17 +87,10 @@ export const columns = (db: DatabaseSync, projectId: number) =>
 		.prepare('SELECT id, name, step, phase FROM columns WHERE project_id = ? ORDER BY position, id')
 		.all(projectId) as Column[];
 
-/**
- * The human reaches every column of the variant. An agent reaches only the neighbouring steps, never done and never
- * out of done: completing and reopening is the human's call.
- */
+/** The human reaches every column of the variant. An agent moves a ticket only by finishing its step (`finishStep`). */
 function targets(db: DatabaseSync, t: Ticket, actor: Actor): Column[] {
-	const cols = columns(db, t.project_id);
-	if (actor.kind === 'user') return cols.filter((c) => c.id !== t.column_id);
-	if (t.column_phase === 'done') return [];
-	// ponytail: the neighbour rule keeps move_ticket usable for agents until finish_step picks the next step itself.
-	const here = cols.findIndex((c) => c.id === t.column_id);
-	return [cols[here - 1], cols[here + 1]].filter((c) => c !== undefined && c.phase !== 'done');
+	if (actor.kind !== 'user') return [];
+	return columns(db, t.project_id).filter((c) => c.id !== t.column_id);
 }
 
 /** The single rule check shared by allowedMoves and moveTicket. */
@@ -105,18 +98,11 @@ function blockers(db: DatabaseSync, t: Ticket, to: Column): Blocker[] {
 	return to.phase === 'done' ? completionBlockers(db, t) : [];
 }
 
-function notReachable(t: Ticket, to: Column, reachable: Column[]): DomainError {
-	const reachableText = `Erreichbar für dich: ${quoted(reachable.map((c) => c.name))}.`;
-	if (to.phase === 'done' || t.column_phase === 'done')
-		return new DomainError(
-			'requires_human',
-			`Nur ein Mensch darf ${t.ref} von „${t.column_name}“ nach „${to.name}“ verschieben. ${reachableText}`,
-			'Abschließen und wieder öffnen macht der Mensch. Lass das Ticket, wo es ist; für Nacharbeit an einem fertigen Ticket ein Folgeticket anlegen und per relates_to verknüpfen.'
-		);
+function notReachable(t: Ticket, to: Column): DomainError {
 	return new DomainError(
-		'transition_not_allowed',
-		`${t.ref} darf nicht von „${t.column_name}“ nach „${to.name}“ wechseln. ${reachableText}`,
-		'Verschiebe in einen der erreichbaren Nachbarschritte; allowedMoves zeigt sie samt Sperrgründen.'
+		'requires_human',
+		`Nur ein Mensch darf ${t.ref} von „${t.column_name}“ nach „${to.name}“ verschieben.`,
+		'Einen Schritt beendest du mit finish_step. Lass das Ticket, wo es ist; für Nacharbeit an einem fertigen Ticket ein Folgeticket anlegen und per relates_to verknüpfen.'
 	);
 }
 
@@ -513,7 +499,7 @@ function retractOpenQuestions(db: DatabaseSync, emit: Emit, t: Ticket) {
 
 function assertMoveAllowed(db: DatabaseSync, actor: Actor, t: Ticket, to: Column) {
 	const reachable = targets(db, t, actor);
-	if (!reachable.some((c) => c.id === to.id)) throw notReachable(t, to, reachable);
+	if (!reachable.some((c) => c.id === to.id)) throw notReachable(t, to);
 	const bs = blockers(db, t, to);
 	if (bs.length)
 		throw new DomainError(

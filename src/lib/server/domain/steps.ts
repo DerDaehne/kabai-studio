@@ -18,7 +18,8 @@ export type StepResult = 'done' | 'back' | 'blocked';
 export type StepOutcome = { next: Step; then: 'run' | 'human'; question_id?: number };
 
 type Unmet = { missing: string; hint: string };
-type ExitCheck = (db: DatabaseSync, t: Ticket) => Unmet | undefined;
+/** One exit condition: `requires` is the line the prompt shows as "Done when", `unmet` the check finish_step runs. */
+type ExitCheck = { requires: string; unmet: (db: DatabaseSync, t: Ticket) => Unmet | undefined };
 
 const ticketText = (db: DatabaseSync, t: Ticket) =>
 	db.prepare('SELECT description, size FROM tickets WHERE id = ?').get(t.id) as {
@@ -37,37 +38,56 @@ const openAgentTaskIds = (db: DatabaseSync, t: Ticket) =>
 		.all(t.id)
 		.map((r) => r.id as number);
 
-const hasTasks: ExitCheck = (db, t) =>
-	taskCount(db, t) > 0
-		? undefined
-		: { missing: 'keine Tasks', hint: 'add_tasks mit einem Task je Akzeptanzkriterium' };
-
-const hasSize: ExitCheck = (db, t) =>
-	ticketText(db, t).size
-		? undefined
-		: { missing: 'keine Größe', hint: 'update_ticket mit size (XS, S, M, L oder XL)' };
-
-const hasDescription: ExitCheck = (db, t) =>
-	ticketText(db, t).description.trim()
-		? undefined
-		: { missing: 'keine Beschreibung', hint: 'update_ticket mit description' };
-
-const agentTasksDone: ExitCheck = (db, t) => {
-	const open = openAgentTaskIds(db, t);
-	if (!open.length) return undefined;
-	return {
-		missing: `offene Tasks ${open.join(', ')}`,
-		hint: `complete_tasks mit task_ids [${open.join(', ')}]; einen Task, den du nicht erfüllen kannst, meldest du mit finish_step result blocked`
-	};
+const hasTasks: ExitCheck = {
+	requires: 'the ticket has at least one task, one per acceptance criterion',
+	unmet: (db, t) =>
+		taskCount(db, t) > 0
+			? undefined
+			: { missing: 'keine Tasks', hint: 'add_tasks mit einem Task je Akzeptanzkriterium' }
 };
 
-const linkedNote: ExitCheck = (db, t) =>
+const hasSize: ExitCheck = {
+	requires: 'the ticket has a size (XS, S, M, L or XL)',
+	unmet: (db, t) =>
+		ticketText(db, t).size
+			? undefined
+			: { missing: 'keine Größe', hint: 'update_ticket mit size (XS, S, M, L oder XL)' }
+};
+
+const hasDescription: ExitCheck = {
+	requires: 'the description is not empty',
+	unmet: (db, t) =>
+		ticketText(db, t).description.trim()
+			? undefined
+			: { missing: 'keine Beschreibung', hint: 'update_ticket mit description' }
+};
+
+const agentTasksDone: ExitCheck = {
+	requires: 'all tasks are ticked',
+	unmet: (db, t) => {
+		const open = openAgentTaskIds(db, t);
+		if (!open.length) return undefined;
+		return {
+			missing: `offene Tasks ${open.join(', ')}`,
+			hint: `complete_tasks mit task_ids [${open.join(', ')}]; einen Task, den du nicht erfüllen kannst, meldest du mit finish_step result blocked`
+		};
+	}
+};
+
+const unmetLinkedNote = (db: DatabaseSync, t: Ticket) =>
 	hasLinkedNote(db, t.id)
 		? undefined
 		: { missing: 'keine verknüpfte Note', hint: 'notes_create, dann link_note_to_ticket' };
 
-const linkedNoteIfRequired: ExitCheck = (db, t) =>
-	t.docs_required ? linkedNote(db, t) : undefined;
+const linkedNote: ExitCheck = {
+	requires: 'a note is linked to the ticket (notes_create, then link_note_to_ticket)',
+	unmet: unmetLinkedNote
+};
+
+const linkedNoteIfRequired: ExitCheck = {
+	requires: 'if the ticket requires documentation, a note is linked to it',
+	unmet: (db, t) => (t.docs_required ? unmetLinkedNote(db, t) : undefined)
+};
 
 /** The exit conditions of each work step: finish_step with done passes only when none of them is unmet. */
 export const EXIT_CHECKS: Partial<Record<Step, ExitCheck[]>> = {
@@ -79,12 +99,22 @@ export const EXIT_CHECKS: Partial<Record<Step, ExitCheck[]>> = {
 	critique: []
 };
 
+/** The "Done when" lines of a step, rendered from the checks finish_step runs. */
+export const exitRequirements = (step: Step): string[] =>
+	(EXIT_CHECKS[step] ?? []).map((check) => check.requires);
+
 /** Where back leads from steps other than critique, which always returns to the step before it. */
 const BACK_TO: Partial<Record<Step, Step>> = {
 	plan: 'refine',
 	implement: 'refine',
 	draft: 'research'
 };
+
+/** The step finish_step with back returns to, or undefined if the step in this list of steps has none. */
+export function backStep(step: Step, steps: readonly Step[]): Step | undefined {
+	const target = step === 'critique' ? steps[steps.indexOf(step) - 1] : BACK_TO[step];
+	return target !== undefined && steps.includes(target) ? target : undefined;
+}
 
 /**
  * Ends the step of the calling run in one transaction: checks the exit conditions (done), writes the summary as the
@@ -173,7 +203,7 @@ function nextColumn(db: DatabaseSync, t: Ticket, cols: Column[]): Column {
 
 function assertExitConditions(db: DatabaseSync, t: Ticket) {
 	const unmet = (EXIT_CHECKS[t.column_step] ?? [])
-		.map((check) => check(db, t))
+		.map((check) => check.unmet(db, t))
 		.filter((u) => u !== undefined);
 	if (!unmet.length) return;
 	throw new DomainError(
@@ -184,11 +214,11 @@ function assertExitConditions(db: DatabaseSync, t: Ticket) {
 }
 
 function backColumn(t: Ticket, cols: Column[]): Column {
-	const here = cols.findIndex((c) => c.id === t.column_id);
-	const target =
-		t.column_step === 'critique'
-			? cols[here - 1]
-			: cols.find((c) => c.step === BACK_TO[t.column_step]);
+	const step = backStep(
+		t.column_step,
+		cols.map((c) => c.step)
+	);
+	const target = cols.find((c) => c.step === step);
 	if (target) return target;
 	throw new DomainError(
 		'back_not_possible',

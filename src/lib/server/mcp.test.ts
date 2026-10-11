@@ -208,7 +208,7 @@ describe('scope of a run', () => {
 });
 
 describe('get_ticket', () => {
-	it('shows tasks with ids, the last ten comments, relations as waits_for/blocks, allowed moves and the approval state', async () => {
+	it('shows tasks with ids, the last ten comments, relations as waits_for/blocks and the approval state', async () => {
 		const { db, call, startRun, ticket, place } = setup();
 		const [open, finished, own, successor, epic] = [
 			ticket('Offen'),
@@ -248,55 +248,46 @@ describe('get_ticket', () => {
 		]);
 		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Backlog' }]);
 		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Backlog' }]);
-		expect(body.allowed_moves).toEqual([
-			{
-				column_id: expect.any(Number),
-				name: 'Präzisieren',
-				blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).'
-			}
-		]);
+		expect(body).not.toHaveProperty('allowed_moves');
 
 		board.approveReview(db, user, own);
 		expect((await call(token, 'get_ticket')).body.review_approved).toBe(true);
 	});
 });
 
-describe('move_ticket for agents', () => {
-	it('refuses a work column while a predecessor is open and names it and blocks_satisfied_at', async () => {
-		const { db, call, startRun, ticket, col, columnOf } = setup();
-		const [predecessor, own] = [ticket(), ticket()];
-		board.linkRelation(db, user, predecessor, own, 'blocks');
-		const { token } = startRun(own);
-
-		const refused = await call(token, 'move_ticket', { column_id: col['Präzisieren'] });
-		expect(refused).toMatchObject({ isError: true, body: { error: 'blocked' } });
-		expect(refused.body.message).toContain('STU-1');
-		expect(refused.body.message).toContain('blocks_satisfied_at = done');
-		expect(refused.body.hint).toContain('request_human');
-		expect(columnOf(own)).toBe('Backlog');
-
-		// a human may start it deliberately
-		board.moveTicket(db, user, own, col['Präzisieren']);
-		expect((await call(token, 'move_ticket', { column_id: col.Backlog })).body.error).toBe(
-			'blocked'
-		); // stepping back is no way around the predecessor either
+describe('tools an agent no longer has', () => {
+	it('offers neither move_ticket nor approve_review', async () => {
+		const { serve, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
+		const names = tools.map((t: { name: string }) => t.name);
+		expect(names).not.toContain('move_ticket');
+		expect(names).not.toContain('approve_review');
 	});
 
-	it('lets the ticket into work once the predecessor is done, or approved when the project counts review_ok', async () => {
-		const { db, projectId, call, startRun, ticket, place, col, columnOf } = setup();
+	it('shows the ticket without allowed_moves, also while a predecessor is still open', async () => {
+		const { db, call, startRun, ticket } = setup();
 		const [predecessor, own] = [ticket(), ticket()];
 		board.linkRelation(db, user, predecessor, own, 'blocks');
-		place(predecessor, 'Kritik');
-		board.approveReview(db, user, predecessor);
 		const { token } = startRun(own);
-		const move = () => call(token, 'move_ticket', { column_id: col['Präzisieren'] });
+		expect((await call(token, 'get_ticket')).body).not.toHaveProperty('allowed_moves');
+	});
 
-		expect((await move()).body.error).toBe('blocked');
-		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
-		expect(await move()).toEqual({ isError: false, body: { column: 'Präzisieren' } });
-		expect(columnOf(own)).toBe('Präzisieren');
-		// a retry is harmless
-		expect(await move()).toEqual({ isError: false, body: { column: 'Präzisieren' } });
+	it('approves in critique only through finish_step with done, from a run other than the author', async () => {
+		const { db, call, startRun, ticket, place } = setup();
+		const own = ticket();
+		place(own, 'Umsetzen');
+		const author = startRun(own);
+		await call(author.token, 'finish_step', { result: 'done', summary: 'Umgesetzt' });
+		runs.finishRun(db, system, author.runId, { state: 'succeeded' });
+		const critic = startRun(own);
+		expect((await call(critic.token, 'get_ticket')).body.review_approved).toBe(false);
+		const done = await call(critic.token, 'finish_step', {
+			result: 'done',
+			summary: 'Nicht widerlegt'
+		});
+		expect(done.isError).toBe(false);
+		expect((await call(critic.token, 'get_ticket')).body.review_approved).toBe(true);
 	});
 });
 
@@ -516,58 +507,6 @@ describe('list_workable', () => {
 		const { body } = await call(token, 'list_workable');
 		expect(body.tickets).toHaveLength(50);
 		expect(body.more).toBe(3);
-	});
-});
-
-describe('approve_review', () => {
-	it('approves your ticket in a review column; get_ticket shows it until the ticket returns to a normal column', async () => {
-		const { call, startRun, ticket, place, col } = setup();
-		const own = ticket();
-		place(own, 'Kritik');
-		const { token } = startRun(own);
-
-		expect(await call(token, 'approve_review')).toEqual({
-			isError: false,
-			body: { review_approved: true }
-		});
-		expect((await call(token, 'get_ticket')).body.review_approved).toBe(true);
-		await call(token, 'move_ticket', { column_id: col.Umsetzen });
-		expect((await call(token, 'get_ticket')).body.review_approved).toBe(false);
-	});
-
-	it('refuses outside a review column and for your own work, naming the ticket and a way out in tool words', async () => {
-		const { db, call, startRun, ticket, place, col } = setup();
-		const own = ticket();
-		place(own, 'Umsetzen');
-		const developer = startRun(own);
-		const approved = () =>
-			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(own)?.at !== null;
-
-		const outside = await call(developer.token, 'approve_review');
-		expect(outside).toMatchObject({
-			isError: true,
-			body: {
-				error: 'not_in_review',
-				message: expect.stringContaining('STU-1'),
-				hint: expect.stringContaining('add_comment')
-			}
-		});
-		await call(developer.token, 'move_ticket', { column_id: col.Kritik });
-		const ownWork = await call(developer.token, 'approve_review');
-		expect(ownWork).toMatchObject({
-			isError: true,
-			body: {
-				error: 'self_approval',
-				message: expect.stringContaining('STU-1'),
-				hint: expect.stringContaining('add_comment')
-			}
-		});
-		expect(approved()).toBe(false);
-
-		runs.finishRun(db, system, developer.runId, { state: 'succeeded' });
-		const reviewer = startRun(own);
-		expect((await call(reviewer.token, 'approve_review')).isError).toBe(false);
-		expect(approved()).toBe(true);
 	});
 });
 
@@ -1102,8 +1041,9 @@ describe('idempotency_key', () => {
 
 describe('identity from the run', () => {
 	it('takes comment author and actor from the run token; the run is the assignee from its start', async () => {
-		const { db, call, startRun, ticket, col } = setup();
+		const { db, call, startRun, ticket, place } = setup();
 		const own = ticket();
+		place(own, 'Planen');
 		const { runId, token } = startRun(own);
 		const label = `agent (Run ${runId})`;
 		expect(db.prepare('SELECT assignee FROM tickets WHERE id = ?').get(own)?.assignee).toBe(label);
@@ -1114,7 +1054,7 @@ describe('identity from the run', () => {
 				.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?')
 				.get(body.comment_id)
 		).toEqual({ author_kind: 'agent', author: label, run_id: runId });
-		await call(token, 'move_ticket', { column_id: col['Präzisieren'] });
+		await call(token, 'finish_step', { result: 'done', summary: 'Weiter' });
 		expect(db.prepare('SELECT moved_by, assignee FROM tickets WHERE id = ?').get(own)).toEqual({
 			moved_by: JSON.stringify({ kind: 'agent', runId }),
 			assignee: label
@@ -1187,27 +1127,6 @@ describe('request_human', () => {
 });
 
 describe('errors reach the agent with a way out in tool vocabulary', () => {
-	it('names the reachable columns with ids when a target is not reachable', async () => {
-		const { call, startRun, ticket, col } = setup();
-		const { token } = startRun(ticket());
-		const { body } = await call(token, 'move_ticket', { column_id: col.Kritik });
-		expect(body.error).toBe('transition_not_allowed');
-		expect(body.hint).toBe(`Erreichbar: column_id ${col['Präzisieren']} (Präzisieren).`);
-	});
-
-	it('refuses to complete the ticket and names the one reachable step with its id instead', async () => {
-		const { call, startRun, ticket, place, col, columnOf } = setup();
-		const own = ticket();
-		place(own, 'Abnahme');
-		const { token } = startRun(own);
-
-		const { body } = await call(token, 'move_ticket', { column_id: col.Fertig });
-		expect(body.error).toBe('transition_not_allowed');
-		expect(body.hint).toBe(`Erreichbar: column_id ${col.Kritik} (Kritik).`);
-		expect(body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
-		expect(columnOf(own)).toBe('Abnahme');
-	});
-
 	it('asks the human from a done ticket without moving it', async () => {
 		const { call, startRun, ticket, place, columnOf } = setup();
 		const own = ticket();
@@ -1239,7 +1158,6 @@ describe('token budget', () => {
 		expect(tools.map((t: { name: string }) => t.name).sort()).toEqual([
 			'add_comment',
 			'add_tasks',
-			'approve_review',
 			'complete_tasks',
 			'create_child_tickets',
 			'finish_step',
@@ -1247,7 +1165,6 @@ describe('token budget', () => {
 			'link_note_to_ticket',
 			'link_tickets',
 			'list_workable',
-			'move_ticket',
 			'notes_create',
 			'notes_get',
 			'notes_link',

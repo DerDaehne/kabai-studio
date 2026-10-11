@@ -25,7 +25,7 @@ differs.
   and overridable · errors always offer a way out · accessible (keyboard, focus,
   WCAG AA contrast, labels, reduced motion) · usable on the go.
 - **AX (agent):** context in the prompt instead of discovery calls · few, concise
-  tools, batch-first, lean responses · no implicit rules (allowed moves explicit)
+  tools, batch-first, lean responses · no implicit rules (what ends a step is explicit: the exit conditions)
   · errors with a stable code and a concrete way out · identity derived from the
   run · take the token budget of small models seriously · retry-safe writes.
 - Every ticket with a visible surface (UI, MCP tool, prompt, CLI, error message)
@@ -142,7 +142,7 @@ Deviations only with a new ADR:
   required configuration; setup through the onboarding assistant instead of a
   manual. Consequently: **no native Node add-ons** (`node:sqlite` instead of
   `better-sqlite3`) and no required environment variables.
-- **Agent experience:** agents get ticket, tasks, allowed moves and notes injected
+- **Agent experience:** agents get ticket, tasks, the step contract (goal, exit conditions, what follows) and notes injected
   into the prompt instead of querying for them. Studio MCP tools are batch-first,
   answer leanly and take the identity from the run token.
 

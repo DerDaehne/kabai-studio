@@ -246,7 +246,9 @@ describe('the board view', () => {
 	it('shows a group per column with its name, how a run starts there and its role', async () => {
 		const { data } = await loaded();
 		const markup = text(html({ ...data, live: live() }));
-		expect(markup).toMatch(/Planen \d+ Start per :run · Do: pick the ticket up; do not refine it/);
+		expect(markup).toMatch(
+			/Planen \d+ Start per :run · Do: plan the work; do not refine the ticket/
+		);
 		expect(markup).toMatch(/Abnahme \d+ Start per :run STU/); // acceptance has no agent role
 	});
 
