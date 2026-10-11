@@ -491,7 +491,7 @@
 			? data.tracks.find((candidate) => candidate.id === tile.runId)
 			: undefined}
 		{@const points = track ? (series[track.id] ?? []) : []}
-		<div class="tile-frame" data-item={tile.key} data-project={tile.project.id}>
+		<div class="tile-frame" data-item={tile.key} data-project={tile.project.id} tabindex="-1">
 			<Tile tone={tile.tone} size={tile.size} href={tile.href}>
 				<span class="tile-head">
 					<span>{tile.ticket}</span>
