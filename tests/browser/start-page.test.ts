@@ -284,6 +284,21 @@ test.describe('at 1440 px', () => {
 		}
 	});
 
+	test('a run held by the human is no agent at work in its project', async ({ page, db }) => {
+		const project = createProject(db, HUMAN, { key: 'HELD', name: 'Held project' }).id;
+		const ticket = createTicket(db, HUMAN, project, { title: 'A held run' }).id;
+		const held = finishedRun(db, ticket, { state: 'paused' });
+		db.prepare('UPDATE runs SET halted = 1 WHERE id = ?').run(held);
+		try {
+			await open(page, '/');
+			const row = section(page, 'projekte').getByRole('link').filter({ hasText: 'Held project' });
+			await expect(row).toContainText(/Agents aktiv\s*0/);
+		} finally {
+			deleteTicket(db, HUMAN, ticket);
+			db.prepare('DELETE FROM projects WHERE id = ?').run(project);
+		}
+	});
+
 	test('x on a run tile asks in a sheet, y cancels the run', async ({
 		page,
 		db,
@@ -358,6 +373,7 @@ test.describe('at 1440 px', () => {
 			const row = operations.getByRole('listitem').filter({ hasText: failedTicket.ref });
 			await expect(row).toContainText('fehlgeschlagen');
 			await expect(row).toContainText('[provider_unreachable] Timeout talking to the model');
+			expect((await row.textContent())!.split('[provider_unreachable]')).toHaveLength(2); // the code shows once
 			await expect(row).toContainText('Ausweg: Modellserver starten.');
 			await expect(row).toContainText(/\d+:\d\d · keine/);
 			await expect(row.getByRole('link', { name: failedTicket.ref })).toHaveAttribute(

@@ -6,7 +6,7 @@ import { rank, waitReason } from './domain/runs';
 import { projectRef, recentFinishedRuns, type FinishedRun } from './live';
 import { LIMITS } from './runner';
 import { stepSeries } from './step-series';
-import { failureOf } from './ticket-view';
+import { splitError, wayOutsOf } from './ticket-view';
 
 /** A queued run as the operations section lists it, in the order the runner will claim it. */
 export type QueuedRun = {
@@ -65,9 +65,11 @@ export const TRACKED_RUNS = `
 	WHERE r.state IN ('running', 'waiting_approval') AND p.archived = 0
 	ORDER BY r.id`;
 
-const TAIL = `
-	SELECT seq, type, idempotency_key AS key, payload FROM run_events
-	WHERE run_id = ? ORDER BY seq DESC LIMIT ${TAIL_EVENTS}`;
+const tailQuery = (runCount: number) => `
+	SELECT run_id AS runId, seq, type, idempotency_key AS key, payload FROM (
+		SELECT *, row_number() OVER (PARTITION BY run_id ORDER BY seq DESC) AS newest FROM run_events
+		WHERE run_id IN (${Array(runCount).fill('?').join(', ')}))
+	WHERE newest <= ${TAIL_EVENTS} ORDER BY runId, seq`;
 
 // ponytail: "today" counts runs that finished or started since local midnight, a run running across midnight
 // with all its tokens; split usage per step once a day boundary has to be exact.
@@ -97,9 +99,18 @@ function queuedRuns(db: DatabaseSync): QueuedRun[] {
 	}));
 }
 
-function tailEvents(db: DatabaseSync, runId: number): TraceEvent[] {
-	const rows = db.prepare(TAIL).all(runId) as (Omit<TraceEvent, 'payload'> & { payload: string })[];
-	return rows.reverse().map((row) => ({ ...row, payload: JSON.parse(row.payload) }));
+function tailEvents(db: DatabaseSync, runIds: number[]): Map<number, TraceEvent[]> {
+	const rows = db.prepare(tailQuery(runIds.length)).all(...runIds) as (Omit<
+		TraceEvent,
+		'payload'
+	> & {
+		runId: number;
+		payload: string;
+	})[];
+	const byRun = new Map<number, TraceEvent[]>(runIds.map((id) => [id, []]));
+	for (const { runId, ...row } of rows)
+		byRun.get(runId)!.push({ ...row, payload: JSON.parse(row.payload) });
+	return byRun;
 }
 
 function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
@@ -110,9 +121,13 @@ function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
 		undefined,
 		now
 	);
+	const events = tailEvents(
+		db,
+		runs.map((run) => run.id)
+	);
 	return runs.map((run, i) => ({
 		...run,
-		events: tailEvents(db, run.id),
+		events: events.get(run.id)!,
 		series: series[i].points
 	}));
 }
@@ -124,19 +139,26 @@ function localMidnight(now: Date): string {
 	return midnight.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function withWayOut(db: DatabaseSync, run: FinishedRun): FinishedRunWithWayOut {
-	if (run.state !== 'failed') return run;
-	const error = (db.prepare('SELECT error FROM runs WHERE id = ?').get(run.id) as { error: string })
-		.error;
-	const failure = failureOf(db, run.id, error ?? '');
-	return failure ? { ...run, failure: { code: failure.code, wayOut: failure.wayOut } } : run;
+function withWayOuts(db: DatabaseSync, finished: FinishedRun[]): FinishedRunWithWayOut[] {
+	const wayOuts = wayOutsOf(
+		db,
+		finished.filter((run) => run.state === 'failed').map((run) => run.id)
+	);
+	return finished.map((run) =>
+		run.state === 'failed'
+			? {
+					...run,
+					failure: { code: splitError(run.summary ?? '').code, wayOut: wayOuts.get(run.id) ?? '' }
+				}
+			: run
+	);
 }
 
 /** Everything the start view shows beyond the live state the root layout already loads. */
 export function startView(db: DatabaseSync, now = new Date()): StartView {
 	return {
 		queued: queuedRuns(db),
-		finished: recentFinishedRuns(db).map((run) => withWayOut(db, run)),
+		finished: withWayOuts(db, recentFinishedRuns(db)),
 		tracks: runTracks(db, now),
 		today: db.prepare(TODAY_USAGE).get(localMidnight(now)) as StartView['today']
 	};

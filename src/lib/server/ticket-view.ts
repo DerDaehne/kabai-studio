@@ -179,15 +179,27 @@ function continuingRun(db: DatabaseSync, runId: number): number | undefined {
 const ERROR_FORMAT = /^\[([^\]]+)\] ([\s\S]*)$/;
 const WAY_OUT = '\nAusweg: ';
 
-export function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['failure'] {
+export function splitError(error: string): { code: string; message: string } {
 	const [, code = '', message = error] = ERROR_FORMAT.exec(error) ?? [];
-	const comment = db
+	return { code, message };
+}
+
+/** The way out of each run's newest failure comment; a run without one is absent. */
+export function wayOutsOf(db: DatabaseSync, runIds: number[]): Map<number, string> {
+	const marks = runIds.map(() => '?').join(', ');
+	const rows = db
 		.prepare(
-			"SELECT body FROM comments WHERE run_id = ? AND author_kind = 'system' AND instr(body, ?) > 0 ORDER BY id DESC LIMIT 1"
+			`SELECT run_id AS runId, body FROM comments
+			WHERE run_id IN (${marks}) AND author_kind = 'system' AND instr(body, ?) > 0 ORDER BY id`
 		)
-		.get(runId, WAY_OUT) as { body: string } | undefined;
-	const wayOut = comment ? comment.body.slice(comment.body.indexOf(WAY_OUT) + WAY_OUT.length) : '';
-	return { code, message, wayOut };
+		.all(...runIds, WAY_OUT) as { runId: number; body: string }[];
+	return new Map(
+		rows.map((row) => [row.runId, row.body.slice(row.body.indexOf(WAY_OUT) + WAY_OUT.length)])
+	);
+}
+
+export function failureOf(db: DatabaseSync, runId: number, error: string): RunTrace['failure'] {
+	return { ...splitError(error), wayOut: wayOutsOf(db, [runId]).get(runId) ?? '' };
 }
 
 const iso = (column: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${column})`;

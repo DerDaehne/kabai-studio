@@ -91,7 +91,9 @@
 
 	const countFor = (projectId: number) => ({
 		questions: questions.filter((question) => question.project.id === projectId).length,
-		agents: runs.filter((run) => run.project.id === projectId && run.state !== 'queued').length
+		agents: runs.filter(
+			(run) => run.project.id === projectId && (run.state === 'running' || run.state === 'waiting')
+		).length
 	});
 
 	const runnerLine = $derived.by(() => {
@@ -408,7 +410,7 @@
 								</span>
 								{#if run.summary}
 									<span class="detail failure">
-										{run.failure?.code ? `[${run.failure.code}] ` : ''}{run.summary}
+										{run.summary}
 									</span>
 								{/if}
 								{#if run.failure?.wayOut}
@@ -681,7 +683,7 @@
 	}
 	.stats {
 		display: flex;
-		gap: var(--space-5);
+		gap: var(--space-4);
 	}
 	.row[aria-current='true'] .name {
 		font-weight: var(--weight-semibold);
@@ -697,7 +699,7 @@
 	}
 	.steps {
 		margin: var(--space-2) 0 0;
-		padding-left: var(--space-5);
+		padding-left: var(--space-6);
 		font-size: var(--type-meta);
 	}
 	.steps li {

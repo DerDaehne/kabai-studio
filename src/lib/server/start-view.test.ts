@@ -84,6 +84,23 @@ describe('startView', () => {
 		expect(run.finishedAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
 	});
 
+	it('reads failure data and tracked events in a fixed number of statements however many runs there are', () => {
+		const s = setup();
+		const statements = (failures: number) => {
+			for (let i = 0; i < failures; i++) {
+				runs.finishRun(s.db, user, s.running(), { state: 'failed', error: '[x] y' });
+				runs.appendEvent(s.db, user, s.running(), { type: 'log', payload: { kind: 'step' } });
+			}
+			let count = 0;
+			const prepare = s.db.prepare.bind(s.db);
+			s.db.prepare = (sql: string) => (count++, prepare(sql));
+			startView(s.db);
+			return count;
+		};
+		const few = statements(1);
+		expect(statements(4)).toBe(few);
+	});
+
 	it('sums today’s tokens and cost over runs that finished or started today, not older ones', () => {
 		const s = setup();
 		const today = s.running();
