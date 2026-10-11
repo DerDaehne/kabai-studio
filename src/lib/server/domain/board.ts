@@ -527,7 +527,7 @@ export function writeApproval(db: DatabaseSync, emit: Emit, actor: Actor, t: Tic
 }
 
 /** SQL condition for an unfinished `blocks` predecessor `b` in column `bc`, judged by the successor's project `p`. */
-const PREDECESSOR_OPEN = `bc.phase <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
+export const PREDECESSOR_OPEN = `bc.phase <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
 
 /**
  * Tickets without unfinished blocks predecessors and without an open question, excluding done ones. A predecessor is unfinished until it is done —

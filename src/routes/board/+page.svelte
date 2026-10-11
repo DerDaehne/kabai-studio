@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { t } from '$lib/i18n/t';
+	import type { MessageKey } from '$lib/i18n';
+	import type { Lage } from '$lib/lage';
 	import { tick } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -12,7 +15,7 @@
 	import { shell, type ProjectRef } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import { reloadsBoard } from '$lib/ticket-live';
-	import Badge from '$lib/ui/Badge.svelte';
+	import Badge, { type Tone } from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
@@ -25,12 +28,28 @@
 		edgeIndex,
 		groupByColumn,
 		groupJump,
-		runStatus,
 		startRule,
 		stepped,
 		type BoardTicket,
 		type StepTarget
 	} from './list';
+
+	const LAGE_TONES: Record<Lage, Tone> = {
+		waiting: 'waiting',
+		working: 'running',
+		open: 'neutral',
+		acceptance: 'accent',
+		done: 'succeeded'
+	};
+
+	/** The Lage and, where it has one, the reason, so colour never carries the state alone. */
+	function lageText({ lage, reason }: BoardTicket) {
+		const name = t(`lage.${lage}`);
+		if (reason.kind === 'capacity') return `${name} · ${reason.text}`;
+		if (lage !== 'waiting' && lage !== 'open') return name;
+		const refs = reason.kind === 'predecessors' ? reason.refs.join(', ') : '';
+		return `${name} · ${t(`lage.reason.${reason.kind}` as MessageKey, { refs })}`;
+	}
 
 	/** How long a deleted ticket can come back with u before it is deleted for good. */
 	const DELETE_UNDO_MS = 10_000;
@@ -38,7 +57,6 @@
 	let { data }: PageProps = $props();
 
 	const projects = $derived(data.live?.projects ?? []);
-	const runs = $derived(data.live?.runs ?? []);
 	/** Deleted on the board, but still inside the undo window. */
 	const deleting = new SvelteSet<number>();
 	const view = $derived(
@@ -318,7 +336,6 @@
 {/snippet}
 
 {#snippet ticketRow(row: BoardTicket)}
-	{@const status = runStatus(row.ref, runs)}
 	<div class="row">
 		<span class="id"
 			><ProjectTag code={row.project.code} palette={row.project.palette} /> {row.ref}</span
@@ -328,9 +345,7 @@
 		{:else}
 			<a class="title" href={href(row)}>{row.title}</a>
 		{/if}
-		<span class="run"
-			>{#if status}<Badge tone={status.tone}>{status.text}</Badge>{/if}</span
-		>
+		<span class="run"><Badge tone={LAGE_TONES[row.lage]}>{lageText(row)}</Badge></span>
 		<span class="tasks"
 			>{#if row.tasks.total}{row.tasks.done}/{row.tasks.total}<span class="visually-hidden">
 					Tasks erledigt</span
@@ -579,6 +594,8 @@
 		.run {
 			grid-column: 2 / -1;
 			grid-row: 2;
+			min-width: 0;
+			overflow: hidden;
 		}
 		.run:empty {
 			display: none;

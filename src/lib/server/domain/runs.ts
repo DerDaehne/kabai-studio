@@ -316,28 +316,38 @@ type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text'> & {
 	halt: 'stop' | 'pause' | null;
 };
 
-/** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
-export function waitReason(
+const WAIT_ROWS = `SELECT r.id AS runId, r.priority, p.pool, (SELECT kind FROM runner_halt) AS halt,
+		(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
+		(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
+			WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
+		(SELECT count(*) FROM runs q JOIN agent_profiles qp ON qp.id = q.agent_profile_id
+			WHERE q.state = 'queued' AND qp.pool = p.pool AND (${rank('q.priority')}, q.id) < (${rank('r.priority')}, r.id)) AS ahead
+	FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.state = 'queued'`;
+
+/** Why each queued run does not run yet, in one query; `runId` narrows it to one run. */
+export function waitReasons(
 	db: DatabaseSync,
-	runId: number,
-	limits: Limits
-): WaitReason | undefined {
-	const row = db
-		.prepare(
-			`SELECT r.priority, p.pool, (SELECT kind FROM runner_halt) AS halt,
-				(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
-				(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
-					WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
-				(SELECT count(*) FROM runs q JOIN agent_profiles qp ON qp.id = q.agent_profile_id
-					WHERE q.state = 'queued' AND qp.pool = p.pool AND (${rank('q.priority')}, q.id) < (${rank('r.priority')}, r.id)) AS ahead
-			FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id WHERE r.id = ? AND r.state = 'queued'`
-		)
-		.get(runId) as WaitRow | undefined;
-	if (!row) return undefined;
-	const { halt, ...counts } = row;
-	const reason = { ...counts, poolLimit: limits.pools[row.pool] ?? 1, globalLimit: limits.global };
-	return { ...reason, text: halt ? HALTED_TEXT[halt] : waitText(reason) };
+	limits: Limits,
+	runId?: number
+): Map<number, WaitReason> {
+	const rows = db
+		.prepare(`${WAIT_ROWS} AND (?1 IS NULL OR r.id = ?1)`)
+		.all(runId ?? null) as (WaitRow & { runId: number })[];
+	return new Map(
+		rows.map(({ runId: id, halt, ...counts }) => {
+			const reason = {
+				...counts,
+				poolLimit: limits.pools[counts.pool] ?? 1,
+				globalLimit: limits.global
+			};
+			return [id, { ...reason, text: halt ? HALTED_TEXT[halt] : waitText(reason) }];
+		})
+	);
 }
+
+/** Why a queued run does not run yet — the same answer for the run UI and the agent's context; undefined unless the run is queued. */
+export const waitReason = (db: DatabaseSync, runId: number, limits: Limits) =>
+	waitReasons(db, limits, runId).get(runId);
 
 const HALTED_TEXT = {
 	stop: 'wartet: Not-Aus aktiv — Fortsetzen mit :fortsetzen all.',

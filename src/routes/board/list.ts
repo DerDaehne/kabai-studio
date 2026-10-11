@@ -1,7 +1,5 @@
-import type { LiveRun } from '$lib/live';
-import { RUN_STATE_LABELS } from '$lib/shell/live.svelte';
+import type { Lage, LageReason, Progress } from '$lib/lage';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
-import type { Tone } from '$lib/ui/Badge.svelte';
 
 export { BOARD_DEPENDENCY } from '$lib/live';
 
@@ -26,6 +24,11 @@ export type BoardTicket = {
 	tasks: { done: number; total: number };
 	/** The ref of the epic the ticket belongs to. */
 	epic: string | null;
+	lage: Lage;
+	reason: LageReason;
+	/** The step of the column, e.g. `implement`. */
+	step: string;
+	progress: Progress;
 	next: { forward?: StepTarget; back?: StepTarget };
 };
 
@@ -78,17 +81,4 @@ export function groupJump(
 		target = next ?? target;
 	}
 	return target;
-}
-
-// Most urgent to least: one holding for the human, then one the human halted, then one at work, then one in the queue.
-const RANK: Record<LiveRun['state'], number> = { waiting: 0, paused: 1, running: 2, queued: 3 };
-
-/** The run that matters most for a row, picked by {@link RANK}; its label comes from the shared RUN_STATE_LABELS. */
-export function runStatus(ref: string, runs: LiveRun[]): { tone: Tone; text: string } | undefined {
-	const [run] = runs
-		.filter((candidate) => candidate.ticket === ref)
-		.sort((a, b) => RANK[a.state] - RANK[b.state]);
-	if (!run) return undefined;
-	const { tone, label } = RUN_STATE_LABELS[run.state];
-	return { tone, text: `${label} · ${run.profile} (${run.location})` };
 }

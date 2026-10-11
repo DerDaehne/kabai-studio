@@ -100,5 +100,19 @@ export const de: Catalogue = {
 	'start.stop.confirm': 'Run abbrechen (y)',
 
 	'settings.signedInAs': 'Angemeldet als {name}',
-	'settings.signOut': 'Abmelden'
+	'settings.signOut': 'Abmelden',
+
+	'lage.waiting': 'Wartet auf dich',
+	'lage.working': 'In Arbeit',
+	'lage.open': 'Offen',
+	'lage.acceptance': 'Zur Abnahme',
+	'lage.done': 'Fertig',
+	'lage.reason.question': 'Offene Frage',
+	'lage.reason.approval': 'Freigabe nötig',
+	'lage.reason.proposal': 'Vorschlag prüfen',
+	'lage.reason.failure': 'Run fehlgeschlagen',
+	'lage.reason.predecessors': 'Wartet auf {refs}',
+	'lage.reason.paused': 'Angehalten, weiter mit :fortsetzen',
+	'lage.reason.not_prioritized': 'Noch nicht priorisiert',
+	'lage.reason.ready': 'Bereit zum Start'
 };

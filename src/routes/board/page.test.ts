@@ -2,14 +2,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render } from 'svelte/server';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { LIVE_DEPENDENCY, type LiveRun, type LiveState } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import * as runs from '$lib/server/domain/runs';
+import { requestHuman } from '$lib/server/domain/questions';
 import { actions, load, type BoardPage } from './+page.server';
 import { BOARD_DEPENDENCY } from './list';
 import Page from './+page.svelte';
+
+vi.mock('$app/state', () => ({ page: { data: { locale: 'de' } } }));
 
 const dir = mkdtempSync(join(tmpdir(), 'studio-board-route-'));
 process.env.STUDIO_DATA_DIR = dir;
@@ -122,6 +126,49 @@ describe('the board load', () => {
 	});
 });
 
+describe('the Lage on the board load', () => {
+	it('gives each ticket lage, reason, step and progress', async () => {
+		expect(await loadedTicket(tasks.id)).toMatchObject({
+			lage: 'open',
+			reason: { kind: 'ready' },
+			step: 'plan',
+			progress: { index: 2, total: 5 }
+		});
+		expect(await loadedTicket(accepted.id)).toMatchObject({
+			lage: 'acceptance',
+			step: 'acceptance'
+		});
+	});
+
+	it('follows a new question, a run change and a move on the next load, which every live event triggers', async () => {
+		const ticket = create(studio, 'Lage live', 'Umsetzen');
+		const { dependencies } = await loaded();
+		expect(dependencies).toContain(LIVE_DEPENDENCY);
+		expect(dependencies).toContain(BOARD_DEPENDENCY);
+
+		const profile = runs.createProfile(db(), user, {
+			name: 'lage-live',
+			executor: 'builtin',
+			provider: 'openai-compatible',
+			model: 'm'
+		}).id;
+		const run = runs.createRun(db(), user, { ticketId: ticket.id, profileId: profile }).id;
+		expect((await loadedTicket(ticket.id)).reason.kind).toBe('capacity');
+		runs.startRun(db(), user, run);
+		expect((await loadedTicket(ticket.id)).lage).toBe('working');
+
+		requestHuman(db(), { kind: 'agent', runId: run }, ticket.id, { question: 'Weiter?' });
+		expect(await loadedTicket(ticket.id)).toMatchObject({
+			lage: 'waiting',
+			reason: { kind: 'question' }
+		});
+
+		await post('move', { ticketId: ticket.id, columnId: columnId(studio, 'Abnahme') });
+		const moved = await loadedTicket(ticket.id);
+		expect(moved).toMatchObject({ step: 'acceptance', reason: { kind: 'question' } });
+	});
+});
+
 describe('the board actions', () => {
 	it('moves a ticket to an allowed column for the human', async () => {
 		const ticket = create(studio, 'Verschieben');
@@ -211,18 +258,10 @@ describe('the board view', () => {
 		);
 	});
 
-	it('shows the run of a ticket with its state and agent', async () => {
+	it('shows the Lage of a ticket and, where it has one, the reason', async () => {
 		const { data } = await loaded();
-		const run: LiveRun = {
-			id: 7,
-			profile: 'qwen',
-			location: 'lokal',
-			project: { id: studio, code: 'STU', name: 'Studio', palette: 1 },
-			ticket: 'STU-2',
-			state: 'running'
-		};
-		expect(text(html({ ...data, live: live([run]) }))).toContain(
-			'Tasks halb erledigt arbeitet · qwen (lokal)'
+		expect(text(html({ ...data, live: live() }))).toContain(
+			'Tasks halb erledigt Offen · Bereit zum Start'
 		);
 	});
 

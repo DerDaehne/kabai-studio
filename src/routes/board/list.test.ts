@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { LiveRun } from '$lib/live';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import {
 	edgeIndex,
 	groupByColumn,
 	groupJump,
-	runStatus,
 	startRule,
 	stepped,
 	type BoardColumn,
@@ -28,6 +26,10 @@ const ticket = (project: ProjectRef, number: number, column: BoardColumn): Board
 	column,
 	tasks: { done: 0, total: 0 },
 	epic: null,
+	lage: 'open',
+	reason: { kind: 'ready' },
+	step: 'refine',
+	progress: { index: 1, total: 5 },
 	next: {}
 });
 
@@ -88,49 +90,5 @@ describe('moving the selection', () => {
 		expect(groupJump(starts, 3, false, 1)).toBe(0);
 		expect(groupJump(starts, 6, false, 2)).toBe(3);
 		expect(groupJump(starts, 0, false, 1)).toBe(0);
-	});
-});
-
-describe('the run status of a row', () => {
-	const run = (id: number, ticketRef: string, state: LiveRun['state']): LiveRun => ({
-		id,
-		profile: `agent-${id}`,
-		location: 'lokal',
-		project: studio,
-		ticket: ticketRef,
-		state
-	});
-
-	it('names state and agent in words, so colour never carries it alone', () => {
-		expect(runStatus('STU-1', [run(1, 'STU-1', 'running')])).toEqual({
-			tone: 'running',
-			text: 'arbeitet · agent-1 (lokal)'
-		});
-		expect(runStatus('STU-1', [run(2, 'STU-1', 'queued')])).toEqual({
-			tone: 'neutral',
-			text: 'in der Queue · agent-2 (lokal)'
-		});
-	});
-
-	it('shows a run that holds for the human before one that works or waits in the queue', () => {
-		const runs = [
-			run(1, 'STU-1', 'queued'),
-			run(2, 'STU-1', 'running'),
-			run(3, 'STU-1', 'waiting')
-		];
-		expect(runStatus('STU-1', runs)).toEqual({ tone: 'waiting', text: 'hält · agent-3 (lokal)' });
-	});
-
-	it('shows a run the human halted as „angehalten“, after one that holds for the human and before one at work', () => {
-		const runs = [run(1, 'STU-1', 'running'), run(2, 'STU-1', 'paused')];
-		expect(runStatus('STU-1', runs)).toEqual({
-			tone: 'paused',
-			text: 'angehalten · agent-2 (lokal)'
-		});
-		expect(runStatus('STU-1', [...runs, run(3, 'STU-1', 'waiting')])?.tone).toBe('waiting');
-	});
-
-	it('shows nothing for a ticket without an active run', () => {
-		expect(runStatus('STU-2', [run(1, 'STU-1', 'running')])).toBeUndefined();
 	});
 });

@@ -99,5 +99,19 @@ export const en = {
 	'start.stop.confirm': 'Cancel run (y)',
 
 	'settings.signedInAs': 'Signed in as {name}',
-	'settings.signOut': 'Sign out'
+	'settings.signOut': 'Sign out',
+
+	'lage.waiting': 'Waiting for you',
+	'lage.working': 'In progress',
+	'lage.open': 'Open',
+	'lage.acceptance': 'For acceptance',
+	'lage.done': 'Done',
+	'lage.reason.question': 'Open question',
+	'lage.reason.approval': 'Approval needed',
+	'lage.reason.proposal': 'Proposal to review',
+	'lage.reason.failure': 'Run failed',
+	'lage.reason.predecessors': 'Waiting for {refs}',
+	'lage.reason.paused': 'Paused, resume with :fortsetzen',
+	'lage.reason.not_prioritized': 'Not prioritized yet',
+	'lage.reason.ready': 'Ready to start'
 };

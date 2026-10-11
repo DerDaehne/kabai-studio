@@ -5,6 +5,7 @@ import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
+import { ticketLagen, type TicketLage } from '$lib/server/lagen';
 import { ticketMoves, type TicketMove } from '$lib/server/ticket-view';
 import { nextMove } from '$lib/ticket-move';
 import { ROLES, type Step } from '$lib/server/domain/variants';
@@ -51,7 +52,7 @@ const TICKETS = `
 const stepTarget = (move: TicketMove | undefined): StepTarget | undefined =>
 	move && { columnId: move.columnId, name: move.name, blockers: move.blockers };
 
-function boardTicket(db: DatabaseSync, row: TicketRow): BoardTicket {
+function boardTicket(db: DatabaseSync, row: TicketRow, lage: TicketLage): BoardTicket {
 	const moves = ticketMoves(db, HUMAN, row.id, row.projectId);
 	return {
 		id: row.id,
@@ -67,6 +68,10 @@ function boardTicket(db: DatabaseSync, row: TicketRow): BoardTicket {
 		},
 		tasks: { done: row.tasksDone, total: row.tasksTotal },
 		epic: row.epic,
+		lage: lage.lage,
+		reason: lage.reason,
+		step: lage.step,
+		progress: lage.progress,
 		next: {
 			forward: stepTarget(nextMove(moves, row.columnPosition, true)),
 			back: stepTarget(nextMove(moves, row.columnPosition, false))
@@ -87,7 +92,11 @@ function roles(db: DatabaseSync): Record<number, string> {
 export const load: PageServerLoad = ({ depends }): BoardPage => {
 	depends(LIVE_DEPENDENCY, BOARD_DEPENDENCY);
 	const rows = db().prepare(TICKETS).all() as TicketRow[];
-	return { tickets: rows.map((row) => boardTicket(db(), row)), roles: roles(db()) };
+	const lagen = new Map(ticketLagen(db()).map((lage) => [lage.ticketId, lage]));
+	return {
+		tickets: rows.map((row) => boardTicket(db(), row, lagen.get(row.id)!)),
+		roles: roles(db())
+	};
 };
 
 const numberField = (form: FormData, name: string) => Number(form.get(name));
