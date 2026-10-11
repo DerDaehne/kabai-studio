@@ -60,7 +60,7 @@ const LAGE_ROWS = `
  */
 function runInput(row: Row): LageRun | null {
 	const { runState: state } = row;
-	if (state === 'failed') return row.runInStep ? 'failed' : null;
+	if (state === 'failed' && row.runInStep) return 'failed';
 	if (row.running) return 'running';
 	return state === 'queued' || state === 'paused' ? state : null;
 }

@@ -150,6 +150,23 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(id).reason.kind).not.toBe('failure');
 	});
 
+	it('shows a ticket as in progress when an older run works and the newest failed in an earlier step', () => {
+		const s = setup();
+		const stu = s.project('STU');
+		const id = s.ticket(stu);
+		runs.startRun(s.db, user, s.run(id));
+		const failed = s.run(id);
+		runs.startRun(s.db, user, failed);
+		runs.finishRun(s.db, user, failed, { state: 'failed', error: 'boom' });
+		const next = s.db
+			.prepare(
+				'SELECT id FROM columns WHERE project_id = ? AND position > (SELECT position FROM columns WHERE step = ? AND project_id = ?) ORDER BY position LIMIT 1'
+			)
+			.get(stu, 'implement', stu)!.id as number;
+		board.moveTicket(s.db, user, id, next);
+		expect(s.lageOfTicket(id).lage).toBe('working');
+	});
+
 	it('shows a ticket moved to done as done even though it had an open question', () => {
 		const s = setup();
 		const stu = s.project('STU');
