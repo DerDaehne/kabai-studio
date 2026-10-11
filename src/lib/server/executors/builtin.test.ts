@@ -471,19 +471,21 @@ describe('builtin executor', () => {
 		expect(board.ticket(db, ticketId).column_step).toBe('implement');
 	});
 
-	it('ends the turn and succeeds once the agent finishes its step as done', async () => {
+	it('ends the turn and succeeds once the agent finishes its step as done, and the next step gets its own run', async () => {
 		const { db, queue, run, ticketId, columns } = setup();
 		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(columns['Planen'], ticketId);
 		const provider = fakeProvider(
 			{ chunks: [call('call-1', 'finish_step', { result: 'done', summary: 'Plan: one writer.' })] },
-			{ chunks: [{ text: 'never asked for' }] }
+			{ chunks: [{ text: 'Implemented.' }] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
 		const runId = queue();
 		await ended(() => run(runId).state);
+		await ended(() => run(runId + 1).state);
 
 		expect(run(runId).state).toBe('succeeded');
-		expect(provider.requests).toHaveLength(1);
+		expect(run(runId + 1)).toMatchObject({ trigger: 'on_enter', column_id: columns['Umsetzen'] });
+		expect(provider.requests).toHaveLength(2);
 		expect(board.ticket(db, ticketId).column_step).toBe('implement');
 	});
 
@@ -546,7 +548,7 @@ describe('builtin executor', () => {
 		).toEqual({ state: 'queued', resume_reason: 'quota' });
 	});
 
-	it('ends succeeded without a follow-up run when parked during its final step', async () => {
+	it('ends succeeded without a resume run when parked during its final step; the chain queues the next step', async () => {
 		const { db, queue, run, columns } = setup();
 		let park = () => {};
 		const provider = fakeProvider(
@@ -559,7 +561,9 @@ describe('builtin executor', () => {
 		await ended(() => run(runId).state);
 
 		expect(run(runId).state).toBe('succeeded');
-		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
+		expect(db.prepare('SELECT trigger FROM runs WHERE id <> ?').all(runId)).toEqual([
+			{ trigger: 'on_enter' }
+		]);
 	});
 
 	it('fails with step_limit when the only move of the run was rejected', async () => {

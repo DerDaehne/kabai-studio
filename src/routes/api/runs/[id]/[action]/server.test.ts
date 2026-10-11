@@ -24,7 +24,10 @@ const runner = startRunner(db(), { builtin: untilAborted });
 afterAll(() => runner.stop());
 
 const projectId = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
-const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
+const ticketId = board.createTicket(db(), user, projectId, {
+	title: 'T',
+	column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+}).id;
 const profileId = runs.createProfile(db(), user, {
 	name: 'qwen',
 	executor: 'builtin',

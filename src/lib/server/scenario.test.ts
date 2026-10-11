@@ -304,7 +304,10 @@ describe('skipAnswerUndoWindow', () => {
 
 		// A ticket whose run the human paused with `:anhalten`, unrelated to the scripted answer below. `pauseRuns`
 		// also sets the halt (kind 'pause') that holds the queue.
-		const pausedTicketId = board.createTicket(db, SYSTEM, projectId, { title: 'paused' }).id;
+		const pausedTicketId = board.createTicket(db, SYSTEM, projectId, {
+			title: 'paused',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const pausedRunId = runs.createRun(db, SYSTEM, { ticketId: pausedTicketId, profileId }).id;
 		runs.startRun(db, SYSTEM, pausedRunId);
 		pauseRuns(db, { kind: 'user' });
@@ -312,7 +315,10 @@ describe('skipAnswerUndoWindow', () => {
 
 		// The asking run of a scripted question, paused (not halted) the way `request_human` leaves it, with the
 		// follow-up run its answer already queued — the state `skipAnswerUndoWindow` is meant to release.
-		const askingTicketId = board.createTicket(db, SYSTEM, projectId, { title: 'asked' }).id;
+		const askingTicketId = board.createTicket(db, SYSTEM, projectId, {
+			title: 'asked',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const askingRunId = runs.createRun(db, SYSTEM, { ticketId: askingTicketId, profileId }).id;
 		db.prepare(
 			"UPDATE runs SET state = 'paused', finished_at = CURRENT_TIMESTAMP WHERE id = ?"

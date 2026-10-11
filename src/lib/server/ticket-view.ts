@@ -3,6 +3,7 @@ import type { ProjectRef } from '$lib/live';
 import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
+import { defaultProfileId } from './domain/intents';
 import type { Actor } from './domain/core';
 import type { Phase } from './domain/variants';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
@@ -236,13 +237,7 @@ export function runTabs(db: DatabaseSync, ticketId: number): RunTab[] {
 /** The profiles to start a run with; preselected is the one the newest run of the project used, else the first. */
 export function runStart(db: DatabaseSync, projectId: number): RunStart {
 	const profiles = listProfiles(db).map(({ id, name }) => ({ id, name }) as StartProfile);
-	const lastUsed = db
-		.prepare(
-			`SELECT r.agent_profile_id AS id FROM runs r JOIN tickets t ON t.id = r.ticket_id
-			WHERE t.project_id = ? AND r.agent_profile_id IS NOT NULL ORDER BY r.id DESC LIMIT 1`
-		)
-		.get(projectId) as { id: number } | undefined;
-	return { profiles, preselected: lastUsed?.id ?? profiles[0]?.id };
+	return { profiles, preselected: defaultProfileId(db, projectId) };
 }
 
 export const isRunOf = (db: DatabaseSync, ticketId: number, runId: number): boolean =>

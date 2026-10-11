@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import { answerQuestion, latestOpenQuestion, type Answer } from './domain/questions';
-import { createProfile, createRun } from './domain/runs';
+import { startTicket } from './domain/intents';
+import { createProfile } from './domain/runs';
 import { migrate, openDb } from './db';
 import { builtinExecutor } from './executors/builtin';
 import { startRunner, type RunnerHandle } from './runner';
@@ -407,7 +408,7 @@ async function runTicket(
 		column_id: startAt
 	});
 	const startColumn = board.ticket(instance.db, ticketId).column_name;
-	createRun(instance.db, USER, { ticketId, profileId: instance.profileId });
+	startTicket(instance.db, USER, ticketId, instance.profileId);
 	const timedOut = await waitForOutcome(instance, ticketId, spec.requestHumanAnswer, maxWaitMs);
 	const runs = runsOfTicket(instance.db, ticketId);
 	const eventsByRun = runs.map((run) => eventsOfRun(instance.db, run.id));

@@ -486,7 +486,9 @@ describe('migrate', () => {
 			expect(migrate(db)[0]).toBe('013_halt_kind.sql');
 
 			const after = everyRow(db);
-			expect(after.runs).toEqual(before.runs.map((run) => ({ ...run, halted: 0 })));
+			expect(after.runs).toEqual(
+				before.runs.map((run) => ({ ...run, halted: 0, step_result: null }))
+			);
 			expect({ ...after, runs: before.runs }).toEqual(before);
 			expect(before.runs).toHaveLength(8);
 			expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
@@ -856,9 +858,11 @@ describe('016 on a database at 015 with both template generations in real use', 
 		expect(rows(RUN_EVENTS)).toEqual(before.events);
 		expect(rows(TICKETS)).toEqual(before.tickets);
 		expect(rows(RUNS)).toEqual(
-			before.runs.map((run) =>
-				run.id === 5 || run.id === 7 || run.id === 11 ? { ...run, column_id: null } : run
-			)
+			before.runs.map((run) => ({
+				...run,
+				...(run.id === 5 || run.id === 7 || run.id === 11 ? { column_id: null } : {}),
+				step_result: null
+			}))
 		);
 	});
 

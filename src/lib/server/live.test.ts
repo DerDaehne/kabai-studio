@@ -34,7 +34,11 @@ function setup() {
 	const db = openDb(':memory:');
 	migrate(db);
 	const project = (key: string, name: string) => board.createProject(db, user, { key, name }).id;
-	const ticket = (projectId: number) => board.createTicket(db, user, projectId, { title: 'T' }).id;
+	const ticket = (projectId: number) =>
+		board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 	const profile = (name: string, pool: string) =>
 		runs.createProfile(db, user, {
 			name,

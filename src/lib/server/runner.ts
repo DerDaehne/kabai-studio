@@ -6,6 +6,7 @@ import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
 import { requestHuman, type QuestionOption } from './domain/questions';
+import { queueNextStep } from './domain/steps';
 import {
 	appendEvent,
 	claimRun,
@@ -289,15 +290,20 @@ function askHumanAfterUsedUpChain(
 	});
 }
 
-/** One transaction: a paused run never stays without its follow-up run or the question to the human. */
+/**
+ * One transaction: a paused run never stays without its follow-up run or the question to the human, and a run that
+ * finished its step never without the run for the next one. A failed or cancelled run continues nothing.
+ */
 function finishExecutedRun(
 	db: DatabaseSync,
 	run: RunContext,
 	result: Exclude<ExecutorResult, void>
 ) {
 	tx(db, () => {
-		finishRun(db, SYSTEM, run.id, { state: result.state ?? 'succeeded', usage: result.usage });
+		const state = result.state ?? 'succeeded';
+		finishRun(db, SYSTEM, run.id, { state, usage: result.usage });
 		if (result.state === 'paused' && result.resume) continuePausedRun(db, run, result.resume);
+		if (state === 'succeeded') queueNextStep(db, run.id);
 	});
 }
 

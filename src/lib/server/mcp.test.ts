@@ -32,7 +32,8 @@ function setup() {
 		provider: 'openai-compatible',
 		model: 'm'
 	}).id;
-	const ticket = (title = 'T') => board.createTicket(db, user, projectId, { title }).id;
+	const ticket = (title = 'T') =>
+		board.createTicket(db, user, projectId, { title, column_id: col.Umsetzen }).id;
 	/** Sets up a state directly, without going through the rules. */
 	const place = (id: number, column: string) =>
 		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[column], id);
@@ -226,6 +227,7 @@ describe('get_ticket', () => {
 		board.completeTask(db, user, a);
 		for (let i = 1; i <= 12; i++) board.addComment(db, user, own, `Kommentar ${i}`);
 		const { token } = startRun(own);
+		place(own, 'Backlog'); // a run from before runs needed a work step
 
 		const { body } = await call(token, 'get_ticket');
 		expect(body).toMatchObject({
@@ -243,11 +245,11 @@ describe('get_ticket', () => {
 		);
 		expect(body.comments[0]).toMatchObject({ by: 'user', at: expect.any(String) });
 		expect(body.waits_for).toEqual([
-			{ ref: 'STU-1', title: 'Offen', column: 'Backlog', blocking: true },
+			{ ref: 'STU-1', title: 'Offen', column: 'Umsetzen', blocking: true },
 			{ ref: 'STU-2', title: 'Fertig', column: 'Fertig', blocking: false }
 		]);
-		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Backlog' }]);
-		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Backlog' }]);
+		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Umsetzen' }]);
+		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Umsetzen' }]);
 		expect(body).not.toHaveProperty('allowed_moves');
 
 		board.approveReview(db, user, own);
@@ -337,10 +339,10 @@ describe('create_child_tickets', () => {
 		expect(schema.blocks).toEqual([{ ref: 'STU-4', title: 'Domain', column: 'Backlog' }]);
 		const domain = (await call(token, 'get_ticket', { ticket: 'STU-4' })).body;
 		expect(domain.waits_for).toEqual([
-			{ ref: 'STU-2', title: 'Vorhanden', column: 'Backlog', blocking: true },
+			{ ref: 'STU-2', title: 'Vorhanden', column: 'Umsetzen', blocking: true },
 			{ ref: 'STU-3', title: 'Schema', column: 'Backlog', blocking: true }
 		]);
-		expect(domain.parent).toEqual([{ ref: 'STU-1', title: 'Epic', column: 'Backlog' }]);
+		expect(domain.parent).toEqual([{ ref: 'STU-1', title: 'Epic', column: 'Umsetzen' }]);
 		const ui = (await call(token, 'get_ticket', { ticket: 'STU-5' })).body;
 		expect(ui).toMatchObject({
 			description: 'Board',
@@ -422,11 +424,11 @@ describe('link_tickets', () => {
 		});
 		const { body } = await call(token, 'get_ticket');
 		expect(body.waits_for).toEqual([
-			{ ref: 'STU-2', title: 'Vorher', column: 'Backlog', blocking: true }
+			{ ref: 'STU-2', title: 'Vorher', column: 'Umsetzen', blocking: true }
 		]);
-		expect(body.blocks).toEqual([{ ref: 'STU-3', title: 'Nachher', column: 'Backlog' }]);
+		expect(body.blocks).toEqual([{ ref: 'STU-3', title: 'Nachher', column: 'Umsetzen' }]);
 		expect((await call(token, 'get_ticket', { ticket: 'STU-3' })).body.waits_for).toEqual([
-			{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', blocking: true }
+			{ ref: 'STU-1', title: 'Eigenes', column: 'Umsetzen', blocking: true }
 		]);
 		expect((await call(token, 'link_tickets', { waits_for: ['STU-2'] })).isError).toBe(false);
 	});
@@ -482,9 +484,9 @@ describe('list_workable', () => {
 		const workable = async () => (await call(token, 'list_workable')).body;
 
 		expect((await workable()).tickets).toEqual([
-			{ ref: 'STU-1', title: 'Eigenes', step: 'backlog', assignee: `agent (Run ${runId})` },
-			{ ref: 'STU-4', title: 'Offen', step: 'backlog' },
-			{ ref: 'STU-5', title: 'Nach Fertig', step: 'backlog' },
+			{ ref: 'STU-1', title: 'Eigenes', step: 'implement', assignee: `agent (Run ${runId})` },
+			{ ref: 'STU-4', title: 'Offen', step: 'implement' },
+			{ ref: 'STU-5', title: 'Nach Fertig', step: 'implement' },
 			{ ref: 'STU-3', title: 'Freigegeben', step: 'critique' }
 		]);
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
@@ -1091,7 +1093,7 @@ describe('request_human', () => {
 		).toBe(true);
 		expect((await ask([{ label: '' }])).isError).toBe(true);
 		expect((await ask([{ label: '  ' }])).body.error).toBe('empty_option');
-		expect(columnOf(own)).toBe('Backlog');
+		expect(columnOf(own)).toBe('Umsetzen');
 	});
 
 	it('hands the chosen option back to the resumed run; the human can retract it until then', async () => {
@@ -1103,7 +1105,7 @@ describe('request_human', () => {
 			options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }]
 		});
 		expect(asked).toEqual({ isError: false, body: { question_id: expect.any(Number) } });
-		expect(columnOf(own)).toBe('Backlog'); // the ticket waits where it is
+		expect(columnOf(own)).toBe('Umsetzen'); // the ticket waits where it is
 		runs.finishRun(db, system, first.runId, { state: 'paused' });
 
 		const questionId = asked.body.question_id;
@@ -1127,8 +1129,8 @@ describe('errors reach the agent with a way out in tool vocabulary', () => {
 	it('asks the human from a done ticket without moving it', async () => {
 		const { call, startRun, ticket, place, columnOf } = setup();
 		const own = ticket();
-		place(own, 'Fertig');
 		const { token } = startRun(own);
+		place(own, 'Fertig');
 		expect((await call(token, 'request_human', { question: 'Nacharbeit?' })).isError).toBe(false);
 		expect(columnOf(own)).toBe('Fertig');
 	});
@@ -1652,7 +1654,15 @@ describe('finish_step with back', () => {
 
 describe('finish_step outside the work phase', () => {
 	it('names the way out in English: no second finish_step, answer without a tool call', async () => {
-		const w = inStep('software', 'backlog');
+		const w = inStep('software', 'plan');
+		const backlog = w.db
+			.prepare(
+				"SELECT id FROM columns WHERE project_id = (SELECT project_id FROM tickets WHERE id = ?) AND step = 'backlog'"
+			)
+			.get(w.id) as { id: number };
+		// a run from before runs needed a work step
+		w.db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(backlog.id, w.id);
+		w.db.prepare('UPDATE runs SET column_id = ? WHERE id = ?').run(backlog.id, w.runId);
 		const refused = await w.finish('done');
 		expect(refused.body).toMatchObject({
 			error: 'not_in_work',

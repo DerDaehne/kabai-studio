@@ -195,10 +195,12 @@ export function answerQuestion(
 }
 
 /** Throws `answer_in_use` once a follow-up run has started: from then on it works with the answer. */
-function continuationOf(db: DatabaseSync, q: QuestionRow, answer: Answer): Continuation {
+function continuationOf(db: DatabaseSync, q: OpenQuestion, answer: Answer): Continuation {
 	if ('option' in answer && stopsRun(q, answer.option))
 		return { kind: 'stopped', reason: 'die gewählte Option startet keinen Run' };
 	if (q.run_id === null) return { kind: 'none', reason: 'die Frage stammt aus keinem Run' };
+	if (q.t.column_phase !== 'work')
+		return { kind: 'none', reason: `${q.t.ref} liegt nicht mehr in einem Arbeitsschritt` };
 	const run = db
 		.prepare('SELECT id, state, agent_profile_id AS profileId FROM runs WHERE id = ?')
 		.get(q.run_id) as { id: number; state: string; profileId: number | null };

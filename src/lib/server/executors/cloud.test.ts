@@ -274,7 +274,10 @@ function setup(profile: Partial<runs.Profile>) {
 	migrate(db);
 	setSecret(db, 'cloud-key', KEY);
 	const projectId = board.createProject(db, user, { key: 'CLD', name: 'Cloud' }).id;
-	const ticketId = board.createTicket(db, user, projectId, { title: 'Refine the export' }).id;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'Refine the export',
+		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Cloud',
 		executor: 'builtin',

@@ -89,7 +89,10 @@ async function openTab() {
 }
 
 function startRun() {
-	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
+	const ticketId = board.createTicket(db(), user, projectId, {
+		title: 'T',
+		column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const runId = runs.createRun(db(), system, { ticketId, profileId }).id;
 	runs.startRun(db(), system, runId);
 	return { ticketId, runId };
@@ -105,7 +108,10 @@ const chip = (runId: number, state: AgentChip['state']): AgentChip => ({
 
 it('shows an agent chip when a run starts and drops it when the run ends, in every open tab without a page reload', async () => {
 	const open = [await openTab(), await openTab()];
-	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
+	const ticketId = board.createTicket(db(), user, projectId, {
+		title: 'T',
+		column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const runId = runs.createRun(db(), system, { ticketId, profileId }).id;
 	for (const tab of open) {
 		await vi.waitFor(() => expect(tab.live.runs.map((run) => run.state)).toEqual(['queued']));
@@ -184,7 +190,10 @@ it('serves every view from the one connection of its tab: views subscribe with o
 
 it('shows the stop with the number of waiting runs in every open tab and drops it on release, without a page reload', async () => {
 	const open = [await openTab(), await openTab()];
-	const ticketId = board.createTicket(db(), user, projectId, { title: 'T' }).id;
+	const ticketId = board.createTicket(db(), user, projectId, {
+		title: 'T',
+		column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	runs.createRun(db(), system, { ticketId, profileId });
 	const queued = db().prepare("SELECT count(*) AS n FROM runs WHERE state = 'queued'").get()!
 		.n as number;

@@ -23,7 +23,10 @@ function twoHaltedRuns() {
 		model: 'm'
 	}).id;
 	const running = () => {
-		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const ticketId = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const { id } = runs.createRun(db, system, { ticketId, profileId });
 		runs.startRun(db, system, id);
 		return id;

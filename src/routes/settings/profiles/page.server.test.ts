@@ -107,7 +107,10 @@ describe('agent profiles in the settings', () => {
 		]);
 
 		const project = board.createProject(db(), { kind: 'user' }, { key: 'STU', name: 'Studio' });
-		const ticketId = board.createTicket(db(), { kind: 'user' }, project.id, { title: 'T' }).id;
+		const ticketId = board.createTicket(db(), { kind: 'user' }, project.id, {
+			title: 'T',
+			column_id: board.columns(db(), project.id).find((c) => c.step === 'implement')!.id
+		}).id;
 		const run = createRun(db(), { kind: 'system' }, { ticketId, profileId: id }).id;
 		const blocked = await post(listActions, 'delete', { id: `${id}` });
 		expect(blocked).toMatchObject({

@@ -110,7 +110,10 @@ describe('ticketDetail', () => {
 
 	it('shows the open question while unanswered, and none once the human has answered it', () => {
 		const { db, projectId } = setup();
-		const { id } = board.createTicket(db, user, projectId, { title: 'T' });
+		const { id } = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		});
 		const profileId = createProfile(db, user, {
 			name: 'P',
 			executor: 'builtin',
@@ -143,7 +146,10 @@ describe('runTrace', () => {
 
 	function withRuns() {
 		const { db, projectId } = setup();
-		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const ticketId = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const profileId = createProfile(db, user, {
 			name: 'P',
 			executor: 'builtin',
@@ -163,7 +169,10 @@ describe('runTrace', () => {
 		const { db, projectId, ticketId, newRun } = withRuns();
 		expect(runTrace(db, ticketId)).toBeUndefined();
 		const runId = newRun();
-		const other = board.createTicket(db, user, projectId, { title: 'Anderes' }).id;
+		const other = board.createTicket(db, user, projectId, {
+			title: 'Anderes',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		expect(runTrace(db, other, runId)).toBeUndefined();
 	});
 
@@ -272,7 +281,10 @@ describe('runTrace', () => {
 describe('runTabs', () => {
 	function withProfile(pool = 'local') {
 		const { db, projectId } = setup();
-		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const ticketId = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const profileId = createProfile(db, user, {
 			name: 'Lokal',
 			executor: 'builtin',
@@ -292,7 +304,10 @@ describe('runTabs', () => {
 			usage: { tokensIn: 1200, tokensOut: 80, cost: 0.5 }
 		});
 		const newer = createRun(db, user, { ticketId, profileId }).id;
-		const other = board.createTicket(db, user, projectId, { title: 'Anderes' }).id;
+		const other = board.createTicket(db, user, projectId, {
+			title: 'Anderes',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		createRun(db, user, { ticketId: other, profileId });
 
 		const tabs = runTabs(db, ticketId);
@@ -420,11 +435,17 @@ describe('runStart', () => {
 		const { db, projectId } = setup();
 		const alpha = profile(db, 'Alpha');
 		const zeta = profile(db, 'Zeta');
-		const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const ticketId = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		createRun(db, user, { ticketId, profileId: alpha });
 		createRun(db, user, { ticketId, profileId: zeta });
 		const otherProject = board.createProject(db, user, { key: 'WEB', name: 'Website' }).id;
-		const otherTicket = board.createTicket(db, user, otherProject, { title: 'W' }).id;
+		const otherTicket = board.createTicket(db, user, otherProject, {
+			title: 'W',
+			column_id: board.columns(db, otherProject).find((c) => c.step === 'implement')!.id
+		}).id;
 		createRun(db, user, { ticketId: otherTicket, profileId: alpha });
 		expect(runStart(db, projectId).preselected).toBe(zeta);
 		expect(runStart(db, otherProject).preselected).toBe(alpha);

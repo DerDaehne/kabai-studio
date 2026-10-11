@@ -6,6 +6,7 @@ import type { RunStart, RunTab } from '$lib/runs/run-control';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import type { Step } from '$lib/server/domain/variants';
 import {
 	createProfile,
 	createRun,
@@ -44,7 +45,11 @@ function newProfile(fields: Partial<Profile> = {}) {
 	}).id;
 }
 
-const newTicket = () => board.createTicket(db(), user, projectId, { title: 'Export bauen' });
+const newTicket = (step: Step = 'implement') =>
+	board.createTicket(db(), user, projectId, {
+		title: 'Export bauen',
+		column_id: board.columns(db(), projectId).find((c) => c.step === step)!.id
+	});
 const params = (number: number) => ({ key: 'RUN', number: String(number) });
 const urlOf = (number: number) => new URL(`http://localhost/p/RUN/t/${number}`);
 
@@ -82,9 +87,9 @@ function fakeModel(text: string, [input, output]: [number, number]): typeof fetc
 
 describe('start', () => {
 	it('queues a run with the preselected profile at human priority and says why it waits', async () => {
-		const { id, number } = newTicket();
+		const { number } = newTicket();
 		const profileId = newProfile();
-		const busy = createRun(db(), user, { ticketId: id, profileId }).id;
+		const busy = createRun(db(), user, { ticketId: newTicket().id, profileId }).id;
 		startRun(db(), user, busy);
 		const { start } = shown(number);
 		expect(start.preselected).toBe(profileId);
@@ -97,6 +102,27 @@ describe('start', () => {
 		expect(started).toMatchObject({ state: 'queued', profile: `Profil ${profileCount}` });
 		expect(priorityOf(started.id)).toBe('human');
 		expect(started.waitText).toBe(`wartet: Pool „pool-${profileCount}“ ist voll (1 von 1 aktiv).`);
+	});
+
+	it('starts a backlog ticket like „los“: it moves into the first work step and gets its run', async () => {
+		const { id, number } = newTicket('backlog');
+		const profileId = newProfile();
+		await expect(post('start', number, { profileId: String(profileId) })).rejects.toMatchObject({
+			status: 303
+		});
+		expect(board.ticket(db(), id).column_step).toBe('refine');
+		expect(shown(number).runs).toEqual([expect.objectContaining({ state: 'queued' })]);
+	});
+
+	it('refuses a second run while one waits, with message and hint at the start form', async () => {
+		const { number } = newTicket();
+		const profileId = String(newProfile());
+		await expect(post('start', number, { profileId })).rejects.toMatchObject({ status: 303 });
+		expect(await post('start', number, { profileId })).toMatchObject({
+			status: 400,
+			data: { action: 'start', code: 'run_pending', hint: expect.stringContaining('(x)') }
+		});
+		expect(shown(number).runs).toHaveLength(1);
 	});
 
 	it('refuses an unknown profile with message and hint at the start form, and queues nothing', async () => {

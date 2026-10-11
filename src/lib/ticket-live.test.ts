@@ -15,7 +15,10 @@ function setup() {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const a = board.createTicket(db, user, projectId, { title: 'A' }).id;
+	const a = board.createTicket(db, user, projectId, {
+		title: 'A',
+		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const b = board.createTicket(db, user, projectId, { title: 'B' }).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Test',

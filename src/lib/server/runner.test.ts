@@ -19,6 +19,8 @@ import {
 	resumeAll,
 	resumeRun
 } from './domain/halt';
+import { startTicket } from './domain/intents';
+import { finishStep } from './domain/steps';
 import type { Step } from './domain/variants';
 import { LIMITS, startRunner, type Executor, type Resume, type RunContext } from './runner';
 import { setSecret } from './secrets';
@@ -31,7 +33,10 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 function setup(db = openDb(':memory:')) {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'T',
+		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const local = runs.createProfile(db, user, {
 		name: 'Local',
 		executor: 'builtin',
@@ -413,7 +418,10 @@ describe('startRunner', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 1 } });
-		const otherTicket = board.createTicket(s.db, user, s.projectId, { title: 'Other' }).id;
+		const otherTicket = board.createTicket(s.db, user, s.projectId, {
+			title: 'Other',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const [deleted, waiting] = [s.queue(s.local), s.queue(s.local, otherTicket)];
 		await flush();
 		expect(s.state(waiting)).toBe('queued');
@@ -436,7 +444,7 @@ describe('priority queue', () => {
 				.prepare('SELECT id FROM columns WHERE project_id = ? AND step = ?')
 				.get(s.projectId, step)!.id as number;
 		const reviewColumn = column('critique');
-		const ticketIn = (columnId?: number) =>
+		const ticketIn = (columnId = column('implement')) =>
 			board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
 		const blockingTicket = ticketIn();
 		board.linkRelation(s.db, user, blockingTicket, ticketIn(), 'blocks');
@@ -892,7 +900,7 @@ describe('parking and resuming a run', () => {
 			s.db
 				.prepare('SELECT c.step FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
 				.get(s.ticketId)
-		).toEqual({ step: 'backlog' }); // the question leaves the ticket where it is
+		).toEqual({ step: 'implement' }); // the question leaves the ticket where it is
 		const question =
 			`Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht ` +
 			`(höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}. Wie soll es weitergehen?`;
@@ -1341,7 +1349,10 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor });
-		const otherTicket = board.createTicket(s.db, user, s.projectId, { title: 'Other' }).id;
+		const otherTicket = board.createTicket(s.db, user, s.projectId, {
+			title: 'Other',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const [halted, other, waiting] = [
 			s.queue(s.local),
 			s.queue(s.cloud, otherTicket),
@@ -1646,4 +1657,118 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		expect(haltedSince(s.db)).toBeNull();
 		expect(continuationsOf(s, halted)).toEqual([]);
 	});
+});
+
+describe('the chain of runs', () => {
+	/** A run that finishes its step as done, as a well-behaved agent does, and ends. */
+	const finishingExecutor = (db: ReturnType<typeof openDb>): Executor => ({
+		execute: async (run) => {
+			finishStep(db, { kind: 'agent', runId: run.id }, run.ticketId, {
+				result: 'done',
+				summary: `Run ${run.id}: done.`
+			});
+		}
+	});
+
+	it.each([
+		['software', ['refine', 'plan', 'implement', 'critique']],
+		['direct', ['implement', 'critique']]
+	] as const)(
+		'carries a %s ticket from one „los“ through %j to acceptance, one run per step',
+		async (variant, steps) => {
+			const db = openDb(':memory:');
+			migrate(db);
+			const projectId = board.createProject(db, user, { key: 'E2E', name: 'Kette' }, variant).id;
+			const ticketId = board.createTicket(db, user, projectId, {
+				title: 'Export',
+				description: 'CSV export',
+				size: 'S'
+			}).id;
+			board.completeTasks(db, user, ticketId, board.addTasks(db, user, ticketId, ['CSV']).ids);
+			const profileId = runs.createProfile(db, user, {
+				name: 'Lokal',
+				executor: 'builtin',
+				provider: 'openai-compatible',
+				model: 'm'
+			}).id;
+			start(db, { builtin: finishingExecutor(db) });
+
+			startTicket(db, user, ticketId, profileId);
+			await vi.waitFor(() => expect(board.ticket(db, ticketId).column_step).toBe('acceptance'));
+			await flush();
+
+			expect(
+				db
+					.prepare(
+						'SELECT c.step, r.state, r.trigger, r.agent_profile_id AS profileId FROM runs r JOIN columns c ON c.id = r.column_id ORDER BY r.id'
+					)
+					.all()
+			).toEqual(
+				steps.map((step, i) => ({
+					step,
+					state: 'succeeded',
+					trigger: i === 0 ? 'manual' : 'on_enter',
+					profileId
+				}))
+			);
+		}
+	);
+
+	it('stops at a run that fails after finishing its step: the ticket waits for the human instead of a next run', async () => {
+		const s = setup();
+		const finishing = finishingExecutor(s.db);
+		start(s.db, {
+			builtin: {
+				execute: async (run, io) => {
+					await finishing.execute(run, io);
+					throw new Error('model gone');
+				}
+			}
+		});
+		const failed = s.queue(s.local);
+		await vi.waitFor(() => expect(s.state(failed)).toBe('failed'));
+		await flush();
+		expect(board.ticket(s.db, s.ticketId).column_step).toBe('critique');
+		expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 1 });
+	});
+
+	it.each(['stop', 'pause'] as const)(
+		'keeps the next step’s run waiting in the queue through a %s, never cancels it, and starts it once the human resumes',
+		async (kind) => {
+			const s = setup();
+			const fake = fakeExecutor();
+			const runner = start(s.db, { builtin: fake.executor }); // one local run at a time
+			const plan = board.columns(s.db, s.projectId).find((c) => c.step === 'plan')!.id;
+			const chained = board.createTicket(s.db, user, s.projectId, {
+				title: 'K',
+				column_id: plan
+			}).id;
+			const first = s.queue(s.local, chained);
+			await flush();
+			const other = s.queue(s.local); // older than the chain's run, so it takes the freed slot first
+			finishStep(s.db, { kind: 'agent', runId: first }, chained, {
+				result: 'done',
+				summary: 'Plan'
+			});
+			fake.call(first).done();
+			await flush();
+			const next = s.db.prepare("SELECT id FROM runs WHERE trigger = 'on_enter'").get()!
+				.id as number;
+			expect([s.state(other), s.state(next)]).toEqual(['running', 'queued']);
+
+			if (kind === 'stop') runner.halt();
+			else runner.pauseAll();
+			await flush();
+			expect(s.row(next)).toMatchObject({ state: 'queued', ticket_id: chained });
+
+			resumeAll(s.db, user);
+			await flush();
+			const resumedOther = s.db
+				.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?')
+				.get(other) as { id: number } | undefined;
+			if (resumedOther) fake.call(resumedOther.id).done(); // a paused run resumes ahead of the chain
+			await flush();
+			expect(s.state(next)).toBe('running');
+		}
+	);
 });

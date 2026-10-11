@@ -162,7 +162,10 @@ function transition(
 	return totals;
 }
 
-/** Creates a `queued` run that records the ticket's column as its role. With `resumedFromRunId` it continues a paused run. */
+/**
+ * Creates a `queued` run that records the ticket's column as its role; only a ticket in a work step gets one
+ * (`not_in_work`). With `resumedFromRunId` it continues a paused run.
+ */
 export function createRun(
 	db: DatabaseSync,
 	actor: Actor,
@@ -177,6 +180,7 @@ export function createRun(
 ): { id: number } {
 	return tx(db, (emit) => {
 		const t = ticket(db, r.ticketId);
+		if (t.column_phase !== 'work') throw notInWork(t);
 		getProfile(db, r.profileId);
 		if (r.resumedFromRunId !== undefined) assertResumable(db, t, r.resumedFromRunId);
 		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
@@ -200,6 +204,26 @@ export function createRun(
 		emit({ type: 'run.created', projectId: t.project_id, ticketId: t.id, actor, runId: id });
 		return { id };
 	});
+}
+
+/** Backlog waits for the human's start; acceptance and done are the human's to decide. */
+export function notInWork(t: Ticket): DomainError {
+	return new DomainError(
+		'not_in_work',
+		`${t.ref} liegt in „${t.column_name}“; Runs gibt es nur in den Arbeitsschritten.`,
+		t.column_phase === 'open'
+			? 'Starte das Ticket mit „los“ (startTicket): es rückt in den ersten Arbeitsschritt, und sein Run startet.'
+			: 'Hier entscheidet der Mensch: abnehmen (acceptTicket) oder mit Kommentar zurückgeben (returnTicket).'
+	);
+}
+
+/** A run of the ticket is active or waits in the queue; a second one would work the same step twice. */
+export function pendingRun(db: DatabaseSync, ticketId: number) {
+	return db
+		.prepare(
+			"SELECT id, state FROM runs WHERE ticket_id = ? AND state IN ('queued', 'running', 'waiting_approval') ORDER BY id LIMIT 1"
+		)
+		.get(ticketId) as { id: number; state: RunState } | undefined;
 }
 
 function assertResumable(db: DatabaseSync, t: Ticket, previousRunId: number) {

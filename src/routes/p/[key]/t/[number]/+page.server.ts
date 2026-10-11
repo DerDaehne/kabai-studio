@@ -2,9 +2,9 @@ import { error, redirect } from '@sveltejs/kit';
 import { LIVE_DEPENDENCY, ticketDependency } from '$lib/live';
 import { domainFail } from '$lib/server/domain-failure';
 import * as board from '$lib/server/domain/board';
-import { tx, type Actor } from '$lib/server/domain/core';
+import type { Actor } from '$lib/server/domain/core';
 import { db } from '$lib/server/db';
-import { createRun, prioritizeRun } from '$lib/server/domain/runs';
+import { startTicket } from '$lib/server/domain/intents';
 import { runner } from '$lib/server/runner';
 import {
 	findTicketId,
@@ -66,14 +66,6 @@ function mutate(action: string, fn: () => void) {
 
 const field = (form: FormData, name: string) => String(form.get(name) ?? '');
 
-/** A run the human starts goes ahead of background work in the queue; both steps or neither. */
-function startForHuman(ticketId: number, profileId: number) {
-	tx(db(), () => {
-		const { id } = createRun(db(), HUMAN, { ticketId, profileId });
-		prioritizeRun(db(), HUMAN, id);
-	});
-}
-
 export const actions: Actions = {
 	update: async ({ request, params }) => {
 		const id = requireTicketId(params);
@@ -123,7 +115,7 @@ export const actions: Actions = {
 	start: async ({ request, params, url }) => {
 		const id = requireTicketId(params);
 		const profileId = Number(field(await request.formData(), 'profileId'));
-		const refused = mutate('start', () => startForHuman(id, profileId));
+		const refused = mutate('start', () => startTicket(db(), HUMAN, id, profileId));
 		if (refused) return refused;
 		redirect(303, url.pathname); // without ?run= the trace shows the newest run, the one just started
 	},

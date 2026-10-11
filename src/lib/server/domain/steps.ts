@@ -10,8 +10,9 @@ import {
 	type Column,
 	type Ticket
 } from './board';
-import { DomainError, tx, type Actor } from './core';
-import { requestHuman } from './questions';
+import { DomainError, OPEN_QUESTION, tx, type Actor } from './core';
+import { requestHuman, type QuestionOption } from './questions';
+import { createRun, pendingRun } from './runs';
 import type { Step } from './variants';
 
 export type StepResult = 'done' | 'back' | 'blocked';
@@ -135,15 +136,61 @@ export function finishStep(
 		if (runColumn === null) throw stepNotCurrent(t);
 		if (t.column_id !== runColumn) return outcomeOf(t.column_step, t.column_phase);
 		assertFinishable(t, input.summary);
-		if (input.result === 'blocked') return block(db, actor, t, input.summary);
+		if (input.result === 'blocked') return block(db, actor, t, { question: input.summary });
+		if (input.result === 'back' && t.column_step === 'critique' && roundsUsedUp(db, t))
+			return block(db, actor, t, disputeQuestion(db, t, input.summary));
 		const cols = columns(db, t.project_id);
 		const to = input.result === 'done' ? nextColumn(db, t, cols) : backColumn(t, cols);
 		if (input.result === 'done' && t.column_step === 'critique') writeApproval(db, emit, actor, t);
 		appendComment(db, emit, actor, t, input.summary);
 		writeMove(db, emit, actor, t, to, cols);
+		recordStepResult(db, actor, input.result);
 		return outcomeOf(to.step, to.phase);
 	});
 }
+
+const recordStepResult = (db: DatabaseSync, actor: Actor, result: StepResult) =>
+	db.prepare('UPDATE runs SET step_result = ? WHERE id = ?').run(result, actor.runId!);
+
+/**
+ * The chain: after a run finished its step with done or back, queues the run for the work step the ticket is in now,
+ * with the same profile and a fresh context. Nothing is queued once the ticket left the work phase, while it has an
+ * open question, while another run of it is active or waiting, or while an open `blocks` predecessor stands before it.
+ */
+export function queueNextStep(db: DatabaseSync, runId: number): { id: number } | undefined {
+	return tx(db, () => {
+		const run = db
+			.prepare('SELECT ticket_id, agent_profile_id, step_result FROM runs WHERE id = ?')
+			.get(runId) as FinishedRun | undefined;
+		if (!run || run.agent_profile_id === null) return undefined;
+		if (run.step_result !== 'done' && run.step_result !== 'back') return undefined;
+		const t = ticket(db, run.ticket_id);
+		if (
+			t.column_phase !== 'work' ||
+			hasOpenQuestion(db, t.id) ||
+			pendingRun(db, t.id) ||
+			blockingPredecessors(db, t.id).length > 0
+		)
+			return undefined;
+		const actor: Actor = { kind: 'system', runId };
+		return createRun(db, actor, {
+			ticketId: t.id,
+			profileId: run.agent_profile_id,
+			trigger: 'on_enter'
+		});
+	});
+}
+
+type FinishedRun = {
+	ticket_id: number;
+	agent_profile_id: number | null;
+	step_result: StepResult | null;
+};
+
+export const hasOpenQuestion = (db: DatabaseSync, ticketId: number) =>
+	db
+		.prepare(`SELECT 1 FROM questions q WHERE q.ticket_id = ? AND ${OPEN_QUESTION}`)
+		.get(ticketId) !== undefined;
 
 const outcomeOf = (step: Step, phase: Column['phase']): StepOutcome => ({
 	next: step,
@@ -187,14 +234,59 @@ function assertFinishable(t: Ticket, summary: string) {
 }
 
 /** The run's own open question stands for a blocked step already reported, so a repeat asks nothing twice. */
-function block(db: DatabaseSync, actor: Actor, t: Ticket, summary: string): StepOutcome {
+function block(
+	db: DatabaseSync,
+	actor: Actor,
+	t: Ticket,
+	question: { question: string; options?: QuestionOption[] }
+): StepOutcome {
 	const asked = db
 		.prepare(
 			'SELECT id FROM questions WHERE run_id = ? AND answer IS NULL ORDER BY id DESC LIMIT 1'
 		)
 		.get(actor.runId!) as { id: number } | undefined;
-	const questionId = asked?.id ?? requestHuman(db, actor, t.id, { question: summary }).id;
+	const questionId = asked?.id ?? requestHuman(db, actor, t.id, question).id;
+	recordStepResult(db, actor, 'blocked');
 	return { next: t.column_step, then: 'human', question_id: questionId };
+}
+
+/** Rounds of findings the critique may send back before the dispute goes to the human. */
+export const CRITIQUE_ROUNDS = 2;
+
+// The human starting a run or answering a question ends the dispute so far; resumes after a park or a halt do not.
+const STARTED_BY_HUMAN = `(trigger = 'manual' OR (trigger = 'resume' AND resume_reason IS NULL))`;
+
+/** The findings of the critique runs that sent the ticket back since the human last acted on it, newest first. */
+function findingsSinceHuman(db: DatabaseSync, t: Ticket): string[] {
+	return db
+		.prepare(
+			`SELECT (SELECT body FROM comments WHERE run_id = r.id ORDER BY id DESC LIMIT 1) AS body
+			FROM runs r JOIN columns c ON c.id = r.column_id
+			WHERE r.ticket_id = ?1 AND r.step_result = 'back' AND c.step = 'critique'
+				AND r.id > coalesce((SELECT max(id) FROM runs WHERE ticket_id = ?1 AND ${STARTED_BY_HUMAN}), 0)
+			ORDER BY r.id DESC`
+		)
+		.all(t.id)
+		.map((r) => String(r.body ?? ''));
+}
+
+const roundsUsedUp = (db: DatabaseSync, t: Ticket) =>
+	findingsSinceHuman(db, t).length >= CRITIQUE_ROUNDS;
+
+// Fixed wording like the runner's escalation; the answer resumes the critique run, which follows the chosen option.
+const DISPUTE_OPTIONS: QuestionOption[] = [
+	{ label: 'Der Kritik folgen: noch eine Runde, mit meinem Hinweis' },
+	{ label: 'Dem Autor folgen: die Kritik schließt mit done ab' },
+	{ label: 'Aufhören: Ticket bleibt beim Menschen', stopsRun: true }
+];
+
+function disputeQuestion(db: DatabaseSync, t: Ticket, findings: string) {
+	const [previous] = findingsSinceHuman(db, t);
+	const question =
+		`Autor und Kritiker sind sich nach ${CRITIQUE_ROUNDS} Runden nicht einig: ` +
+		`Die Kritik schickt ${t.ref} zum ${CRITIQUE_ROUNDS + 1}. Mal zurück.\n\n` +
+		`Befunde der Runde davor:\n${previous}\n\nBefunde jetzt:\n${findings}\n\nWie soll es weitergehen?`;
+	return { question, options: DISPUTE_OPTIONS };
 }
 
 function nextColumn(db: DatabaseSync, t: Ticket, cols: Column[]): Column {

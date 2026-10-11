@@ -10,7 +10,7 @@ import type { Step } from './variants';
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 
-function setup(startStep: Step = 'backlog') {
+function setup(startStep: Step = 'implement') {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
@@ -85,7 +85,7 @@ describe('requestHuman', () => {
 		expect(caught(() => questions.requestHuman(db, agent, ticketId, { question: ' ' })).code).toBe(
 			'empty_question'
 		);
-		expect(column()).toBe('backlog');
+		expect(column()).toBe('implement');
 		expect(db.prepare('SELECT count(*) AS n FROM questions').get()?.n).toBe(0);
 		expect(db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(0);
 	});

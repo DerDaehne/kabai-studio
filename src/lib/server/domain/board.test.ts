@@ -16,7 +16,10 @@ const reviewer: Actor = { kind: 'agent', runId: 2 };
 /** Agent actors act in real runs (comments.run_id has a FK), so this creates runs 1 and 2 in a separate project. */
 function withRuns(db: DatabaseSync) {
 	const p = board.createProject(db, user, { key: 'RUN', name: 'Runs' }).id;
-	const ticketId = board.createTicket(db, user, p, { title: 'Runs' }).id;
+	const ticketId = board.createTicket(db, user, p, {
+		title: 'Runs',
+		column_id: board.columns(db, p).find((c) => c.step === 'implement')!.id
+	}).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Test',
 		executor: 'builtin',

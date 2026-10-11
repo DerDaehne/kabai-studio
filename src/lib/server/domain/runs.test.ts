@@ -28,7 +28,10 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 function setup(db = openDb(':memory:')) {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, { title: 'T' }).id;
+	const ticketId = board.createTicket(db, user, projectId, {
+		title: 'T',
+		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 	const profileId = runs.createProfile(db, user, LOCAL).id;
 	const queued = () => runs.createRun(db, system, { ticketId, profileId }).id;
 	const running = () => {
@@ -143,7 +146,10 @@ describe('state transitions', () => {
 		expect(err.message).toBe(
 			'Fortsetzen geht nur mit einem pausierten Run von STU-1; Run 3 ist „succeeded“.'
 		);
-		const other = board.createTicket(db, user, projectId, { title: 'Anderes' }).id;
+		const other = board.createTicket(db, user, projectId, {
+			title: 'Anderes',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		expect(
 			caught(() =>
 				runs.createRun(db, system, { ticketId: other, profileId, resumedFromRunId: paused })

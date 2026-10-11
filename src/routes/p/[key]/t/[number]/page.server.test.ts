@@ -69,7 +69,10 @@ describe('load', () => {
 	});
 
 	it('loads the newest run of the ticket as its trace, and none before the first run', async () => {
-		const { number, id } = board.createTicket(db(), user, projectId, { title: 'Mit Runs' });
+		const { number, id } = board.createTicket(db(), user, projectId, {
+			title: 'Mit Runs',
+			column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+		});
 		expect((await loadTicket(number)).trace).toBeUndefined();
 		const profileId = createProfile(db(), user, {
 			name: `P${number}`,

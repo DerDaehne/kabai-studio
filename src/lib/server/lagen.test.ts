@@ -28,7 +28,22 @@ function setup() {
 		model: 'm',
 		pool: 'local'
 	}).id;
-	const run = (ticketId: number) => runs.createRun(db, user, { ticketId, profileId: profile }).id;
+	// createRun refuses tickets outside a work step; a ticket that moved on keeps its older run.
+	const run = (ticketId: number) => {
+		const t = db
+			.prepare(
+				'SELECT c.phase, c.id AS column_id FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?'
+			)
+			.get(ticketId) as { phase: string; column_id: number };
+		if (t.phase === 'work') return runs.createRun(db, user, { ticketId, profileId: profile }).id;
+		return (
+			db
+				.prepare(
+					"INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, priority) VALUES (?, ?, ?, 'manual', 'normal') RETURNING id"
+				)
+				.get(ticketId, t.column_id, profile) as { id: number }
+		).id;
+	};
 	const lageOfTicket = (ticketId: number) =>
 		ticketLagen(db).find((row) => row.ticketId === ticketId)!;
 	return { db, project, columnId, ticket, run, lageOfTicket };
