@@ -40,7 +40,11 @@ export default defineConfig({
 					// Playwright turns the back/forward cache off; real browsers keep it on, and pages must cope with it.
 					ignoreDefaultArgs: ['--disable-back-forward-cache'],
 					// The Nix devshell's Chromium: the one Playwright downloads misses shared libraries on NixOS.
-					executablePath: process.env.STUDIO_BROWSER_EXECUTABLE || undefined
+					executablePath: process.env.STUDIO_BROWSER_EXECUTABLE || undefined,
+					// A desktop session's LD_LIBRARY_PATH makes the Nix Chromium load foreign libraries and abort with a GLIBC error.
+					env: Object.fromEntries(
+						Object.entries(process.env).filter(([name]) => name !== 'LD_LIBRARY_PATH')
+					)
 				}
 			}
 		}
