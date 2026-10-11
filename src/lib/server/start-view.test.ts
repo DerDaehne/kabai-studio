@@ -53,7 +53,9 @@ describe('startView', () => {
 		const s = setup();
 		const later = s.queued();
 		const now = s.queued();
-		s.db.prepare('UPDATE runs SET not_before = ? WHERE id = ?').run('2099-01-02T03:04:05.000Z', later);
+		s.db
+			.prepare('UPDATE runs SET not_before = ? WHERE id = ?')
+			.run('2099-01-02T03:04:05.000Z', later);
 
 		const { queued } = startView(s.db);
 		expect(queued.find((run) => run.id === later)?.notBefore).toBe('2099-01-02T03:04:05.000Z');
