@@ -1291,8 +1291,8 @@ const networkFailure = (code: string, message: string) =>
 	});
 
 /** A model server that accepts the connection but never answers, like llama-swap while it loads a model. */
-async function silentServer() {
-	const server = createServer(() => {});
+async function silentServer(onConnectionClosed: () => void = () => {}) {
+	const server = createServer((_req, res) => res.on('close', onConnectionClosed));
 	await new Promise<void>((listening) => server.listen(0, '127.0.0.1', listening));
 	cleanups.push(() => {
 		server.closeAllConnections();
@@ -1439,6 +1439,20 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 
 		expect(run(runId).state).toBe('cancelled');
 		expect(JSON.stringify(comments())).not.toMatch(/provider_/);
+	});
+
+	it('closes the connection to the model server when a run is cancelled during a pending request', async () => {
+		const connectionClosed = vi.fn();
+		const { db, queue, run } = setup({ base_url: await silentServer(connectionClosed) });
+		const { runner } = startBuiltin(db, {});
+		const runId = queue();
+		await vi.waitFor(() => expect(run(runId).state).toBe('running'));
+		await new Promise((settle) => setTimeout(settle, 200));
+
+		runner.cancel(runId);
+
+		await vi.waitFor(() => expect(connectionClosed).toHaveBeenCalled(), { timeout: 2000 });
+		expect(run(runId).state).toBe('cancelled');
 	});
 
 	it('still fails a model that never answers with model_loading_timeout, not provider_unreachable', async () => {
