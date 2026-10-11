@@ -137,7 +137,7 @@ export function finishStep(
 		if (t.column_id !== runColumn) return outcomeOf(t.column_step, t.column_phase);
 		assertFinishable(t, input.summary);
 		if (input.result === 'blocked') return block(db, actor, t, { question: input.summary });
-		if (input.result === 'back' && t.column_step === 'critique' && roundsUsedUp(db, t))
+		if (input.result === 'back' && roundsUsedUp(db, t))
 			return block(db, actor, t, disputeQuestion(db, t, input.summary));
 		const cols = columns(db, t.project_id);
 		const to = input.result === 'done' ? nextColumn(db, t, cols) : backColumn(t, cols);
@@ -250,20 +250,23 @@ function block(
 	return { next: t.column_step, then: 'human', question_id: questionId };
 }
 
-/** Rounds of findings the critique may send back before the dispute goes to the human. */
-export const CRITIQUE_ROUNDS = 2;
+/** How often a ticket may go back a step, from any step, before the next back becomes a question to the human. */
+export const BACK_ROUNDS = 2;
 
 // The human starting a run or answering a question ends the dispute so far; resumes after a park or a halt do not.
 const STARTED_BY_HUMAN = `(trigger = 'manual' OR (trigger = 'resume' AND resume_reason IS NULL))`;
 
-/** The findings of the critique runs that sent the ticket back since the human last acted on it, newest first. */
+/**
+ * The findings of the runs that sent the ticket back since the human last acted on it, newest first. The run the human
+ * started counts as well, so the limit holds whoever started the run that goes back.
+ */
 function findingsSinceHuman(db: DatabaseSync, t: Ticket): string[] {
 	return db
 		.prepare(
 			`SELECT (SELECT body FROM comments WHERE run_id = r.id ORDER BY id DESC LIMIT 1) AS body
-			FROM runs r JOIN columns c ON c.id = r.column_id
-			WHERE r.ticket_id = ?1 AND r.step_result = 'back' AND c.step = 'critique'
-				AND r.id > coalesce((SELECT max(id) FROM runs WHERE ticket_id = ?1 AND ${STARTED_BY_HUMAN}), 0)
+			FROM runs r
+			WHERE r.ticket_id = ?1 AND r.step_result = 'back'
+				AND r.id >= coalesce((SELECT max(id) FROM runs WHERE ticket_id = ?1 AND ${STARTED_BY_HUMAN}), 0)
 			ORDER BY r.id DESC`
 		)
 		.all(t.id)
@@ -271,20 +274,21 @@ function findingsSinceHuman(db: DatabaseSync, t: Ticket): string[] {
 }
 
 const roundsUsedUp = (db: DatabaseSync, t: Ticket) =>
-	findingsSinceHuman(db, t).length >= CRITIQUE_ROUNDS;
+	findingsSinceHuman(db, t).length >= BACK_ROUNDS;
 
-// Fixed wording like the runner's escalation; the answer resumes the critique run, which follows the chosen option.
+// Fixed wording like the runner's escalation; the answer resumes the run that wanted to go back, which follows the chosen option.
 const DISPUTE_OPTIONS: QuestionOption[] = [
-	{ label: 'Der Kritik folgen: noch eine Runde, mit meinem Hinweis' },
-	{ label: 'Dem Autor folgen: die Kritik schließt mit done ab' },
+	{ label: 'Zurückgehen: noch eine Runde, mit meinem Hinweis' },
+	{ label: 'Weitergehen: der Schritt schließt mit done ab' },
 	{ label: 'Aufhören: Ticket bleibt beim Menschen', stopsRun: true }
 ];
 
 function disputeQuestion(db: DatabaseSync, t: Ticket, findings: string) {
 	const [previous] = findingsSinceHuman(db, t);
+	const who = t.column_step === 'critique' ? 'Autor und Kritiker sind' : 'Die Schritte sind';
 	const question =
-		`Autor und Kritiker sind sich nach ${CRITIQUE_ROUNDS} Runden nicht einig: ` +
-		`Die Kritik schickt ${t.ref} zum ${CRITIQUE_ROUNDS + 1}. Mal zurück.\n\n` +
+		`${who} sich nach ${BACK_ROUNDS} Runden nicht einig: ` +
+		`„${t.column_name}“ schickt ${t.ref} zum ${BACK_ROUNDS + 1}. Mal zurück.\n\n` +
 		`Befunde der Runde davor:\n${previous}\n\nBefunde jetzt:\n${findings}\n\nWie soll es weitergehen?`;
 	return { question, options: DISPUTE_OPTIONS };
 }

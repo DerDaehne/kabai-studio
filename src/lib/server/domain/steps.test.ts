@@ -166,7 +166,7 @@ describe('the chain', () => {
 	});
 });
 
-describe('the round limit between author and critique', () => {
+describe('the round limit on going back', () => {
 	/** Implement and critique alternate; each critique sends findings `n` back. */
 	function rounds(c: ReturnType<typeof chain>, findings: string[]) {
 		return findings.map((text) => {
@@ -239,6 +239,85 @@ describe('the round limit between author and critique', () => {
 				summary: 'B'
 			})
 		).toEqual({ next: 'implement', then: 'run' });
+	});
+
+	it.each([
+		{ variant: 'software', start: 'implement', backTo: 'refine', workBack: ['done', 'done'] },
+		{ variant: 'knowledge', start: 'draft', backTo: 'research', workBack: ['done'] }
+	] as const)(
+		'turns the third back into the question in a $variant loop that never reaches critique',
+		({ variant, start, backTo, workBack }) => {
+			const c = chain(variant, start);
+			for (const finding of ['Befund 1', 'Befund 2']) {
+				const back = c.work('back', finding);
+				expect(back.outcome).toEqual({ next: backTo, then: 'run' });
+				expect(back.next).toBeDefined();
+				workBack.forEach((result) => c.work(result));
+			}
+
+			const third = c.work('back', 'Befund 3');
+
+			expect(third.outcome).toEqual({
+				next: start,
+				then: 'human',
+				question_id: expect.any(Number)
+			});
+			expect(third.next).toBeUndefined();
+			const question = latestOpenQuestion(c.db, c.ticketId)!.question;
+			expect(question).toMatch(/^Die Schritte sind sich nach 2 Runden nicht einig/);
+			expect(question).toContain('Befund 2');
+			expect(question).toContain('Befund 3');
+		}
+	);
+
+	it('counts every back towards the same limit, from critique and from an earlier step alike', () => {
+		const c = chain('software', 'implement');
+		rounds(c, ['Befund 1']);
+		expect(c.work('back', 'Befund 2').outcome).toEqual({ next: 'refine', then: 'run' });
+		c.work('done');
+		c.work('done');
+		c.work('done');
+
+		expect(c.work('back', 'Befund 3').outcome.then).toBe('human');
+	});
+
+	it('counts the back of a critique run the human started, so the third back is the question', () => {
+		const c = chain('software', 'critique');
+		expect(c.work('back', 'Befund 1').outcome).toEqual({ next: 'implement', then: 'run' });
+		c.work('done');
+		expect(c.work('back', 'Befund 2').outcome).toEqual({ next: 'implement', then: 'run' });
+		c.work('done');
+
+		const third = c.work('back', 'Befund 3');
+
+		expect(third.outcome).toEqual({
+			next: 'critique',
+			then: 'human',
+			question_id: expect.any(Number)
+		});
+	});
+
+	it('keeps counting through a critique run that resumes after a park', () => {
+		const c = chain('software', 'implement');
+		rounds(c, ['Befund 1', 'Befund 2']);
+		c.work('done');
+		const parked = c.current();
+		runs.startRun(c.db, system, parked);
+		runs.finishRun(c.db, system, parked, { state: 'paused' });
+		const resumed = runs.createRun(c.db, system, {
+			ticketId: c.ticketId,
+			profileId: c.profileId,
+			resumedFromRunId: parked,
+			resumeReason: 'context_budget'
+		}).id;
+		runs.startRun(c.db, system, resumed);
+
+		const third = finishStep(c.db, { kind: 'agent', runId: resumed }, c.ticketId, {
+			result: 'back',
+			summary: 'Befund 3'
+		});
+
+		expect(third).toEqual({ next: 'critique', then: 'human', question_id: expect.any(Number) });
 	});
 
 	it('asks only once when the critique repeats its third back', () => {
