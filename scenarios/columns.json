@@ -5,8 +5,8 @@
 			"description": "Auf kleinen Bildschirmen ist unklar, in welcher Spalte eine Karte gerade ist. Jemand sollte sich das genauer ansehen.",
 			"column": "Backlog",
 			"expect": {
-				"forbiddenTools": ["add_tasks"],
-				"maxSteps": 6
+				"forbiddenTools": ["add_tasks", "update_ticket", "finish_step"],
+				"maxSteps": 3
 			}
 		},
 		{

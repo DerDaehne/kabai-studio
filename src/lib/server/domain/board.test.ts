@@ -259,7 +259,7 @@ describe('createProject / createTicket', () => {
 			expect(critique).toContain('critic, not a reviewer');
 			expect(critique).toContain('refute');
 			expect(critique).toContain('bugs and security holes');
-			expect(critique).toContain('test that fails, a mutation that survives or a probe');
+			expect(critique).toContain('the file and line, the quoted text, or a concrete input');
 			expect(critique).toContain('Never write "ok"');
 			expect(critique).toContain('"Not refuted"');
 			expect(critique).toContain('what you checked and what you could not check');

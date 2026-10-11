@@ -130,9 +130,9 @@ const TOOLS = {
 			blocks: list({ type: 'string', maxLength: MAX_REF })
 		})
 	),
-	list_workable: define<{ column_id?: number }>(
-		'Tickets of your project that can start now: no blocks predecessor still open. Optionally one column only.',
-		object({ column_id: { type: 'integer' } })
+	list_workable: define<Record<string, never>>(
+		'Tickets of your project that can start now: no blocks predecessor still open.',
+		object({})
 	),
 	notes_search: define<{ query: string; kind?: notes.NoteKind }>(
 		'Search the notes (knowledge base); words are taken literally. Returns slugs and snippets.',
@@ -376,7 +376,7 @@ function registerTicketTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolCont
 		linkOwnTicket(db, ctx, waits_for, blocks)
 	);
 
-	tool('list_workable', ({ column_id }) => workableView(db, ctx, column_id));
+	tool('list_workable', () => workableView(db, ctx));
 }
 
 function registerNoteTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContext) {
@@ -534,19 +534,19 @@ function createChildTickets(db: DatabaseSync, ctx: ToolContext, items: ChildTick
 }
 
 /** At most MAX_ITEMS tickets, so a large backlog does not flood a small model's context; `more` says what was left out. */
-function workableView(db: DatabaseSync, ctx: ToolContext, columnId?: number) {
-	const columnName = new Map(
+function workableView(db: DatabaseSync, ctx: ToolContext) {
+	const stepOf = new Map(
 		db
-			.prepare('SELECT id, name FROM columns WHERE project_id = ?')
+			.prepare('SELECT id, step FROM columns WHERE project_id = ?')
 			.all(ctx.projectId)
-			.map((c) => [c.id as number, c.name as string])
+			.map((c) => [c.id as number, c.step as string])
 	);
-	const rows = board.workableTickets(db, ctx.projectId, columnId);
+	const rows = board.workableTickets(db, ctx.projectId);
 	return {
 		tickets: rows.slice(0, MAX_ITEMS).map((t) => ({
 			ref: t.ref,
 			title: t.title,
-			column: columnName.get(t.column_id),
+			step: stepOf.get(t.column_id),
 			...(t.assignee && { assignee: t.assignee })
 		})),
 		...(rows.length > MAX_ITEMS && { more: rows.length - MAX_ITEMS })

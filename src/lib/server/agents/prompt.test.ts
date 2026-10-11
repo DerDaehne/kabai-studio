@@ -259,6 +259,19 @@ describe('assignment', () => {
 	});
 });
 
+describe('assignment without a step contract', () => {
+	it('tells the agent to change nothing and not to call finish_step in a step without an agent role', () => {
+		const w = world();
+		const { user } = assemblePrompt(w.db, {
+			ticketId: w.ticket('Waiting', 'Backlog'),
+			profile: cloud
+		});
+		const assignment = user.slice(user.indexOf('## Assignment'));
+		expect(assignment).toContain('Change nothing and do not call finish_step');
+		expect(assignment).not.toMatch(/end the step with finish_step/);
+	});
+});
+
 describe('internal context', () => {
 	it('lists tasks with ids, relations with their reading, comments and linked notes', () => {
 		const w = world();
@@ -383,6 +396,8 @@ describe('output nothing can produce', () => {
 		/real output/i,
 		/commands? you ran/i,
 		/failing test/i,
+		/a test that fails/i,
+		/mutation that survives/i,
 		/test-first/i,
 		/\b(compile|execute|run) (it|the code|your code|the tests?)\b/i
 	];

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import {
 	appendComment,
+	blockingPredecessors,
 	columns,
 	hasLinkedNote,
 	ticket,
@@ -175,7 +176,7 @@ function assertFinishable(t: Ticket, summary: string) {
 		throw new DomainError(
 			'not_in_work',
 			`${t.ref} liegt in „${t.column_name}“; dort gibt es keinen Schritt für Agents.`,
-			'Beende deinen Zug; weiter geht es mit dem Menschen.'
+			'Do not call finish_step again; answer without a tool call. The human continues from here.'
 		);
 	if (!summary.trim())
 		throw new DomainError(
@@ -198,7 +199,20 @@ function block(db: DatabaseSync, actor: Actor, t: Ticket, summary: string): Step
 
 function nextColumn(db: DatabaseSync, t: Ticket, cols: Column[]): Column {
 	assertExitConditions(db, t);
-	return cols[cols.findIndex((c) => c.id === t.column_id) + 1];
+	const next = cols[cols.findIndex((c) => c.id === t.column_id) + 1];
+	if (next.phase === 'work') assertNoBlockingPredecessor(db, t);
+	return next;
+}
+
+function assertNoBlockingPredecessor(db: DatabaseSync, t: Ticket) {
+	const open = blockingPredecessors(db, t.id);
+	if (!open.length) return;
+	const refs = open.map((p) => p.ref).join(', ');
+	throw new DomainError(
+		'blocked_by_predecessor',
+		`${t.ref} wartet auf ${refs} (blocks); es darf nicht in den nächsten Arbeitsschritt.`,
+		`Beende den Schritt mit finish_step result blocked und nenne ${refs} in summary; der Mensch entscheidet.`
+	);
 }
 
 function assertExitConditions(db: DatabaseSync, t: Ticket) {

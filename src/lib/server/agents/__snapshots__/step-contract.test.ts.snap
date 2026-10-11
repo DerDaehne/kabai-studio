@@ -2,7 +2,7 @@
 
 exports[`the phase contract of a step > in direct: critique shows goal, done-when and then 1`] = `
 "## Step: critique (2 of 3)
-Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence you can give from the board: the file and line, the quoted text, or a concrete input that contradicts a criterion, with the steps to repeat it; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
 Done when: your summary says what you did and what is open
 Then: a human accepts the result
 Finish with finish_step: done, back (to implement), or blocked (your question)."
@@ -18,7 +18,7 @@ Finish with finish_step: done, or blocked (your question)."
 
 exports[`the phase contract of a step > in knowledge: critique shows goal, done-when and then 1`] = `
 "## Step: critique (3 of 4)
-Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence you can give from the board: the file and line, the quoted text, or a concrete input that contradicts a criterion, with the steps to repeat it; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
 Done when: your summary says what you did and what is open
 Then: a human accepts the result
 Finish with finish_step: done, back (to draft), or blocked (your question)."
@@ -42,7 +42,7 @@ Finish with finish_step: done, or blocked (your question)."
 
 exports[`the phase contract of a step > in software: critique shows goal, done-when and then 1`] = `
 "## Step: critique (4 of 5)
-Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence: a test that fails, a mutation that survives or a probe anyone can repeat; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
+Goal: Do: act as a critic, not a reviewer. Try to refute that the ticket is done: check the result against every acceptance criterion and look for bugs and security holes. Do not take the author at their word. A finding counts only with evidence you can give from the board: the file and line, the quoted text, or a concrete input that contradicts a criterion, with the steps to repeat it; an opinion is not a finding. Deliver: a summary with each finding and its evidence, then a list of what you checked and what you could not check. Never write "ok": without findings write "Not refuted" and the list. Stop: finish_step with done if you could not refute it, with back and the findings if you could.
 Done when: your summary says what you did and what is open
 Then: a human accepts the result
 Finish with finish_step: done, back (to implement), or blocked (your question)."
@@ -58,7 +58,7 @@ Finish with finish_step: done, back (to refine), or blocked (your question)."
 
 exports[`the phase contract of a step > in software: plan shows goal, done-when and then 1`] = `
 "## Step: plan (2 of 5)
-Goal: Do: plan the work; do not refine the ticket and do not implement it. Check that no blocker is still open and read the linked notes. Deliver: the plan as your summary, in a few lines: the steps in order, what each touches and the risks. Stop: finish_step with done. Only if the description no longer matches reality, finish_step with back and say why in the summary.
+Goal: Do: plan the work; do not refine the ticket and do not implement it. Check that no blocker is still open; if one is, finish_step with blocked and name it. Read the linked notes. Deliver: the plan as your summary, in a few lines: the steps in order, what each touches and the risks. Stop: finish_step with done. Only if the description no longer matches reality, finish_step with back and say why in the summary.
 Done when: your summary says what you did and what is open
 Then: a fresh agent works the next step, implement
 Finish with finish_step: done, back (to refine), or blocked (your question)."

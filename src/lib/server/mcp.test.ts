@@ -464,7 +464,7 @@ describe('link_tickets', () => {
 
 describe('list_workable', () => {
 	it('lists only tickets whose predecessors are done, or approved (acceptance) when the project counts review_ok', async () => {
-		const { db, projectId, call, startRun, ticket, place, col } = setup();
+		const { db, projectId, call, startRun, ticket, place } = setup();
 		const own = ticket('Eigenes');
 		const [done, approved, open] = [ticket('Fertig'), ticket('Freigegeben'), ticket('Offen')];
 		const [afterDone, afterApproved, afterOpen] = [
@@ -479,13 +479,13 @@ describe('list_workable', () => {
 		board.linkRelation(db, user, approved, afterApproved, 'blocks');
 		board.linkRelation(db, user, open, afterOpen, 'blocks');
 		const { runId, token } = startRun(own);
-		const workable = async (args = {}) => (await call(token, 'list_workable', args)).body;
+		const workable = async () => (await call(token, 'list_workable')).body;
 
 		expect((await workable()).tickets).toEqual([
-			{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', assignee: `agent (Run ${runId})` },
-			{ ref: 'STU-4', title: 'Offen', column: 'Backlog' },
-			{ ref: 'STU-5', title: 'Nach Fertig', column: 'Backlog' },
-			{ ref: 'STU-3', title: 'Freigegeben', column: 'Kritik' }
+			{ ref: 'STU-1', title: 'Eigenes', step: 'backlog', assignee: `agent (Run ${runId})` },
+			{ ref: 'STU-4', title: 'Offen', step: 'backlog' },
+			{ ref: 'STU-5', title: 'Nach Fertig', step: 'backlog' },
+			{ ref: 'STU-3', title: 'Freigegeben', step: 'critique' }
 		]);
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		expect((await workable()).tickets.map((t: { ref: string }) => t.ref)).toEqual([
@@ -495,9 +495,6 @@ describe('list_workable', () => {
 			'STU-6',
 			'STU-3'
 		]);
-		expect(await workable({ column_id: col.Kritik })).toEqual({
-			tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Kritik' }]
-		});
 	});
 
 	it('answers with at most 50 tickets and says how many more there are', async () => {
@@ -1650,6 +1647,31 @@ describe('finish_step with back', () => {
 			hint: expect.stringContaining('finish_step mit result blocked')
 		});
 		expect(writableRows(w.db)).toBe(before);
+	});
+});
+
+describe('finish_step outside the work phase', () => {
+	it('names the way out in English: no second finish_step, answer without a tool call', async () => {
+		const w = inStep('software', 'backlog');
+		const refused = await w.finish('done');
+		expect(refused.body).toMatchObject({
+			error: 'not_in_work',
+			hint: expect.stringMatching(/do not call finish_step again; answer without a tool call/i)
+		});
+	});
+});
+
+describe('finish_step with done and an open blocks predecessor', () => {
+	it('is refused as blocked_by_predecessor with blocked as the way out and leaves the ticket in its step', async () => {
+		const w = inStep('software', 'plan');
+		const predecessor = w.ticket('First');
+		board.linkRelation(w.db, user, predecessor, w.id, 'blocks');
+		const refused = await w.finish('done');
+		expect(refused.body).toMatchObject({
+			error: 'blocked_by_predecessor',
+			hint: expect.stringContaining('result blocked')
+		});
+		expect(w.stepOf()).toBe('plan');
 	});
 });
 

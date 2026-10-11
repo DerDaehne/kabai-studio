@@ -219,6 +219,11 @@ function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Bloc
 }
 
 function assignmentText(context: Context): string {
+	if (!context.contract)
+		return [
+			'## Assignment',
+			`${context.ref} is in the step "${context.step}", which has no agent work. Change nothing and do not call finish_step: reply with one sentence that the ticket waits for the human, then stop.`
+		].join('\n');
 	return [
 		'## Assignment',
 		`Work ${context.ref} in the step "${context.step}": do what your goal for this step says, deliver the result it names and end the step with finish_step. ` +
