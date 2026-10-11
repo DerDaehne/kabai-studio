@@ -19,7 +19,8 @@ export type Ticket = {
 type Emit = (event: StudioEvent) => void;
 export type RelationType = 'parent_of' | 'blocks' | 'relates_to' | 'duplicate_of';
 /** Who can fulfil a task; finishing a step requires only the agent's tasks. */
-export type TaskOwner = 'agent' | 'system' | 'human';
+export const TASK_OWNERS = ['agent', 'system', 'human'] as const;
+export type TaskOwner = (typeof TASK_OWNERS)[number];
 export type Blocker = { code: string; message: string; hint: string };
 /** A reachable target; empty `blockers` = this actor may make the move now. */
 export type Move = {
@@ -589,6 +590,12 @@ export function addTasks(
 ): { ids: number[] } {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
+		if (!TASK_OWNERS.includes(owner))
+			throw new DomainError(
+				'invalid_owner',
+				`„${owner}“ ist keine Zuständigkeit für Tasks.`,
+				`Erlaubt: ${TASK_OWNERS.join(', ')}.`
+			);
 		if (titles.some((title) => !title.trim()))
 			throw new DomainError(
 				'empty_title',

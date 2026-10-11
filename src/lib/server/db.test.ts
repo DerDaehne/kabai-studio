@@ -939,6 +939,13 @@ describe('016 on a database at 015 with both template generations in real use', 
 		board.updateTicket(db, { kind: 'user' }, 101, { size: 'S' });
 		expect(db.prepare('SELECT size FROM tickets WHERE id = 101').get()).toEqual({ size: 'S' });
 	});
+
+	it('gives the tasks that existed before 017 the owner agent', () => {
+		const db = dbBefore016();
+		migrate(db);
+		expect(db.prepare('SELECT DISTINCT owner FROM tasks').all()).toEqual([{ owner: 'agent' }]);
+		expect(rowCounts(db).tasks).toBe(2);
+	});
 });
 
 describe('migrate with foreign keys', () => {

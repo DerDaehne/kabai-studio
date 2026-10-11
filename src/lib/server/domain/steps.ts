@@ -100,7 +100,9 @@ export function finishStep(
 ): StepOutcome {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		if (t.column_id !== runColumnOf(db, actor)) return outcomeOf(t.column_step, t.column_phase);
+		const runColumn = runColumnOf(db, actor);
+		if (runColumn === null) throw stepNotCurrent(t);
+		if (t.column_id !== runColumn) return outcomeOf(t.column_step, t.column_phase);
 		assertFinishable(t, input.summary);
 		if (input.result === 'blocked') return block(db, actor, t, input.summary);
 		const cols = columns(db, t.project_id);
@@ -129,6 +131,14 @@ function runColumnOf(db: DatabaseSync, actor: Actor): number | null {
 		{ column_id: number | null } | undefined;
 	return run?.column_id ?? null;
 }
+
+/** A run whose column is gone has no step to finish; the summary is not saved, so the error says so. */
+const stepNotCurrent = (t: Ticket) =>
+	new DomainError(
+		'step_not_current',
+		`Der Schritt dieses Runs existiert nicht mehr; ${t.ref} liegt jetzt in „${t.column_name}“. Deine summary wurde nicht gespeichert.`,
+		`Beende deinen Zug; das Ticket liegt im Schritt „${t.column_name}“.`
+	);
 
 function assertFinishable(t: Ticket, summary: string) {
 	if (t.column_phase !== 'work')

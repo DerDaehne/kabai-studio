@@ -1667,6 +1667,30 @@ describe('step_incomplete names the tools and ids that fix it', () => {
 		expect(hint).toContain('update_ticket mit size (XS, S, M, L oder XL)');
 		expect(hint).toContain('update_ticket mit description');
 	});
+
+	it('refuses an empty summary with empty_summary and writes nothing', async () => {
+		const w = inStep('software', 'critique');
+		const before = writableRows(w.db);
+		const refused = await w.finish('back', '   ');
+		expect(refused.isError).toBe(true);
+		expect(refused.body.error).toBe('empty_summary');
+		expect(writableRows(w.db)).toBe(before);
+		expect(w.stepOf()).toBe('critique');
+	});
+
+	it('refuses a run whose column is gone with step_not_current instead of reporting success', async () => {
+		const w = inStep('software', 'implement');
+		w.db.prepare('UPDATE runs SET column_id = NULL WHERE id = ?').run(w.runId);
+		await w.call(w.token, 'add_tasks', { titles: ['Open'] });
+		const before = writableRows(w.db);
+		const refused = await w.finish('done');
+		expect(refused.isError).toBe(true);
+		expect(refused.body.error).toBe('step_not_current');
+		expect(refused.body.hint).toContain('Umsetzen');
+		expect(refused.body.message).toContain('summary wurde nicht gespeichert');
+		expect(writableRows(w.db)).toBe(before);
+		expect(w.stepOf()).toBe('implement');
+	});
 });
 
 describe('finish_step with back', () => {
@@ -1814,5 +1838,17 @@ describe('task owner', () => {
 			['Code', undefined],
 			['Try it on a phone', 'human']
 		]);
+	});
+
+	it('rejects an unknown owner with invalid_owner listing the allowed values and adds nothing', async () => {
+		const { call, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const refused = await call(token, 'add_tasks', { titles: ['Code'], owner: 'robot' });
+		expect(refused.isError).toBe(true);
+		expect(refused.body).toMatchObject({
+			error: 'invalid_owner',
+			hint: 'Erlaubt: agent, system, human.'
+		});
+		expect((await call(token, 'get_ticket')).body.tasks).toEqual([]);
 	});
 });

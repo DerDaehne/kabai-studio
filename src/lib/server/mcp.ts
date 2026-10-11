@@ -226,8 +226,9 @@ const TOOLS = {
 			{
 				titles: list(text(MAX_TITLE)),
 				owner: {
-					enum: ['agent', 'system', 'human'],
-					description: 'who can fulfil them; default agent'
+					type: 'string',
+					maxLength: 10,
+					description: 'who can fulfil them: agent (default), system or human'
 				},
 				idempotency_key: idempotencyKey
 			},
