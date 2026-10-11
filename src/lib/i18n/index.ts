@@ -69,3 +69,10 @@ export function localeFromEnv(env: Record<string, string | undefined>): Locale {
 	const setting = env.LC_ALL || env.LC_MESSAGES || env.LANG || '';
 	return supportedLanguage(setting) ?? FALLBACK_LOCALE;
 }
+
+/**
+ * Fills the language into the shell's `<html>` tag only. Page content cannot produce this exact tag, because
+ * rendered text has its `<` escaped, so a `%lang%` written by a user stays untouched.
+ */
+export const setHtmlLang = (html: string, locale: Locale): string =>
+	html.replace('<html lang="%lang%"', `<html lang="${locale}"`);

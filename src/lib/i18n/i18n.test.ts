@@ -6,6 +6,7 @@ import {
 	negotiateLocale,
 	placeholders,
 	resolveLocale,
+	setHtmlLang,
 	translate,
 	type Locale
 } from './index.ts';
@@ -65,5 +66,17 @@ describe('locale selection', () => {
 		[{}, 'en']
 	])('the CLI environment %j selects %s', (env, locale) => {
 		expect(localeFromEnv(env)).toBe(locale);
+	});
+});
+
+describe('html language', () => {
+	it('fills the shell tag only, so a %lang% in page content stays as written', () => {
+		const chunk = '<html lang="%lang%"><body><p>Use %lang% here</p></body></html>';
+		expect(setHtmlLang(chunk, 'en')).toBe(
+			'<html lang="en"><body><p>Use %lang% here</p></body></html>'
+		);
+		expect(setHtmlLang('<p>a later chunk with %lang%</p>', 'de')).toBe(
+			'<p>a later chunk with %lang%</p>'
+		);
 	});
 });

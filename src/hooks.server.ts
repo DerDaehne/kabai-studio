@@ -9,7 +9,7 @@ import {
 	type RequestEvent,
 	type ServerInit
 } from '@sveltejs/kit';
-import { LOCALE_COOKIE, resolveLocale } from '$lib/i18n';
+import { LOCALE_COOKIE, resolveLocale, setHtmlLang } from '$lib/i18n';
 import {
 	SESSION_COOKIE,
 	clearSessionCookie,
@@ -77,6 +77,13 @@ const RUN_TOKEN_PATH = '/mcp';
 const HEALTH_PATH = '/api/health';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+// The page language follows Accept-Language, so a shared cache must not hand one visitor's language to another.
+function withLanguageVary(response: Response): Response {
+	if (response.headers.get('content-type')?.startsWith('text/html'))
+		response.headers.append('vary', 'Accept-Language');
+	return response;
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
 	const locale = resolveLocale(
 		event.cookies.get(LOCALE_COOKIE),
@@ -93,7 +100,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const hasSession = !!token && restoreSession(event, token);
 	const path = event.url.pathname;
 	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH || path === HEALTH_PATH)
-		return resolve(event, { transformPageChunk: ({ html }) => html.replace('%lang%', locale) });
+		return withLanguageVary(
+			await resolve(event, { transformPageChunk: ({ html }) => setHtmlLang(html, locale) })
+		);
 	if (path === '/api' || path.startsWith('/api/')) return unauthorizedApiResponse(event, !!token);
 	redirect(303, hasOwner(db()) ? '/login' : '/setup');
 };

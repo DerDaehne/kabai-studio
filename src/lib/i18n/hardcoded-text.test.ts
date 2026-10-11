@@ -1,6 +1,6 @@
 // Guards against human-facing text written directly into component markup instead of going through `t()`.
-// ponytail: checks markup text and user-facing attributes only; strings in <script> (e.g. a label constant) slip
-// through. Extend the walk to string literals once the migration has removed most of today's findings.
+// ponytail: checks markup text, user-facing attributes and strings an expression renders directly; strings in
+// <script> (e.g. a label constant) slip through. Extend the walk there once the migration is done.
 import { globSync, readFileSync } from 'node:fs';
 import { parse } from 'svelte/compiler';
 import { describe, expect, it } from 'vitest';
@@ -50,14 +50,44 @@ const USER_FACING_ATTRIBUTES = new Set([
 ]);
 const LETTER = /\p{L}/u;
 
-type Node = { type?: string; data?: string; name?: string; value?: unknown };
+type Node = { type?: string; data?: string; name?: string; value?: unknown; expression?: unknown };
+type Expression = {
+	type?: string;
+	value?: unknown;
+	quasis?: { value: { cooked?: string } }[];
+	consequent?: Expression;
+	alternate?: Expression;
+	left?: Expression;
+	right?: Expression;
+};
+
+/** Strings an expression shows as they are: `{'Hallo'}`, `{x ? 'Ja' : 'Nein'}`, `{name || 'Gast'}`, template literals. */
+function renderedStrings(expression: Expression | undefined): string[] {
+	switch (expression?.type) {
+		case 'Literal':
+			return typeof expression.value === 'string' ? [expression.value] : [];
+		case 'TemplateLiteral':
+			return [(expression.quasis ?? []).map((quasi) => quasi.value.cooked ?? '').join('')];
+		case 'ConditionalExpression':
+			return [...renderedStrings(expression.consequent), ...renderedStrings(expression.alternate)];
+		case 'LogicalExpression':
+			return [...renderedStrings(expression.left), ...renderedStrings(expression.right)];
+		default:
+			return [];
+	}
+}
 
 function collectTexts(node: unknown, found: string[]): void {
 	if (Array.isArray(node)) return node.forEach((child) => collectTexts(child, found));
 	if (typeof node !== 'object' || node === null) return;
-	const { type, data, name, value } = node as Node;
+	const { type, data, name, value, expression } = node as Node;
 	if (type === 'Text') {
 		if (LETTER.test(data ?? '')) found.push((data ?? '').trim());
+		return;
+	}
+	if (type === 'ExpressionTag') {
+		const shown = renderedStrings(expression as Expression).filter((text) => LETTER.test(text));
+		found.push(...shown.map((text) => text.trim()));
 		return;
 	}
 	if (type === 'Attribute' && USER_FACING_ATTRIBUTES.has(name ?? ''))
@@ -87,6 +117,24 @@ describe('hard-coded text in components', () => {
 				'<h1>{t("login.title")}</h1><input name="name" type="text" style:width="{n}px" />'
 			)
 		).toEqual([]);
+	});
+
+	it('finds strings an expression renders directly, but not strings it only compares or passes to t()', () => {
+		expect(
+			hardcodedTexts(
+				"<p>{'Hallo'}</p><p>{`Moin ${n}`}</p><p>{ok ? 'Ja' : 'Nein'}</p><p>{name || 'Gast'}</p><b title={x ? 'Offen' : t('k')}>.</b>"
+			)
+		).toEqual(['Hallo', 'Moin', 'Ja', 'Nein', 'Gast', 'Offen']);
+		expect(
+			hardcodedTexts(
+				"<p>{state === 'running' ? t('a') : t('b')}</p>{#if mode === 'dark'}<i>{t('c')}</i>{/if}"
+			)
+		).toEqual([]);
+	});
+
+	it('the list of unmigrated components only shrinks', () => {
+		// Raising this number needs a visible edit here, not just one more entry in the list above.
+		expect(NOT_YET_MIGRATED.size).toBeLessThanOrEqual(28);
 	});
 
 	it.each(components.filter((file) => !NOT_YET_MIGRATED.has(file)))(
