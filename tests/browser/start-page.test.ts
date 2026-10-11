@@ -292,7 +292,7 @@ test.describe('at 1440 px', () => {
 		try {
 			await open(page, '/');
 			const row = section(page, 'projekte').getByRole('link').filter({ hasText: 'Held project' });
-			await expect(row).toContainText(/Agents aktiv\s*0/);
+			await expect(row).toContainText(/(^|\s)0\s*Agents aktiv/);
 		} finally {
 			deleteTicket(db, HUMAN, ticket);
 			db.prepare('DELETE FROM projects WHERE id = ?').run(project);
