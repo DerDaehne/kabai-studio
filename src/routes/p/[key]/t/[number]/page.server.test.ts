@@ -189,15 +189,16 @@ describe('actions', () => {
 		});
 	});
 
-	it('move only accepts an allowedMoves target, with the blocker reported on a refused move', async () => {
+	it('move takes the human into any column, with the blocker reported on a refused move', async () => {
 		const { number, id } = board.createTicket(db(), user, projectId, { title: 'T' });
-		const refine = findColumn(id, 'Refine'); // adjacent to Backlog, so an allowed move
-		await post('move', number, { columnId: String(refine) });
-		expect((await loadTicket(number)).ticket.column.name).toBe('Refine');
+		const abnahme = findColumn(id, 'Abnahme'); // three steps on from Backlog: the human may skip steps
+		await post('move', number, { columnId: String(abnahme) });
+		expect((await loadTicket(number)).ticket.column.name).toBe('Abnahme');
 
-		const abnahme = findColumn(id, 'Abnahme'); // not adjacent to Refine, so not an allowed move
-		const fail = await post('move', number, { columnId: String(abnahme) });
-		expect(fail).toMatchObject({ status: 400, data: { code: 'transition_not_allowed' } });
+		board.addTask(db(), user, id, 'offen');
+		const fertig = findColumn(id, 'Fertig');
+		const fail = await post('move', number, { columnId: String(fertig) });
+		expect(fail).toMatchObject({ status: 400, data: { code: 'open_tasks' } });
 	});
 
 	it('delete removes the ticket and redirects to the board', async () => {

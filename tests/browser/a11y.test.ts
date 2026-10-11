@@ -104,7 +104,7 @@ test.describe('WCAG 2.1 A/AA, light/dark × phone/desktop', () => {
 		addTask(db, HUMAN, ticket.id, taskTitle);
 		addComment(db, HUMAN, ticket.id, 'A real work-log comment, so the comment list is not empty.');
 		await open(page, ticket.path);
-		await expect(page.getByText(taskTitle)).toBeVisible();
+		await expect(page.getByRole('button', { name: `[ ] ${taskTitle}` })).toBeVisible();
 
 		await checkEveryCombination(page, 'run-akte');
 	});

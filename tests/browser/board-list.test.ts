@@ -87,7 +87,7 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 }) => {
 	const first = seedTicket('Sketch the onboarding');
 	const second = seedTicket('Write the release notes');
-	const refined = seedTicket('Split the importer', 'Refine');
+	const refined = seedTicket('Split the importer', 'Präzisieren');
 	await open(page, '/');
 	await press(page, 'g', 'b');
 	await expect(page).toHaveURL('/board');
@@ -117,7 +117,7 @@ test('gb opens the board, which groups tickets by column and binds its keys to t
 		new RegExp(`${PROJECT.key}\\s*${first.ref}\\s*Sketch the onboarding`),
 		new RegExp(`${second.ref}\\s*Write the release notes`)
 	]);
-	await expect(group(page, 'Refine')).toContainText(`${refined.ref} Split the importer`);
+	await expect(group(page, 'Präzisieren')).toContainText(`${refined.ref} Split the importer`);
 
 	await press(page, 'g', 'g');
 	await expect(selected(page)).toContainText(first.ref);
@@ -149,14 +149,14 @@ test('> moves the selected ticket one allowed column on and the row slides there
 	const slides = page.waitForFunction(slidingCopies, ticket.id);
 	await press(page, '>');
 	await slides;
-	await expect(group(page, 'Refine')).toContainText(ticket.ref);
-	await expect(page.getByText(`${ticket.ref} nach Refine`, { exact: true })).toBeVisible();
+	await expect(group(page, 'Präzisieren')).toContainText(ticket.ref);
+	await expect(page.getByText(`${ticket.ref} nach Präzisieren`, { exact: true })).toBeVisible();
 	await expect(selected(page)).toBeFocused();
 
 	await press(page, 'u');
 	await expect(rowIn(page, 'Backlog', ticket.ref)).toBeVisible();
-	await expect(rowIn(page, 'Refine', ticket.ref)).toBeHidden();
-	await expect(page.getByText(`Rückgängig: ${ticket.ref} nach Refine`)).toBeVisible();
+	await expect(rowIn(page, 'Präzisieren', ticket.ref)).toBeHidden();
+	await expect(page.getByText(`Rückgängig: ${ticket.ref} nach Präzisieren`)).toBeVisible();
 });
 
 test('another tab moving my selected ticket keeps its row focused once it lands', async ({
@@ -179,7 +179,7 @@ test('another tab moving my selected ticket keeps its row focused once it lands'
 		await select(other, ticket.ref);
 		await press(other, '>');
 
-		await expect(group(page, 'Refine')).toContainText(ticket.ref);
+		await expect(group(page, 'Präzisieren')).toContainText(ticket.ref);
 		await expect(selected(page)).toBeFocused();
 	} finally {
 		await otherContext.close();
@@ -209,7 +209,7 @@ test('a reload that lands after the focus left the list does not pull the focus 
 	await expect(commandLine).toBeFocused();
 
 	release();
-	await expect(rowIn(page, 'Refine', ticket.ref)).toBeVisible();
+	await expect(rowIn(page, 'Präzisieren', ticket.ref)).toBeVisible();
 	await page.waitForTimeout(300); // time for a second reload, the live echo of the move, to land as well
 	await expect(commandLine).toBeFocused();
 });
@@ -252,7 +252,7 @@ test('with reduced motion a moved row shows up in its new column at once, withou
 	await select(page, ticket.ref);
 
 	await press(page, '>');
-	await expect(group(page, 'Refine')).toContainText(`${ticket.ref} Fix the typo`);
+	await expect(group(page, 'Präzisieren')).toContainText(`${ticket.ref} Fix the typo`);
 	expect(await page.locator(`[data-ticket="${ticket.id}"]`).count()).toBe(1);
 	expect(await page.evaluate(slidingCopies, ticket.id)).toBe(0);
 });
@@ -264,7 +264,7 @@ test('o creates a ticket in the column of the selected row, and a second tab sho
 	seedTicket
 }) => {
 	const title = `Quick ticket ${randomUUID()}`;
-	const anchor = seedTicket('Plan the sprint', 'Refine');
+	const anchor = seedTicket('Plan the sprint', 'Präzisieren');
 	const otherContext = await browser.newContext();
 	const other = await otherContext.newPage();
 	try {
@@ -279,12 +279,12 @@ test('o creates a ticket in the column of the selected row, and a second tab sho
 		await field.fill(title);
 		await press(page, 'Enter');
 		await expect(page.getByText(new RegExp(`${PROJECT.key}-\\d+ angelegt`))).toBeVisible();
-		await expect(rowIn(page, 'Refine', title)).toBeVisible();
+		await expect(rowIn(page, 'Präzisieren', title)).toBeVisible();
 		await expect(selected(page)).toContainText(title);
-		await expect(rowIn(other, 'Refine', title)).toBeVisible();
+		await expect(rowIn(other, 'Präzisieren', title)).toBeVisible();
 
 		await press(page, '>');
-		await expect(rowIn(other, 'Ready', title)).toBeVisible();
+		await expect(rowIn(other, 'Planen', title)).toBeVisible();
 	} finally {
 		await otherContext.close();
 		deleteByTitle(db, title);

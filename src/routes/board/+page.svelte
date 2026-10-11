@@ -127,7 +127,7 @@
 		const row = current;
 		const project = shell.focus ?? row?.project ?? projects[0];
 		if (!project) return;
-		const sameColumn = row && row.project.id === project.id && row.column.kind !== 'done';
+		const sameColumn = row && row.project.id === project.id && row.column.phase !== 'done';
 		draft = { anchor: row?.id, below, project, columnId: sameColumn ? row.column.id : undefined };
 		draftTitle = '';
 	}
@@ -383,7 +383,7 @@
 					{group.column.name} <span class="count">{group.rows.length}</span>
 				</h2>
 				<p class="rule">
-					{startRule(group.column.kind)}{#if role}{' · '}<span class="role">{role}</span>{/if}
+					{startRule(group.column.phase)}{#if role}{' · '}<span class="role">{role}</span>{/if}
 				</p>
 			</header>
 			<ul class="rows">

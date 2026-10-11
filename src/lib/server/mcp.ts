@@ -229,7 +229,7 @@ const TOOLS = {
 		object({ column_id: { type: 'integer' } }, ['column_id'])
 	),
 	request_human: define<{ question: string; options?: QuestionOption[] }>(
-		'Ask the human and wait: moves your ticket to human intervention. Offer 1-3 decidable options when possible. End your turn afterwards.',
+		'Ask the human and wait: your ticket stays where it is until the answer comes. Offer 1-3 decidable options when possible. End your turn afterwards.',
 		object(
 			{
 				question: text(2000),
@@ -326,7 +326,7 @@ async function callTool<Name extends ToolName>(
 				{
 					error: err.code,
 					message: err.message,
-					hint: toolHint(db, ctx, name, err.code) ?? err.hint
+					hint: toolHint(err.code) ?? err.hint
 				},
 				true
 			);
@@ -416,10 +416,9 @@ function registerWorkTools(tool: RegisterTool, db: DatabaseSync, ctx: ToolContex
 
 	tool('move_ticket', ({ column_id }) => moveOwnTicket(db, ctx, column_id));
 
-	tool('request_human', (q) => {
-		const { id, column } = requestHuman(db, ctx.actor, ctx.ticketId, q);
-		return { question_id: id, column };
-	});
+	tool('request_human', (q) => ({
+		question_id: requestHuman(db, ctx.actor, ctx.ticketId, q).id
+	}));
 }
 
 function linkOwnTicket(db: DatabaseSync, ctx: ToolContext, waitsFor: string[], blocks: string[]) {
@@ -456,24 +455,11 @@ function noteSearchView(
 	};
 }
 
-/** Tool-level way out for domain errors whose domain hint names domain functions or does not fit the calling tool. */
-function toolHint(
-	db: DatabaseSync,
-	ctx: ToolContext,
-	tool: ToolName,
-	code: string
-): string | undefined {
+/** Tool-level way out for domain errors whose domain hint names domain functions. */
+function toolHint(code: string): string | undefined {
 	switch (code) {
 		case 'requires_human':
-			return tool === 'request_human'
-				? 'Das Ticket kann nur der Mensch verschieben; stell deine Frage mit add_comment.'
-				: 'Diesen Schritt macht nur der Mensch. Lass das Ticket, wo es ist; brauchst du eine Entscheidung, frag mit request_human.';
-		case 'open_tasks':
-			return `Schließe die Tasks mit complete_tasks ab: task_ids [${openTaskIds(db, ctx.ticketId).join(', ')}].`;
-		case 'open_children':
-			return 'Erst müssen die Kind-Tickets fertig sein; hängt es an ihnen, frag mit request_human.';
-		case 'docs_required':
-			return 'Vor dem Abschluss muss eine Note mit dem Ticket verknüpft sein; bitte den Menschen mit request_human darum.';
+			return 'Diesen Schritt macht nur der Mensch. Lass das Ticket, wo es ist; brauchst du eine Entscheidung, frag mit request_human.';
 		case 'transition_not_allowed':
 			return 'get_ticket zeigt die erreichbaren Spalten unter allowed_moves.';
 		case 'not_in_review':
@@ -493,18 +479,18 @@ const openTaskIds = (db: DatabaseSync, ticketId: number) =>
 		.all(ticketId)
 		.map((r) => r.id as number);
 
-/** Domain moves plus the rule only agents get: a blocked ticket must not enter a work column. */
+/** Domain moves plus the rule only agents get: a blocked ticket does not move on. */
 export function agentMoves(db: DatabaseSync, ctx: ToolContext): AgentMove[] {
 	const waitingFor = board.blockingPredecessors(db, ctx.ticketId);
 	return board.allowedMoves(db, ctx.ticketId, ctx.actor).map((m) => ({
 		columnId: m.columnId,
 		name: m.name,
 		refusals: [
-			...(m.kind === 'normal' && waitingFor.length ? [blockedRefusal(db, ctx, waitingFor)] : []),
+			...(waitingFor.length ? [blockedRefusal(db, ctx, waitingFor)] : []),
 			...m.blockers.map((b) => ({
 				error: b.code,
 				message: b.message,
-				hint: toolHint(db, ctx, 'move_ticket', b.code) ?? b.hint
+				hint: toolHint(b.code) ?? b.hint
 			}))
 		]
 	}));

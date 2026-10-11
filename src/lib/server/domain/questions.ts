@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { StudioEvent } from '../events';
-import { appendComment, applyAnswerMove, applyMove, ticket, type Ticket } from './board';
+import { appendComment, ticket, type Ticket } from './board';
 import { DomainError, tx, type Actor } from './core';
 import { createRun, finishRun, prioritizeRun } from './runs';
 
@@ -32,7 +32,7 @@ type QuestionRow = {
 	collected_at: string | null;
 };
 type OpenQuestion = QuestionRow & { t: Ticket };
-type PausedRun = { id: number; profileId: number; columnId: number | null };
+type PausedRun = { id: number; profileId: number };
 /**
  * What an answer sets going: a new run continuing the paused one, the follow-up runs already waiting, a deliberate
  * stop (the human's own choice, needs no "way out" comment), or no run for another reason.
@@ -77,13 +77,13 @@ const asComment = (text: string, options: QuestionOption[]) =>
 		'\n'
 	);
 
-/** Records the question (as comment and as question row) and moves the ticket to the project's human_intervention column. */
+/** Records the question as comment and as question row; the ticket stays in its column and waits for the human there. */
 export function requestHuman(
 	db: DatabaseSync,
 	actor: Actor,
 	ticketId: number,
 	q: { question: string; options?: QuestionOption[] }
-): { id: number; column: string } {
+): { id: number } {
 	return tx(db, (emit) => {
 		const t = ticket(db, ticketId);
 		if (!q.question.trim())
@@ -93,14 +93,12 @@ export function requestHuman(
 				'Formuliere die Frage so, dass der Mensch sie ohne weiteren Kontext beantworten kann.'
 			);
 		const options = normalizedOptions(q.options ?? []);
-		const escalation = escalationColumn(db, t);
 		appendComment(db, emit, actor, t, asComment(q.question, options));
 		const { id } = db
 			.prepare(
 				'INSERT INTO questions (ticket_id, run_id, question, options) VALUES (?, ?, ?, ?) RETURNING id'
 			)
 			.get(t.id, actor.runId ?? null, q.question, JSON.stringify(options)) as { id: number };
-		applyMove(db, emit, actor, t, escalation.id);
 		emit({
 			type: 'question.asked',
 			projectId: t.project_id,
@@ -108,7 +106,7 @@ export function requestHuman(
 			actor,
 			questionId: id
 		});
-		return { id, column: escalation.name };
+		return { id };
 	});
 }
 
@@ -121,25 +119,6 @@ export function latestOpenQuestion(db: DatabaseSync, ticketId: number): LatestQu
 		.get(ticketId) as QuestionRow | undefined;
 	if (!q) return undefined;
 	return { id: q.id, question: q.question, options: JSON.parse(q.options), answer: null };
-}
-
-function columnOfKind(db: DatabaseSync, t: Ticket, kind: 'human_intervention' | 'human_answered') {
-	return db
-		.prepare(
-			'SELECT id, name FROM columns WHERE project_id = ? AND kind = ? ORDER BY position, id LIMIT 1'
-		)
-		.get(t.project_id, kind) as { id: number; name: string } | undefined;
-}
-
-function escalationColumn(db: DatabaseSync, t: Ticket): { id: number; name: string } {
-	const column = columnOfKind(db, t, 'human_intervention');
-	if (!column)
-		throw new DomainError(
-			'no_escalation_column',
-			`Das Board von ${t.ref} hat keine human_intervention-Spalte.`,
-			'Stell die Frage als Kommentar; eine human_intervention-Spalte legt der Mensch im Board an.'
-		);
-	return column;
 }
 
 /** Only the human answers, and only until the agent has collected the answer. */
@@ -186,8 +165,8 @@ function validAnswer(q: QuestionRow, answer: Answer): Answer {
 }
 
 /**
- * Sets or replaces the human's answer. If it answers a paused run, the ticket returns to that run's column and a follow-up
- * run continues it once the undo window has passed; until that run starts, the human can change or retract the answer.
+ * Sets or replaces the human's answer. If it answers a paused run, a follow-up run continues it once the undo window has
+ * passed; until that run starts, the human can change or retract the answer.
  */
 export function answerQuestion(
 	db: DatabaseSync,
@@ -221,15 +200,8 @@ function continuationOf(db: DatabaseSync, q: QuestionRow, answer: Answer): Conti
 		return { kind: 'stopped', reason: 'die gewählte Option startet keinen Run' };
 	if (q.run_id === null) return { kind: 'none', reason: 'die Frage stammt aus keinem Run' };
 	const run = db
-		.prepare(
-			'SELECT id, state, agent_profile_id AS profileId, column_id AS columnId FROM runs WHERE id = ?'
-		)
-		.get(q.run_id) as {
-		id: number;
-		state: string;
-		profileId: number | null;
-		columnId: number | null;
-	};
+		.prepare('SELECT id, state, agent_profile_id AS profileId FROM runs WHERE id = ?')
+		.get(q.run_id) as { id: number; state: string; profileId: number | null };
 	// ponytail: an answer that beats the asking run's own pause continues nothing; queue the follow-up on pause if that race shows up.
 	if (run.state !== 'paused')
 		return { kind: 'none', reason: `Run ${run.id} ist „${run.state}“, nicht pausiert` };
@@ -243,7 +215,7 @@ function continuationOf(db: DatabaseSync, q: QuestionRow, answer: Answer): Conti
 	const started = followUps.find((f) => f.state !== 'queued');
 	if (started) throw answerInUse(q.id, started.id);
 	if (followUps.length) return { kind: 'waiting', followUpIds: followUps.map((f) => f.id) };
-	return { kind: 'resume', run: { id: run.id, profileId: run.profileId, columnId: run.columnId } };
+	return { kind: 'resume', run: { id: run.id, profileId: run.profileId } };
 }
 
 function answerInUse(questionId: number, runId: number) {
@@ -263,10 +235,7 @@ function continueAfterAnswer(
 ) {
 	const notBefore = new Date(Date.now() + ANSWER_UNDO_WINDOW_MS).toISOString();
 	if (continuation.kind === 'waiting') return holdBack(db, continuation.followUpIds, notBefore);
-	if (continuation.kind === 'resume')
-		return resumeRun(db, emit, actor, q.t, continuation.run, notBefore);
-	const answered = columnOfKind(db, q.t, 'human_answered');
-	if (answered) applyAnswerMove(db, emit, actor, q.t, answered.id);
+	if (continuation.kind === 'resume') return resumeRun(db, actor, q.t, continuation.run, notBefore);
 	if (continuation.kind === 'stopped') return; // the human's own choice: the ask-time comment already explains it
 	if (q.answer !== null) return; // only a changed answer: the way out is already on the ticket
 	const wayOut = `Die Antwort auf Frage ${q.id} setzt keinen Run fort: ${continuation.reason}.\nAusweg: Starte einen Run für das Ticket, er liest die Antwort.`;
@@ -279,17 +248,7 @@ function holdBack(db: DatabaseSync, runIds: number[], notBefore: string) {
 	for (const id of runIds) update.run(notBefore, id);
 }
 
-/** The follow-up run records the ticket's column at creation as its role, so the ticket moves first. */
-function resumeRun(
-	db: DatabaseSync,
-	emit: Emit,
-	actor: Actor,
-	t: Ticket,
-	run: PausedRun,
-	notBefore: string
-) {
-	const column = run.columnId ?? columnOfKind(db, t, 'human_answered')?.id;
-	if (column !== undefined) applyAnswerMove(db, emit, actor, t, column);
+function resumeRun(db: DatabaseSync, actor: Actor, t: Ticket, run: PausedRun, notBefore: string) {
 	const { id } = createRun(db, actor, {
 		ticketId: t.id,
 		profileId: run.profileId,
@@ -299,7 +258,7 @@ function resumeRun(
 	prioritizeRun(db, actor, id);
 }
 
-/** Takes the answer back while the run it would resume still waits: that run is cancelled and the ticket waits in human intervention again. */
+/** Takes the answer back while the run it would resume still waits: that run is cancelled and the question is open again. */
 export function retractAnswer(db: DatabaseSync, actor: Actor, questionId: number) {
 	tx(db, (emit) => {
 		const q = questionOpenForHuman(db, actor, questionId);
@@ -312,8 +271,6 @@ export function retractAnswer(db: DatabaseSync, actor: Actor, questionId: number
 		const continuation = continuationOf(db, q, JSON.parse(q.answer) as Answer);
 		if (continuation.kind === 'waiting')
 			continuation.followUpIds.forEach((id) => finishRun(db, actor, id, { state: 'cancelled' }));
-		const intervention = columnOfKind(db, q.t, 'human_intervention');
-		if (intervention) applyMove(db, emit, actor, q.t, intervention.id);
 		db.prepare('UPDATE questions SET answer = NULL, answered_at = NULL WHERE id = ?').run(q.id);
 		emit({
 			type: 'question.retracted',

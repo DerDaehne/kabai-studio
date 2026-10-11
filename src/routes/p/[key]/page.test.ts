@@ -32,21 +32,20 @@ const html = (data: ProjectPage, form: unknown = null) =>
 const text = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 describe('the project page', () => {
-	it('loads name, key and the columns in board order with their role prompts', () => {
+	it('loads name, key and the columns in board order with the role of their step', () => {
 		const { project, columns } = loaded('STU');
 		expect(project).toMatchObject({ code: 'STU', name: 'Studio' });
 		expect(columns.map((column) => column.name)).toEqual([
 			'Backlog',
-			'Refine',
-			'Ready',
-			'In Arbeit',
-			'Review',
+			'Präzisieren',
+			'Planen',
+			'Umsetzen',
+			'Kritik',
 			'Abnahme',
-			'Done',
-			'Human Intervention',
-			'Human Answered'
+			'Fertig'
 		]);
-		expect(columns[0].role).toMatch(/^Do: sort new work in/);
+		expect(columns[0].role).toBe(''); // the backlog has no agent role
+		expect(columns[1].role).toMatch(/^Do: propose the scope/);
 	});
 
 	it('404s with a message for a key no project has', () => {
@@ -62,7 +61,7 @@ describe('the project page', () => {
 		const markup = html(loaded('STU'));
 		expect(markup).toMatch(/<h1[^>]*>.*Studio<\/h1>/s);
 		expect(text(markup)).toContain('STU');
-		expect(text(markup)).toContain('Backlog Do: sort new work in');
+		expect(text(markup)).toContain('Präzisieren Do: propose the scope');
 		expect(markup).toMatch(/<label [^>]*>Titel<\/label>/);
 		expect(markup).toMatch(/<button [^>]*type="submit"[^>]*>\s*Ticket anlegen<\/button>/);
 		expect(markup).toMatch(/<a [^>]*href="\/projects"/);

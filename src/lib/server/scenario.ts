@@ -38,7 +38,7 @@ export type ScenarioExpectations = {
 export type ScenarioTicket = {
 	title: string;
 	description?: string;
-	/** Starting column by name, e.g. "Refine"; defaults to the project's first column (Backlog). */
+	/** Starting column by name, e.g. "Präzisieren"; defaults to the project's first column (Backlog). */
 	column?: string;
 	/** Answers an open request_human question once with this; omit to see the ticket stop there. */
 	requestHumanAnswer?: Answer;

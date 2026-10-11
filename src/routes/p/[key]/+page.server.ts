@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { domainFail } from '$lib/server/domain-failure';
 import { createTicket } from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import { ROLES, type Step } from '$lib/server/domain/variants';
 import { projectRef } from '$lib/server/live';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -22,11 +23,12 @@ function requireProject(key: string) {
 export const load: PageServerLoad = ({ params }): ProjectPage => {
 	const project = requireProject(params.key);
 	const columns = db()
-		.prepare(
-			'SELECT name, role_prompt AS role FROM columns WHERE project_id = ? ORDER BY position, id'
-		)
-		.all(project.id) as ProjectPage['columns'];
-	return { project: projectRef(project), columns };
+		.prepare('SELECT name, step FROM columns WHERE project_id = ? ORDER BY position, id')
+		.all(project.id) as { name: string; step: Step }[];
+	return {
+		project: projectRef(project),
+		columns: columns.map(({ name, step }) => ({ name, role: ROLES[step] ?? '' }))
+	};
 };
 
 export const actions: Actions = {

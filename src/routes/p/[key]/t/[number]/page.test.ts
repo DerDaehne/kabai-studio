@@ -48,11 +48,11 @@ const base: TicketDetail = {
 		children: [{ ref: 'STU-3', title: 'Kind', column: 'Ready' }]
 	},
 	moves: [
-		{ columnId: 11, name: 'Review', kind: 'normal', position: 4, blockers: [] },
+		{ columnId: 11, name: 'Review', phase: 'work', position: 4, blockers: [] },
 		{
 			columnId: 12,
 			name: 'Abnahme',
-			kind: 'normal',
+			phase: 'acceptance',
 			position: 5,
 			blockers: [
 				{ code: 'open_tasks', message: 'STU-1 hat 1 offene Tasks.', hint: 'Erledige sie zuerst.' }

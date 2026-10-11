@@ -19,7 +19,7 @@ test('creating a project leads straight into it, and from there to its first tic
 	await expect(page).toHaveURL(`/p/${key}`);
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${key} Kundenportal ${suffix}`);
 	const columns = page.getByRole('region', { name: 'Spalten' }).getByRole('listitem');
-	await expect(columns).toHaveCount(9);
+	await expect(columns).toHaveCount(7);
 	await expect(columns.first()).toContainText('Backlog');
 
 	await page.getByLabel('Titel').fill('Draft the landing page');

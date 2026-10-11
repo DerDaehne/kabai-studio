@@ -216,7 +216,7 @@ describe('get_ticket', () => {
 			ticket('Danach'),
 			ticket('Epic')
 		];
-		place(finished, 'Done');
+		place(finished, 'Fertig');
 		board.linkRelation(db, user, open, own, 'blocks');
 		board.linkRelation(db, user, finished, own, 'blocks');
 		board.linkRelation(db, user, own, successor, 'blocks');
@@ -243,17 +243,16 @@ describe('get_ticket', () => {
 		expect(body.comments[0]).toMatchObject({ by: 'user', at: expect.any(String) });
 		expect(body.waits_for).toEqual([
 			{ ref: 'STU-1', title: 'Offen', column: 'Backlog', blocking: true },
-			{ ref: 'STU-2', title: 'Fertig', column: 'Done', blocking: false }
+			{ ref: 'STU-2', title: 'Fertig', column: 'Fertig', blocking: false }
 		]);
 		expect(body.blocks).toEqual([{ ref: 'STU-4', title: 'Danach', column: 'Backlog' }]);
 		expect(body.parent).toEqual([{ ref: 'STU-5', title: 'Epic', column: 'Backlog' }]);
 		expect(body.allowed_moves).toEqual([
 			{
 				column_id: expect.any(Number),
-				name: 'Refine',
+				name: 'Präzisieren',
 				blocked: 'STU-3 wartet auf STU-1 (blocks_satisfied_at = done).'
-			},
-			{ column_id: expect.any(Number), name: 'Human Intervention' }
+			}
 		]);
 
 		board.approveReview(db, user, own);
@@ -268,34 +267,35 @@ describe('move_ticket for agents', () => {
 		board.linkRelation(db, user, predecessor, own, 'blocks');
 		const { token } = startRun(own);
 
-		const refused = await call(token, 'move_ticket', { column_id: col['Refine'] });
+		const refused = await call(token, 'move_ticket', { column_id: col['Präzisieren'] });
 		expect(refused).toMatchObject({ isError: true, body: { error: 'blocked' } });
 		expect(refused.body.message).toContain('STU-1');
 		expect(refused.body.message).toContain('blocks_satisfied_at = done');
 		expect(refused.body.hint).toContain('request_human');
 		expect(columnOf(own)).toBe('Backlog');
 
-		board.moveTicket(db, user, own, col['Refine']); // a human may start it deliberately
-		board.moveTicket(db, user, own, col.Backlog);
-		expect(
-			(await call(token, 'move_ticket', { column_id: col['Human Intervention'] })).isError
-		).toBe(false);
+		// a human may start it deliberately
+		board.moveTicket(db, user, own, col['Präzisieren']);
+		expect((await call(token, 'move_ticket', { column_id: col.Backlog })).body.error).toBe(
+			'blocked'
+		); // stepping back is no way around the predecessor either
 	});
 
 	it('lets the ticket into work once the predecessor is done, or approved when the project counts review_ok', async () => {
 		const { db, projectId, call, startRun, ticket, place, col, columnOf } = setup();
 		const [predecessor, own] = [ticket(), ticket()];
 		board.linkRelation(db, user, predecessor, own, 'blocks');
-		place(predecessor, 'Review');
+		place(predecessor, 'Kritik');
 		board.approveReview(db, user, predecessor);
 		const { token } = startRun(own);
-		const move = () => call(token, 'move_ticket', { column_id: col['Refine'] });
+		const move = () => call(token, 'move_ticket', { column_id: col['Präzisieren'] });
 
 		expect((await move()).body.error).toBe('blocked');
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
-		expect(await move()).toEqual({ isError: false, body: { column: 'Refine' } });
-		expect(columnOf(own)).toBe('Refine');
-		expect(await move()).toEqual({ isError: false, body: { column: 'Refine' } }); // a retry is harmless
+		expect(await move()).toEqual({ isError: false, body: { column: 'Präzisieren' } });
+		expect(columnOf(own)).toBe('Präzisieren');
+		// a retry is harmless
+		expect(await move()).toEqual({ isError: false, body: { column: 'Präzisieren' } });
 	});
 });
 
@@ -480,13 +480,12 @@ describe('list_workable', () => {
 			ticket('Nach Freigabe'),
 			ticket('Nach Offen')
 		];
-		place(done, 'Done');
-		place(approved, 'Review');
+		place(done, 'Fertig');
+		place(approved, 'Kritik');
 		board.approveReview(db, user, approved);
 		board.linkRelation(db, user, done, afterDone, 'blocks');
 		board.linkRelation(db, user, approved, afterApproved, 'blocks');
 		board.linkRelation(db, user, open, afterOpen, 'blocks');
-		place(ticket('Wartet auf den Menschen'), 'Human Intervention');
 		const { runId, token } = startRun(own);
 		const workable = async (args = {}) => (await call(token, 'list_workable', args)).body;
 
@@ -494,7 +493,7 @@ describe('list_workable', () => {
 			{ ref: 'STU-1', title: 'Eigenes', column: 'Backlog', assignee: `agent (Run ${runId})` },
 			{ ref: 'STU-4', title: 'Offen', column: 'Backlog' },
 			{ ref: 'STU-5', title: 'Nach Fertig', column: 'Backlog' },
-			{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }
+			{ ref: 'STU-3', title: 'Freigegeben', column: 'Kritik' }
 		]);
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		expect((await workable()).tickets.map((t: { ref: string }) => t.ref)).toEqual([
@@ -504,8 +503,8 @@ describe('list_workable', () => {
 			'STU-6',
 			'STU-3'
 		]);
-		expect(await workable({ column_id: col.Review })).toEqual({
-			tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Review' }]
+		expect(await workable({ column_id: col.Kritik })).toEqual({
+			tickets: [{ ref: 'STU-3', title: 'Freigegeben', column: 'Kritik' }]
 		});
 	});
 
@@ -523,7 +522,7 @@ describe('approve_review', () => {
 	it('approves your ticket in a review column; get_ticket shows it until the ticket returns to a normal column', async () => {
 		const { call, startRun, ticket, place, col } = setup();
 		const own = ticket();
-		place(own, 'Review');
+		place(own, 'Kritik');
 		const { token } = startRun(own);
 
 		expect(await call(token, 'approve_review')).toEqual({
@@ -531,14 +530,14 @@ describe('approve_review', () => {
 			body: { review_approved: true }
 		});
 		expect((await call(token, 'get_ticket')).body.review_approved).toBe(true);
-		await call(token, 'move_ticket', { column_id: col['In Arbeit'] });
+		await call(token, 'move_ticket', { column_id: col.Umsetzen });
 		expect((await call(token, 'get_ticket')).body.review_approved).toBe(false);
 	});
 
 	it('refuses outside a review column and for your own work, naming the ticket and a way out in tool words', async () => {
 		const { db, call, startRun, ticket, place, col } = setup();
 		const own = ticket();
-		place(own, 'In Arbeit');
+		place(own, 'Umsetzen');
 		const developer = startRun(own);
 		const approved = () =>
 			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(own)?.at !== null;
@@ -552,7 +551,7 @@ describe('approve_review', () => {
 				hint: expect.stringContaining('add_comment')
 			}
 		});
-		await call(developer.token, 'move_ticket', { column_id: col.Review });
+		await call(developer.token, 'move_ticket', { column_id: col.Kritik });
 		const ownWork = await call(developer.token, 'approve_review');
 		expect(ownWork).toMatchObject({
 			isError: true,
@@ -1114,7 +1113,7 @@ describe('identity from the run', () => {
 				.prepare('SELECT author_kind, author, run_id FROM comments WHERE id = ?')
 				.get(body.comment_id)
 		).toEqual({ author_kind: 'agent', author: label, run_id: runId });
-		await call(token, 'move_ticket', { column_id: col['Refine'] });
+		await call(token, 'move_ticket', { column_id: col['Präzisieren'] });
 		expect(db.prepare('SELECT moved_by, assignee FROM tickets WHERE id = ?').get(own)).toEqual({
 			moved_by: JSON.stringify({ kind: 'agent', runId }),
 			assignee: label
@@ -1165,11 +1164,8 @@ describe('request_human', () => {
 			question: 'A oder B?',
 			options: [{ label: 'A', effect: 'schnell' }, { label: 'B' }]
 		});
-		expect(asked).toEqual({
-			isError: false,
-			body: { question_id: expect.any(Number), column: 'Human Intervention' }
-		});
-		expect(columnOf(own)).toBe('Human Intervention');
+		expect(asked).toEqual({ isError: false, body: { question_id: expect.any(Number) } });
+		expect(columnOf(own)).toBe('Backlog'); // the ticket waits where it is
 		runs.finishRun(db, system, first.runId, { state: 'paused' });
 
 		const questionId = asked.body.question_id;
@@ -1193,42 +1189,31 @@ describe('errors reach the agent with a way out in tool vocabulary', () => {
 	it('names the reachable columns with ids when a target is not reachable', async () => {
 		const { call, startRun, ticket, col } = setup();
 		const { token } = startRun(ticket());
-		const { body } = await call(token, 'move_ticket', { column_id: col.Review });
+		const { body } = await call(token, 'move_ticket', { column_id: col.Kritik });
 		expect(body.error).toBe('transition_not_allowed');
-		expect(body.hint).toBe(
-			`Erreichbar: column_id ${col['Refine']} (Refine), column_id ${col['Human Intervention']} (Human Intervention).`
-		);
+		expect(body.hint).toBe(`Erreichbar: column_id ${col['Präzisieren']} (Präzisieren).`);
 	});
 
-	it('points to complete_tasks with the open task ids and to request_human for what only the human can do', async () => {
-		const { db, call, startRun, ticket, place, col } = setup();
+	it('refuses to complete the ticket and names the one reachable step with its id instead', async () => {
+		const { call, startRun, ticket, place, col, columnOf } = setup();
 		const own = ticket();
 		place(own, 'Abnahme');
-		board.updateTicket(db, user, own, { docs_required: 1 });
-		const [a, b] = board.addTasks(db, user, own, ['A', 'B']).ids;
 		const { token } = startRun(own);
 
-		const humanOnly = (await call(token, 'move_ticket', { column_id: col.Done })).body;
-		expect(humanOnly.error).toBe('requires_human');
-		expect(humanOnly.hint).toContain('request_human');
-
-		db.prepare('UPDATE transitions SET requires_human = 0 WHERE to_column_id = ?').run(col.Done);
-		const { body } = await call(token, 'move_ticket', { column_id: col.Done });
-		expect(body.error).toBe('open_tasks');
-		expect(body.hint).toContain(`complete_tasks ab: task_ids [${a}, ${b}]`);
-		expect(body.hint).toContain('Note');
+		const { body } = await call(token, 'move_ticket', { column_id: col.Fertig });
+		expect(body.error).toBe('transition_not_allowed');
+		expect(body.hint).toBe(`Erreichbar: column_id ${col.Kritik} (Kritik).`);
 		expect(body.hint).not.toMatch(DOMAIN_FUNCTION_NAMES);
+		expect(columnOf(own)).toBe('Abnahme');
 	});
 
-	it('fits the way out to the calling tool: request_human from a closed ticket suggests add_comment', async () => {
-		const { call, startRun, ticket, place } = setup();
+	it('asks the human from a done ticket without moving it', async () => {
+		const { call, startRun, ticket, place, columnOf } = setup();
 		const own = ticket();
-		place(own, 'Done');
+		place(own, 'Fertig');
 		const { token } = startRun(own);
-		const { body } = await call(token, 'request_human', { question: 'Nacharbeit?' });
-		expect(body.error).toBe('requires_human');
-		expect(body.hint).toContain('add_comment');
-		expect(body.hint).not.toContain('request_human');
+		expect((await call(token, 'request_human', { question: 'Nacharbeit?' })).isError).toBe(false);
+		expect(columnOf(own)).toBe('Fertig');
 	});
 
 	it('names the valid task ids for unknown ones', async () => {

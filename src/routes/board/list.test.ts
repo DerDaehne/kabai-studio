@@ -14,10 +14,10 @@ import {
 
 const studio: ProjectRef = { id: 1, code: 'STU', name: 'Studio', palette: 1 };
 const shop: ProjectRef = { id: 2, code: 'SHO', name: 'Shop', palette: 2 };
-const backlog: BoardColumn = { id: 1, name: 'Backlog', kind: 'normal', position: 0 };
-const refine: BoardColumn = { id: 2, name: 'Refine', kind: 'normal', position: 1 };
-const ready: BoardColumn = { id: 3, name: 'Ready', kind: 'normal', position: 2 };
-const shopReady: BoardColumn = { id: 12, name: 'Ready', kind: 'normal', position: 2 };
+const backlog: BoardColumn = { id: 1, name: 'Backlog', phase: 'open', position: 0 };
+const refine: BoardColumn = { id: 2, name: 'Refine', phase: 'work', position: 1 };
+const ready: BoardColumn = { id: 3, name: 'Ready', phase: 'work', position: 2 };
+const shopReady: BoardColumn = { id: 12, name: 'Ready', phase: 'work', position: 2 };
 
 const ticket = (project: ProjectRef, number: number, column: BoardColumn): BoardTicket => ({
 	id: project.id * 100 + number,
@@ -57,11 +57,10 @@ describe('the board list', () => {
 		expect(refs(rows)).toEqual(['SHO-3', 'STU-3']);
 	});
 
-	it('names how a run starts in each kind of column', () => {
-		expect(startRule('normal')).toBe('Start per :run');
+	it('names how a run starts in each phase of column', () => {
+		for (const phase of ['open', 'work', 'acceptance'] as const)
+			expect(startRule(phase)).toBe('Start per :run');
 		expect(startRule('done')).toBe('fertig, kein Run');
-		expect(startRule('human_intervention')).toBe('wartet auf dich');
-		expect(startRule('human_answered')).toBe('beantwortet, weiter per Spaltenwechsel');
 	});
 });
 

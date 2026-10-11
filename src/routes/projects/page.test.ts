@@ -72,14 +72,14 @@ describe('the project list', () => {
 			expect.objectContaining({
 				code: 'ALT',
 				name: 'Altlast',
-				columns: 9,
+				columns: 7,
 				openQuestions: 0,
 				archived: true
 			}),
 			expect.objectContaining({
 				code: 'STU',
 				name: 'Studio',
-				columns: 9,
+				columns: 7,
 				openQuestions: 1,
 				archived: false
 			})
@@ -90,7 +90,7 @@ describe('the project list', () => {
 	it('shows each project as a link into it, with its counts', async () => {
 		const markup = html((await loaded()).data);
 		expect(markup).toMatch(/<a [^>]*href="\/p\/STU"[^>]*>Studio<\/a>/);
-		expect(text(markup)).toContain('9 Spalten · 1 offene Frage');
+		expect(text(markup)).toContain('7 Spalten · 1 offene Frage');
 		expect(text(markup)).toContain('archiviert');
 	});
 });
@@ -106,14 +106,12 @@ describe('creating a project', () => {
 		expect(columnsOf('CRM')).toEqual(columnsOf('STU'));
 		expect(columnsOf('CRM')).toEqual([
 			'Backlog',
-			'Refine',
-			'Ready',
-			'In Arbeit',
-			'Review',
+			'Präzisieren',
+			'Planen',
+			'Umsetzen',
+			'Kritik',
 			'Abnahme',
-			'Done',
-			'Human Intervention',
-			'Human Answered'
+			'Fertig'
 		]);
 	});
 

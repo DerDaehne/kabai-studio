@@ -7,7 +7,8 @@ import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketMoves, type TicketMove } from '$lib/server/ticket-view';
 import { nextMove } from '$lib/ticket-move';
-import { type BoardTicket, type ColumnKind, type StepTarget } from './list';
+import { ROLES, type Step } from '$lib/server/domain/variants';
+import { type BoardTicket, type ColumnPhase, type StepTarget } from './list';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };
@@ -27,7 +28,7 @@ type TicketRow = {
 	name: string;
 	columnId: number;
 	columnName: string;
-	columnKind: ColumnKind;
+	columnPhase: ColumnPhase;
 	columnPosition: number;
 	tasksDone: number;
 	tasksTotal: number;
@@ -36,7 +37,7 @@ type TicketRow = {
 
 const TICKETS = `
 	SELECT t.id, t.number, t.title, p.id AS projectId, p.key, p.name,
-		c.id AS columnId, c.name AS columnName, c.kind AS columnKind, c.position AS columnPosition,
+		c.id AS columnId, c.name AS columnName, c.phase AS columnPhase, c.position AS columnPosition,
 		(SELECT count(*) FROM tasks k WHERE k.ticket_id = t.id AND k.done_at IS NOT NULL) AS tasksDone,
 		(SELECT count(*) FROM tasks k WHERE k.ticket_id = t.id) AS tasksTotal,
 		(SELECT ep.key || '-' || e.number FROM ticket_relations r
@@ -61,7 +62,7 @@ function boardTicket(db: DatabaseSync, row: TicketRow): BoardTicket {
 		column: {
 			id: row.columnId,
 			name: row.columnName,
-			kind: row.columnKind,
+			phase: row.columnPhase,
 			position: row.columnPosition
 		},
 		tasks: { done: row.tasksDone, total: row.tasksTotal },
@@ -76,10 +77,10 @@ function boardTicket(db: DatabaseSync, row: TicketRow): BoardTicket {
 function roles(db: DatabaseSync): Record<number, string> {
 	const rows = db
 		.prepare(
-			'SELECT c.id, c.role_prompt AS role FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.archived = 0'
+			'SELECT c.id, c.step FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.archived = 0'
 		)
-		.all() as { id: number; role: string }[];
-	return Object.fromEntries(rows.map((row) => [row.id, row.role]));
+		.all() as { id: number; step: Step }[];
+	return Object.fromEntries(rows.map((row) => [row.id, ROLES[row.step] ?? '']));
 }
 
 // A reconnect reloads the live state; the board reloads with it, as it has no replay of the events it missed.

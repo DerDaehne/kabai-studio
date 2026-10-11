@@ -429,7 +429,7 @@ describe('builtin executor', () => {
 	it('succeeds when max_steps runs out after the run has moved its ticket', async () => {
 		const { db, queue, run, columns } = setup({ max_steps: 2 });
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Refine'] })] },
+			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Präzisieren'] })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'moved' })] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -450,7 +450,7 @@ describe('builtin executor', () => {
 
 		expect(run(runId).state).toBe('paused');
 		expect(provider.requests).toHaveLength(1);
-		expect(board.ticket(db, ticketId).column_name).toBe('Human Intervention');
+		expect(board.ticket(db, ticketId).column_name).toBe('Backlog');
 		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(1);
 	});
 
@@ -517,7 +517,7 @@ describe('builtin executor', () => {
 		const { db, queue, run, columns } = setup();
 		let park = () => {};
 		const provider = fakeProvider(
-			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Refine'] })] },
+			{ chunks: [call('call-1', 'move_ticket', { column_id: columns['Präzisieren'] })] },
 			{ chunks: [{ pause: () => park() }, { text: 'Moved the ticket, done.' }] }
 		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
@@ -555,7 +555,7 @@ describe('builtin executor', () => {
 		const provider = fakeProvider(
 			{ chunks: [call('call-1', 'move_ticket', { column_id: 99999 })] },
 			{ chunks: [call('call-2', 'add_comment', { text: 'Header row done.' })] },
-			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['Refine'] })] },
+			{ chunks: [call('call-3', 'move_ticket', { column_id: columns['Präzisieren'] })] },
 			{ chunks: [] }
 		);
 		startBuiltin(db, { fetch: provider.fetch });
@@ -567,7 +567,7 @@ describe('builtin executor', () => {
 			text: [
 				"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
 				'Tools: move_ticket 2× (1 failed), add_comment 1×',
-				'Ticket: moved to Refine',
+				'Ticket: moved to Präzisieren',
 				'Open tasks:',
 				`- ${oneLinePerTicket}: Export one line per ticket`
 			].join('\n'),
@@ -846,7 +846,7 @@ describe('trace of the builtin executor', () => {
 			{
 				chunks: [
 					{ reasoning: 'The comment is there.\nI should move it to Refine.\n' },
-					call('call-2', 'move_ticket', { column_id: columns['Refine'] })
+					call('call-2', 'move_ticket', { column_id: columns['Präzisieren'] })
 				]
 			},
 			{ chunks: [call('call-3', 'get_ticket', { ticket: 'STU-1' })] },
@@ -904,7 +904,7 @@ describe('trace of the builtin executor', () => {
 
 		const trace = traceOf(events(runId));
 		expect(trace['call-1:result']).toMatchObject({ result_summary: '' });
-		expect(trace['call-2:result']).toMatchObject({ result_summary: '→ Refine' });
+		expect(trace['call-2:result']).toMatchObject({ result_summary: '→ Präzisieren' });
 		expect(trace['call-2:result']).not.toHaveProperty('diff_anchor');
 	});
 
@@ -925,7 +925,7 @@ describe('trace of the builtin executor', () => {
 				expect.arrayContaining(['target', 'reason', 'reason_source', 'next_hint'])
 			);
 		expect(payloadOf('tool_call')[1]).toMatchObject({ reason: 'I should move it to Refine.' });
-		expect(payloadOf('tool_result')[1]).toMatchObject({ result_summary: '→ Refine' });
+		expect(payloadOf('tool_result')[1]).toMatchObject({ result_summary: '→ Präzisieren' });
 	});
 
 	it('reports thinking and writing with the tokens so far and the tokens per second, at most once a second', async () => {
@@ -1080,7 +1080,7 @@ describe('loop guard of the builtin executor', () => {
 		expect(run(fresh.id).state).toBe('paused');
 		expect(interventions(events, fresh.id).at(-1)).toMatchObject({ attempt: 2, max: 1 });
 		expect(db.prepare('SELECT count(*) AS n FROM runs').get()!.n).toBe(2);
-		expect(board.ticket(db, ticketId).column_name).toBe('Human Intervention');
+		expect(board.ticket(db, ticketId).column_name).toBe('Backlog');
 	});
 
 	it('hands off at once when the step limit leaves no step for a hint', async () => {

@@ -28,7 +28,7 @@ function setup() {
 		runId: runs.createRun(db, user, { ticketId: a, profileId }).id
 	};
 	const refineId = db
-		.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'Refine'")
+		.prepare("SELECT id FROM columns WHERE project_id = ? AND step = 'refine'")
 		.get(projectId)!.id as number;
 	return { db, a, b, agent, refineId };
 }

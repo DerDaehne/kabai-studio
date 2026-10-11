@@ -89,12 +89,15 @@ describe('ticketDetail', () => {
 		});
 		board.addTask(db, user, id, 'offen');
 		const moves = ticketDetail(db, user, id).moves;
-		expect(moves.map((m) => [m.name, m.position, m.kind])).toEqual([
-			['Review', 4, 'normal'],
-			['Done', 6, 'done'],
-			['Human Intervention', 7, 'human_intervention']
+		expect(moves.map((m) => [m.name, m.position, m.phase])).toEqual([
+			['Backlog', 0, 'open'],
+			['Präzisieren', 1, 'work'],
+			['Planen', 2, 'work'],
+			['Umsetzen', 3, 'work'],
+			['Kritik', 4, 'work'],
+			['Fertig', 6, 'done']
 		]);
-		const toDone = moves.find((m) => m.name === 'Done');
+		const toDone = moves.find((m) => m.name === 'Fertig');
 		expect(toDone?.blockers).toEqual([
 			{
 				code: 'open_tasks',
@@ -102,7 +105,7 @@ describe('ticketDetail', () => {
 				hint: 'Erledige die Tasks (completeTask) oder lösche überholte mit Begründung (deleteTask).'
 			}
 		]);
-		expect(moves.find((m) => m.name === 'Review')?.blockers).toEqual([]);
+		expect(moves.find((m) => m.name === 'Kritik')?.blockers).toEqual([]);
 	});
 
 	it('shows the open question while unanswered, and none once the human has answered it', () => {

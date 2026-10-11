@@ -5,6 +5,7 @@ import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import type { Answer, QuestionOption } from '../domain/questions';
 import type { Intervention, Profile, ResumeReason } from '../domain/runs';
+import { ROLES } from '../domain/variants';
 import {
 	agentMoves,
 	linkedNotes,
@@ -139,12 +140,11 @@ function readContext(db: DatabaseSync, ticketId: number): Context {
 	const t = board.ticket(db, ticketId);
 	const scope: ToolContext = { actor: { kind: 'agent' }, projectId: t.project_id, ticketId };
 	const fields = db
-		.prepare(
-			'SELECT t.title, t.description, c.role_prompt AS rolePrompt FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?'
-		)
-		.get(ticketId) as { title: string; description: string; rolePrompt: string };
+		.prepare('SELECT title, description FROM tickets WHERE id = ?')
+		.get(ticketId) as { title: string; description: string };
 	return {
 		...fields,
+		rolePrompt: ROLES[t.column_step] ?? '',
 		ref: t.ref,
 		type: t.type,
 		column: t.column_name,

@@ -5,8 +5,8 @@ import type { Tone } from '$lib/ui/Badge.svelte';
 
 export { BOARD_DEPENDENCY } from '$lib/live';
 
-export type ColumnKind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
-export type BoardColumn = { id: number; name: string; kind: ColumnKind; position: number };
+export type ColumnPhase = 'open' | 'work' | 'acceptance' | 'done';
+export type BoardColumn = { id: number; name: string; phase: ColumnPhase; position: number };
 
 /** Where `>` or `<` leads; a move with blockers stays closed and says why. */
 export type StepTarget = {
@@ -49,15 +49,9 @@ export function groupByColumn(tickets: BoardTicket[]): BoardGroup[] {
 	return [...groups.values()].map((group) => ({ ...group, rows: group.rows.sort(byNumber) }));
 }
 
-const START_RULES: Record<ColumnKind, string> = {
-	normal: 'Start per :run',
-	done: 'fertig, kein Run',
-	human_intervention: 'wartet auf dich',
-	human_answered: 'beantwortet, weiter per Spaltenwechsel'
-};
-
-/** How a run starts in a column of this kind; agents start only when the human starts them. */
-export const startRule = (kind: ColumnKind) => START_RULES[kind];
+/** How a run starts in a column of this phase; agents start only when the human starts them. */
+export const startRule = (phase: ColumnPhase) =>
+	phase === 'done' ? 'fertig, kein Run' : 'Start per :run';
 
 const clamp = (index: number, length: number) => Math.min(Math.max(index, 0), length - 1);
 

@@ -4,10 +4,10 @@ test('o adds a task, and > and < step the ticket to the next and back to the pre
 	page,
 	seedTicket
 }) => {
-	const ticket = seedTicket('Write the changelog', 'Refine');
+	const ticket = seedTicket('Write the changelog', 'Präzisieren');
 	await open(page, ticket.path);
 	const ticketHead = page.locator('header', { has: page.getByRole('heading', { level: 1 }) });
-	await expect(ticketHead).toContainText('Refine');
+	await expect(ticketHead).toContainText('Präzisieren');
 
 	await page.keyboard.press('o');
 	await expect(page.getByLabel('Neuer Task')).toBeFocused();
@@ -17,7 +17,7 @@ test('o adds a task, and > and < step the ticket to the next and back to the pre
 	await page.keyboard.press('Escape');
 
 	await page.keyboard.press('>');
-	await expect(ticketHead).toContainText('Ready');
+	await expect(ticketHead).toContainText('Planen');
 	await page.keyboard.press('<');
-	await expect(ticketHead).toContainText('Refine');
+	await expect(ticketHead).toContainText('Präzisieren');
 });

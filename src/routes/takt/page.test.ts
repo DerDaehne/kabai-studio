@@ -35,7 +35,7 @@ function project(name: string) {
 	const key = `P${projects}`;
 	const id = board.createProject(db(), user, { key, name }).id;
 	const column = db()
-		.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'In Arbeit'")
+		.prepare("SELECT id FROM columns WHERE project_id = ? AND step = 'implement'")
 		.get(id)!.id as number;
 	const profileId = runs.createProfile(db(), user, {
 		name: `Profil ${key}`,

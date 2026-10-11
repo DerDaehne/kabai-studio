@@ -34,8 +34,8 @@ Decisions: what you decided and why.
 Open: what is left or uncertain.
 Next: the next concrete step for whoever continues.
 
-## Role: In Arbeit
-Implement the ticket test-first. Move it to Review when every task is done.
+## Role: Umsetzen
+Do: carry out the task the ticket describes and write what it asks for as text: an answer, an analysis or code. Do not refine: leave the description and the tasks as they are. Deliver: the result itself in a comment, code in a fenced block, marked "Unverified: not compiled, run or tested."; then tick each task the result fulfils. Ask the human only if the task needs more than text, such as changing files in a repository. Stop: move the ticket to Review once the result is delivered.
 
 ## Override — takes precedence
 Answer in short sentences.
@@ -45,7 +45,7 @@ Answer in short sentences.
 ## Internal context — never copy into repository artifacts
 
 ### Ticket STU-1: Write the config parser
-Column: In Arbeit · type: ticket · docs required: no
+Column: Umsetzen · type: ticket · docs required: no
 Parse the config file into a map.
 
 ### Tasks — tick each with \`complete_tasks\` as soon as it is met
@@ -53,7 +53,7 @@ Parse the config file into a map.
 - [ ] 2: Parser rejects duplicate keys
 
 ### Relations — A blocks B = A must be finished before B starts
-- waits for STU-2 "Define the config format" (Review), still blocking
+- waits for STU-2 "Define the config format" (Kritik), still blocking
 - blocks STU-3 "Document the config file" (Backlog)
 
 ### Recent comments, oldest first
@@ -65,9 +65,8 @@ Keep the parser free of dependencies.
 Duplicate keys are an error, not a warning.
 
 ### Allowed moves — \`move_ticket\` with column_id
-- 3: Ready — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
-- 5: Review — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
-- 8: Human Intervention
+- 3: Planen — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
+- 5: Kritik — blocked: STU-1 wartet auf STU-2 (blocks_satisfied_at = done).
 
 ### Linked notes
 
@@ -75,7 +74,7 @@ Duplicate keys are an error, not a warning.
 Lines are key=value; # starts a comment.
 
 ## Assignment
-Work STU-1 in the column "In Arbeit": do what your role for this column says, deliver the result it names and stop where it says. Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. The internal context above is current: start with the work, not with \`get_ticket\`."
+Work STU-1 in the column "Umsetzen": do what your role for this column says, deliver the result it names and stop where it says. Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. The internal context above is current: start with the work, not with \`get_ticket\`."
 `;
 
 exports[`previous state > shows a resumed run the handoff, the human's answer and what not to try again of the run it continues 1`] = `

@@ -30,13 +30,13 @@ const create = (projectId: number, title: string, column?: string) =>
 	});
 
 const epic = board.createTicket(db(), user, studio, { title: 'Release 1', type: 'epic' });
-const tasks = create(studio, 'Tasks halb erledigt', 'Ready');
+const tasks = create(studio, 'Tasks halb erledigt', 'Planen');
 board.linkRelation(db(), user, epic.id, tasks.id, 'parent_of');
 board.completeTask(db(), user, board.addTask(db(), user, tasks.id, 'Eins').id);
 board.addTask(db(), user, tasks.id, 'Zwei');
 const accepted = create(studio, 'Wartet auf Abnahme', 'Abnahme');
 board.addTask(db(), user, accepted.id, 'Noch offen');
-const shopTicket = create(shop, 'Warenkorb', 'Ready');
+const shopTicket = create(shop, 'Warenkorb', 'Planen');
 create(archive, 'Archiviert');
 db().prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archive);
 
@@ -88,30 +88,34 @@ describe('the board load', () => {
 			number: 2,
 			title: 'Tasks halb erledigt',
 			project: { id: studio, code: 'STU', name: 'Studio' },
-			column: { id: columnId(studio, 'Ready'), name: 'Ready', kind: 'normal' },
+			column: { id: columnId(studio, 'Planen'), name: 'Planen', phase: 'work' },
 			tasks: { done: 1, total: 2 },
 			epic: 'STU-1'
 		});
 		expect((await loadedTicket(shopTicket.id)).epic).toBeNull();
 	});
 
-	it('names the role prompt of every column', async () => {
+	it('names the role of every column by its step, none for backlog and done', async () => {
 		const { data } = await loaded();
-		expect(data.roles[columnId(studio, 'Backlog')]).toMatch(/^Do: sort new work in/);
-		expect(data.roles[columnId(shop, 'Done')]).toBe('');
+		expect(data.roles[columnId(studio, 'Präzisieren')]).toMatch(/^Do: propose the scope/);
+		expect(data.roles[columnId(studio, 'Backlog')]).toBe('');
+		expect(data.roles[columnId(shop, 'Fertig')]).toBe('');
 	});
 
 	it('names the column > and < lead to, and why a blocked one is closed, with the way out', async () => {
 		const { next } = await loadedTicket(tasks.id);
 		expect(next.forward).toMatchObject({
-			columnId: columnId(studio, 'In Arbeit'),
-			name: 'In Arbeit',
+			columnId: columnId(studio, 'Umsetzen'),
+			name: 'Umsetzen',
 			blockers: []
 		});
-		expect(next.back).toMatchObject({ columnId: columnId(studio, 'Refine'), name: 'Refine' });
+		expect(next.back).toMatchObject({
+			columnId: columnId(studio, 'Präzisieren'),
+			name: 'Präzisieren'
+		});
 
 		const done = (await loadedTicket(accepted.id)).next.forward!;
-		expect(done.name).toBe('Done');
+		expect(done.name).toBe('Fertig');
 		expect(done.blockers[0]).toMatchObject({ code: 'open_tasks' });
 		expect(done.blockers[0].message).toContain('STU-3');
 		expect(done.blockers[0].hint).not.toBe('');
@@ -122,10 +126,10 @@ describe('the board actions', () => {
 	it('moves a ticket to an allowed column for the human', async () => {
 		const ticket = create(studio, 'Verschieben');
 		expect(
-			await post('move', { ticketId: ticket.id, columnId: columnId(studio, 'Refine') })
+			await post('move', { ticketId: ticket.id, columnId: columnId(studio, 'Präzisieren') })
 		).toEqual({});
 		expect(board.ticket(db(), ticket.id)).toMatchObject({
-			column_name: 'Refine',
+			column_name: 'Präzisieren',
 			moved_by: '{"kind":"user"}'
 		});
 	});
@@ -133,7 +137,10 @@ describe('the board actions', () => {
 	it('refuses a move the workflow does not allow, with the reason and the way out', async () => {
 		const ticket = create(studio, 'Gesperrt', 'Abnahme');
 		board.addTask(db(), user, ticket.id, 'Offen');
-		const refused = await post('move', { ticketId: ticket.id, columnId: columnId(studio, 'Done') });
+		const refused = await post('move', {
+			ticketId: ticket.id,
+			columnId: columnId(studio, 'Fertig')
+		});
 		expect(refused).toMatchObject({ status: 409 });
 		expect((refused.data as { message: string }).message).toMatch(/offen.*\. .+/i);
 		expect(board.ticket(db(), ticket.id).column_name).toBe('Abnahme');
@@ -142,7 +149,7 @@ describe('the board actions', () => {
 	it('creates a ticket in the current project and column and names it', async () => {
 		const result = await post('create', {
 			projectId: shop,
-			columnId: columnId(shop, 'Ready'),
+			columnId: columnId(shop, 'Planen'),
 			title: 'Schnell angelegt'
 		});
 		const created = db()
@@ -151,7 +158,7 @@ describe('the board actions', () => {
 			)
 			.get(shop) as { number: number; column_id: number };
 		expect(result).toEqual({ ref: `SHO-${created.number}` });
-		expect(created.column_id).toBe(columnId(shop, 'Ready'));
+		expect(created.column_id).toBe(columnId(shop, 'Planen'));
 	});
 
 	it('creates a ticket in the first column when no column is given', async () => {
@@ -191,8 +198,8 @@ describe('the board view', () => {
 	it('shows a group per column with its name, how a run starts there and its role', async () => {
 		const { data } = await loaded();
 		const markup = text(html({ ...data, live: live() }));
-		expect(markup).toMatch(/Ready \d+ Start per :run · Do: pick the ticket up; do not refine it/);
-		expect(markup).toMatch(/Abnahme \d+ Start per :run · Do: nothing; finished work waits here/);
+		expect(markup).toMatch(/Planen \d+ Start per :run · Do: pick the ticket up; do not refine it/);
+		expect(markup).toMatch(/Abnahme \d+ Start per :run STU/); // acceptance has no agent role
 	});
 
 	it('shows each ticket with project code and number, title, task progress, epic and project', async () => {

@@ -264,13 +264,13 @@ function derivePriority(
 	const hasWaitingSuccessor = db
 		.prepare(
 			`SELECT 1 FROM ticket_relations r JOIN tickets s ON s.id = r.to_ticket_id JOIN columns c ON c.id = s.column_id
-			WHERE r.from_ticket_id = ? AND r.type = 'blocks' AND c.kind <> 'done'`
+			WHERE r.from_ticket_id = ? AND r.type = 'blocks' AND c.phase <> 'done'`
 		)
 		.get(ticketId);
 	if (hasWaitingSuccessor) return 'blocker';
-	const inReviewColumn =
-		db.prepare('SELECT review FROM columns WHERE id = ?').get(columnId)?.review === 1;
-	if (inReviewColumn && trigger !== 'manual') return 'review';
+	const inCritique =
+		db.prepare('SELECT step FROM columns WHERE id = ?').get(columnId)?.step === 'critique';
+	if (inCritique && trigger !== 'manual') return 'review';
 	return 'normal';
 }
 
@@ -281,7 +281,7 @@ export function prioritizeRun(db: DatabaseSync, actor: Actor, runId: number) {
 			throw new DomainError(
 				'requires_human',
 				'Runs priorisiert nur der Mensch.',
-				'Ist etwas dringend: Frage als Kommentar, dann in die human_intervention-Spalte.'
+				'Ist etwas dringend: frag den Menschen (requestHuman); das Ticket wartet dann auf ihn.'
 			);
 		const r = run(db, runId);
 		if (r.state !== 'queued')
@@ -556,7 +556,7 @@ function requireNotAgent(actor: Actor) {
 		throw new DomainError(
 			'requires_human',
 			'Agent-Profile ändert nur der Mensch.',
-			'Brauchst du ein anderes Profil oder mehr Rechte: Frage als Kommentar, dann in die human_intervention-Spalte.'
+			'Brauchst du ein anderes Profil oder mehr Rechte: frag den Menschen (requestHuman).'
 		);
 }
 

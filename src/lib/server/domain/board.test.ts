@@ -5,8 +5,8 @@ import { subscribe, type StudioEvent } from '../events';
 import * as board from './board';
 import { DomainError, tx, type Actor } from './core';
 import * as notes from './notes';
-import { requestHuman } from './questions';
 import * as runs from './runs';
+import { ROLES, type Step } from './variants';
 
 const user: Actor = { kind: 'user' };
 const dev: Actor = { kind: 'agent', runId: 1 };
@@ -30,17 +30,17 @@ function setup() {
 	migrate(db);
 	withRuns(db);
 	const { id: projectId } = board.createProject(db, user, { key: 'STU', name: 'Studio' });
-	const rows = db.prepare('SELECT name, id FROM columns WHERE project_id = ?').all(projectId);
-	const col = Object.fromEntries(rows.map((r) => [r.name, r.id])) as Record<string, number>;
+	const rows = db.prepare('SELECT step, id FROM columns WHERE project_id = ?').all(projectId);
+	const col = Object.fromEntries(rows.map((r) => [r.step, r.id])) as Record<Step, number>;
 	const ticket = (fields: Partial<board.TicketFields> = {}) =>
 		board.createTicket(db, user, projectId, { title: 'T', ...fields }).id;
 	/** Sets the initial state directly, bypassing the rules. */
-	const place = (id: number, column: string) =>
-		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[column], id);
+	const place = (id: number, step: Step) =>
+		db.prepare('UPDATE tickets SET column_id = ? WHERE id = ?').run(col[step], id);
 	const columnOf = (id: number) =>
 		db
-			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
-			.get(id)?.name;
+			.prepare('SELECT c.step FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+			.get(id)?.step;
 	return { db, projectId, col, ticket, place, columnOf };
 }
 
@@ -55,51 +55,71 @@ function caught(fn: () => unknown): DomainError {
 }
 
 describe('createProject / createTicket', () => {
-	it('creates the Software template with linear transitions (only a human moves to done or human_answered)', () => {
+	const stepsOf = (db: DatabaseSync, projectId: number) =>
+		db
+			.prepare('SELECT step, phase, name FROM columns WHERE project_id = ? ORDER BY position')
+			.all(projectId)
+			.map((c) => `${c.step}:${c.phase}:${c.name}`);
+
+	it('creates the software variant by default: one column per step with its phase and label', () => {
 		const { db, projectId } = setup();
-		const cols = db
-			.prepare('SELECT name, kind FROM columns WHERE project_id = ? ORDER BY position')
-			.all(projectId);
-		expect(cols.map((c) => `${c.name}:${c.kind}`)).toEqual([
-			'Backlog:normal',
-			'Refine:normal',
-			'Ready:normal',
-			'In Arbeit:normal',
-			'Review:normal',
-			'Abnahme:normal',
-			'Done:done',
-			'Human Intervention:human_intervention',
-			'Human Answered:human_answered'
+		expect(stepsOf(db, projectId)).toEqual([
+			'backlog:open:Backlog',
+			'refine:work:Präzisieren',
+			'plan:work:Planen',
+			'implement:work:Umsetzen',
+			'critique:work:Kritik',
+			'acceptance:acceptance:Abnahme',
+			'done:done:Fertig'
 		]);
-		const edges = db
-			.prepare(
-				`SELECT f.name AS "from", t.name AS "to", x.requires_human AS rh FROM transitions x
-				JOIN columns f ON f.id = x.from_column_id JOIN columns t ON t.id = x.to_column_id WHERE x.project_id = ? ORDER BY f.position, t.position`
-			)
-			.all(projectId);
-		expect(edges.map((e) => `${e.from} → ${e.to}${e.rh ? ' (Mensch)' : ''}`)).toEqual([
-			'Backlog → Refine',
-			'Refine → Backlog',
-			'Refine → Ready',
-			'Ready → Refine',
-			'Ready → In Arbeit',
-			'In Arbeit → Ready',
-			'In Arbeit → Review',
-			'Review → In Arbeit',
-			'Review → Abnahme',
-			'Abnahme → Review',
-			'Abnahme → Done (Mensch)',
-			'Done → Abnahme',
-			'Human Intervention → Human Answered (Mensch)'
-		]);
+		expect(db.prepare('SELECT variant FROM projects WHERE id = ?').get(projectId)).toEqual({
+			variant: 'software'
+		});
 	});
 
-	it('marks exactly the Review column with the review flag (migration 009)', () => {
+	it('creates the knowledge variant: research, draft and critique as work steps', () => {
+		const { db } = setup();
+		const id = board.createProject(db, user, { key: 'WIS', name: 'Wissen' }, 'knowledge').id;
+		expect(stepsOf(db, id)).toEqual([
+			'backlog:open:Backlog',
+			'research:work:Recherchieren',
+			'draft:work:Entwerfen',
+			'critique:work:Kritik',
+			'acceptance:acceptance:Abnahme',
+			'done:done:Fertig'
+		]);
+		expect(db.prepare('SELECT variant FROM projects WHERE id = ?').get(id)).toEqual({
+			variant: 'knowledge'
+		});
+	});
+
+	it('creates the direct variant: implement and critique as the only work steps', () => {
+		const { db } = setup();
+		const id = board.createProject(db, user, { key: 'DIR', name: 'Direkt' }, 'direct').id;
+		expect(stepsOf(db, id)).toEqual([
+			'backlog:open:Backlog',
+			'implement:work:Umsetzen',
+			'critique:work:Kritik',
+			'acceptance:acceptance:Abnahme',
+			'done:done:Fertig'
+		]);
+		expect(db.prepare('SELECT variant FROM projects WHERE id = ?').get(id)).toEqual({
+			variant: 'direct'
+		});
+	});
+
+	it('lets the database refuse a second column for the same step and an unknown step', () => {
 		const { db, projectId } = setup();
-		const flagged = db
-			.prepare('SELECT name FROM columns WHERE project_id = ? AND review = 1')
-			.all(projectId) as { name: string }[];
-		expect(flagged.map((c) => c.name)).toEqual(['Review']);
+		expect(() =>
+			db
+				.prepare("INSERT INTO columns (project_id, step, name) VALUES (?, 'critique', 'Prüfung')")
+				.run(projectId)
+		).toThrow(/UNIQUE/);
+		expect(() =>
+			db
+				.prepare("INSERT INTO columns (project_id, step, name) VALUES (?, 'triage', 'Triage')")
+				.run(projectId)
+		).toThrow(/CHECK/);
 	});
 
 	it('numbers tickets consecutively per project and never twice, even after a deletion', () => {
@@ -115,28 +135,19 @@ describe('createProject / createTicket', () => {
 			.all(projectId);
 		expect(numbers.map((r) => r.number)).toEqual([1, 3]);
 		expect(c.number).toBe(3);
-		expect(columnOf(a)).toBe('Backlog'); // default: the first normal column
+		expect(columnOf(a)).toBe('backlog'); // default: the first normal column
 	});
 
-	it('creates tickets never in done, in human_answered only as user, and in human_intervention also as agent', () => {
+	it('creates tickets never in done, in every other step also as agent', () => {
 		const { db, projectId, col } = setup();
 		expect(
-			caught(() => board.createTicket(db, user, projectId, { title: 'X', column_id: col.Done }))
+			caught(() => board.createTicket(db, user, projectId, { title: 'X', column_id: col.done }))
 				.code
 		).toBe('invalid_column');
-		const err = caught(() =>
-			board.createTicket(db, dev, projectId, { title: 'X', column_id: col['Human Answered'] })
-		);
-		expect(err.code).toBe('requires_human');
-		expect(err.message).toBe('Nur ein Mensch darf Tickets in „Human Answered“ anlegen.');
-		board.createTicket(db, user, projectId, { title: 'Antwort', column_id: col['Human Answered'] });
-		board.createTicket(db, dev, projectId, {
-			title: 'Frage',
-			column_id: col['Human Intervention']
-		}); // an agent may escalate
+		board.createTicket(db, dev, projectId, { title: 'Abnahme', column_id: col.acceptance });
 		expect(
 			db.prepare('SELECT count(*) AS n FROM tickets WHERE project_id = ?').get(projectId)?.n
-		).toBe(2);
+		).toBe(1);
 	});
 
 	it('refuses a key another project already has, names that project and creates nothing', () => {
@@ -181,7 +192,7 @@ describe('createProject / createTicket', () => {
 			title: 'Neu',
 			docs_required: 1
 		});
-		const err = caught(() => board.updateTicket(db, dev, id, { column_id: col.Done } as never));
+		const err = caught(() => board.updateTicket(db, dev, id, { column_id: col.done } as never));
 		expect(err.code).toBe('unknown_field');
 		expect(err.hint).toContain('moveTicket');
 	});
@@ -209,40 +220,23 @@ describe('createProject / createTicket', () => {
 	});
 
 	describe('default role prompts', () => {
-		const rolePrompts = (db: DatabaseSync, projectId: number) =>
-			Object.fromEntries(
-				(
-					db
-						.prepare(
-							'SELECT name, role_prompt AS rolePrompt FROM columns WHERE project_id = ? ORDER BY position'
-						)
-						.all(projectId) as { name: string; rolePrompt: string }[]
-				).map((r) => [r.name, r.rolePrompt])
-			) as Record<string, string>;
+		// The test names keep the former column names, so the snapshots prove the texts moved into the code unchanged.
+		const ROLE_OF_FORMER_COLUMN: Record<string, Step> = {
+			Refine: 'refine',
+			Ready: 'plan',
+			'In Arbeit': 'implement',
+			Review: 'critique'
+		};
+		const role = (step: Step) => ROLES[step] ?? '';
 
-		const COLUMNS_WITH_A_ROLE = [
-			'Backlog',
-			'Refine',
-			'Ready',
-			'In Arbeit',
-			'Review',
-			'Abnahme',
-			'Human Intervention',
-			'Human Answered'
-		];
-
-		it('gives every column a non-empty English role prompt, except Done', () => {
-			const { db, projectId } = setup();
-			const prompts = rolePrompts(db, projectId);
-			for (const name of COLUMNS_WITH_A_ROLE) expect(prompts[name].trim()).not.toBe('');
-			expect(prompts.Done.trim()).toBe('');
+		it('gives refine, plan, implement and critique a role and backlog, acceptance and done none', () => {
+			expect(Object.keys(ROLES).sort()).toEqual(['critique', 'implement', 'plan', 'refine']);
 		});
 
-		it.each(COLUMNS_WITH_A_ROLE)(
+		it.each(Object.keys(ROLE_OF_FORMER_COLUMN))(
 			'the %s role says what to do, what to deliver and when to stop, in that order',
 			(name) => {
-				const { db, projectId } = setup();
-				const prompt = rolePrompts(db, projectId)[name];
+				const prompt = role(ROLE_OF_FORMER_COLUMN[name]);
 				expect(prompt).toMatchSnapshot();
 				const parts = ['Do: ', 'Deliver: ', 'Stop: '].map((label) => prompt.indexOf(label));
 				expect(parts.every((at) => at >= 0)).toBe(true);
@@ -251,21 +245,18 @@ describe('createProject / createTicket', () => {
 		);
 
 		it('lets Refine propose scope and criteria itself and ask the human only for a genuine product decision', () => {
-			const { db, projectId } = setup();
-			const refine = rolePrompts(db, projectId).Refine;
+			const refine = role('refine');
 			expect(refine).toContain('propose the scope');
 			expect(refine).toContain('yourself');
 			expect(refine).toContain('Ask the human only for a genuine product decision');
 		});
 
 		it('keeps Ready from refining: it picks the ticket up and moves it on', () => {
-			const { db, projectId } = setup();
-			expect(rolePrompts(db, projectId).Ready).toContain('do not refine');
+			expect(role('plan')).toContain('do not refine');
 		});
 
 		it('has In Arbeit carry out the task and deliver the result as an unverified comment, without demanding a test it cannot run', () => {
-			const { db, projectId } = setup();
-			const inProgress = rolePrompts(db, projectId)['In Arbeit'];
+			const inProgress = role('implement');
 			expect(inProgress).toContain('carry out the task');
 			expect(inProgress).toContain('fenced block');
 			expect(inProgress).toContain('"Unverified: not compiled, run or tested."');
@@ -285,8 +276,7 @@ describe('createProject / createTicket', () => {
 		];
 
 		it('keeps every role prompt generic: no ticket numbers, slugs, product or tool names, ASCII English only', () => {
-			const { db, projectId } = setup();
-			const prompts = Object.values(rolePrompts(db, projectId)).filter((text) => text !== '');
+			const prompts = Object.values(ROLES);
 			expect(prompts.length).toBeGreaterThan(0);
 			for (const text of prompts)
 				for (const pattern of FORBIDDEN_PATTERNS) expect(text).not.toMatch(pattern);
@@ -312,88 +302,71 @@ describe('createProject / createTicket', () => {
 });
 
 describe('moveTicket', () => {
-	it('rejects an illegal transition and names the allowed targets', () => {
+	it('lets the human move into any column of the variant, skipping steps in both directions', () => {
 		const { db, ticket, col, columnOf } = setup();
 		const id = ticket();
-		const err = caught(() => board.moveTicket(db, user, id, col.Review));
+		board.moveTicket(db, user, id, col.critique);
+		expect(columnOf(id)).toBe('critique');
+		board.moveTicket(db, user, id, col.backlog);
+		expect(columnOf(id)).toBe('backlog');
+		board.moveTicket(db, user, id, col.done);
+		expect(columnOf(id)).toBe('done');
+		board.moveTicket(db, user, id, col.refine); // reopening is the human's call
+		expect(columnOf(id)).toBe('refine');
+	});
+
+	it('lets an agent step only to a neighbouring step and names the reachable ones when it tries more', () => {
+		const { db, ticket, place, col, columnOf } = setup();
+		const id = ticket();
+		place(id, 'plan');
+		const err = caught(() => board.moveTicket(db, dev, id, col.critique));
 		expect(err.code).toBe('transition_not_allowed');
 		expect(err.message).toBe(
-			'STU-1 darf nicht von „Backlog“ nach „Review“ wechseln. Erlaubte Ziele: „Refine“, „Human Intervention“.'
+			'STU-1 darf nicht von „Planen“ nach „Kritik“ wechseln. Erreichbar für dich: „Präzisieren“, „Umsetzen“.'
 		);
 		expect(err.hint).toContain('allowedMoves');
-		expect(columnOf(id)).toBe('Backlog');
+		board.moveTicket(db, dev, id, col.implement);
+		board.moveTicket(db, dev, id, col.critique);
+		board.moveTicket(db, dev, id, col.acceptance);
+		expect(columnOf(id)).toBe('acceptance');
 	});
 
-	it('reaches human_intervention from every column, and every column from human_answered', () => {
+	it('never lets an agent complete a ticket: done stays the human step, with the reachable step in the error', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
-		for (const from of ['Backlog', 'In Arbeit', 'Review', 'Done', 'Human Answered']) {
-			place(id, from);
-			board.moveTicket(db, from === 'Done' ? user : dev, id, col['Human Intervention']); // out of done only the human (reopen)
-			expect(columnOf(id)).toBe('Human Intervention');
-		}
-		place(id, 'Human Answered');
-		expect(board.allowedMoves(db, id, dev).map((m) => [m.name, m.requiresHuman])).toEqual([
-			['Backlog', false],
-			['Refine', false],
-			['Ready', false],
-			['In Arbeit', false],
-			['Review', false],
-			['Abnahme', false],
-			['Done', true],
-			['Human Intervention', false]
-		]);
-		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('requires_human'); // implicit edge, still human only
-		board.moveTicket(db, dev, id, col.Backlog); // no stored edge
-		expect(columnOf(id)).toBe('Backlog');
+		place(id, 'acceptance');
+		const err = caught(() => board.moveTicket(db, dev, id, col.done));
+		expect(err.code).toBe('requires_human');
+		expect(err.message).toBe(
+			'Nur ein Mensch darf STU-1 von „Abnahme“ nach „Fertig“ verschieben. Erreichbar für dich: „Kritik“.'
+		);
+		expect(err.hint).toContain('Abschließen');
+		expect(columnOf(id)).toBe('acceptance');
 	});
 
-	it('rejects a move into a done column while tasks are open', () => {
+	it('lets only the human move a ticket out of done (reopen)', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket();
-		place(id, 'Abnahme');
+		place(id, 'done');
+		expect(board.allowedMoves(db, id, dev)).toEqual([]);
+		const err = caught(() => board.moveTicket(db, dev, id, col.acceptance));
+		expect(err.code).toBe('requires_human');
+		expect(err.message).toContain('Erreichbar für dich: keine.');
+		expect(err.hint).toContain('Folgeticket');
+		board.moveTicket(db, user, id, col.acceptance);
+		expect(columnOf(id)).toBe('acceptance');
+	});
+
+	it('rejects a move into done while tasks are open, from any column', () => {
+		const { db, ticket, col, columnOf } = setup();
+		const id = ticket(); // in the backlog: the human may jump straight to done, the check still applies
 		const { id: task } = board.addTask(db, dev, id, 'Tests grün');
-		const err = caught(() => board.moveTicket(db, user, id, col.Done));
+		const err = caught(() => board.moveTicket(db, user, id, col.done));
 		expect(err.code).toBe('open_tasks');
 		expect(err.message).toBe('STU-1 hat 1 offene Tasks: „Tests grün“.');
 		board.completeTask(db, dev, task);
-		board.moveTicket(db, user, id, col.Done);
-		expect(columnOf(id)).toBe('Done');
-	});
-
-	it('lets only the user move into a done column and into human_answered', () => {
-		const { db, ticket, place, col, columnOf } = setup();
-		const id = ticket();
-		place(id, 'Abnahme');
-		const err = caught(() => board.moveTicket(db, dev, id, col.Done));
-		expect(err.code).toBe('requires_human');
-		expect(err.message).toBe('Nur ein Mensch darf STU-1 nach „Done“ verschieben.');
-		board.moveTicket(db, user, id, col.Done);
-		expect(columnOf(id)).toBe('Done');
-
-		place(id, 'Human Intervention');
-		expect(caught(() => board.moveTicket(db, dev, id, col['Human Answered'])).code).toBe(
-			'requires_human'
-		);
-	});
-
-	it('lets only the user move a ticket out of a done column (reopen)', () => {
-		const { db, ticket, place, col, columnOf } = setup();
-		const id = ticket();
-		place(id, 'Done');
-		expect(
-			board
-				.allowedMoves(db, id, dev)
-				.map((m) => [m.name, m.requiresHuman, m.blockers.map((b) => b.code)])
-		).toEqual([
-			['Abnahme', true, ['requires_human']],
-			['Human Intervention', true, ['requires_human']]
-		]);
-		const err = caught(() => board.moveTicket(db, dev, id, col.Abnahme));
-		expect(err.message).toBe('Nur ein Mensch darf STU-1 aus „Done“ wieder öffnen.');
-		expect(err.hint).toContain('Folgeticket');
-		board.moveTicket(db, user, id, col.Abnahme);
-		expect(columnOf(id)).toBe('Abnahme');
+		board.moveTicket(db, user, id, col.done);
+		expect(columnOf(id)).toBe('done');
 	});
 
 	it('rejects moving an epic to done while a child is open', () => {
@@ -403,27 +376,27 @@ describe('moveTicket', () => {
 		notes.linkTicket(db, user, noteId, epic, 'documents'); // epics are always docs_required — a note is linked first so that only open_children applies
 		const child = ticket();
 		board.linkRelation(db, user, epic, child, 'parent_of');
-		place(epic, 'Abnahme');
-		const err = caught(() => board.moveTicket(db, user, epic, col.Done));
+		place(epic, 'acceptance');
+		const err = caught(() => board.moveTicket(db, user, epic, col.done));
 		expect(err.code).toBe('open_children');
 		expect(err.message).toBe('STU-1 hat nicht abgeschlossene Kind-Tickets: STU-2.');
-		place(child, 'Done');
-		board.moveTicket(db, user, epic, col.Done);
-		expect(columnOf(epic)).toBe('Done');
+		place(child, 'done');
+		board.moveTicket(db, user, epic, col.done);
+		expect(columnOf(epic)).toBe('done');
 	});
 
 	it('rejects done without the docs_required note and allows it once a note is linked', () => {
 		const { db, ticket, place, col, columnOf } = setup();
 		const id = ticket({ docs_required: 1 });
-		place(id, 'Abnahme');
-		const err = caught(() => board.moveTicket(db, user, id, col.Done));
+		place(id, 'acceptance');
+		const err = caught(() => board.moveTicket(db, user, id, col.done));
 		expect(err.code).toBe('docs_required');
 		expect(err.hint).toContain('createNote');
 
 		const { id: noteId } = notes.createNote(db, user, { slug: 'n-1', title: 'N', body: '' });
 		notes.linkTicket(db, user, noteId, id, 'documents');
-		board.moveTicket(db, user, id, col.Done);
-		expect(columnOf(id)).toBe('Done');
+		board.moveTicket(db, user, id, col.done);
+		expect(columnOf(id)).toBe('done');
 	});
 
 	it('does not accept an archived note as docs_required evidence', () => {
@@ -432,22 +405,8 @@ describe('moveTicket', () => {
 		const { id: noteId } = notes.createNote(db, user, { slug: 'n-2', title: 'N', body: '' });
 		notes.linkTicket(db, user, noteId, id, 'documents');
 		notes.archiveNote(db, user, noteId);
-		place(id, 'Abnahme');
-		expect(caught(() => board.moveTicket(db, user, id, col.Done)).code).toBe('docs_required');
-	});
-
-	it('applies to an agent actor too, independent of the requires_human edge (transitions are configurable)', () => {
-		const { db, projectId, ticket, place, col } = setup();
-		const id = ticket({ docs_required: 1 });
-		place(id, 'Abnahme');
-		const done = board.allowedMoves(db, id, dev).find((m) => m.name === 'Done');
-		expect(done?.blockers.map((b) => b.code)).toEqual(['requires_human', 'docs_required']);
-
-		// Isolated from requires_human: the Abnahme -> Done edge opened up for agents as a probe (not yet exposed as an API).
-		db.prepare(
-			'UPDATE transitions SET requires_human = 0 WHERE project_id = ? AND from_column_id = ? AND to_column_id = ?'
-		).run(projectId, col.Abnahme, col.Done);
-		expect(caught(() => board.moveTicket(db, dev, id, col.Done)).code).toBe('docs_required');
+		place(id, 'acceptance');
+		expect(caught(() => board.moveTicket(db, user, id, col.done)).code).toBe('docs_required');
 	});
 });
 
@@ -476,22 +435,29 @@ describe('linkRelation', () => {
 });
 
 describe('allowedMoves', () => {
-	it('lists targets including the human_* edges with blockers per actor', () => {
+	it('lists every other column for the human and only the neighbouring steps short of done for an agent', () => {
 		const { db, ticket, place } = setup();
 		const id = ticket();
-		place(id, 'Abnahme');
+		place(id, 'acceptance');
 		board.addTask(db, dev, id, 'offen');
 		const view = (actor: Actor) =>
 			board
 				.allowedMoves(db, id, actor)
-				.map((m) => [m.name, m.requiresHuman, m.blockers.map((b) => b.code)]);
-		expect(view(dev)).toEqual([
-			['Review', false, []],
-			['Done', true, ['requires_human', 'open_tasks']],
-			['Human Intervention', false, []]
+				.map((m) => [m.name, m.phase, m.blockers.map((b) => b.code)]);
+		expect(view(dev)).toEqual([['Kritik', 'work', []]]);
+		expect(view(user)).toEqual([
+			['Backlog', 'open', []],
+			['Präzisieren', 'work', []],
+			['Planen', 'work', []],
+			['Umsetzen', 'work', []],
+			['Kritik', 'work', []],
+			['Fertig', 'done', ['open_tasks']]
 		]);
-		expect(view(user)[1]).toEqual(['Done', true, ['open_tasks']]);
-		expect(board.allowedMoves(db, id, dev)[1].blockers[1].hint).toContain('completeTask');
+		expect(board.allowedMoves(db, id, user)[5].blockers[0].hint).toContain('completeTask');
+		place(id, 'implement');
+		expect(view(dev).map(([name]) => name)).toEqual(['Planen', 'Kritik']);
+		place(id, 'backlog');
+		expect(view(dev).map(([name]) => name)).toEqual(['Präzisieren']);
 	});
 });
 
@@ -499,8 +465,8 @@ describe('review approval', () => {
 	it('rejects self-approval and allows another agent and the human to approve', () => {
 		const { db, ticket, place, col } = setup();
 		const id = ticket();
-		place(id, 'In Arbeit');
-		board.moveTicket(db, dev, id, col.Review);
+		place(id, 'implement');
+		board.moveTicket(db, dev, id, col.critique);
 		const err = caught(() => board.approveReview(db, dev, id));
 		expect(err.code).toBe('self_approval');
 		expect(err.hint).toContain('anderer Agent');
@@ -511,12 +477,12 @@ describe('review approval', () => {
 		expect(row?.review_approved_at).not.toBeNull();
 		expect(JSON.parse(row?.review_approved_by as string)).toEqual(reviewer);
 
-		board.moveTicket(db, user, id, col['In Arbeit']);
-		board.moveTicket(db, user, id, col.Review);
+		board.moveTicket(db, user, id, col.implement);
+		board.moveTicket(db, user, id, col.critique);
 		board.approveReview(db, user, id); // the human may always approve
 	});
 
-	it('lets an agent approve only in a column flagged as review column, the human in any column', () => {
+	it('lets an agent approve only in the critique step, whatever the column is called, the human in any column', () => {
 		const { db, ticket, place, col } = setup();
 		const id = ticket();
 		const err = caught(() => board.approveReview(db, reviewer, id));
@@ -528,58 +494,51 @@ describe('review approval', () => {
 		).toBeNull();
 		board.approveReview(db, user, id);
 
-		db.prepare("UPDATE columns SET name = 'Prüfung' WHERE id = ?").run(col.Review);
-		place(id, 'Review');
+		db.prepare("UPDATE columns SET name = 'Prüfung' WHERE id = ?").run(col.critique);
+		place(id, 'critique');
 		board.approveReview(db, reviewer, id);
 	});
 
-	it('clears the approval when moved back to "In Arbeit" and keeps it when moved to done', () => {
+	it('clears the approval when moved back to implement and keeps it when moved on to acceptance and done', () => {
 		const { db, ticket, place, col } = setup();
 		const approved = (id: number) =>
 			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at !== null;
 		const id = ticket();
-		place(id, 'Review');
+		place(id, 'critique');
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, reviewer, id, col['In Arbeit']);
+		board.moveTicket(db, reviewer, id, col.implement);
 		expect(approved(id)).toBe(false);
 
-		board.moveTicket(db, dev, id, col.Review);
+		board.moveTicket(db, dev, id, col.critique);
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, reviewer, id, col.Abnahme);
+		board.moveTicket(db, reviewer, id, col.acceptance);
 		expect(approved(id)).toBe(true);
-		board.moveTicket(db, user, id, col.Done);
+		board.moveTicket(db, user, id, col.done);
 		expect(approved(id)).toBe(true);
 	});
 
-	it('clears the approval returning from a human column by its kind, not by column position', () => {
+	it('clears the approval when the human reopens a done ticket into earlier work', () => {
 		const { db, ticket, place, col } = setup();
 		const approved = (id: number) =>
 			db.prepare('SELECT review_approved_at AS at FROM tickets WHERE id = ?').get(id)?.at !== null;
-		// Move the human columns before Review, so a purely position-based rule would read the return as "forward".
-		db.prepare('UPDATE columns SET position = -10 WHERE id = ?').run(col['Human Intervention']);
-		db.prepare('UPDATE columns SET position = -9 WHERE id = ?').run(col['Human Answered']);
-
 		const id = ticket();
-		place(id, 'Review');
+		place(id, 'critique');
 		board.approveReview(db, reviewer, id);
-		board.moveTicket(db, dev, id, col['Human Intervention']); // moving into a human column keeps it, regardless of position
+		board.moveTicket(db, user, id, col.done);
 		expect(approved(id)).toBe(true);
-		board.moveTicket(db, user, id, col['Human Answered']);
-		expect(approved(id)).toBe(true);
-
-		board.moveTicket(db, user, id, col.Review); // "forward" by the new position, but returning from a human column
+		board.moveTicket(db, user, id, col.implement);
 		expect(approved(id)).toBe(false);
 	});
 
-	it('keeps a predecessor approved in Review unblocking its successor after it moves on to acceptance (review_ok)', () => {
+	it('keeps a predecessor approved in critique unblocking its successor after it moves on to acceptance (review_ok)', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [a, b] = [ticket(), ticket()];
 		board.linkRelation(db, user, a, b, 'blocks');
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
-		place(a, 'Review');
+		place(a, 'critique');
 		board.approveReview(db, reviewer, a);
-		board.moveTicket(db, reviewer, a, col.Abnahme);
-		expect(board.workableTickets(db, projectId, col.Backlog).map((r) => r.ref)).toEqual(['STU-2']);
+		board.moveTicket(db, reviewer, a, col.acceptance);
+		expect(board.workableTickets(db, projectId, col.backlog).map((r) => r.ref)).toEqual(['STU-2']);
 	});
 });
 
@@ -590,27 +549,26 @@ describe('workableTickets', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [a, b] = [ticket(), ticket()];
 		const done = ticket();
-		place(done, 'Done');
-		place(ticket(), 'Human Intervention'); // waits for the human, not workable
+		place(done, 'done');
 		board.linkRelation(db, user, a, b, 'blocks');
 		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-1']);
-		place(a, 'Done');
+		place(a, 'done');
 		expect(refs(board.workableTickets(db, projectId))).toEqual(['STU-2']);
-		expect(refs(board.workableTickets(db, projectId, col['In Arbeit']))).toEqual([]);
+		expect(refs(board.workableTickets(db, projectId, col.implement))).toEqual([]);
 	});
 
 	it('respects blocks_satisfied_at: done versus review_ok', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [a, b] = [ticket(), ticket()];
 		board.linkRelation(db, user, a, b, 'blocks');
-		place(a, 'Review');
+		place(a, 'critique');
 		board.approveReview(db, reviewer, a);
-		const workable = () => refs(board.workableTickets(db, projectId, col.Backlog));
+		const workable = () => refs(board.workableTickets(db, projectId, col.backlog));
 
 		expect(workable()).toEqual([]); // default done: an approval is not enough
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');
 		expect(workable()).toEqual(['STU-2']);
-		board.moveTicket(db, reviewer, a, col['In Arbeit']); // the approval clears
+		board.moveTicket(db, reviewer, a, col.implement); // the approval clears
 		expect(workable()).toEqual([]);
 	});
 });
@@ -746,26 +704,26 @@ describe('event bus', () => {
 	});
 
 	it("rolls back a joined mutation that fails even when the caller catches its error, and keeps the caller's own writes", () => {
-		const { db, projectId, ticket, place } = setup();
-		const closed = ticket();
-		place(closed, 'Done');
+		const { db, projectId, ticket } = setup();
+		const id = ticket();
+		const { id: task } = board.addTask(db, user, id, 'Alt');
+		const ghost: Actor = { kind: 'agent', runId: 999 }; // no such run: the system comment's run FK fails after the delete
 		const events: StudioEvent[] = [];
 		const off = subscribe((e) => events.push(e));
 
 		tx(db, () => {
 			board.createTicket(db, user, projectId, { title: 'Bleibt' });
 			try {
-				requestHuman(db, dev, closed, { question: 'Nacharbeit?' }); // writes comment and question, then the move out of done is refused
+				// deletes and reports the task, then the comment is refused
+				board.deleteTask(db, ghost, task, 'überholt');
 			} catch {
-				// the caller decides to go on without the question
+				// the caller decides to go on without the deletion
 			}
 		});
 		off();
 
-		expect(db.prepare('SELECT count(*) AS n FROM questions').get()?.n).toBe(0);
-		expect(
-			db.prepare('SELECT count(*) AS n FROM comments WHERE ticket_id = ?').get(closed)?.n
-		).toBe(0);
+		expect(db.prepare('SELECT count(*) AS n FROM tasks WHERE id = ?').get(task)?.n).toBe(1);
+		expect(db.prepare('SELECT count(*) AS n FROM comments WHERE ticket_id = ?').get(id)?.n).toBe(0);
 		expect(db.prepare("SELECT count(*) AS n FROM tickets WHERE title = 'Bleibt'").get()?.n).toBe(1);
 		expect(events.map((e) => e.type)).toEqual(['ticket.created']);
 	});
@@ -777,24 +735,24 @@ describe('blockingPredecessors', () => {
 	it('lists the open predecessors that keep a ticket out of workableTickets', () => {
 		const { db, projectId, ticket, place, col } = setup();
 		const [open, finished, successor] = [ticket(), ticket(), ticket()];
-		place(finished, 'Done');
+		place(finished, 'done');
 		board.linkRelation(db, user, open, successor, 'blocks');
 		board.linkRelation(db, user, finished, successor, 'blocks');
 		expect(board.blockingPredecessors(db, successor)).toEqual([
 			{ id: open, ref: 'STU-1', title: 'T', column: 'Backlog' }
 		]);
-		expect(refs(board.workableTickets(db, projectId, col.Backlog))).not.toContain('STU-3');
+		expect(refs(board.workableTickets(db, projectId, col.backlog))).not.toContain('STU-3');
 
-		place(open, 'Done');
+		place(open, 'done');
 		expect(board.blockingPredecessors(db, successor)).toEqual([]);
-		expect(refs(board.workableTickets(db, projectId, col.Backlog))).toContain('STU-3');
+		expect(refs(board.workableTickets(db, projectId, col.backlog))).toContain('STU-3');
 	});
 
 	it('counts an approved predecessor as finished only when the project says review_ok', () => {
 		const { db, projectId, ticket, place } = setup();
 		const [predecessor, successor] = [ticket(), ticket()];
 		board.linkRelation(db, user, predecessor, successor, 'blocks');
-		place(predecessor, 'Review');
+		place(predecessor, 'critique');
 		board.approveReview(db, reviewer, predecessor);
 		expect(refs(board.blockingPredecessors(db, successor))).toEqual(['STU-1']);
 		board.setBlocksSatisfiedAt(db, user, projectId, 'review_ok');

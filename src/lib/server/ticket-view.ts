@@ -4,6 +4,7 @@ import type { RunStart, RunTab, StartProfile } from '$lib/runs/run-control';
 import type { RunTrace, TraceEvent } from '$lib/trace/trace';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
+import type { Phase } from './domain/variants';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
 import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
@@ -22,7 +23,7 @@ export type TicketComment = {
 export type TicketMove = {
 	columnId: number;
 	name: string;
-	kind: board.Kind;
+	phase: Phase;
 	/** Board position of the target column, so the ticket page can tell `>`/`<` apart without a second lookup. */
 	position: number;
 	blockers: board.Blocker[];
@@ -83,7 +84,7 @@ export function ticketMoves(
 	return board.allowedMoves(db, ticketId, actor).map((m) => ({
 		columnId: m.columnId,
 		name: m.name,
-		kind: m.kind,
+		phase: m.phase,
 		position: positions.get(m.columnId)!,
 		blockers: m.blockers
 	}));

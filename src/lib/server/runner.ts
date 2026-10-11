@@ -269,7 +269,6 @@ function hintsGiven(db: DatabaseSync, runId: number): number {
 	return n;
 }
 
-/** If the board cannot take the question, the failed run carries it and a way out for the human. */
 function askHumanAfterUsedUpChain(
 	db: DatabaseSync,
 	actor: Actor,
@@ -284,19 +283,10 @@ function askHumanAfterUsedUpChain(
 		(lastHint ? `, zuletzt: „${lastHint}“` : '') +
 		'.';
 	const link = `${ticketPath(db, run.ticketId)}?run=${run.id}`;
-	try {
-		requestHuman(db, actor, run.ticketId, {
-			question: `${stuck} Den Stand zeigt die Run-Akte: ${link}. Wie soll es weitergehen?`,
-			options: ESCALATION_OPTIONS
-		});
-	} catch (err) {
-		if (!(err instanceof DomainError) || err.code !== 'no_escalation_column') throw err;
-		throw new DomainError(
-			err.code,
-			`${stuck} Die Frage an den Menschen ging nicht: ${err.message}`,
-			`Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; Run-Akte: ${link}.`
-		);
-	}
+	requestHuman(db, actor, run.ticketId, {
+		question: `${stuck} Den Stand zeigt die Run-Akte: ${link}. Wie soll es weitergehen?`,
+		options: ESCALATION_OPTIONS
+	});
 }
 
 /** One transaction: a paused run never stays without its follow-up run or the question to the human. */

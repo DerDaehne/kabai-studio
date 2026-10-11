@@ -67,13 +67,17 @@ describe('runScenario expectation checks', () => {
 			tickets: [
 				{
 					title: 'ok case',
-					column: 'Refine',
-					expect: { endColumn: 'Refine', requiredTools: ['add_tasks'], commentHasCodeBlock: true }
+					column: 'Präzisieren',
+					expect: {
+						endColumn: 'Präzisieren',
+						requiredTools: ['add_tasks'],
+						commentHasCodeBlock: true
+					}
 				},
 				{ title: 'forbidden tool case', expect: { forbiddenTools: ['add_tasks'] } },
 				{ title: 'execution claim case', expect: {} },
 				{ title: 'required tool missing case', expect: { requiredTools: ['move_ticket'] } },
-				{ title: 'end column violation case', expect: { endColumn: 'Ready' } },
+				{ title: 'end column violation case', expect: { endColumn: 'Planen' } },
 				{ title: 'code block missing case', expect: { commentHasCodeBlock: true } },
 				{ title: 'max steps violation case', expect: { maxSteps: 1 } },
 				{ title: 'request human asked violation case', expect: { requestHumanAsked: true } }

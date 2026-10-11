@@ -17,9 +17,9 @@ type HaltedRun = {
 };
 
 const NOT_AUS_REFUSED_HINT =
-	'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet über den Not-Aus.';
+	'Läuft etwas aus dem Ruder: frag den Menschen (requestHuman) — er entscheidet über den Not-Aus.';
 const PAUSE_REFUSED_HINT =
-	'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet, ob Runs anhalten.';
+	'Läuft etwas aus dem Ruder: frag den Menschen (requestHuman) — er entscheidet, ob Runs anhalten.';
 const RESUME_WAY_OUT = ':fortsetzen zeigt die angehaltenen Runs; :fortsetzen all setzt alle fort.';
 
 /** Stopping, pausing and resuming agents is the human's control over them, so no agent may do it. */

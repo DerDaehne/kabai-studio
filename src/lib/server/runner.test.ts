@@ -19,6 +19,7 @@ import {
 	resumeAll,
 	resumeRun
 } from './domain/halt';
+import type { Step } from './domain/variants';
 import { LIMITS, startRunner, type Executor, type Resume, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
@@ -430,11 +431,11 @@ describe('startRunner', () => {
 describe('priority queue', () => {
 	function withPriorities() {
 		const s = setup();
-		const column = (name: string) =>
+		const column = (step: Step) =>
 			s.db
-				.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?')
-				.get(s.projectId, name)!.id as number;
-		const reviewColumn = column('Review');
+				.prepare('SELECT id FROM columns WHERE project_id = ? AND step = ?')
+				.get(s.projectId, step)!.id as number;
+		const reviewColumn = column('critique');
 		const ticketIn = (columnId?: number) =>
 			board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
 		const blockingTicket = ticketIn();
@@ -446,7 +447,7 @@ describe('priority queue', () => {
 		return { ...s, column, ticketIn, blockingTicket, reviewTicket, queueWith, priority };
 	}
 
-	it('derives the priority when a run is created: normal by default, blocker for a ticket with waiting successors, review for a run triggered in a review column', () => {
+	it('derives the priority when a run is created: normal by default, blocker for a ticket with waiting successors, review for a run triggered in critique', () => {
 		const s = withPriorities();
 		expect(s.priority(s.queue(s.local))).toBe('normal');
 		expect(s.priority(s.queueWith(s.blockingTicket, 'manual'))).toBe('blocker');
@@ -458,8 +459,7 @@ describe('priority queue', () => {
 		const s = withPriorities();
 		const [predecessor, successor] = [s.ticketIn(), s.ticketIn()];
 		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
-		for (const name of ['Refine', 'Ready', 'In Arbeit', 'Review', 'Abnahme', 'Done'])
-			board.moveTicket(s.db, user, successor, s.column(name));
+		board.moveTicket(s.db, user, successor, s.column('done'));
 		expect(s.priority(s.queueWith(predecessor, 'manual'))).toBe('normal');
 	});
 
@@ -876,9 +876,9 @@ describe('parking and resuming a run', () => {
 		expect(lastRunId(s)).toBe(exhausted);
 		expect(
 			s.db
-				.prepare('SELECT c.kind FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+				.prepare('SELECT c.step FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
 				.get(s.ticketId)
-		).toEqual({ kind: 'human_intervention' });
+		).toEqual({ step: 'backlog' }); // the question leaves the ticket where it is
 		const question =
 			`Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht ` +
 			`(höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}. Wie soll es weitergehen?`;
@@ -1025,39 +1025,6 @@ describe('parking and resuming a run', () => {
 		});
 	});
 
-	it('fails the run instead of leaving it paused without a follow-up when the human cannot be asked, and tells the human why and where the handoff is', async () => {
-		const s = setup();
-		s.db.exec("DELETE FROM columns WHERE kind = 'human_intervention'");
-		const fake = fakeExecutor();
-		start(s.db, { builtin: fake.executor });
-		s.queue(s.local);
-		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
-		await flush();
-		const fresh = lastRunId(s);
-
-		fake.call(fresh).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
-		await flush();
-
-		expect(lastRunId(s)).toBe(fresh);
-		expect(s.state(fresh)).toBe('failed');
-		expect(s.db.prepare('SELECT count(*) AS n FROM questions').get()).toEqual({ n: 0 });
-		const error =
-			`[no_escalation_column] Run ${fresh} kommt nicht weiter (Stillstand oder Längenlimit), und seine Kette hat ihren frischen Run schon verbraucht ` +
-			'(höchstens 1 je Kette). 0 Hinweise in diesem Run. Die Frage an den Menschen ging nicht: Das Board von STU-1 hat keine human_intervention-Spalte.';
-		const wayOut = `Lege im Board eine human_intervention-Spalte an und starte einen neuen Run für das Ticket; Run-Akte: /p/STU/t/1?run=${fresh}.`;
-		expect(s.row(fresh).error).toBe(error);
-		expect(s.comments()).toEqual([
-			{
-				author_kind: 'system',
-				run_id: fresh,
-				body: `Run ${fresh} ist fehlgeschlagen: ${error}\nAusweg: ${wayOut}`
-			}
-		]);
-	});
-
 	it('claims a follow-up run only once its notBefore has passed, also after a server restart, by one timer instead of polling', async () => {
 		vi.useFakeTimers({
 			toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date']
@@ -1132,7 +1099,7 @@ describe('resuming after the human answers', () => {
 		vi.setSystemTime(new Date('2026-10-03T12:00:00.000Z'));
 		const s = setup();
 		const inProgress = s.db
-			.prepare("SELECT id FROM columns WHERE project_id = ? AND name = 'In Arbeit'")
+			.prepare("SELECT id FROM columns WHERE project_id = ? AND step = 'implement'")
 			.get(s.projectId)!.id as number;
 		const ticketId = board.createTicket(s.db, user, s.projectId, {
 			title: 'Asks first',
@@ -1295,7 +1262,7 @@ describe('stop (kill switch)', () => {
 		const refused = expect.objectContaining({
 			code: 'requires_human',
 			message: 'Den Not-Aus setzt nur der Mensch.',
-			hint: 'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet über den Not-Aus.'
+			hint: 'Läuft etwas aus dem Ruder: frag den Menschen (requestHuman) — er entscheidet über den Not-Aus.'
 		});
 
 		for (const actor of [agent, system]) {
@@ -1647,7 +1614,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 			expect.objectContaining({
 				code: 'requires_human',
 				message,
-				hint: 'Läuft etwas aus dem Ruder: Frage als Kommentar, dann in die human_intervention-Spalte — der Mensch entscheidet, ob Runs anhalten.'
+				hint: 'Läuft etwas aus dem Ruder: frag den Menschen (requestHuman) — er entscheidet, ob Runs anhalten.'
 			});
 
 		for (const actor of [agent, system]) {

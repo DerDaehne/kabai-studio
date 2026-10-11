@@ -6,6 +6,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultDataDir } from './data-dir';
 import { latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
+import type { Actor } from './domain/core';
+import * as questions from './domain/questions';
+import { ROLES } from './domain/variants';
+import { liveState } from './live';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -15,6 +19,83 @@ const names = (db: ReturnType<typeof openDb>) =>
 		.prepare('SELECT name FROM schema_migrations ORDER BY name')
 		.all()
 		.map((r) => r.name);
+
+const SHIPPED = import.meta.glob<string>('/migrations/*.sql', {
+	query: '?raw',
+	import: 'default',
+	eager: true
+});
+/** The shipped migrations whose path sorts before `prefix`, e.g. `/migrations/016` for the schema up to 015. */
+const shippedBefore = (prefix: string) =>
+	Object.fromEntries(Object.entries(SHIPPED).filter(([path]) => path < prefix));
+
+/** The template createProject built before Refine, Ready and Abnahme existed. */
+const COLUMNS_BEFORE_REFINE = [
+	'Backlog',
+	'In Arbeit',
+	'Review',
+	'Done',
+	'Human Intervention',
+	'Human Answered'
+];
+/** The template createProject built from then on, until 016. */
+const COLUMNS_SINCE_REFINE = [
+	'Backlog',
+	'Refine',
+	'Ready',
+	'In Arbeit',
+	'Review',
+	'Abnahme',
+	'Done',
+	'Human Intervention',
+	'Human Answered'
+];
+const LEGACY_KIND: Record<string, string> = {
+	Done: 'done',
+	'Human Intervention': 'human_intervention',
+	'Human Answered': 'human_answered'
+};
+
+/**
+ * A project as the old createProject left it in a database before 016: columns with kind, review flag and role prompt,
+ * the linear transitions and the edge from human intervention to human answered. Returns the column ids by name.
+ */
+function legacyProject(
+	db: ReturnType<typeof openDb>,
+	project: { id: number; key: string; firstColumnId: number },
+	names: string[]
+): Record<string, number> {
+	db.prepare('INSERT INTO projects (id, key, name) VALUES (?, ?, ?)').run(
+		project.id,
+		project.key,
+		`Projekt ${project.key}`
+	);
+	const ids = Object.fromEntries(names.map((name, i) => [name, project.firstColumnId + i]));
+	const column = db.prepare(
+		'INSERT INTO columns (id, project_id, name, position, kind, review, role_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+	);
+	names.forEach((name, i) =>
+		column.run(
+			ids[name],
+			project.id,
+			name,
+			i,
+			LEGACY_KIND[name] ?? 'normal',
+			name === 'Review' ? 1 : 0,
+			`Role of ${name}`
+		)
+	);
+	const edge = db.prepare(
+		'INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)'
+	);
+	const flow = names.filter((name) => !name.startsWith('Human'));
+	for (let i = 0; i + 1 < flow.length; i++) {
+		edge.run(project.id, ids[flow[i]], ids[flow[i + 1]], flow[i + 1] === 'Done' ? 1 : 0);
+		edge.run(project.id, ids[flow[i + 1]], ids[flow[i]], 0);
+	}
+	edge.run(project.id, ids['Human Intervention'], ids['Human Answered'], 1);
+	return ids;
+}
 
 describe('defaultDataDir', () => {
 	it('uses XDG_DATA_HOME on Linux when set', () => {
@@ -240,7 +321,7 @@ describe('migrate', () => {
 		);
 		db.exec(`
 			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
-			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+			INSERT INTO columns (id, project_id, step, name) VALUES (10, 1, 'plan', 'Planen');
 			INSERT INTO tickets (id, project_id, number, column_id, title, type, docs_required) VALUES
 				(100, 1, 1, 10, 'Altes Epic', 'epic', 0),
 				(101, 1, 2, 10, 'Altes Ticket', 'ticket', 0);
@@ -270,13 +351,16 @@ describe('migrate', () => {
 			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'p', 'builtin', 'openai-compatible', 'm');
 			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger) VALUES (7, 100, 11, 1, 'on_enter');
 		`);
-		expect(migrate(db)[0]).toBe('009_run_priority.sql');
+		const upTo010 = Object.fromEntries(
+			Object.entries(bundled).filter(([path]) => path < '/migrations/010')
+		);
+		expect(migrate(db, upTo010)).toEqual(['009_run_priority.sql']);
 		expect(db.prepare('SELECT name, review FROM columns ORDER BY id').all()).toEqual([
 			{ name: 'In Arbeit', review: 0 },
 			{ name: 'Review', review: 1 }
 		]);
 		expect(db.prepare('SELECT priority FROM runs').all()).toEqual([{ priority: 'normal' }]);
-		expect(migrate(db)).toEqual([]);
+		expect(migrate(db, upTo010)).toEqual([]);
 		expect(() => db.exec("UPDATE runs SET priority = 'urgent'")).toThrow(/CHECK/);
 	});
 
@@ -492,46 +576,33 @@ describe('migrate', () => {
 			Refine: 'Refine with the team conventions: effort in story points.',
 			Review: `${PREVIOUS_DEFAULTS.Review} `
 		};
-		const bundled = import.meta.glob<string>('/migrations/*.sql', {
-			query: '?raw',
-			import: 'default',
-			eager: true
-		});
 		const db = openDb(':memory:');
-		migrate(
-			db,
-			Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/014'))
-		);
-		const old = board.createProject(db, { kind: 'user' }, { key: 'OLD', name: 'Old' }).id;
-		const setRole = db.prepare(
-			'UPDATE columns SET role_prompt = ? WHERE project_id = ? AND name = ?'
-		);
+		migrate(db, shippedBefore('/migrations/014'));
+		const old = legacyProject(db, { id: 1, key: 'OLD', firstColumnId: 1 }, COLUMNS_SINCE_REFINE);
+		const setRole = db.prepare('UPDATE columns SET role_prompt = ? WHERE id = ?');
 		for (const [name, text] of Object.entries({ ...PREVIOUS_DEFAULTS, ...EDITED }))
-			setRole.run(text, old, name);
+			setRole.run(text, old[name]);
 
-		expect(
-			migrate(
-				db,
-				Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/015'))
-			)
-		).toEqual(['014_default_role_prompts.sql']);
+		expect(migrate(db, shippedBefore('/migrations/015'))).toEqual(['014_default_role_prompts.sql']);
 
-		const current = board.createProject(db, { kind: 'user' }, { key: 'NEW', name: 'New' }).id;
-		const rolePrompts = (projectId: number) =>
-			Object.fromEntries(
-				db
-					.prepare('SELECT name, role_prompt FROM columns WHERE project_id = ?')
-					.all(projectId)
-					.map((r) => [r.name, r.role_prompt])
-			);
-		expect(rolePrompts(old)).toEqual({ ...rolePrompts(current), ...EDITED });
-		expect(rolePrompts(old).Backlog).not.toBe(PREVIOUS_DEFAULTS.Backlog);
-		expect(
-			migrate(
-				db,
-				Object.fromEntries(Object.entries(bundled).filter(([path]) => path < '/migrations/015'))
-			)
-		).toEqual([]);
+		const rolePrompts = Object.fromEntries(
+			db
+				.prepare('SELECT name, role_prompt FROM columns WHERE project_id = 1')
+				.all()
+				.map((r) => [r.name, r.role_prompt])
+		);
+		// Ready and In Arbeit carry the texts the plan and implement steps still have in the code.
+		expect(rolePrompts).toMatchObject({
+			...EDITED,
+			Ready: ROLES.plan,
+			'In Arbeit': ROLES.implement,
+			Done: ''
+		});
+		for (const name of ['Backlog', 'Abnahme', 'Human Intervention', 'Human Answered']) {
+			expect(rolePrompts[name]).not.toBe(PREVIOUS_DEFAULTS[name]);
+			expect(rolePrompts[name]).toMatch(/^Do: /);
+		}
+		expect(migrate(db, shippedBefore('/migrations/015'))).toEqual([]);
 	});
 
 	it('015 adds the four indexes liveState, claimRun and recentFinishedRuns need, leaving runs_by_ticket in place', () => {
@@ -556,6 +627,304 @@ describe('migrate', () => {
 	});
 });
 
+describe('016 on a database at 015 with both template generations in real use', () => {
+	const token = (n: number) => String(n).repeat(64);
+
+	/**
+	 * Project OLD has the template from before Refine (columns 1–6), project CUR the later one (11–19) plus two columns
+	 * only hand-written SQL could add: one with an unknown name (20) and a second review column (21). Every column holds
+	 * a ticket; runs, questions, comments, tasks, a review approval and a tool approval hang off them as in production.
+	 */
+	function dbBefore016() {
+		const db = openDb(':memory:');
+		migrate(db, shippedBefore('/migrations/016'));
+		legacyProject(db, { id: 1, key: 'OLD', firstColumnId: 1 }, COLUMNS_BEFORE_REFINE);
+		legacyProject(db, { id: 2, key: 'CUR', firstColumnId: 11 }, COLUMNS_SINCE_REFINE);
+		db.exec(`
+			INSERT INTO columns (id, project_id, name, position, review) VALUES (20, 2, 'Parkplatz', 9, 0), (21, 2, 'Prüfung', 10, 1);
+			INSERT INTO tickets (id, project_id, number, column_id, title, effort_estimate, effort_unit) VALUES
+				(101, 1, 1, 1, 'OLD Backlog', 3, 'h'), (102, 1, 2, 2, 'OLD In Arbeit', NULL, NULL),
+				(103, 1, 3, 3, 'OLD Review', NULL, NULL), (104, 1, 4, 4, 'OLD Done', NULL, NULL),
+				(105, 1, 5, 5, 'OLD fragt aus der Arbeit', NULL, NULL), (106, 1, 6, 6, 'OLD beantwortet ohne Run', NULL, NULL),
+				(111, 2, 1, 11, 'CUR Backlog', NULL, NULL), (112, 2, 2, 12, 'CUR Refine', NULL, NULL),
+				(113, 2, 3, 13, 'CUR Ready', NULL, NULL), (114, 2, 4, 14, 'CUR In Arbeit', NULL, NULL),
+				(115, 2, 5, 15, 'CUR Review', NULL, NULL), (116, 2, 6, 16, 'CUR Abnahme', NULL, NULL),
+				(117, 2, 7, 17, 'CUR Done', NULL, NULL), (118, 2, 8, 18, 'CUR fragt aus der Kritik', NULL, NULL),
+				(119, 2, 9, 19, 'CUR beantwortet nach Abnahme', NULL, NULL), (120, 2, 10, 20, 'CUR Parkplatz', NULL, NULL),
+				(121, 2, 11, 21, 'CUR zweite Prüfung', NULL, NULL);
+			UPDATE projects SET ticket_seq = (SELECT max(number) FROM tickets WHERE project_id = projects.id);
+			UPDATE tickets SET review_approved_at = '2026-10-01 09:00:00', review_approved_by = '{"kind":"agent","runId":4}'
+				WHERE id IN (103, 116);
+			INSERT INTO tasks (ticket_id, title, done_at) VALUES (102, 'Parser', '2026-10-01 08:00:00'), (102, 'Tests', NULL);
+			INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, type) VALUES (101, 102, 'blocks'), (111, 112, 'parent_of');
+			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'Lokal', 'builtin', 'openai-compatible', 'm');
+			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger, state, token_hash, created_at, started_at, finished_at, error) VALUES
+				(1, 105, 2, 1, 'manual', 'paused', NULL, '2026-10-01 10:00:00', '2026-10-01 10:00:01', '2026-10-01 10:05:00', NULL),
+				(2, 113, 13, 1, 'manual', 'queued', NULL, '2026-10-01 10:00:00', NULL, NULL, NULL),
+				(3, 114, 14, 1, 'on_enter', 'waiting_approval', '${token(3)}', '2026-10-01 10:00:00', '2026-10-01 10:00:01', NULL, NULL),
+				(4, 118, 15, 1, 'on_enter', 'succeeded', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:30:00', NULL),
+				(5, 118, 18, 1, 'resume', 'paused', NULL, '2026-10-01 11:00:00', '2026-10-01 11:00:01', '2026-10-01 11:05:00', NULL),
+				(6, 119, 16, 1, 'manual', 'succeeded', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', NULL),
+				(7, 120, 20, 1, 'manual', 'failed', NULL, '2026-10-01 09:00:00', '2026-10-01 09:00:01', '2026-10-01 09:10:00', '[x] kaputt');
+			INSERT INTO run_events (run_id, seq, type, payload) VALUES
+				(1, 1, 'message', '{"text":"Stand"}'), (3, 1, 'permission_request', '{"tool":"shell","command":"npm test"}');
+			INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES
+				(102, 'user', 'user', 'Bitte zuerst den Parser.', NULL),
+				(105, 'agent', 'agent (Run 1)', 'A oder B?', 1),
+				(118, 'agent', 'agent (Run 5)', 'Wie streng?', 5),
+				(120, 'user', 'user', 'Später.', NULL);
+			INSERT INTO questions (id, ticket_id, run_id, question, options, answer, answered_at, collected_at) VALUES
+				(1, 105, 1, 'A oder B?', '[{"label":"A"},{"label":"B"}]', NULL, NULL, NULL),
+				(2, 118, 5, 'Wie streng?', '[]', NULL, NULL, NULL),
+				(3, 119, 6, 'Passt das?', '[]', '{"text":"Ja"}', '2026-10-01 09:20:00', '2026-10-01 09:21:00');
+		`);
+		return db;
+	}
+
+	const tables = (db: ReturnType<typeof openDb>) =>
+		db
+			.prepare(
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('columns', 'transitions', 'schema_migrations') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'notes_fts%' ORDER BY name"
+			)
+			.all()
+			.map((r) => r.name as string);
+	const rowCounts = (db: ReturnType<typeof openDb>) =>
+		Object.fromEntries(
+			tables(db).map((table) => [
+				table,
+				db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n as number
+			])
+		);
+	const stepOfTicket = (db: ReturnType<typeof openDb>) =>
+		Object.fromEntries(
+			db
+				.prepare(
+					'SELECT t.id, c.step FROM tickets t JOIN columns c ON c.id = t.column_id ORDER BY t.id'
+				)
+				.all()
+				.map((r) => [r.id, r.step])
+		);
+
+	it('loses no row: every table keeps its count, the comments gain one system comment per dropped column', () => {
+		const db = dbBefore016();
+		const before = rowCounts(db);
+		const ticketsPerProject = () =>
+			db.prepare('SELECT project_id, count(*) AS n FROM tickets GROUP BY project_id').all();
+		const perProjectBefore = ticketsPerProject();
+
+		expect(migrate(db)).toEqual(['016_variants.sql']);
+
+		expect(before).toMatchObject({
+			tickets: 17,
+			runs: 7,
+			comments: 4,
+			questions: 3,
+			tasks: 2,
+			projects: 2
+		});
+		expect(rowCounts(db)).toEqual({ ...before, comments: before.comments + 2 });
+		expect(ticketsPerProject()).toEqual(perProjectBefore);
+		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+		expect(migrate(db)).toEqual([]);
+	});
+
+	it('turns every project into the software variant, keeping the ids of known columns and adding missing steps', () => {
+		const db = dbBefore016();
+		migrate(db);
+
+		const columnsOf = (projectId: number) =>
+			db
+				.prepare('SELECT id, step, phase, name FROM columns WHERE project_id = ? ORDER BY position')
+				.all(projectId)
+				.map((c) => `${c.step}:${c.phase}:${c.name}`);
+		const software = [
+			'backlog:open:Backlog',
+			'refine:work:Präzisieren',
+			'plan:work:Planen',
+			'implement:work:Umsetzen',
+			'critique:work:Kritik',
+			'acceptance:acceptance:Abnahme',
+			'done:done:Fertig'
+		];
+		expect(columnsOf(1)).toEqual(software);
+		expect(columnsOf(2)).toEqual(software);
+		expect(db.prepare('SELECT id, step FROM columns WHERE id < 21 ORDER BY id').all()).toEqual(
+			[
+				[1, 'backlog'],
+				[2, 'implement'],
+				[3, 'critique'],
+				[4, 'done'],
+				[11, 'backlog'],
+				[12, 'refine'],
+				[13, 'plan'],
+				[14, 'implement'],
+				[15, 'critique'],
+				[16, 'acceptance'],
+				[17, 'done']
+			].map(([id, step]) => ({ id, step }))
+		);
+		expect(
+			db.prepare('SELECT min(id) AS first FROM columns WHERE project_id = 1 AND id > 6').get()
+		).toEqual({
+			first: 22
+		}); // added steps never reuse the id of a dropped column
+		expect(db.prepare('SELECT DISTINCT variant FROM projects').all()).toEqual([
+			{ variant: 'software' }
+		]);
+	});
+
+	it('puts every ticket in a step: human tickets in the step of their newest work run or the backlog, tickets of unknown or doubled columns in the backlog with a system comment', () => {
+		const db = dbBefore016();
+		migrate(db);
+
+		expect(stepOfTicket(db)).toEqual({
+			101: 'backlog',
+			102: 'implement',
+			103: 'critique',
+			104: 'done',
+			105: 'implement', // asked from a run in In Arbeit
+			106: 'backlog', // answered, but never worked by a run
+			111: 'backlog',
+			112: 'refine',
+			113: 'plan',
+			114: 'implement',
+			115: 'critique',
+			116: 'acceptance',
+			117: 'done',
+			118: 'critique', // its newest run sat in the human column itself, the one before in Review
+			119: 'backlog', // its only run was in Abnahme, no work step
+			120: 'backlog',
+			121: 'backlog' // a second column for the critique step goes like an unknown one
+		});
+		expect(
+			db
+				.prepare(
+					"SELECT ticket_id, author_kind, author, body, run_id FROM comments WHERE author_kind = 'system'"
+				)
+				.all()
+		).toEqual([
+			{
+				ticket_id: 120,
+				author_kind: 'system',
+				author: 'system',
+				body: 'Die Spalte „Parkplatz“ gibt es nicht mehr. Das Ticket liegt jetzt im Backlog.',
+				run_id: null
+			},
+			{
+				ticket_id: 121,
+				author_kind: 'system',
+				author: 'system',
+				body: 'Die Spalte „Prüfung“ gibt es nicht mehr. Das Ticket liegt jetzt im Backlog.',
+				run_id: null
+			}
+		]);
+	});
+
+	it('keeps questions, runs, tool and review approvals; only runs of dropped columns lose their column, explicitly', () => {
+		const db = dbBefore016();
+		const rows = (sql: string) => db.prepare(sql).all();
+		const QUESTIONS = 'SELECT * FROM questions ORDER BY id';
+		const RUNS = 'SELECT * FROM runs ORDER BY id';
+		const RUN_EVENTS = 'SELECT * FROM run_events ORDER BY run_id, seq';
+		const TICKETS =
+			'SELECT id, project_id, number, title, description, docs_required, assignee, position, created_at, updated_at, review_approved_at, review_approved_by, moved_by FROM tickets ORDER BY id';
+		const before = {
+			questions: rows(QUESTIONS),
+			runs: rows(RUNS),
+			events: rows(RUN_EVENTS),
+			tickets: rows(TICKETS)
+		};
+
+		migrate(db);
+
+		expect(rows(QUESTIONS)).toEqual(before.questions);
+		expect(rows(RUN_EVENTS)).toEqual(before.events);
+		expect(rows(TICKETS)).toEqual(before.tickets);
+		expect(rows(RUNS)).toEqual(
+			before.runs.map((run) => (run.id === 5 || run.id === 7 ? { ...run, column_id: null } : run))
+		);
+	});
+
+	it('keeps the app working on the migrated data: domain reads, the live state and an answer that resumes the paused run', () => {
+		const db = dbBefore016();
+		migrate(db);
+		const human: Actor = { kind: 'user' };
+
+		for (const { id } of db.prepare('SELECT id FROM tickets').all() as { id: number }[]) {
+			expect(board.ticket(db, id).column_step).toBe(stepOfTicket(db)[id]);
+			expect(board.allowedMoves(db, id, human)).toHaveLength(6);
+		}
+		expect(board.workableTickets(db, 1).map((t) => t.ref)).toEqual([
+			'OLD-1',
+			'OLD-6',
+			'OLD-5',
+			'OLD-3'
+		]);
+		expect(questions.latestOpenQuestion(db, 118)).toMatchObject({ id: 2, question: 'Wie streng?' });
+		expect(liveState(db)).toMatchObject({ openQuestions: 2, activeRuns: 1 });
+
+		expect(questions.answerQuestion(db, human, 1, { option: 2 })).toEqual({ resumesRun: true });
+		expect(
+			db.prepare('SELECT state, column_id, resumed_from_run_id FROM runs WHERE id = 8').get()
+		).toEqual({ state: 'queued', column_id: 2, resumed_from_run_id: 1 });
+		expect(db.prepare('SELECT state FROM runs WHERE id = 3').get()).toEqual({
+			state: 'waiting_approval'
+		});
+	});
+
+	it('drops transitions, the column kind, review flag and role, and the effort fields; adds step, generated phase, variant and size', () => {
+		const db = dbBefore016();
+		migrate(db);
+		const columnsOf = (table: string) =>
+			db
+				.prepare(`SELECT name, hidden FROM pragma_table_xinfo('${table}')`)
+				.all()
+				.map((c) => (c.hidden === 0 ? String(c.name) : `${c.name} (generated)`));
+		const uniqueKeys = (table: string) =>
+			(
+				db.prepare(`SELECT name FROM pragma_index_list('${table}') WHERE "unique" = 1`).all() as {
+					name: string;
+				}[]
+			)
+				.map(({ name }) =>
+					db
+						.prepare(`SELECT name FROM pragma_index_info('${name}') ORDER BY seqno`)
+						.all()
+						.map((c) => c.name)
+						.join(', ')
+				)
+				.sort();
+
+		expect(
+			db.prepare("SELECT name FROM sqlite_master WHERE name = 'transitions'").get()
+		).toBeUndefined();
+		expect(columnsOf('columns')).toEqual([
+			'id',
+			'project_id',
+			'step',
+			'phase (generated)',
+			'name',
+			'position'
+		]);
+		expect(uniqueKeys('columns')).toEqual(['project_id, id', 'project_id, step']);
+		expect(columnsOf('projects')).toContain('variant');
+		expect(columnsOf('tickets')).toContain('size');
+		expect(columnsOf('tickets').filter((name) => name.startsWith('effort'))).toEqual([]);
+
+		const err = (() => {
+			try {
+				board.updateTicket(db, { kind: 'user' }, 101, { effort_estimate: 3 } as never);
+			} catch (e) {
+				return e as { code: string; hint: string };
+			}
+		})();
+		expect(err).toMatchObject({ code: 'unknown_field' });
+		expect(err?.hint).toContain('size');
+		board.updateTicket(db, { kind: 'user' }, 101, { size: 'S' });
+		expect(db.prepare('SELECT size FROM tickets WHERE id = 101').get()).toEqual({ size: 'S' });
+	});
+});
+
 describe('migrate with foreign keys', () => {
 	const shipped = import.meta.glob<string>('/migrations/*.sql', {
 		query: '?raw',
@@ -570,7 +939,7 @@ describe('migrate with foreign keys', () => {
 		migrate(db);
 		db.exec(`
 			INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
-			INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+			INSERT INTO columns (id, project_id, step, name) VALUES (10, 1, 'plan', 'Planen');
 			INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Ticket');
 			INSERT INTO notes (id, slug, title) VALUES (1, 'note-a', 'A'), (2, 'note-b', 'B');
 			INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);
@@ -669,8 +1038,7 @@ describe('core schema', () => {
 		migrate(db);
 		db.exec(`
 		INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio'), (2, 'OTH', 'Anderes');
-		INSERT INTO columns (id, project_id, name, kind) VALUES (10, 1, 'Ready', 'normal'), (11, 1, 'Done', 'done'), (20, 2, 'Fremd', 'normal');
-		INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (1, 10, 11, 1);
+		INSERT INTO columns (id, project_id, step, name) VALUES (10, 1, 'plan', 'Planen'), (11, 1, 'done', 'Fertig'), (20, 2, 'plan', 'Planen');
 		INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Erstes'), (101, 1, 2, 10, 'Zweites');
 		INSERT INTO tasks (ticket_id, title) VALUES (100, 'Kriterium');
 		INSERT INTO comments (ticket_id, author_kind, author, body, redacted_at, redacted_reason) VALUES (100, 'agent', 'dev', 'x', CURRENT_TIMESTAMP, 'Secret');
@@ -691,29 +1059,30 @@ describe('core schema', () => {
 		],
 		[
 			'column without project',
-			"INSERT INTO columns (project_id, name) VALUES (99, 'x')",
+			"INSERT INTO columns (project_id, step, name) VALUES (99, 'refine', 'x')",
 			/FOREIGN KEY/
 		],
 		[
-			'unknown column kind',
-			"INSERT INTO columns (project_id, name, kind) VALUES (1, 'x', 'archive')",
+			'unknown step',
+			"INSERT INTO columns (project_id, step, name) VALUES (1, 'archive', 'x')",
 			/CHECK/
 		],
 		[
-			"transition into another project's column",
-			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 20)',
-			/FOREIGN KEY/
+			'a second column for the same step',
+			"INSERT INTO columns (project_id, step, name) VALUES (1, 'plan', 'Noch mal')",
+			/UNIQUE/
 		],
 		[
-			'transition to itself',
-			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 10)',
+			'a written phase',
+			"INSERT INTO columns (project_id, step, phase, name) VALUES (1, 'refine', 'done', 'x')",
+			/generated column/
+		],
+		[
+			'unknown variant',
+			"INSERT INTO projects (key, name, variant) VALUES ('VAR', 'x', 'kanban')",
 			/CHECK/
 		],
-		[
-			'duplicate transition',
-			'INSERT INTO transitions (project_id, from_column_id, to_column_id) VALUES (1, 10, 11)',
-			/UNIQUE|PRIMARY KEY/
-		],
+		['unknown size', "UPDATE tickets SET size = 'XXL' WHERE id = 100", /CHECK/],
 		[
 			'duplicate ticket number in a project',
 			"INSERT INTO tickets (project_id, number, column_id, title) VALUES (1, 1, 10, 'x')",
@@ -868,7 +1237,6 @@ describe('core schema', () => {
 		const count = (table: string) => db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
 		const tables = [
 			'columns',
-			'transitions',
 			'tickets',
 			'tasks',
 			'comments',
@@ -877,7 +1245,7 @@ describe('core schema', () => {
 			'run_events',
 			'agent_profiles'
 		];
-		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]); // left: the column of OTH and the (global) profile
+		expect(tables.map(count)).toEqual([1, 0, 0, 0, 0, 0, 0, 1]); // left: the column of OTH and the (global) profile
 	});
 });
 
@@ -889,7 +1257,7 @@ describe('notes schema', () => {
 		migrate(db);
 		db.exec(`
 		INSERT INTO projects (id, key, name) VALUES (1, 'STU', 'Studio');
-		INSERT INTO columns (id, project_id, name) VALUES (10, 1, 'Ready');
+		INSERT INTO columns (id, project_id, step, name) VALUES (10, 1, 'plan', 'Planen');
 		INSERT INTO tickets (id, project_id, number, column_id, title) VALUES (100, 1, 1, 10, 'Ticket');
 		INSERT INTO notes (id, slug, title, kind, status) VALUES (1, 'adr-a', 'A', 'adr', 'accepted'), (2, 'note-b', 'B', 'note', NULL);
 		INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);

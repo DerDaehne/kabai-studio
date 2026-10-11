@@ -1,9 +1,9 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
 import { actorLabel as label, DomainError, tx, type Actor } from './core';
+import { STEP_LABELS, VARIANTS, type Phase, type Step, type Variant } from './variants';
 
-export type Kind = 'normal' | 'done' | 'human_intervention' | 'human_answered';
-type Column = { id: number; name: string; kind: Kind };
+type Column = { id: number; name: string; step: Step; phase: Phase };
 export type Ticket = {
 	id: number;
 	project_id: number;
@@ -11,7 +11,8 @@ export type Ticket = {
 	moved_by: string | null;
 	ref: string;
 	column_name: string;
-	column_kind: Kind;
+	column_step: Step;
+	column_phase: Phase;
 	type: 'ticket' | 'epic';
 	docs_required: 0 | 1;
 };
@@ -22,8 +23,7 @@ export type Blocker = { code: string; message: string; hint: string };
 export type Move = {
 	columnId: number;
 	name: string;
-	kind: Kind;
-	requiresHuman: boolean;
+	phase: Phase;
 	blockers: Blocker[];
 };
 
@@ -35,9 +35,7 @@ const FIELDS = [
 	'docs_required',
 	'assignee',
 	'position',
-	'effort_estimate',
-	'effort_actual',
-	'effort_unit'
+	'size'
 ] as const;
 export type TicketFields = {
 	title: string;
@@ -46,52 +44,16 @@ export type TicketFields = {
 	docs_required: 0 | 1;
 	assignee: string | null;
 	position: number;
-	effort_estimate: number | null;
-	effort_actual: number | null;
-	effort_unit: string | null;
+	size: 'XS' | 'S' | 'M' | 'L' | 'XL' | null;
 };
 
-// Generic role prompts for the default "Software" template: short, English, no product, project, tool or path names
-// — an agent's role comes from the prompt's role block (assemblePrompt), built from this text, never from the
-// column name. Each says what to do, what to deliver and when to stop. Boards still holding an earlier default
-// unedited get the current text by migration.
-const BACKLOG_ROLE =
-	'Do: sort new work in. Give the ticket a clear title and a short description of the need, and add only what is obviously missing. Do not refine it: scope and acceptance criteria come in Refine. Deliver: a ticket someone else can understand, and a short comment on what you added. Stop: move it on to Refine, or leave it here when it should wait.';
-const REFINE_ROLE =
-	'Do: propose the scope yourself from what the ticket says: what is in and out, a rough effort and observable acceptance criteria. Fill gaps with sensible defaults and name them as assumptions. Ask the human only for a genuine product decision you cannot default, never as your first step. Deliver: an updated description and one task per acceptance criterion. Stop: move the ticket on to Ready.';
-const READY_ROLE =
-	'Do: pick the ticket up; do not refine it. Check that no blocker is still open. Deliver: a pickup comment with your plan in one or two sentences. Stop: move the ticket to In Arbeit right away. Only if the description no longer matches reality, send it back to Refine with a comment saying why.';
-const IN_PROGRESS_ROLE =
-	'Do: carry out the task the ticket describes and write what it asks for as text: an answer, an analysis or code. Do not refine: leave the description and the tasks as they are. Deliver: the result itself in a comment, code in a fenced block, marked "Unverified: not compiled, run or tested."; then tick each task the result fulfils. Ask the human only if the task needs more than text, such as changing files in a repository. Stop: move the ticket to Review once the result is delivered.';
-const REVIEW_ROLE =
-	'Do: check the delivered result against the acceptance criteria, not against your own taste. Deliver: a comment with one finding per unmet criterion, or a short "Review ok". Stop: with findings, send the ticket back to In Arbeit; without, approve it and move it on to Abnahme.';
-const ACCEPTANCE_ROLE =
-	'Do: nothing; finished work waits here for a human to accept it in a batch. Deliver: nothing, neither a comment nor a change. Stop: right away, without moving the ticket.';
-const HUMAN_INTERVENTION_ROLE =
-	'Do: wait; a question to the human is open and blocks this ticket. Deliver: nothing; do not resume the work or ask again. Stop: right away, without moving the ticket; the answer brings it back into work.';
-const HUMAN_ANSWERED_ROLE =
-	'Do: read the answer to the open question in the comments and act on it. Deliver: a short comment on how the answer changes the work. Stop: move the ticket back to the column where the work continues.';
-
-const DEFAULT_COLUMNS: [string, Kind, string][] = [
-	['Backlog', 'normal', BACKLOG_ROLE],
-	['Refine', 'normal', REFINE_ROLE],
-	['Ready', 'normal', READY_ROLE],
-	['In Arbeit', 'normal', IN_PROGRESS_ROLE],
-	['Review', 'normal', REVIEW_ROLE],
-	['Abnahme', 'normal', ACCEPTANCE_ROLE],
-	['Done', 'done', ''],
-	['Human Intervention', 'human_intervention', HUMAN_INTERVENTION_ROLE],
-	['Human Answered', 'human_answered', HUMAN_ANSWERED_ROLE]
-];
-
-/** Default for requires_human: only a human may complete a ticket or mark that the human has answered. */
-const humanOnly = (kind: Kind) => kind === 'done' || kind === 'human_answered';
-const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ');
+const quoted = (names: string[]) => names.map((n) => `„${n}“`).join(', ') || 'keine';
 
 export function ticket(db: DatabaseSync, id: number): Ticket {
 	const t = db
 		.prepare(
-			`SELECT t.id, t.project_id, t.column_id, t.moved_by, t.type, t.docs_required, p.key || '-' || t.number AS ref, c.name AS column_name, c.kind AS column_kind
+			`SELECT t.id, t.project_id, t.column_id, t.moved_by, t.type, t.docs_required, p.key || '-' || t.number AS ref,
+				c.name AS column_name, c.step AS column_step, c.phase AS column_phase
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id WHERE t.id = ?`
 		)
 		.get(id) as Ticket | undefined;
@@ -118,60 +80,40 @@ function task(db: DatabaseSync, id: number) {
 
 const columns = (db: DatabaseSync, projectId: number) =>
 	db
-		.prepare('SELECT id, name, kind FROM columns WHERE project_id = ? ORDER BY position, id')
+		.prepare('SELECT id, name, step, phase FROM columns WHERE project_id = ? ORDER BY position, id')
 		.all(projectId) as Column[];
 
 /**
- * Reachable columns: the stored transitions plus, implicitly, every column → human_intervention and human_answered → every column.
- * Only the human may leave a done column (reopen), whatever the edge says.
+ * The human reaches every column of the variant. An agent reaches only the neighbouring steps, never done and never
+ * out of done: completing and reopening is the human's call.
  */
-function targets(db: DatabaseSync, t: Ticket) {
-	const rows = db
-		.prepare(
-			'SELECT to_column_id AS id, requires_human AS rh FROM transitions WHERE project_id = ? AND from_column_id = ?'
-		)
-		.all(t.project_id, t.column_id);
-	const explicit = new Map(rows.map((r) => [r.id as number, r.rh === 1]));
-	return columns(db, t.project_id)
-		.filter(
-			(c) =>
-				c.id !== t.column_id &&
-				(explicit.has(c.id) ||
-					c.kind === 'human_intervention' ||
-					t.column_kind === 'human_answered')
-		)
-		.map((column) => ({
-			column,
-			requiresHuman: t.column_kind === 'done' || (explicit.get(column.id) ?? humanOnly(column.kind))
-		}));
+function targets(db: DatabaseSync, t: Ticket, actor: Actor): Column[] {
+	const cols = columns(db, t.project_id);
+	if (actor.kind === 'user') return cols.filter((c) => c.id !== t.column_id);
+	if (t.column_phase === 'done') return [];
+	// ponytail: the neighbour rule keeps move_ticket usable for agents until finish_step picks the next step itself.
+	const here = cols.findIndex((c) => c.id === t.column_id);
+	return [cols[here - 1], cols[here + 1]].filter((c) => c !== undefined && c.phase !== 'done');
 }
 
 /** The single rule check shared by allowedMoves and moveTicket. */
-function blockers(
-	db: DatabaseSync,
-	t: Ticket,
-	to: Column,
-	requiresHuman: boolean,
-	actor: Actor
-): Blocker[] {
-	const out: Blocker[] = [];
-	if (requiresHuman && actor.kind !== 'user') out.push(requiresHumanBlocker(t, to));
-	if (to.kind === 'done') out.push(...completionBlockers(db, t));
-	return out;
+function blockers(db: DatabaseSync, t: Ticket, to: Column): Blocker[] {
+	return to.phase === 'done' ? completionBlockers(db, t) : [];
 }
 
-function requiresHumanBlocker(t: Ticket, to: Column): Blocker {
-	if (t.column_kind === 'done')
-		return {
-			code: 'requires_human',
-			message: `Nur ein Mensch darf ${t.ref} aus „${t.column_name}“ wieder öffnen.`,
-			hint: 'Abgenommene Tickets öffnet nur der Mensch. Für Nacharbeit ein Folgeticket anlegen und per relates_to verknüpfen.'
-		};
-	return {
-		code: 'requires_human',
-		message: `Nur ein Mensch darf ${t.ref} nach „${to.name}“ verschieben.`,
-		hint: 'Lass das Ticket in der aktuellen Spalte, den Wechsel übernimmt der Mensch. Brauchst du vorher eine Entscheidung: Frage als Kommentar, dann in die human_intervention-Spalte.'
-	};
+function notReachable(t: Ticket, to: Column, reachable: Column[]): DomainError {
+	const reachableText = `Erreichbar für dich: ${quoted(reachable.map((c) => c.name))}.`;
+	if (to.phase === 'done' || t.column_phase === 'done')
+		return new DomainError(
+			'requires_human',
+			`Nur ein Mensch darf ${t.ref} von „${t.column_name}“ nach „${to.name}“ verschieben. ${reachableText}`,
+			'Abschließen und wieder öffnen macht der Mensch. Lass das Ticket, wo es ist; für Nacharbeit an einem fertigen Ticket ein Folgeticket anlegen und per relates_to verknüpfen.'
+		);
+	return new DomainError(
+		'transition_not_allowed',
+		`${t.ref} darf nicht von „${t.column_name}“ nach „${to.name}“ wechseln. ${reachableText}`,
+		'Verschiebe in einen der erreichbaren Nachbarschritte; allowedMoves zeigt sie samt Sperrgründen.'
+	);
 }
 
 function completionBlockers(db: DatabaseSync, t: Ticket): Blocker[] {
@@ -199,7 +141,7 @@ function openChildrenBlocker(db: DatabaseSync, t: Ticket): Blocker | undefined {
 		.prepare(
 			`SELECT p.key || '-' || k.number AS ref FROM ticket_relations r JOIN tickets k ON k.id = r.to_ticket_id
 			JOIN projects p ON p.id = k.project_id JOIN columns c ON c.id = k.column_id
-			WHERE r.from_ticket_id = ? AND r.type = 'parent_of' AND c.kind <> 'done' ORDER BY k.project_id, k.number`
+			WHERE r.from_ticket_id = ? AND r.type = 'parent_of' AND c.phase <> 'done' ORDER BY k.project_id, k.number`
 		)
 		.all(t.id);
 	if (!kids.length) return undefined;
@@ -314,37 +256,25 @@ const reaches = (db: DatabaseSync, start: number, goal: number, type: RelationTy
 		)
 		.get(start, goal, type);
 
-/** Creates a project with the default "Software" board: Backlog ↔ Refine ↔ Ready ↔ In Arbeit ↔ Review ↔ Abnahme ↔ Done, plus human_intervention → human_answered. */
+/** Creates a project with one column per step of its variant, in the variant's order. */
 export function createProject(
 	db: DatabaseSync,
 	actor: Actor,
-	p: { key: string; name: string; description?: string }
+	p: { key: string; name: string; description?: string },
+	variant: Variant = 'software'
 ): { id: number } {
 	return tx(db, (emit) => {
 		checkNewProject(db, p);
 		const { id } = db
-			.prepare('INSERT INTO projects (key, name, description) VALUES (?, ?, ?) RETURNING id')
-			.get(p.key, p.name, p.description ?? '') as { id: number };
-		const col = db.prepare(
-			'INSERT INTO columns (project_id, name, position, kind, role_prompt, review) VALUES (?, ?, ?, ?, ?, ?) RETURNING id'
+			.prepare(
+				'INSERT INTO projects (key, name, description, variant) VALUES (?, ?, ?, ?) RETURNING id'
+			)
+			.get(p.key, p.name, p.description ?? '', variant) as { id: number };
+		const column = db.prepare(
+			'INSERT INTO columns (project_id, step, name, position) VALUES (?, ?, ?, ?)'
 		);
-		const ids = DEFAULT_COLUMNS.map(
-			([name, kind, rolePrompt], i) =>
-				(col.get(id, name, i, kind, rolePrompt, name === 'Review' ? 1 : 0) as { id: number }).id
-		);
-		const tr = db.prepare(
-			'INSERT INTO transitions (project_id, from_column_id, to_column_id, requires_human) VALUES (?, ?, ?, ?)'
-		);
-		const edge = (a: number, b: number) =>
-			tr.run(id, ids[a], ids[b], humanOnly(DEFAULT_COLUMNS[b][1]) ? 1 : 0);
-		const doneIndex = DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'done');
-		for (let i = 0; i < doneIndex; i++) {
-			edge(i, i + 1);
-			edge(i + 1, i);
-		}
-		edge(
-			DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'human_intervention'),
-			DEFAULT_COLUMNS.findIndex(([, kind]) => kind === 'human_answered')
+		VARIANTS[variant].forEach((step, position) =>
+			column.run(id, step, STEP_LABELS[step], position)
 		);
 		emit({ type: 'project.created', projectId: id, actor });
 		return { id };
@@ -402,7 +332,7 @@ export function setBlocksSatisfiedAt(
 	});
 }
 
-/** Number = project counter + 1; without `column_id` the ticket lands in the first normal column. */
+/** Number = project counter + 1; without `column_id` the ticket lands in the backlog. */
 export function createTicket(
 	db: DatabaseSync,
 	actor: Actor,
@@ -411,7 +341,7 @@ export function createTicket(
 ): { id: number; number: number } {
 	return tx(db, (emit) => {
 		const { column_id, ...rest } = fields;
-		const col = startColumn(db, actor, projectId, column_id);
+		const col = startColumn(db, projectId, column_id);
 		const f = fieldsOf(withEpicDocsRequired(rest.type ?? 'ticket', rest, 0));
 		const { n } = db
 			.prepare(
@@ -428,32 +358,21 @@ export function createTicket(
 	});
 }
 
-function startColumn(
-	db: DatabaseSync,
-	actor: Actor,
-	projectId: number,
-	columnId: number | undefined
-): Column {
+function startColumn(db: DatabaseSync, projectId: number, columnId: number | undefined): Column {
 	const col = columns(db, projectId).find((c) =>
-		columnId === undefined ? c.kind === 'normal' : c.id === columnId
+		columnId === undefined ? c.step === 'backlog' : c.id === columnId
 	);
 	if (!col)
 		throw new DomainError(
 			'not_found',
-			`Projekt ${projectId} hat keine Spalte ${columnId ?? 'der Art normal'}.`,
+			`Projekt ${projectId} hat keine Spalte ${columnId ?? 'Backlog'}.`,
 			'Prüfe Projekt- und Spalten-ID.'
 		);
-	if (col.kind === 'done')
+	if (col.phase === 'done')
 		throw new DomainError(
 			'invalid_column',
-			`Tickets starten nicht in der done-Spalte „${col.name}“.`,
-			'Lege das Ticket in einer anderen Spalte an; nach done führt nur moveTicket.'
-		);
-	if (col.kind === 'human_answered' && actor.kind !== 'user')
-		throw new DomainError(
-			'requires_human',
-			`Nur ein Mensch darf Tickets in „${col.name}“ anlegen.`,
-			'Lege das Ticket in einer normalen Spalte an. Eine Frage an den Menschen: als Kommentar, dann in die human_intervention-Spalte.'
+			`Tickets starten nicht in „${col.name}“.`,
+			'Lege das Ticket in einem anderen Schritt an; nach „Fertig“ führt nur moveTicket.'
 		);
 	return col;
 }
@@ -491,12 +410,11 @@ export function deleteTicket(db: DatabaseSync, actor: Actor, ticketId: number) {
 
 export function allowedMoves(db: DatabaseSync, ticketId: number, actor: Actor): Move[] {
 	const t = ticket(db, ticketId);
-	return targets(db, t).map(({ column: c, requiresHuman }) => ({
+	return targets(db, t, actor).map((c) => ({
 		columnId: c.id,
 		name: c.name,
-		kind: c.kind,
-		requiresHuman,
-		blockers: blockers(db, t, c, requiresHuman, actor)
+		phase: c.phase,
+		blockers: blockers(db, t, c)
 	}));
 }
 
@@ -511,22 +429,6 @@ export function applyMove(db: DatabaseSync, emit: Emit, actor: Actor, t: Ticket,
 	const to = targetColumn(t, cols, columnId);
 	assertMoveAllowed(db, actor, t, to);
 	writeMove(db, emit, actor, t, to, cols);
-}
-
-/**
- * The human's answer takes a ticket out of human intervention to wherever work goes on, without a stored transition —
- * the counterpart of the implicit move from any column into human intervention. A ticket the human moved elsewhere stays.
- */
-export function applyAnswerMove(
-	db: DatabaseSync,
-	emit: Emit,
-	actor: Actor,
-	t: Ticket,
-	columnId: number
-) {
-	if (t.column_kind !== 'human_intervention' || t.column_id === columnId) return;
-	const cols = columns(db, t.project_id);
-	writeMove(db, emit, actor, t, targetColumn(t, cols, columnId), cols);
 }
 
 function targetColumn(t: Ticket, cols: Column[], columnId: number): Column {
@@ -566,15 +468,9 @@ function writeMove(
 }
 
 function assertMoveAllowed(db: DatabaseSync, actor: Actor, t: Ticket, to: Column) {
-	const moves = targets(db, t);
-	const move = moves.find((m) => m.column.id === to.id);
-	if (!move)
-		throw new DomainError(
-			'transition_not_allowed',
-			`${t.ref} darf nicht von „${t.column_name}“ nach „${to.name}“ wechseln. Erlaubte Ziele: ${quoted(moves.map((m) => m.column.name))}.`,
-			'Verschiebe über eine der erlaubten Spalten; allowedMoves zeigt alle Ziele samt Sperrgründen.'
-		);
-	const bs = blockers(db, t, to, move.requiresHuman, actor);
+	const reachable = targets(db, t, actor);
+	if (!reachable.some((c) => c.id === to.id)) throw notReachable(t, to, reachable);
+	const bs = blockers(db, t, to);
 	if (bs.length)
 		throw new DomainError(
 			bs[0].code,
@@ -583,29 +479,19 @@ function assertMoveAllowed(db: DatabaseSync, actor: Actor, t: Ticket, to: Column
 		);
 }
 
-/**
- * The approval is good for the reviewed state; it clears only when the ticket moves back into earlier work, or
- * returns from a human column into a normal one — the human column case is judged by kind, not by where the
- * human columns happen to sit, so reordering the board cannot flip the direction.
- */
+/** The approval is good for the reviewed state; it clears only when the ticket moves back to an earlier step. */
 function invalidatesApproval(t: Ticket, to: Column, cols: Column[]): boolean {
-	if (to.kind !== 'normal') return false;
-	const returnsFromHuman =
-		t.column_kind === 'human_intervention' || t.column_kind === 'human_answered';
-	const movesBack = cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
-	return returnsFromHuman || movesBack;
+	return cols.indexOf(to) < cols.findIndex((c) => c.id === t.column_id);
 }
 
-/** Review approval. The human may always; an agent only in a review column and not after it moved the ticket last. */
+/** Review approval. The human may always; an agent only in the critique step and not after it moved the ticket last. */
 export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) {
 	tx(db, (emit) => {
 		const t = ticket(db, ticketId);
-		const inReviewColumn =
-			db.prepare('SELECT review FROM columns WHERE id = ?').get(t.column_id)?.review === 1;
-		if (actor.kind !== 'user' && !inReviewColumn)
+		if (actor.kind !== 'user' && t.column_step !== 'critique')
 			throw new DomainError(
 				'not_in_review',
-				`${t.ref} liegt in „${t.column_name}“, keiner Review-Spalte; ein Agent gibt nur im Review frei.`,
+				`${t.ref} liegt in „${t.column_name}“, nicht in der Kritik; ein Agent gibt nur in der Kritik frei.`,
 				'Freigeben gehört zur Review-Rolle. Halte dein Ergebnis als Kommentar fest; freigeben kann ein Review-Run oder der Mensch.'
 			);
 		const last = t.moved_by === null ? null : (JSON.parse(t.moved_by) as Actor);
@@ -624,18 +510,18 @@ export function approveReview(db: DatabaseSync, actor: Actor, ticketId: number) 
 }
 
 /** SQL condition for an unfinished `blocks` predecessor `b` in column `bc`, judged by the successor's project `p`. */
-const PREDECESSOR_OPEN = `bc.kind <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
+const PREDECESSOR_OPEN = `bc.phase <> 'done' AND NOT (p.blocks_satisfied_at = 'review_ok' AND b.review_approved_at IS NOT NULL)`;
 
 /**
- * Tickets without unfinished blocks predecessors (excluding done and human_intervention columns). A predecessor is
- * unfinished until it is in a done column — with `blocks_satisfied_at = 'review_ok'` its review approval suffices.
+ * Tickets without unfinished blocks predecessors, excluding done ones. A predecessor is unfinished until it is done —
+ * with `blocks_satisfied_at = 'review_ok'` its review approval suffices.
  */
 export function workableTickets(db: DatabaseSync, projectId: number, columnId?: number) {
 	return db
 		.prepare(
 			`SELECT t.id, p.key || '-' || t.number AS ref, t.title, t.type, t.column_id, t.assignee
 			FROM tickets t JOIN columns c ON c.id = t.column_id JOIN projects p ON p.id = t.project_id
-			WHERE t.project_id = ?1 AND (?2 IS NULL OR t.column_id = ?2) AND c.kind NOT IN ('done', 'human_intervention')
+			WHERE t.project_id = ?1 AND (?2 IS NULL OR t.column_id = ?2) AND c.phase <> 'done'
 				AND NOT EXISTS (
 					SELECT 1 FROM ticket_relations r JOIN tickets b ON b.id = r.from_ticket_id JOIN columns bc ON bc.id = b.column_id
 					WHERE r.to_ticket_id = t.id AND r.type = 'blocks' AND ${PREDECESSOR_OPEN})

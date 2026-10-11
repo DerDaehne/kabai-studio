@@ -5,20 +5,21 @@ import * as board from './board';
 import { DomainError, type Actor } from './core';
 import * as questions from './questions';
 import * as runs from './runs';
+import type { Step } from './variants';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
 
-function setup(startColumn = 'Backlog') {
+function setup(startStep: Step = 'backlog') {
 	const db = openDb(':memory:');
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const columnId = (name: string) =>
-		db.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?').get(projectId, name)!
+	const columnId = (step: Step) =>
+		db.prepare('SELECT id FROM columns WHERE project_id = ? AND step = ?').get(projectId, step)!
 			.id as number;
 	const ticketId = board.createTicket(db, user, projectId, {
 		title: 'T',
-		column_id: columnId(startColumn)
+		column_id: columnId(startStep)
 	}).id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Test',
@@ -32,8 +33,8 @@ function setup(startColumn = 'Backlog') {
 	};
 	const column = () =>
 		db
-			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
-			.get(ticketId)?.name;
+			.prepare('SELECT c.step FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+			.get(ticketId)?.step;
 	const ask = (options?: questions.QuestionOption[]) =>
 		questions.requestHuman(db, agent, ticketId, { question: 'A oder B?', options }).id;
 	const comments = () =>
@@ -52,10 +53,14 @@ function caught(fn: () => unknown): DomainError {
 }
 
 describe('requestHuman', () => {
-	it('records the question as comment and question and moves the ticket to human intervention', () => {
-		const { db, ticketId, agent, column, ask } = setup();
+	it('records the question as comment and question and leaves the ticket in its step', () => {
+		const { db, ticketId, agent, column, ask } = setup('implement');
+		const events: StudioEvent[] = [];
+		const off = subscribe((e) => events.push(e));
 		const id = ask([{ label: 'A', effect: 'schnell' }, { label: 'B' }]);
-		expect(column()).toBe('Human Intervention');
+		off();
+		expect(column()).toBe('implement');
+		expect(events.map((e) => e.type)).toEqual(['comment.added', 'question.asked']);
 		expect(
 			db.prepare('SELECT author, body, run_id FROM comments WHERE ticket_id = ?').get(ticketId)
 		).toEqual({
@@ -80,7 +85,7 @@ describe('requestHuman', () => {
 		expect(caught(() => questions.requestHuman(db, agent, ticketId, { question: ' ' })).code).toBe(
 			'empty_question'
 		);
-		expect(column()).toBe('Backlog');
+		expect(column()).toBe('backlog');
 		expect(db.prepare('SELECT count(*) AS n FROM questions').get()?.n).toBe(0);
 		expect(db.prepare('SELECT count(*) AS n FROM comments').get()?.n).toBe(0);
 	});
@@ -205,9 +210,9 @@ describe('an answer continues the paused run', () => {
 	});
 	afterEach(() => vi.useRealTimers());
 
-	/** A run working in "In Arbeit" that asked the human and paused, as an executor ends after request_human. */
+	/** A run working in implement that asked the human and paused, as an executor ends after request_human. */
 	function pausedAfterAsking() {
-		const s = setup('In Arbeit');
+		const s = setup('implement');
 		const pausedRun = s.agent.runId!;
 		runs.startRun(s.db, system, pausedRun);
 		const id = s.ask([{ label: 'A' }, { label: 'B' }]);
@@ -223,7 +228,7 @@ describe('an answer continues the paused run', () => {
 		return { ...s, id, pausedRun, followUps, answer };
 	}
 
-	it('returns the ticket to the column of the paused run and queues its follow-up with human priority behind a 10 s undo window', () => {
+	it('keeps the ticket in its step and queues the follow-up with human priority behind a 10 s undo window', () => {
 		const s = pausedAfterAsking();
 		const events: StudioEvent[] = [];
 		const off = subscribe((e) => events.push(e));
@@ -231,7 +236,7 @@ describe('an answer continues the paused run', () => {
 		questions.answerQuestion(s.db, user, s.id, { option: 2 });
 		off();
 
-		expect(s.column()).toBe('In Arbeit');
+		expect(s.column()).toBe('implement');
 		expect(s.followUps()).toEqual([
 			{
 				id: expect.any(Number),
@@ -241,22 +246,24 @@ describe('an answer continues the paused run', () => {
 				resumed_from_run_id: s.pausedRun,
 				resume_reason: null,
 				not_before: '2026-10-03T12:00:10.000Z',
-				column_id: s.columnId('In Arbeit')
+				column_id: s.columnId('implement')
 			}
 		]);
 		expect(runs.freshRunsInChain(s.db, s.followUps()[0].id as number)).toBe(0);
-		expect(events.map((e) => e.type)).toEqual(
-			expect.arrayContaining(['question.answered', 'ticket.moved', 'run.created'])
-		);
+		expect(events.map((e) => e.type)).toEqual([
+			'question.answered',
+			'run.created',
+			'run.prioritized'
+		]);
 	});
 
-	it('clears a review approval on the way back, like every return from human intervention', () => {
+	it('keeps a review approval, because an answer moves the ticket nowhere', () => {
 		const s = pausedAfterAsking();
 		board.approveReview(s.db, user, s.ticketId);
 		questions.answerQuestion(s.db, user, s.id, { option: 1 });
 		expect(
 			s.db.prepare('SELECT review_approved_at FROM tickets WHERE id = ?').get(s.ticketId)
-		).toEqual({ review_approved_at: null });
+		).not.toEqual({ review_approved_at: null });
 	});
 
 	it('replaces the answer given before the follow-up run starts, restarts the undo window and queues no second run', () => {
@@ -269,10 +276,10 @@ describe('an answer continues the paused run', () => {
 
 		expect(s.answer()).toBe('{"text":"Weder noch, C."}');
 		expect(s.followUps()).toEqual([{ ...first, not_before: '2026-10-03T12:00:18.000Z' }]);
-		expect(s.column()).toBe('In Arbeit');
+		expect(s.column()).toBe('implement');
 	});
 
-	it('takes the answer back before the follow-up run starts: the run is cancelled, the ticket waits in human intervention again', () => {
+	it('takes the answer back before the follow-up run starts: the run is cancelled, the question is open again and the ticket stays', () => {
 		const s = pausedAfterAsking();
 		questions.answerQuestion(s.db, user, s.id, { option: 1 });
 		const events: StudioEvent[] = [];
@@ -283,14 +290,12 @@ describe('an answer continues the paused run', () => {
 
 		expect(s.answer()).toBeNull();
 		expect(s.followUps()).toMatchObject([{ state: 'cancelled' }]);
-		expect(s.column()).toBe('Human Intervention');
-		expect(events.map((e) => e.type)).toEqual(
-			expect.arrayContaining(['run.state_changed', 'ticket.moved', 'question.retracted'])
-		);
+		expect(s.column()).toBe('implement');
+		expect(events.map((e) => e.type)).toEqual(['run.state_changed', 'question.retracted']);
 
 		questions.answerQuestion(s.db, user, s.id, { option: 2 });
 		expect(s.followUps()).toMatchObject([{ state: 'cancelled' }, { state: 'queued' }]);
-		expect(s.column()).toBe('In Arbeit');
+		expect(s.column()).toBe('implement');
 	});
 
 	it('refuses to take back or change an answer once the follow-up run has started, with a way out, and changes nothing', () => {
@@ -309,7 +314,7 @@ describe('an answer continues the paused run', () => {
 		);
 		expect(s.answer()).toBe('{"option":1}');
 		expect(s.followUps()).toMatchObject([{ id: followUp, state: 'running' }]);
-		expect(s.column()).toBe('In Arbeit');
+		expect(s.column()).toBe('implement');
 	});
 
 	it('writes only the final answer to the history, as a comment of the human, when the agent collects it', () => {
@@ -343,22 +348,10 @@ describe('an answer continues the paused run', () => {
 
 	it('leaves the ticket where the human moved it, and still continues the run', () => {
 		const s = pausedAfterAsking();
-		board.moveTicket(s.db, user, s.ticketId, s.columnId('Human Answered'));
+		board.moveTicket(s.db, user, s.ticketId, s.columnId('critique'));
 		questions.answerQuestion(s.db, user, s.id, { option: 1 });
-		expect(s.column()).toBe('Human Answered');
-		expect(s.followUps()).toMatchObject([
-			{ state: 'queued', column_id: s.columnId('Human Answered') }
-		]);
-	});
-
-	it('sends the ticket to human answered when the column of the paused run no longer exists, and still continues the run', () => {
-		const s = pausedAfterAsking();
-		s.db.prepare('DELETE FROM columns WHERE id = ?').run(s.columnId('In Arbeit'));
-		questions.answerQuestion(s.db, user, s.id, { option: 1 });
-		expect(s.column()).toBe('Human Answered');
-		expect(s.followUps()).toMatchObject([
-			{ state: 'queued', column_id: s.columnId('Human Answered') }
-		]);
+		expect(s.column()).toBe('critique');
+		expect(s.followUps()).toMatchObject([{ state: 'queued', column_id: s.columnId('critique') }]);
 	});
 
 	it.each([
@@ -385,9 +378,9 @@ describe('an answer continues the paused run', () => {
 			reason: 'das Agent-Profil von Run 1 ist gelöscht'
 		}
 	])(
-		'keeps the answer to $case, moves the ticket to human answered and says how to go on',
+		'keeps the answer to $case, leaves the ticket in its step and says how to go on',
 		({ ask, reason }) => {
-			const s = setup('In Arbeit');
+			const s = setup('implement');
 			const id = ask(s);
 
 			questions.answerQuestion(s.db, user, id, { text: 'Ja' });
@@ -395,7 +388,7 @@ describe('an answer continues the paused run', () => {
 			expect(s.db.prepare('SELECT answer FROM questions WHERE id = ?').get(id)).toEqual({
 				answer: '{"text":"Ja"}'
 			});
-			expect(s.column()).toBe('Human Answered');
+			expect(s.column()).toBe('implement');
 			expect(s.db.prepare('SELECT count(*) AS n FROM runs').get()).toEqual({ n: 1 });
 			expect(s.comments().at(-1)).toEqual({
 				author_kind: 'system',

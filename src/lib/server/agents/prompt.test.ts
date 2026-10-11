@@ -9,6 +9,7 @@ import * as notes from '../domain/notes';
 import { answerQuestion, requestHuman, retractAnswer } from '../domain/questions';
 import * as runs from '../domain/runs';
 import type { ResumeReason } from '../domain/runs';
+import { ROLES, type Step } from '../domain/variants';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
 import { setSecret } from '../secrets';
@@ -40,8 +41,6 @@ function world() {
 	) as Record<string, number>;
 	const ticket = (title: string, column: string, description = '') =>
 		board.createTicket(db, user, projectId, { title, description, column_id: col[column] }).id;
-	const setRole = (column: string, rolePrompt: string) =>
-		db.prepare('UPDATE columns SET role_prompt = ? WHERE id = ?').run(rolePrompt, col[column]);
 	const setDescription = (ticketId: number, description: string) =>
 		board.updateTicket(db, user, ticketId, { description });
 	/** Comments get a fixed time, so two worlds built one after the other read the same. */
@@ -62,12 +61,8 @@ function world() {
 		notes.linkTicket(db, user, id, ticketId, 'references');
 	};
 
-	const parser = ticket(
-		'Write the config parser',
-		'In Arbeit',
-		'Parse the config file into a map.'
-	);
-	const format = ticket('Define the config format', 'Review');
+	const parser = ticket('Write the config parser', 'Umsetzen', 'Parse the config file into a map.');
+	const format = ticket('Define the config format', 'Kritik');
 	const docs = ticket('Document the config file', 'Backlog');
 	board.linkRelation(db, user, format, parser, 'blocks');
 	board.linkRelation(db, user, parser, docs, 'blocks');
@@ -76,14 +71,10 @@ function world() {
 		'Parser rejects duplicate keys'
 	]).ids;
 	board.completeTask(db, user, readsLines);
-	setRole(
-		'In Arbeit',
-		'Implement the ticket test-first. Move it to Review when every task is done.'
-	);
 	comment(parser, 'Keep the parser free of dependencies.', 1);
 	comment(parser, 'Duplicate keys are an error, not a warning.', 2);
 	note(parser, 'config-format', 'Lines are key=value; # starts a comment.');
-	return { db, projectId, parser, ticket, setRole, setDescription, comment, note };
+	return { db, projectId, parser, ticket, setDescription, comment, note };
 }
 
 type World = ReturnType<typeof world>;
@@ -172,7 +163,6 @@ describe('assemblePrompt is deterministic', () => {
 describe('override', () => {
 	it('comes last under its own heading, so it wins over a contradicting role', () => {
 		const w = world();
-		w.setRole('In Arbeit', 'Move the ticket to Review when you are done.');
 		const { system } = assemble(
 			w,
 			{ ...cloud, extra_prompt: 'Do not move the ticket.' },
@@ -184,7 +174,7 @@ describe('override', () => {
 			)
 		).toBe(true);
 		expect(system.indexOf('Do not move the ticket.')).toBeGreaterThan(
-			system.indexOf('Move the ticket to Review when you are done.')
+			system.indexOf('Stop: move the ticket to Review once the result is delivered.')
 		);
 	});
 
@@ -261,7 +251,7 @@ describe('assignment', () => {
 		const { user } = assemble(world());
 		expect(user.slice(user.indexOf('## Assignment'))).toBe(
 			'## Assignment\n' +
-				'Work STU-1 in the column "In Arbeit": do what your role for this column says, deliver the result it names and stop where it says. ' +
+				'Work STU-1 in the column "Umsetzen": do what your role for this column says, deliver the result it names and stop where it says. ' +
 				'Refine the ticket (rewrite its scope, description or acceptance criteria) only in the Refine column or when your role asks for it. ' +
 				'The internal context above is current: start with the work, not with `get_ticket`.'
 		);
@@ -278,10 +268,10 @@ describe('internal context', () => {
 			.map((r) => r.id as number);
 		expect(text).toContain(`- [x] ${done}: Parser reads key=value lines`);
 		expect(text).toContain(`- [ ] ${open}: Parser rejects duplicate keys`);
-		expect(text).toContain('- waits for STU-2 "Define the config format" (Review), still blocking');
+		expect(text).toContain('- waits for STU-2 "Define the config format" (Kritik), still blocking');
 		expect(text).toContain('- blocks STU-3 "Document the config file" (Backlog)');
 		expect(text).toContain('Duplicate keys are an error, not a warning.');
-		expect(text).toMatch(/- \d+: Review\b/);
+		expect(text).toMatch(/- \d+: Kritik\b/);
 		expect(text).toContain('Lines are key=value; # starts a comment.');
 	});
 
@@ -367,7 +357,7 @@ describe('budget', () => {
 		w.setDescription(w.parser, 'd'.repeat(60_000));
 		const prompt = assemble(w, local);
 		expect(prompt.user).toContain('Criterion 39 ');
-		expect(prompt.user).toMatch(/- \d+: Review\b/);
+		expect(prompt.user).toMatch(/- \d+: Kritik\b/);
 		expect(
 			prompt.blocks
 				.filter((b) => b.name === 'tasks' || b.name === 'allowed_moves')
@@ -376,9 +366,9 @@ describe('budget', () => {
 	});
 
 	it('refuses with prompt_too_large and a way out when even the cut prompt exceeds the budget', () => {
-		const w = world();
-		w.setRole('In Arbeit', 'r'.repeat(50_000));
-		const err = tooLargeError(() => assemble(w, local));
+		const err = tooLargeError(() =>
+			assemble(world(), { ...local, extra_prompt: 'r'.repeat(50_000) })
+		);
 		expect(err.code).toBe('prompt_too_large');
 		expect(err.hint).toMatch(/Notes/);
 		expect(err.hint).toMatch(/kleiner schneiden/);
@@ -386,9 +376,8 @@ describe('budget', () => {
 	});
 
 	it("plans with the model's context: a 128k model fits what a 32k model cannot", () => {
-		const w = world();
-		w.setRole('In Arbeit', 'r'.repeat(50_000));
-		expect(() => assemble(w, { ...local, model: 'qwen3.6-35b' })).not.toThrow();
+		const profile = { ...local, model: 'qwen3.6-35b', extra_prompt: 'r'.repeat(50_000) };
+		expect(() => assemble(world(), profile)).not.toThrow();
 	});
 });
 
@@ -407,9 +396,13 @@ describe('output nothing can produce', () => {
 	function promptsOfEveryDefaultRole() {
 		const w = world();
 		const projectId = board.createProject(w.db, user, { key: 'DEF', name: 'Defaults' }).id;
-		const columns = w.db
-			.prepare("SELECT id, name FROM columns WHERE project_id = ? AND role_prompt <> ''")
-			.all(projectId) as { id: number; name: string }[];
+		const columns = (
+			w.db.prepare('SELECT id, name, step FROM columns WHERE project_id = ?').all(projectId) as {
+				id: number;
+				name: string;
+				step: Step;
+			}[]
+		).filter(({ step }) => ROLES[step] !== undefined);
 		return columns.flatMap(({ id, name }) => {
 			const ticketId = board.createTicket(w.db, user, projectId, {
 				title: `Ticket in ${name}`,
@@ -421,7 +414,7 @@ describe('output nothing can produce', () => {
 
 	it('is asked for by no part of any prompt: base prompts, handoff template, default roles or assignment', () => {
 		const prompts = promptsOfEveryDefaultRole();
-		expect(prompts).toHaveLength(16);
+		expect(prompts).toHaveLength(8);
 		expect(prompts.every((prompt) => prompt.system.includes('## Role:'))).toBe(true);
 		const texts = [BASE_PROMPT.full, BASE_PROMPT.compact, HANDOFF_TEMPLATE].concat(
 			prompts.map((prompt) => `${prompt.system}\n${prompt.user}`)
@@ -554,10 +547,9 @@ describe('boundaries shared with get_ticket', () => {
 		expect(assemble(w).user).not.toContain('old-plan');
 	});
 
-	it('lists the allowed moves as get_ticket shows them to the run, with human-only moves blocked', async () => {
-		const w = world();
-		const inAcceptance = w.ticket('Review the config format', 'Abnahme'); // next to Done, the one human-only move from here
-		const { content } = await asRunOf(w.db, inAcceptance, 'tools/call', {
+	it('lists the allowed moves as get_ticket shows them to the run, with blocked moves marked', async () => {
+		const w = world(); // STU-1 still waits for STU-2, so every move of it is blocked
+		const { content } = await asRunOf(w.db, w.parser, 'tools/call', {
 			name: 'get_ticket',
 			arguments: {}
 		});
@@ -566,7 +558,7 @@ describe('boundaries shared with get_ticket', () => {
 			name: string;
 			blocked?: string;
 		}[];
-		const { user: context } = assemblePrompt(w.db, { ticketId: inAcceptance, profile: local });
+		const { user: context } = assemblePrompt(w.db, { ticketId: w.parser, profile: local });
 		expect(moves.some((m) => m.blocked)).toBe(true);
 		for (const m of moves)
 			expect(context).toContain(

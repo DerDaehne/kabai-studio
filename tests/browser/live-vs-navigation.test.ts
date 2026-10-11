@@ -39,7 +39,7 @@ async function navigateToTaktDuringLiveEvent(page: Page, db: DatabaseSync, ticke
 	await page.keyboard.press('g');
 	await page.keyboard.press('t');
 	await requested;
-	await moveTicketLive(page, db, ticketId, 'Refine');
+	await moveTicketLive(page, db, ticketId, 'Präzisieren');
 	await page.waitForTimeout(300); // time for the event to reach the page before the held load resolves
 
 	const replayed = page.waitForRequest((request) => pathOf(request.url()) === '/takt/__data.json');
@@ -91,7 +91,7 @@ test('a live event reloads the page data after a return from the back/forward ca
 	const reloaded = page.waitForRequest((request) => pathOf(request.url()) === '/__data.json', {
 		timeout: 5000
 	});
-	await moveTicketLive(page, db, ticket.id, 'Refine');
+	await moveTicketLive(page, db, ticket.id, 'Präzisieren');
 	await reloaded;
 });
 
@@ -125,7 +125,7 @@ test('a live event reloads the page data after a bfcache return, when the naviga
 	const reloaded = page.waitForRequest((request) => pathOf(request.url()) === '/__data.json', {
 		timeout: 5000
 	});
-	await moveTicketLive(page, db, ticket.id, 'Refine');
+	await moveTicketLive(page, db, ticket.id, 'Präzisieren');
 	await reloaded;
 });
 
@@ -200,7 +200,7 @@ test('a live event still reloads the ticket after its own form submit aborted a 
 		(request) => pathOf(request.url()) === `${ticket.path}/__data.json`,
 		{ timeout: 5000 }
 	);
-	await moveTicketLive(page, db, ticket.id, 'Refine');
+	await moveTicketLive(page, db, ticket.id, 'Präzisieren');
 	await reloaded;
 });
 
@@ -242,7 +242,7 @@ test('a live event does not abort a newer navigation that superseded the one the
 
 	releaseTakt();
 	await page.waitForTimeout(300); // time for the superseded navigation's rejection to be handled
-	await moveTicketLive(page, db, ticket.id, 'Refine');
+	await moveTicketLive(page, db, ticket.id, 'Präzisieren');
 	await page.waitForTimeout(300); // time for the event to reach the page before the held load resolves
 	releaseBoard();
 	await expect(page).toHaveURL('/board', { timeout: 5000 });
