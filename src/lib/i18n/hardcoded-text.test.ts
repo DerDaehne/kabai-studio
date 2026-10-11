@@ -76,19 +76,23 @@ function renderedStrings(expression: Expression | undefined): string[] {
 	}
 }
 
+const hasLetter = (text: string | undefined): text is string => LETTER.test(text ?? '');
+
+/** The visible strings a leaf node writes itself, or `undefined` when the node is not a leaf. */
+function leafTexts(node: Node): string[] | undefined {
+	if (node.type === 'Text') return hasLetter(node.data) ? [node.data.trim()] : [];
+	if (node.type !== 'ExpressionTag') return undefined;
+	return renderedStrings(node.expression as Expression)
+		.filter(hasLetter)
+		.map((text) => text.trim());
+}
+
 function collectTexts(node: unknown, found: string[]): void {
 	if (Array.isArray(node)) return node.forEach((child) => collectTexts(child, found));
 	if (typeof node !== 'object' || node === null) return;
-	const { type, data, name, value, expression } = node as Node;
-	if (type === 'Text') {
-		if (LETTER.test(data ?? '')) found.push((data ?? '').trim());
-		return;
-	}
-	if (type === 'ExpressionTag') {
-		const shown = renderedStrings(expression as Expression).filter((text) => LETTER.test(text));
-		found.push(...shown.map((text) => text.trim()));
-		return;
-	}
+	const { type, name, value } = node as Node;
+	const leaf = leafTexts(node as Node);
+	if (leaf) return void found.push(...leaf);
 	if (type === 'Attribute' && USER_FACING_ATTRIBUTES.has(name ?? ''))
 		return collectTexts(value, found);
 	if (type === 'Attribute' || type?.endsWith('Directive')) return;
