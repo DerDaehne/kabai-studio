@@ -10,7 +10,7 @@ import {
 	type Ticket
 } from './board';
 import { DomainError, tx, type Actor } from './core';
-import { createRun, notInWork, pendingRun, prioritizeRun } from './runs';
+import { assertNoPendingRun, createRun, notInWork, prioritizeRun } from './runs';
 import { hasOpenQuestion } from './steps';
 
 // The human's intents: each is one call and needs no knowledge of the variant's columns.
@@ -110,13 +110,7 @@ function assertReturnable(t: Ticket, comment: string) {
 
 /** A run the human starts goes ahead of background work in the queue. */
 function queueRunForHuman(db: DatabaseSync, actor: Actor, t: Ticket, profileId?: number): number {
-	const pending = pendingRun(db, t.id);
-	if (pending)
-		throw new DomainError(
-			'run_pending',
-			`${t.ref} hat schon Run ${pending.id} („${pending.state}“).`,
-			'Warte, bis er endet, oder brich ihn in der Run-Akte ab (x); danach erneut „los“.'
-		);
+	assertNoPendingRun(db, t);
 	if (hasOpenQuestion(db, t.id))
 		throw new DomainError(
 			'open_question',

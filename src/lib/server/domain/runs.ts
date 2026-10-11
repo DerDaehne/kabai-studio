@@ -183,6 +183,8 @@ export function createRun(
 		if (t.column_phase !== 'work') throw notInWork(t);
 		getProfile(db, r.profileId);
 		if (r.resumedFromRunId !== undefined) assertResumable(db, t, r.resumedFromRunId);
+		// ponytail: one run per ticket is enforced by the paths that create runs (los, return, chain, resume), not here, since
+		// the queue's pool and priority logic is still tested with several runs on one ticket; move assertNoPendingRun here then.
 		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
 		const priority = derivePriority(db, t.id, t.column_id, trigger);
 		const notBefore = r.notBefore === undefined ? null : canonicalTime(r.notBefore);
@@ -217,13 +219,31 @@ export function notInWork(t: Ticket): DomainError {
 	);
 }
 
-/** A run of the ticket is active or waits in the queue; a second one would work the same step twice. */
-export function pendingRun(db: DatabaseSync, ticketId: number) {
+/**
+ * A run of the ticket is active, waits in the queue, or was paused by the human and waits to be resumed; a second one
+ * would work the same step twice. `except` is the run being resumed, which does not stand in its own way.
+ */
+export function pendingRun(db: DatabaseSync, ticketId: number, except?: number) {
 	return db
 		.prepare(
-			"SELECT id, state FROM runs WHERE ticket_id = ? AND state IN ('queued', 'running', 'waiting_approval') ORDER BY id LIMIT 1"
+			`SELECT id, state FROM runs r WHERE ticket_id = ? AND id IS NOT ?
+				AND (state IN ('queued', 'running', 'waiting_approval') OR (${awaitsResume('r')}))
+			ORDER BY id LIMIT 1`
 		)
-		.get(ticketId) as { id: number; state: RunState } | undefined;
+		.get(ticketId, except ?? null) as { id: number; state: RunState } | undefined;
+}
+
+/** One run per ticket: refuses a second one, with the way out that fits the run already there. */
+export function assertNoPendingRun(db: DatabaseSync, t: Ticket, except?: number) {
+	const pending = pendingRun(db, t.id, except);
+	if (!pending) return;
+	throw new DomainError(
+		'run_pending',
+		`${t.ref} hat schon Run ${pending.id} („${pending.state}“).`,
+		pending.state === 'paused'
+			? `Setz ihn fort (:fortsetzen ${pending.id}) statt einen zweiten zu starten.`
+			: 'Warte, bis er endet, oder brich ihn in der Run-Akte ab (x); danach erneut „los“.'
+	);
 }
 
 function assertResumable(db: DatabaseSync, t: Ticket, previousRunId: number) {

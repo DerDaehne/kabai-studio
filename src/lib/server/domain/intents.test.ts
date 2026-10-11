@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate, openDb } from '../db';
 import * as board from './board';
 import { DomainError, type Actor } from './core';
+import { pauseRun, resumeAll, resumeRun } from './halt';
 import { acceptTicket, returnTicket, startTicket } from './intents';
 import { requestHuman } from './questions';
 import * as runs from './runs';
@@ -132,6 +133,44 @@ describe('startTicket („los“)', () => {
 		);
 		expect(s.stepOf(asking)).toBe('backlog');
 		expect(s.runsOf(running)).toHaveLength(1);
+	});
+
+	it('refuses a second run while the human paused one, points to :fortsetzen, and resuming all leaves one run', () => {
+		const s = setup();
+		const id = s.ticket('implement');
+		const first = startTicket(s.db, user, id, s.profile('P')).runId;
+		runs.startRun(s.db, user, first);
+		pauseRun(s.db, user, first);
+
+		const refusal = caught(() => startTicket(s.db, user, id));
+		resumeAll(s.db, user);
+
+		expect(refusal).toMatchObject({
+			code: 'run_pending',
+			hint: `Setz ihn fort (:fortsetzen ${first}) statt einen zweiten zu starten.`
+		});
+		expect(s.runsOf(id).filter((r) => r.state === 'queued')).toEqual([
+			expect.objectContaining({ trigger: 'resume' })
+		]);
+	});
+
+	it('resumes no halted run while another run of its ticket waits', () => {
+		const s = setup();
+		const id = s.ticket('implement');
+		const profileId = s.profile('P');
+		const halted = startTicket(s.db, user, id, profileId).runId;
+		runs.startRun(s.db, user, halted);
+		pauseRun(s.db, user, halted);
+		const other = runs.createRun(s.db, user, { ticketId: id, profileId }).id;
+
+		expect(caught(() => resumeRun(s.db, user, halted))).toMatchObject({
+			code: 'run_pending',
+			message: expect.stringContaining(`Run ${other}`)
+		});
+		expect(resumeAll(s.db, user)).toMatchObject({
+			resumed: [],
+			skipped: [expect.objectContaining({ runId: halted, code: 'run_pending' })]
+		});
 	});
 
 	it('asks for a profile when none exists yet', () => {

@@ -34,10 +34,12 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 function setup(db = openDb(':memory:')) {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, {
-		title: 'T',
-		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
-	}).id;
+	const newTicket = () =>
+		board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
+	const ticketId = newTicket();
 	const local = runs.createProfile(db, user, {
 		name: 'Local',
 		executor: 'builtin',
@@ -57,7 +59,7 @@ function setup(db = openDb(':memory:')) {
 	const state = (id: number) => row(id).state;
 	const comments = () =>
 		db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
-	return { db, projectId, ticketId, local, cloud, queue, row, state, comments };
+	return { db, projectId, ticketId, newTicket, local, cloud, queue, row, state, comments };
 }
 
 type ExecutorResult = Awaited<ReturnType<Executor['execute']>>;
@@ -1457,7 +1459,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const halted = s.queue(s.local);
 		await flush();
 		runner.pause(halted);
-		const [busy, older] = [s.queue(s.local), s.queue(s.local)];
+		const [busy, older] = [s.queue(s.local, s.newTicket()), s.queue(s.local, s.newTicket())];
 		await flush();
 
 		const { id: continuation } = resumeRun(s.db, user, halted);
@@ -1551,10 +1553,10 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor }, { global: 10, pools: { local: 10 } });
-		const [first, second] = [s.queue(s.local), s.queue(s.local)];
+		const [first, second] = [s.queue(s.local), s.queue(s.local, s.newTicket())];
 		await flush();
 		runner.pauseAll();
-		const queued = s.queue(s.local);
+		const queued = s.queue(s.local, s.newTicket());
 
 		const { resumed: afterPause, skipped: skippedAfterPause } = resumeAll(s.db, user);
 		await flush();
@@ -1575,7 +1577,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const pausedAlone = afterPause[0];
 		runner.pause(pausedAlone);
 		runner.halt();
-		const waiting = s.queue(s.local);
+		const waiting = s.queue(s.local, s.newTicket());
 		const { resumed: afterStop, skipped: skippedAfterStop } = resumeAll(s.db, user);
 		await flush();
 
@@ -1608,7 +1610,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor });
-		const [orphaned, healthy] = [s.queue(s.local), s.queue(s.cloud)];
+		const [orphaned, healthy] = [s.queue(s.local), s.queue(s.cloud, s.newTicket())];
 		await flush();
 		runner.pauseAll();
 		s.db.prepare('UPDATE runs SET agent_profile_id = NULL WHERE id = ?').run(orphaned);

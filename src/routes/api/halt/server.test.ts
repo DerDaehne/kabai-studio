@@ -38,12 +38,13 @@ afterEach(async () => {
 	db().exec('DELETE FROM runs; DELETE FROM runner_halt'); // what a test leaves behind must not reach the next one
 });
 
-/** Two runs of a fresh profile in a pool of its own: the first runs, the second waits. */
+/** Two runs of a fresh profile in a pool of its own, one per ticket: the first runs, the second waits. */
 async function runningAndWaiting() {
-	const ticketId = board.createTicket(db(), user, projectId, {
-		title: 'T',
-		column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
-	}).id;
+	const newTicket = () =>
+		board.createTicket(db(), user, projectId, {
+			title: 'T',
+			column_id: board.columns(db(), projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 	profiles += 1;
 	const profileId = runs.createProfile(db(), user, {
 		name: `qwen ${profiles}`,
@@ -53,7 +54,7 @@ async function runningAndWaiting() {
 		pool: `pool-${profiles}`
 	}).id;
 	const [running, waiting] = [1, 2].map(
-		() => runs.createRun(db(), user, { ticketId, profileId }).id
+		() => runs.createRun(db(), user, { ticketId: newTicket(), profileId }).id
 	);
 	await flush();
 	return { running, waiting };
