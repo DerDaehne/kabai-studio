@@ -44,6 +44,17 @@ board.addTask(db(), user, accepted.id, 'Noch offen');
 const shopTicket = create(shop, 'Warenkorb', 'Planen');
 create(archive, 'Archiviert');
 db().prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(archive);
+const newestRunProfile = runs.createProfile(db(), user, {
+	name: 'newest-run',
+	executor: 'builtin',
+	provider: 'openai-compatible',
+	model: 'm'
+}).id;
+const queuedRun = (title: string) => {
+	const ticket = create(shop, title, 'Umsetzen');
+	runs.createRun(db(), user, { ticketId: ticket.id, profileId: newestRunProfile });
+	return ticket;
+};
 
 async function loaded(cookie?: string) {
 	const dependencies: string[] = [];
@@ -124,15 +135,9 @@ describe('the board load', () => {
 	});
 
 	it('gives each ticket the state and profile of its newest run', async () => {
-		const ticket = create(shop, 'Mit Run', 'Umsetzen');
-		expect((await loadedTicket(ticket.id)).run).toBeNull();
-		const profile = runs.createProfile(db(), user, {
-			name: 'newest-run',
-			executor: 'builtin',
-			provider: 'openai-compatible',
-			model: 'm'
-		}).id;
-		runs.createRun(db(), user, { ticketId: ticket.id, profileId: profile });
+		const bare = create(shop, 'Ohne Run', 'Umsetzen');
+		expect((await loadedTicket(bare.id)).run).toBeNull();
+		const ticket = queuedRun('Mit Run');
 		expect((await loadedTicket(ticket.id)).run).toEqual({ state: 'queued', profile: 'newest-run' });
 	});
 
@@ -371,6 +376,7 @@ describe('the board view', () => {
 	});
 
 	it('shows the expert view with the columns, the Lage, the newest run with its profile, task progress and epic', async () => {
+		queuedRun('Mit Run');
 		const { data } = await loaded();
 		const markup = html({ ...data, flow: true, live: live() });
 		expect(headings(markup)).toEqual([
