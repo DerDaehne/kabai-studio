@@ -1,5 +1,4 @@
 import { shell, type ProjectRef } from './shell.svelte';
-import { toast } from '$lib/ui/toast.svelte';
 
 /** `:` runs a command, `/` searches the current view and all tickets. */
 export type CommandMode = ':' | '/';
@@ -83,13 +82,6 @@ function singleKeysCommands(setSingleKeys: (on: boolean) => void): Suggestion[] 
 /** The commands that work everywhere, not just in one view; `+layout.svelte` binds the result via `bindCommands`. */
 export function globalCommands(handlers: GlobalCommandHandlers): Suggestion[] {
 	return [
-		{
-			id: 'run',
-			label: ':run',
-			detail: 'Ticket als Run starten',
-			run: () =>
-				toast(':run startet einen Run in der Run-Akte eines Tickets — öffne zuerst das Ticket.')
-		},
 		{
 			id: 'projects',
 			label: ':projekte',

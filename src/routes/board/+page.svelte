@@ -139,6 +139,8 @@
 	let draftTitle = $state('');
 	let renaming = $state<number | null>(null);
 	let renameTitle = $state('');
+	let givingBack = $state<number | null>(null);
+	let giveBackComment = $state('');
 
 	const glide = () => (motionMode() === 'reduced' ? 0 : duration.glide);
 	const [send, receive] = crossfade({ duration: glide, easing: easing.inOut });
@@ -253,6 +255,54 @@
 		void focusRow(row.id);
 	}
 
+	/** Runs one of the human's intents on the row; a refusal shows at the row, with its way out. */
+	async function intend(row: BoardTicket, action: string, fields: Record<string, string> = {}) {
+		const result = await postAction(`/board?/${action}`, { ticketId: String(row.id), ...fields });
+		const failure = failureOf(result);
+		if (failure) {
+			refusal = { id: row.id, text: failure };
+			void focusRow(row.id);
+			return false;
+		}
+		refusal = null;
+		await reload();
+		void focusRow(row.id);
+		return result;
+	}
+
+	async function start(row: BoardTicket) {
+		const result = await intend(row, 'start');
+		if (!result) return;
+		const waitingFor = result.type === 'success' ? (result.data?.predecessors as string[]) : [];
+		toast(
+			waitingFor.length
+				? t('board.startedBlocked', { ref: row.ref, refs: waitingFor.join(', ') })
+				: t('board.started', { ref: row.ref }),
+			'success'
+		);
+	}
+
+	async function accept(row: BoardTicket) {
+		if (await intend(row, 'accept')) toast(t('board.accepted', { ref: row.ref }), 'success');
+	}
+
+	function startGivingBack(row: BoardTicket) {
+		givingBack = row.id;
+		giveBackComment = '';
+		refusal = null;
+	}
+
+	function cancelGivingBack(row: BoardTicket) {
+		givingBack = null;
+		void focusRow(row.id);
+	}
+
+	async function giveBack(row: BoardTicket) {
+		if (!(await intend(row, 'giveBack', { comment: giveBackComment }))) return;
+		givingBack = null;
+		toast(t('board.returned', { ref: row.ref }), 'success');
+	}
+
 	function startRenaming(row: BoardTicket) {
 		renaming = row.id;
 		renameTitle = row.title;
@@ -339,6 +389,9 @@
 			group: (count, key) => select(groupJump(groupStarts, currentIndex, key === '}', count)),
 			open: () => void goto(href(row)),
 			shiftColumn: flow ? (_count, key) => void shift(row, key === '>') : undefined,
+			start: () => void start(row),
+			accept: () => void accept(row),
+			giveBack: () => startGivingBack(row),
 			editText: () => startRenaming(row),
 			remove: () => remove(row),
 			copy: () => void copyRef(row),
@@ -435,6 +488,51 @@
 	</form>
 {/snippet}
 
+{#snippet giveBackForm(row: BoardTicket)}
+	<form
+		class="field-row give-back"
+		onsubmit={(event) => {
+			event.preventDefault();
+			void giveBack(row);
+		}}
+	>
+		<input
+			aria-label={t('board.giveBack.label', { ref: row.ref })}
+			placeholder={t('board.giveBack.placeholder')}
+			autocomplete="off"
+			bind:value={giveBackComment}
+			onkeydown={escapeTo(() => cancelGivingBack(row))}
+			{@attach focusField}
+		/>
+		<Button type="submit" size="sm">{t('board.giveBack.send')}</Button>
+		<span class="hint"
+			><Kbd key="Enter" />
+			{t('board.giveBack.hintSend')} · <Kbd key="Escape" />
+			{t('board.giveBack.hintDiscard')}</span
+		>
+	</form>
+{/snippet}
+
+{#snippet intents(row: BoardTicket)}
+	<span class="intents" role="group" aria-label={t('board.intents.label', { ref: row.ref })}>
+		{#if row.column.phase === 'open' || row.column.phase === 'work'}
+			<Button size="sm" onclick={() => void start(row)}
+				>{t('board.intent.start')} <Kbd key="s" /></Button
+			>
+		{/if}
+		{#if row.column.phase === 'acceptance'}
+			<Button size="sm" onclick={() => void accept(row)}
+				>{t('board.intent.accept')} <Kbd key="a" /></Button
+			>
+		{/if}
+		{#if row.column.phase === 'acceptance' || row.column.phase === 'done'}
+			<Button size="sm" onclick={() => startGivingBack(row)}
+				>{t('board.intent.giveBack')} <Kbd key="r" /></Button
+			>
+		{/if}
+	</span>
+{/snippet}
+
 {#snippet lageMeta(row: BoardTicket)}
 	<span class="track" role="img" aria-label={t('board.progress', row.progress)}>
 		{#each { length: row.progress.total }, step}<span
@@ -480,6 +578,8 @@
 		<p class="meta">
 			{#if flow}{@render flowMeta(row)}{:else}{@render lageMeta(row)}{/if}
 		</p>
+		{@render intents(row)}
+		{#if givingBack === row.id}{@render giveBackForm(row)}{/if}
 		{#if refusal?.id === row.id}<p class="refusal" role="alert">{refusal.text}</p>{/if}
 	</div>
 {/snippet}
@@ -688,6 +788,15 @@
 		overflow-wrap: anywhere;
 		white-space: normal;
 	}
+	.intents {
+		display: flex;
+		flex-wrap: wrap;
+		grid-column: 1 / -1;
+		gap: var(--space-2);
+	}
+	.intents:empty {
+		display: none;
+	}
 	.refusal {
 		padding: var(--space-1) var(--space-2);
 		background: var(--status-failed-tint);
@@ -727,6 +836,9 @@
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
+	}
+	.field-row.give-back {
+		grid-column: 1 / -1;
 	}
 	.field-row.rename {
 		padding: 0;

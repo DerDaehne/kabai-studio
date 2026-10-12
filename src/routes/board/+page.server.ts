@@ -2,6 +2,7 @@ import { BOARD_DEPENDENCY, LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import { acceptTicket, returnTicket, startTicket } from '$lib/server/domain/intents';
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketLagen, type TicketLage } from '$lib/server/lagen';
@@ -131,6 +132,23 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const title = textField(form, 'title');
 		return attempt(() => board.updateTicket(db(), HUMAN, numberField(form, 'ticketId'), { title }));
+	},
+	start: async ({ request }) => {
+		const form = await request.formData();
+		return attempt(() => {
+			const { predecessors } = startTicket(db(), HUMAN, numberField(form, 'ticketId'));
+			return { predecessors: predecessors.map((predecessor) => predecessor.ref) };
+		});
+	},
+	accept: async ({ request }) => {
+		const form = await request.formData();
+		return attempt(() => acceptTicket(db(), HUMAN, numberField(form, 'ticketId')));
+	},
+	giveBack: async ({ request }) => {
+		const form = await request.formData();
+		return attempt(() =>
+			returnTicket(db(), HUMAN, numberField(form, 'ticketId'), textField(form, 'comment'))
+		);
 	},
 	delete: async ({ request }) => {
 		const form = await request.formData();

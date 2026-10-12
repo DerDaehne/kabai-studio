@@ -55,8 +55,8 @@ describe('matchesWordStart', () => {
 });
 
 describe('suggest', () => {
-	it('finds :run for "run" in command mode', () => {
-		expect(labels(suggest(':', 'run', sources))).toEqual([':run']);
+	it('finds :projekte for "projekte" in command mode', () => {
+		expect(labels(suggest(':', 'projekte', sources))).toEqual([':projekte']);
 	});
 
 	it('matches the description of a command, not only its name', () => {
@@ -130,10 +130,8 @@ describe('globalCommands', () => {
 		expect(shell.focus).toBeNull();
 	});
 
-	it(':run points into the Run-Akte instead of running anything itself', () => {
-		const run = commands.find((c) => c.id === 'run')!;
-		expect(run.href).toBeUndefined();
-		expect(run.run).toBeTypeOf('function');
+	it('has no :run, as starting a ticket is the s key on the board', () => {
+		expect(commands.find((c) => c.id === 'run')).toBeUndefined();
 	});
 });
 

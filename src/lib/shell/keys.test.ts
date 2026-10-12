@@ -19,7 +19,7 @@ describe('keymap', () => {
 	const designKeymap: Record<KeyGroup, string[]> = {
 		Bewegen: ['j', 'k', 'h', 'l', 'gg', 'G', '{', '}'],
 		'Öffnen und zurück': ['Enter', 'gd', 'Escape', 'Ctrl+o', 'gs', 'gt', 'gb', 'gr'],
-		Entscheiden: ['1', '2', '3', 'i', 's', 'u', 'Ctrl+r'],
+		Entscheiden: ['1', '2', '3', 'i', 's', 'a', 'r', 'u', 'Ctrl+r'],
 		Bearbeiten: ['i', 'a', 'o', 'O', 'dd', 'x', 'y', '>', '<', 'yy'],
 		'Suchen und Befehle': ['/', 'n', 'N', ':', '*', 'v'],
 		'Projekte und Übersicht': [' a–z', '  ', ' g', '?']
@@ -50,6 +50,54 @@ describe('keymap', () => {
 	it('gives every action its own label, so the key bar can tell them apart', () => {
 		const labels = Object.values(keymap).map((binding) => binding.label);
 		expect(new Set(labels).size).toBe(labels.length);
+	});
+});
+
+describe('keys the board binds at once', () => {
+	const board: KeyAction[] = [
+		'move',
+		'side',
+		'edge',
+		'group',
+		'open',
+		'back',
+		'jumpBack',
+		'goStellwerk',
+		'goTakt',
+		'goBoard',
+		'goLastRun',
+		'start',
+		'accept',
+		'giveBack',
+		'undo',
+		'redo',
+		'editText',
+		'add',
+		'remove',
+		'shiftColumn',
+		'copy',
+		'search',
+		'command',
+		'focusHere',
+		'focusAll',
+		'groupBy',
+		'focusProject',
+		'help'
+	];
+	const sequencesOf = (actions: KeyAction[]) =>
+		actions.flatMap((action) => keymap[action].keys.map((sequence) => sequence.join('')));
+
+	it('give every key sequence to one action', () => {
+		const all = sequencesOf(board);
+		expect(all.filter((sequence, index) => all.indexOf(sequence) !== index)).toEqual([]);
+	});
+
+	it('let no single key be the start of a longer sequence', () => {
+		const all = sequencesOf(board);
+		const shadowed = all.filter((one) =>
+			all.some((other) => other !== one && other.startsWith(one) && one.length === 1)
+		);
+		expect(shadowed).toEqual([]);
 	});
 });
 
