@@ -269,6 +269,7 @@ export function createProject(
 ): { id: number } {
 	return tx(db, (emit) => {
 		checkNewProject(db, p);
+		checkVariant(variant);
 		const { id } = db
 			.prepare(
 				'INSERT INTO projects (key, name, description, variant) VALUES (?, ?, ?, ?) RETURNING id'
@@ -283,6 +284,15 @@ export function createProject(
 		emit({ type: 'project.created', projectId: id, actor });
 		return { id };
 	});
+}
+
+function checkVariant(variant: string) {
+	if (!Object.hasOwn(VARIANTS, variant))
+		throw new DomainError(
+			'invalid_variant',
+			`Die Variante „${variant}“ gibt es nicht.`,
+			`Wähle eine der Varianten: ${Object.keys(VARIANTS).join(', ')}.`
+		);
 }
 
 /** Key and name each identify a project for the human, so neither may repeat; names compare without case. */

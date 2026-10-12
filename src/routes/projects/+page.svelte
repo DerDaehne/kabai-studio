@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { t } from '$lib/i18n/t';
 	import { openQuestionsLabel } from '$lib/shell/live.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
+	import StepBar from '$lib/ui/StepBar.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -14,13 +16,11 @@
 	const focusOnError = (field: string) => (input: HTMLElement) => {
 		if (form?.field === field) input.focus();
 	};
-	const columnsLabel = (count: number) => `${count} ${count === 1 ? 'Spalte' : 'Spalten'}`;
+	const selectedVariant = $derived(form?.variant ?? 'software');
 </script>
 
-<h1>Projekte</h1>
-<p class="intro">
-	Ein Projekt sammelt Tickets in Spalten; jede Spalte gibt den Agents ihre Rolle vor.
-</p>
+<h1>{t('projects.heading')}</h1>
+<p class="intro">{t('projects.intro')}</p>
 
 {#if data.projects.length}
 	<ul class="projects">
@@ -29,16 +29,16 @@
 				<ProjectTag code={project.code} palette={project.palette} />
 				<a class="name" href="/p/{project.code}">{project.name}</a>
 				<span class="meta">
-					{columnsLabel(project.columns)} · {openQuestionsLabel(project.openQuestions)}
+					{t(`variant.${project.variant}.name`)} · {openQuestionsLabel(project.openQuestions)}
 				</span>
-				{#if project.archived}<Badge>archiviert</Badge>{/if}
+				{#if project.archived}<Badge>{t('projects.archived')}</Badge>{/if}
 			</li>
 		{/each}
 	</ul>
 {/if}
 
 <section aria-labelledby="new-project">
-	<h2 id="new-project">Neues Projekt</h2>
+	<h2 id="new-project">{t('projects.new')}</h2>
 	<form
 		method="POST"
 		action="?/create"
@@ -50,7 +50,7 @@
 			};
 		}}
 	>
-		<FormField label="Name" error={errorFor('name')}>
+		<FormField label={t('projects.name')} error={errorFor('name')}>
 			{#snippet children(attrs)}
 				<input
 					{...attrs}
@@ -62,11 +62,7 @@
 				/>
 			{/snippet}
 		</FormField>
-		<FormField
-			label="Key"
-			hint="Großbuchstaben und Ziffern, z. B. WEB. Er steht vor jeder Ticketnummer: WEB-1."
-			error={errorFor('key')}
-		>
+		<FormField label={t('projects.key')} hint={t('projects.key.hint')} error={errorFor('key')}>
 			{#snippet children(attrs)}
 				<input
 					{...attrs}
@@ -81,8 +77,29 @@
 				/>
 			{/snippet}
 		</FormField>
-		<p class="template">Die Spalten kommen aus der Vorlage „Software“: Backlog bis Done.</p>
-		<Button type="submit" variant="primary" loading={creating}>Projekt anlegen</Button>
+		<fieldset aria-describedby={form?.field === 'variant' ? 'variant-error' : undefined}>
+			<legend>{t('projects.variant.legend')}</legend>
+			{#each data.variants as { variant, steps } (variant)}
+				<div class="option">
+					<label>
+						<input
+							type="radio"
+							name="variant"
+							value={variant}
+							checked={variant === selectedVariant}
+							aria-describedby="variant-{variant}-description"
+						/>
+						{t(`variant.${variant}.name`)}
+					</label>
+					<div id="variant-{variant}-description" class="description">
+						<p>{t(`variant.${variant}.description`)}</p>
+						<StepBar {steps} />
+					</div>
+				</div>
+			{/each}
+			{#if errorFor('variant')}<p id="variant-error" class="error">{errorFor('variant')}</p>{/if}
+		</fieldset>
+		<Button type="submit" variant="primary" loading={creating}>{t('projects.create')}</Button>
 	</form>
 </section>
 
@@ -132,8 +149,47 @@
 	.key {
 		text-transform: uppercase;
 	}
-	.template {
+	fieldset {
+		display: grid;
+		gap: var(--space-2);
+		width: 100%;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	legend {
+		margin-bottom: var(--space-1);
+		padding: 0;
+		font-size: var(--text-sm);
+		font-weight: 560;
+	}
+	.option {
+		padding: var(--space-2) var(--space-3);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	.option label {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-weight: 620;
+	}
+	.option input {
+		width: auto;
+	}
+	.description {
+		display: grid;
+		gap: var(--space-1);
+		margin-top: var(--space-1);
 		color: var(--text-muted);
 		font-size: var(--text-sm);
+	}
+	.description p {
+		margin: 0;
+	}
+	.error {
+		color: var(--status-failed);
+		font-size: var(--text-sm);
+		font-weight: 560;
 	}
 </style>

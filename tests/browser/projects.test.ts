@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, open, test } from './fixtures.ts';
+import { VARIANTS, type Variant } from '../../src/lib/server/domain/variants.ts';
 import { PROJECT } from './global-setup.ts';
 
 // Projects cannot be deleted, so every run creates its own: capital letters and digits keep the key valid.
@@ -18,14 +19,93 @@ test('creating a project leads straight into it, and from there to its first tic
 
 	await expect(page).toHaveURL(`/p/${key}`);
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${key} Kundenportal ${suffix}`);
-	const columns = page.getByRole('region', { name: 'Spalten' }).getByRole('listitem');
-	await expect(columns).toHaveCount(7);
-	await expect(columns.first()).toContainText('Backlog');
+	const steps = page.getByRole('region', { name: 'Schritte' }).getByRole('listitem');
+	await expect(steps).toHaveCount(7);
+	await expect(steps.first()).toContainText('Backlog');
+	await expect(page.getByText('Variante Software')).toBeVisible();
+	await expect(page.getByText('Do: ')).toHaveCount(0);
 
 	await page.getByLabel('Titel').fill('Draft the landing page');
 	await page.getByRole('button', { name: 'Ticket anlegen' }).click();
 	await expect(page).toHaveURL(`/p/${key}/t/1`);
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('Draft the landing page');
+});
+
+const VARIANT_NAMES: Record<Variant, string> = {
+	software: 'Software',
+	knowledge: 'Wissen',
+	direct: 'Direkt'
+};
+
+for (const variant of Object.keys(VARIANTS) as Variant[]) {
+	test(`a project of the ${variant} variant gets the columns of that variant`, async ({
+		page,
+		db
+	}) => {
+		const suffix = uniqueSuffix();
+		const key = `V${suffix}`;
+		await open(page, '/projects');
+		await page.getByLabel('Name', { exact: true }).fill(`Variant ${suffix}`);
+		await page.getByLabel('Key', { exact: true }).fill(key);
+		await page.getByRole('radio', { name: VARIANT_NAMES[variant] }).check();
+		await page.getByRole('button', { name: 'Projekt anlegen' }).click();
+
+		await expect(page).toHaveURL(`/p/${key}`);
+		await expect(page.getByText(`Variante ${VARIANT_NAMES[variant]}`)).toBeVisible();
+		const columns = db
+			.prepare(
+				'SELECT c.step FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.key = ? ORDER BY c.position'
+			)
+			.all(key)
+			.map((row) => row.step);
+		expect(columns).toEqual([...VARIANTS[variant]]);
+		await expect(page.getByRole('region', { name: 'Schritte' }).getByRole('listitem')).toHaveCount(
+			VARIANTS[variant].length
+		);
+
+		await open(page, '/projects');
+		await expect(page.getByRole('listitem').filter({ hasText: key })).toContainText(
+			VARIANT_NAMES[variant]
+		);
+	});
+}
+
+test('every variant option shows its sentence, linked as its accessible description', async ({
+	page
+}) => {
+	await open(page, '/projects');
+	for (const variant of Object.keys(VARIANTS) as Variant[]) {
+		const radio = page.getByRole('radio', { name: VARIANT_NAMES[variant] });
+		const description = page.locator(`#variant-${variant}-description`);
+		await expect(description).toBeVisible();
+		await expect(radio).toHaveAttribute('aria-describedby', `variant-${variant}-description`);
+		await expect(radio).toHaveAccessibleDescription(/bevor du abnimmst/);
+	}
+	await expect(page.getByRole('radio', { name: 'Software' })).toBeChecked();
+});
+
+test('a project of the knowledge variant can be created with the keyboard alone', async ({
+	page
+}) => {
+	const suffix = uniqueSuffix();
+	const key = `K${suffix}`;
+	await open(page, '/projects');
+	await page.getByLabel('Name', { exact: true }).focus();
+	await page.keyboard.type(`Keyboard ${suffix}`);
+	await page.keyboard.press('Tab');
+	await page.keyboard.type(key);
+	await page.keyboard.press('Tab');
+	const software = page.getByRole('radio', { name: 'Software' });
+	await expect(software).toBeFocused();
+	await expect(software).toHaveCSS('outline-style', 'solid');
+	await page.keyboard.press('ArrowDown');
+	await expect(page.getByRole('radio', { name: 'Wissen' })).toBeFocused();
+	await expect(page.getByRole('radio', { name: 'Wissen' })).toBeChecked();
+	await page.keyboard.press('Tab');
+	await page.keyboard.press('Enter');
+
+	await expect(page).toHaveURL(`/p/${key}`);
+	await expect(page.getByText('Variante Wissen')).toBeVisible();
 });
 
 test('a taken key is refused at the key field with a way out, keeping what was typed', async ({

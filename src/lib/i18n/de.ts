@@ -102,6 +102,46 @@ export const de: Catalogue = {
 	'settings.signedInAs': 'Angemeldet als {name}',
 	'settings.signOut': 'Abmelden',
 
+	'projects.heading': 'Projekte',
+	'projects.intro': 'Ein Projekt sammelt Tickets und führt sie durch die Schritte seiner Variante.',
+	'projects.archived': 'archiviert',
+	'projects.new': 'Neues Projekt',
+	'projects.name': 'Name',
+	'projects.key': 'Key',
+	'projects.key.hint':
+		'Großbuchstaben und Ziffern, z. B. WEB. Er steht vor jeder Ticketnummer: WEB-1.',
+	'projects.variant.legend': 'Wie arbeitet das Projekt?',
+	'projects.create': 'Projekt anlegen',
+	'projects.back': 'Alle Projekte',
+	'projects.ticket.heading': 'Ticket anlegen',
+	'projects.ticket.intro':
+		'Ein Ticket startet im Backlog; in seiner Run-Akte gibst du es einem Agent.',
+	'projects.ticket.title': 'Titel',
+	'projects.ticket.create': 'Ticket anlegen',
+	'projects.steps.heading': 'Schritte',
+	'projects.steps.intro':
+		'Variante {variant}: Ein Ticket durchläuft diese Schritte der Reihe nach.',
+
+	'variant.software.name': 'Software',
+	'variant.software.description':
+		'Für Arbeit an Code: erst wird der Umfang geklärt und geplant, dann umgesetzt, dann kritisiert, bevor du abnimmst.',
+	'variant.knowledge.name': 'Wissen',
+	'variant.knowledge.description':
+		'Für Notizen und Ausarbeitungen: erst wird recherchiert, dann ein Entwurf geschrieben, dann kritisiert, bevor du abnimmst.',
+	'variant.direct.name': 'Direkt',
+	'variant.direct.description':
+		'Für kleine, klare Aufgaben: gleich umsetzen, dann kritisieren, bevor du abnimmst.',
+
+	'step.backlog': 'Backlog',
+	'step.refine': 'Präzisieren',
+	'step.plan': 'Planen',
+	'step.implement': 'Umsetzen',
+	'step.research': 'Recherchieren',
+	'step.draft': 'Entwerfen',
+	'step.critique': 'Kritik',
+	'step.acceptance': 'Abnahme',
+	'step.done': 'Fertig',
+
 	'board.title': 'Board – kabai studio',
 	'board.heading': 'Board',
 	'board.summary': '{count} Tickets',

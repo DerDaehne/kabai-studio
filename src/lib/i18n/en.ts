@@ -101,6 +101,45 @@ export const en = {
 	'settings.signedInAs': 'Signed in as {name}',
 	'settings.signOut': 'Sign out',
 
+	'projects.heading': 'Projects',
+	'projects.intro': 'A project collects tickets and moves them through the steps of its variant.',
+	'projects.archived': 'archived',
+	'projects.new': 'New project',
+	'projects.name': 'Name',
+	'projects.key': 'Key',
+	'projects.key.hint':
+		'Capital letters and digits, e.g. WEB. It precedes every ticket number: WEB-1.',
+	'projects.variant.legend': 'How does the project work?',
+	'projects.create': 'Create project',
+	'projects.back': 'All projects',
+	'projects.ticket.heading': 'Create ticket',
+	'projects.ticket.intro':
+		'A ticket starts in the backlog; in its run record you hand it to an agent.',
+	'projects.ticket.title': 'Title',
+	'projects.ticket.create': 'Create ticket',
+	'projects.steps.heading': 'Steps',
+	'projects.steps.intro': 'The {variant} variant: a ticket passes these steps in order.',
+
+	'variant.software.name': 'Software',
+	'variant.software.description':
+		'For work on code: the scope is clarified and planned first, then implemented, then criticised before you accept it.',
+	'variant.knowledge.name': 'Knowledge',
+	'variant.knowledge.description':
+		'For notes and write-ups: sources are researched first, then a draft is written, then criticised before you accept it.',
+	'variant.direct.name': 'Direct',
+	'variant.direct.description':
+		'For small, clear tasks: straight to implementation, then criticised before you accept it.',
+
+	'step.backlog': 'Backlog',
+	'step.refine': 'Refine',
+	'step.plan': 'Plan',
+	'step.implement': 'Implement',
+	'step.research': 'Research',
+	'step.draft': 'Draft',
+	'step.critique': 'Critique',
+	'step.acceptance': 'Acceptance',
+	'step.done': 'Done',
+
 	'board.title': 'Board – kabai studio',
 	'board.heading': 'Board',
 	'board.summary': '{count} tickets',

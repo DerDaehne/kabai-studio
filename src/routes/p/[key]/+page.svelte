@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { t } from '$lib/i18n/t';
 	import Button from '$lib/ui/Button.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
+	import StepBar from '$lib/ui/StepBar.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -13,12 +15,12 @@
 	};
 </script>
 
-<p class="back"><a href="/projects">Alle Projekte</a></p>
+<p class="back"><a href="/projects">{t('projects.back')}</a></p>
 <h1><ProjectTag code={data.project.code} palette={data.project.palette} /> {data.project.name}</h1>
 
 <section aria-labelledby="first-ticket">
-	<h2 id="first-ticket">Ticket anlegen</h2>
-	<p class="intro">Ein Ticket startet im Backlog; in seiner Run-Akte gibst du es einem Agent.</p>
+	<h2 id="first-ticket">{t('projects.ticket.heading')}</h2>
+	<p class="intro">{t('projects.ticket.intro')}</p>
 	<form
 		method="POST"
 		action="?/createTicket"
@@ -30,7 +32,7 @@
 			};
 		}}
 	>
-		<FormField label="Titel" error={form?.message}>
+		<FormField label={t('projects.ticket.title')} error={form?.message}>
 			{#snippet children(attrs)}
 				<input
 					{...attrs}
@@ -42,20 +44,15 @@
 				/>
 			{/snippet}
 		</FormField>
-		<Button type="submit" variant="primary" loading={creating}>Ticket anlegen</Button>
+		<Button type="submit" variant="primary" loading={creating}>{t('projects.ticket.create')}</Button
+		>
 	</form>
 </section>
 
-<section aria-labelledby="columns">
-	<h2 id="columns">Spalten</h2>
-	<ol class="columns">
-		{#each data.columns as column (column.name)}
-			<li>
-				<span class="name">{column.name}</span>
-				{#if column.role}<span class="role">{column.role}</span>{/if}
-			</li>
-		{/each}
-	</ol>
+<section aria-labelledby="steps">
+	<h2 id="steps">{t('projects.steps.heading')}</h2>
+	<p class="intro">{t('projects.steps.intro', { variant: t(`variant.${data.variant}.name`) })}</p>
+	<StepBar steps={data.steps} label={t('projects.steps.heading')} />
 </section>
 
 <style>
@@ -86,35 +83,5 @@
 	}
 	form :global(.field) {
 		flex: 1 1 24ch;
-	}
-	.columns {
-		display: grid;
-		gap: var(--space-1);
-		margin-top: var(--space-2);
-		padding: 0;
-		list-style: none;
-	}
-	.columns li {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-1) var(--space-3);
-		padding: var(--space-2) var(--space-3);
-		border-radius: var(--radius);
-		background: var(--surface);
-	}
-	.name {
-		flex: 0 0 18ch;
-		font-weight: 620;
-	}
-	/* the role prompt in short: two lines, the full text stays in the DOM for screen readers */
-	.role {
-		flex: 1 1 30ch;
-		display: -webkit-box;
-		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		overflow: hidden;
-		color: var(--text-muted);
-		font-size: var(--text-sm);
 	}
 </style>
