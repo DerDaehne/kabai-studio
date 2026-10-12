@@ -71,7 +71,10 @@ async function post(action: keyof typeof actions, fields: Record<string, string 
 	const body = new FormData();
 	for (const [name, value] of Object.entries(fields)) body.set(name, String(value));
 	const request = new Request('http://localhost/board', { method: 'POST', body });
-	return (await actions[action]({ request } as never)) as Record<string, unknown>;
+	return (await actions[action]({ request, locals: { locale: 'de' } } as never)) as Record<
+		string,
+		unknown
+	>;
 }
 
 const live = (
@@ -241,7 +244,10 @@ describe('the board actions', () => {
 			columnId: columnId(studio, 'Fertig')
 		});
 		expect(refused).toMatchObject({ status: 409 });
-		expect((refused.data as { message: string }).message).toMatch(/offen.*\. .+/i);
+		const { message } = refused.data as { message: string };
+		expect(message).toMatch(/offen.*\. .+/i);
+		expect(message).toContain('Hake die offenen Tasks ab oder lösche sie.');
+		expect(message).not.toContain('completeTask');
 		expect(board.ticket(db(), ticket.id).column_name).toBe('Abnahme');
 	});
 
