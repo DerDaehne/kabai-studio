@@ -2,6 +2,8 @@ import { BOARD_DEPENDENCY, LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
+import type { DomainError } from '$lib/server/domain/error';
+import { translate, type Locale } from '$lib/i18n';
 import { acceptTicket, returnTicket, startTicket } from '$lib/server/domain/intents';
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
@@ -117,11 +119,19 @@ function createTicket(form: FormData) {
 	return { ref: board.ticket(db(), id).ref };
 }
 
+/** The domain's way out for open tasks names the agents' tools; the human gets a sentence that fits the board. */
+const humanWayOut = (locale: Locale) => (err: DomainError) =>
+	err.code === 'open_tasks'
+		? { message: `${err.message} ${translate(locale, 'board.refusal.openTasks')}` }
+		: {};
+
 export const actions: Actions = {
-	move: async ({ request }) => {
+	move: async ({ request, locals }) => {
 		const form = await request.formData();
-		return attempt(() =>
-			board.moveTicket(db(), HUMAN, numberField(form, 'ticketId'), numberField(form, 'columnId'))
+		return attempt(
+			() =>
+				board.moveTicket(db(), HUMAN, numberField(form, 'ticketId'), numberField(form, 'columnId')),
+			humanWayOut(locals.locale)
 		);
 	},
 	create: async ({ request }) => {
@@ -140,9 +150,12 @@ export const actions: Actions = {
 			return { predecessors: predecessors.map((predecessor) => predecessor.ref) };
 		});
 	},
-	accept: async ({ request }) => {
+	accept: async ({ request, locals }) => {
 		const form = await request.formData();
-		return attempt(() => acceptTicket(db(), HUMAN, numberField(form, 'ticketId')));
+		return attempt(
+			() => acceptTicket(db(), HUMAN, numberField(form, 'ticketId')),
+			humanWayOut(locals.locale)
+		);
 	},
 	giveBack: async ({ request }) => {
 		const form = await request.formData();

@@ -256,12 +256,17 @@
 	}
 
 	/** Runs one of the human's intents on the row; a refusal shows at the row, with its way out. */
-	async function intend(row: BoardTicket, action: string, fields: Record<string, string> = {}) {
+	async function intend(
+		row: BoardTicket,
+		action: 'start' | 'accept' | 'giveBack',
+		fields: Record<string, string> = {}
+	) {
 		const result = await postAction(`/board?/${action}`, { ticketId: String(row.id), ...fields });
 		const failure = failureOf(result);
 		if (failure) {
 			refusal = { id: row.id, text: failure };
-			void focusRow(row.id);
+			// an open comment field keeps the focus, or the next keys would act on the row instead of the text
+			if (givingBack !== row.id) void focusRow(row.id);
 			return false;
 		}
 		refusal = null;
@@ -271,22 +276,35 @@
 	}
 
 	async function start(row: BoardTicket) {
+		selectQuietly(row);
 		const result = await intend(row, 'start');
 		if (!result) return;
 		const waitingFor = result.type === 'success' ? (result.data?.predecessors as string[]) : [];
 		toast(
 			waitingFor.length
-				? t('board.startedBlocked', { ref: row.ref, refs: waitingFor.join(', ') })
+				? t(
+						plural.select(waitingFor.length) === 'one'
+							? 'board.startedBlocked.one'
+							: 'board.startedBlocked.other',
+						{ ref: row.ref, refs: waitingFor.join(', ') }
+					)
 				: t('board.started', { ref: row.ref }),
 			'success'
 		);
 	}
 
 	async function accept(row: BoardTicket) {
+		selectQuietly(row);
 		if (await intend(row, 'accept')) toast(t('board.accepted', { ref: row.ref }), 'success');
 	}
 
+	/** Makes the row the selected one without moving the focus, for an intent a click started on another row. */
+	function selectQuietly(row: BoardTicket) {
+		cursor = { id: row.id, index: rows.indexOf(row) };
+	}
+
 	function startGivingBack(row: BoardTicket) {
+		selectQuietly(row);
 		givingBack = row.id;
 		giveBackComment = '';
 		refusal = null;
@@ -381,6 +399,11 @@
 	const goSide = (count: number, forward: boolean) =>
 		select(sideJump(groupStarts, currentIndex, forward, count));
 
+	const canStart = ({ column }: BoardTicket) => column.phase === 'open' || column.phase === 'work';
+	const canAccept = ({ column }: BoardTicket) => column.phase === 'acceptance';
+	const canGiveBack = ({ column }: BoardTicket) =>
+		column.phase === 'acceptance' || column.phase === 'done';
+
 	function rowKeys(row: BoardTicket): KeyHandlers {
 		return {
 			move: (count, key) =>
@@ -390,9 +413,9 @@
 			group: (count, key) => select(groupJump(groupStarts, currentIndex, key === '}', count)),
 			open: () => void goto(href(row)),
 			shiftColumn: flow ? (_count, key) => void shift(row, key === '>') : undefined,
-			start: () => void start(row),
-			accept: () => void accept(row),
-			giveBack: () => startGivingBack(row),
+			start: canStart(row) ? () => void start(row) : undefined,
+			accept: canAccept(row) ? () => void accept(row) : undefined,
+			giveBack: canGiveBack(row) ? () => startGivingBack(row) : undefined,
 			editText: () => startRenaming(row),
 			remove: () => remove(row),
 			copy: () => void copyRef(row),
@@ -516,17 +539,21 @@
 
 {#snippet intents(row: BoardTicket)}
 	<span class="intents" role="group" aria-label={t('board.intents.label', { ref: row.ref })}>
-		{#if row.column.phase === 'open' || row.column.phase === 'work'}
+		{#if row.reason.kind === 'question'}
+			<Button size="sm" onclick={() => void goto(href(row))}
+				>{t('board.intent.answer')} <Kbd key="Enter" /></Button
+			>
+		{:else if canStart(row)}
 			<Button size="sm" onclick={() => void start(row)}
 				>{t('board.intent.start')} <Kbd key="s" /></Button
 			>
 		{/if}
-		{#if row.column.phase === 'acceptance'}
+		{#if canAccept(row)}
 			<Button size="sm" onclick={() => void accept(row)}
 				>{t('board.intent.accept')} <Kbd key="a" /></Button
 			>
 		{/if}
-		{#if row.column.phase === 'acceptance' || row.column.phase === 'done'}
+		{#if canGiveBack(row)}
 			<Button size="sm" onclick={() => startGivingBack(row)}
 				>{t('board.intent.giveBack')} <Kbd key="r" /></Button
 			>
@@ -795,8 +822,10 @@
 		grid-column: 1 / -1;
 		gap: var(--space-2);
 	}
-	.intents:empty {
-		display: none;
+	@media (pointer: coarse), (max-width: 375px) {
+		.intents :global(button) {
+			min-height: 44px;
+		}
 	}
 	.refusal {
 		padding: var(--space-1) var(--space-2);
@@ -828,7 +857,7 @@
 		padding: var(--space-1) var(--space-2);
 	}
 	.field-row input {
-		flex: 1;
+		flex: 1 1 24ch;
 		min-width: 0;
 		height: 28px;
 		padding: 0 var(--space-2);

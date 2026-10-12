@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Page } from '@playwright/test';
 import * as board from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import { requestHuman } from '../../src/lib/server/domain/questions.ts';
 import { createProfile } from '../../src/lib/server/domain/runs.ts';
 import { expect, open, test } from './fixtures.ts';
 import { PROJECT } from './global-setup.ts';
@@ -135,7 +136,8 @@ test('accepting with an open task shows the refusal and its way out at the row',
 		await press(page, 'a');
 		const refusal = rowIn(page, 'Zur Abnahme', title).getByRole('alert');
 		await expect(refusal).toContainText(`${ticket.ref} hat 1 offene Tasks`);
-		await expect(refusal).toContainText('Erledige die Tasks');
+		await expect(refusal).toContainText('Hake die offenen Tasks ab oder lösche sie');
+		await expect(refusal).not.toContainText('completeTask');
 		await expect(rowIn(page, 'Fertig', title)).toHaveCount(0);
 	} finally {
 		cleanUp(db, title);
@@ -207,17 +209,172 @@ test('Enter opens the Run-Akte of the selected ticket', async ({ page, db }) => 
 	}
 });
 
-test('the overview lists the intent keys of the board', async ({ page, db }) => {
-	const title = `Keys ${randomUUID()}`;
-	ticketIn(db, title, 'Backlog');
+test('the overview lists the intent keys that fit the selected ticket', async ({ page, db }) => {
+	const backlog = `Keys backlog ${randomUUID()}`;
+	const acceptance = `Keys acceptance ${randomUUID()}`;
+	ticketIn(db, backlog, 'Backlog');
+	ticketIn(db, acceptance, 'Abnahme');
 	try {
-		await openBoardAt(page, title);
+		await openBoardAt(page, backlog);
 		await press(page, '?');
 		const keyBar = page.getByRole('list', { name: 'Gültige Tasten' });
-		for (const label of ['los', 'abnehmen', 'zurückgeben'])
-			await expect(keyBar).toContainText(label);
+		await expect(keyBar).toContainText('los');
+		await expect(keyBar).not.toContainText('abnehmen');
+		await expect(keyBar).not.toContainText('zurückgeben');
+		await page.keyboard.press('Escape');
+
+		await openBoardAt(page, acceptance);
+		await press(page, '?');
+		await expect(keyBar).toContainText('abnehmen');
+		await expect(keyBar).toContainText('zurückgeben');
+		await expect(keyBar).not.toContainText('los');
 		await page.keyboard.press('Escape');
 	} finally {
+		cleanUp(db, backlog);
+		cleanUp(db, acceptance);
+	}
+});
+
+test('after the empty-comment refusal the focus stays in the field, so dd types text instead of deleting', async ({
+	page,
+	db
+}) => {
+	const title = `Keep focus ${randomUUID()}`;
+	const ticket = ticketIn(db, title, 'Abnahme');
+	try {
+		await openBoardAt(page, title);
+		await press(page, 'r', 'Enter');
+		await expect(rowIn(page, 'Zur Abnahme', title).getByRole('alert')).toBeVisible();
+		const comment = page.getByLabel(`Kommentar zum Zurückgeben von ${ticket.ref}`);
+		await expect(comment).toBeFocused();
+		await page.keyboard.type('dd');
+		await expect(comment).toHaveValue('dd');
+		await expect(rowIn(page, 'Zur Abnahme', title)).toHaveCount(1);
+	} finally {
+		cleanUp(db, title);
+	}
+});
+
+test('a button on another row makes that row the selected one', async ({ page, db }) => {
+	const first = `Selected first ${randomUUID()}`;
+	const second = `Clicked second ${randomUUID()}`;
+	ticketIn(db, first, 'Abnahme');
+	const clicked = ticketIn(db, second, 'Abnahme');
+	try {
+		await openBoardAt(page, first);
+		await rowIn(page, 'Zur Abnahme', second)
+			.getByRole('button', { name: /^Zurückgeben/ })
+			.click();
+		await press(page, 'Escape', 'r');
+		await expect(page.getByLabel(`Kommentar zum Zurückgeben von ${clicked.ref}`)).toBeFocused();
+	} finally {
+		cleanUp(db, first);
+		cleanUp(db, second);
+	}
+});
+
+test('a ticket waiting for an answer offers Antworten, which opens the Run-Akte, instead of Los', async ({
+	page,
+	db
+}) => {
+	const title = `Asks a question ${randomUUID()}`;
+	const ticket = ticketIn(db, title, 'Umsetzen');
+	requestHuman(db, HUMAN, ticket.id, { question: 'CSV or JSON?' });
+	try {
+		await open(page, '/board');
+		const row = rowIn(page, 'Wartet auf dich', title);
+		await expect(row.getByRole('button', { name: /^Los/ })).toHaveCount(0);
+		await row.getByRole('button', { name: /^Antworten/ }).click();
+		await expect(page).toHaveURL(new RegExp(`/p/${PROJECT.key}/t/${ticket.number}$`, 'i'));
+	} finally {
+		cleanUp(db, title);
+	}
+});
+
+test('r and a do nothing on a ticket that is not in the acceptance', async ({ page, db }) => {
+	const title = `Not yet accepted ${randomUUID()}`;
+	const ticket = ticketIn(db, title, 'Backlog');
+	try {
+		await openBoardAt(page, title);
+		await press(page, 'r');
+		await expect(page.getByLabel(`Kommentar zum Zurückgeben von ${ticket.ref}`)).toHaveCount(0);
+		await press(page, 'a');
+		await expect(rowIn(page, 'Offen', title).getByRole('alert')).toHaveCount(0);
+		await expect(rowIn(page, 'Offen', title)).toHaveCount(1);
+	} finally {
+		cleanUp(db, title);
+	}
+});
+
+test('starting a ticket that waits for several tickets names them in the plural', async ({
+	page,
+	db
+}) => {
+	anyProfile(db);
+	const title = `Blocked start ${randomUUID()}`;
+	const blocked = ticketIn(db, title, 'Backlog');
+	const one = ticketIn(db, `Blocker one ${title}`, 'Backlog');
+	const two = ticketIn(db, `Blocker two ${title}`, 'Backlog');
+	board.linkRelation(db, HUMAN, one.id, blocked.id, 'blocks');
+	board.linkRelation(db, HUMAN, two.id, blocked.id, 'blocks');
+	try {
+		await openBoardAt(page, title);
+		await press(page, 's');
+		await expect(
+			page.getByText(
+				`${blocked.ref} gestartet, obwohl ${one.ref}, ${two.ref} noch fertig werden müssen`
+			)
+		).toBeVisible();
+	} finally {
+		cleanUp(db, title);
+		cleanUp(db, `Blocker one ${title}`);
+		cleanUp(db, `Blocker two ${title}`);
+	}
+});
+
+test('the comment field is wide and the row buttons are touch targets on a phone', async ({
+	page,
+	db
+}) => {
+	const title = `Layout ${randomUUID()}`;
+	const ticket = ticketIn(db, title, 'Abnahme');
+	try {
+		await openBoardAt(page, title);
+		await press(page, 'r');
+		const field = page.getByLabel(`Kommentar zum Zurückgeben von ${ticket.ref}`);
+		expect((await field.boundingBox())!.width).toBeGreaterThanOrEqual(200);
+		await press(page, 'Escape');
+		await page.setViewportSize({ width: 375, height: 667 });
+		const button = rowIn(page, 'Zur Abnahme', title).getByRole('button', { name: /^Abnehmen/ });
+		expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	} finally {
+		cleanUp(db, title);
+	}
+});
+
+test('a row that another tab moves keeps the focus that sat on its button', async ({
+	page,
+	browser,
+	db
+}) => {
+	const title = `Moved under focus ${randomUUID()}`;
+	const ticket = ticketIn(db, title, 'Abnahme');
+	const otherContext = await browser.newContext();
+	const other = await otherContext.newPage();
+	try {
+		await openBoardAt(page, title);
+		await rowIn(page, 'Zur Abnahme', title)
+			.getByRole('button', { name: /^Abnehmen/ })
+			.focus();
+
+		// This tab accepts nothing itself: only the reload its live event triggers can bring the focus back.
+		await openBoardAt(other, title);
+		await press(other, 'a');
+
+		await expect(rowIn(page, 'Fertig', title)).toHaveCount(1);
+		await expect(page.locator(`[data-ticket="${ticket.id}"]:not([inert])`)).toBeFocused();
+	} finally {
+		await otherContext.close();
 		cleanUp(db, title);
 	}
 });

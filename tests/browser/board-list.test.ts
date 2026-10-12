@@ -369,7 +369,8 @@ test('moving into done with an open task shows the refusal with the way out at t
 		await press(page, '>');
 		const refusal = rowIn(page, 'Abnahme', title).getByRole('alert');
 		await expect(refusal).toContainText(`${ticket.ref} hat 1 offene Tasks`);
-		await expect(refusal).toContainText('Erledige die Tasks');
+		await expect(refusal).toContainText('Hake die offenen Tasks ab oder lösche sie');
+		await expect(refusal).not.toContainText('completeTask');
 		await expect(group(page, 'Fertig')).not.toContainText(ticket.ref);
 		// refused, so there is nothing to take back
 		await press(page, '?');
