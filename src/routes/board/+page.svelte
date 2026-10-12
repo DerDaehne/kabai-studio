@@ -161,7 +161,7 @@
 
 	/** Loads the board again; a row that had the focus keeps it, unless the focus has moved on meanwhile. */
 	async function reload() {
-		const focused = document.activeElement?.getAttribute('data-ticket');
+		const focused = document.activeElement?.closest('[data-ticket]')?.getAttribute('data-ticket');
 		await invalidateLive(BOARD_DEPENDENCY);
 		await tick();
 		if (focused && focusDropped()) await focusRow(Number(focused));

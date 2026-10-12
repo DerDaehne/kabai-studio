@@ -44,12 +44,12 @@ const runsOf = (db: DatabaseSync, ticketId: number) =>
 	(db.prepare('SELECT count(*) AS n FROM runs WHERE ticket_id = ?').get(ticketId)!.n as number) ??
 	0;
 
-const columnOf = (db: DatabaseSync, ticketId: number) =>
+const phaseOf = (db: DatabaseSync, ticketId: number) =>
 	(
 		db
-			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
-			.get(ticketId)! as { name: string }
-	).name;
+			.prepare('SELECT c.phase FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
+			.get(ticketId)! as { phase: string }
+	).phase;
 
 function cleanUp(db: DatabaseSync, title: string) {
 	for (const { id } of db.prepare('SELECT id FROM tickets WHERE title = ?').all(title))
@@ -65,7 +65,7 @@ function anyProfile(db: DatabaseSync) {
 	});
 }
 
-test('s starts the selected ticket, it moves into the work step and a run is queued; the button does the same', async ({
+test('s starts the selected ticket, it moves into a work step and a run is queued; the button does the same', async ({
 	page,
 	db
 }) => {
@@ -79,12 +79,12 @@ test('s starts the selected ticket, it moves into the work step and a run is que
 		await press(page, 's');
 		await expect(page.getByText(`${first.ref} gestartet`)).toBeVisible();
 		expect(runsOf(db, first.id)).toBe(1);
-		expect(columnOf(db, first.id)).toBe('Umsetzen');
+		expect(phaseOf(db, first.id)).toBe('work');
 
 		await rowIn(page, 'Offen', byButton).getByRole('button', { name: /^Los/ }).click();
 		await expect(page.getByText(`${second.ref} gestartet`)).toBeVisible();
 		expect(runsOf(db, second.id)).toBe(1);
-		expect(columnOf(db, second.id)).toBe('Umsetzen');
+		expect(phaseOf(db, second.id)).toBe('work');
 	} finally {
 		cleanUp(db, byKey);
 		cleanUp(db, byButton);
