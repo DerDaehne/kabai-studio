@@ -300,6 +300,7 @@
 	async function giveBack(row: BoardTicket) {
 		if (!(await intend(row, 'giveBack', { comment: giveBackComment }))) return;
 		givingBack = null;
+		void focusRow(row.id);
 		toast(t('board.returned', { ref: row.ref }), 'success');
 	}
 
