@@ -41,7 +41,7 @@ test('the Run-Akte shows comment, step message and final report as markdown, hea
 	const loaded: string[] = [];
 	page.on('request', (request) => loaded.push(request.url()));
 	const ticket = seedTicket('Render agent text');
-	addComment(db, { kind: 'agent', name: 'reviewer' }, ticket.id, MARKDOWN);
+	addComment(db, { kind: 'agent' }, ticket.id, MARKDOWN);
 	finishedRunSaying(db, ticket.id, MARKDOWN);
 	await page.setViewportSize({ width: 375, height: 800 });
 	await open(page, ticket.path);
