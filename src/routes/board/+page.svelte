@@ -4,7 +4,7 @@
 	import { t } from '$lib/i18n/t';
 	import type { MessageKey } from '$lib/i18n';
 	import type { Lage } from '$lib/lage';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { crossfade } from 'svelte/transition';
@@ -181,6 +181,13 @@
 		refusal = null;
 		void focusRow(row.id);
 	}
+
+	let shownFocus = shell.focus?.id;
+	$effect(() => {
+		if (shell.focus?.id === shownFocus) return;
+		shownFocus = shell.focus?.id;
+		untrack(() => void focusRow(current?.id));
+	});
 
 	function toggleFlow() {
 		flowChoice = !flow;
@@ -666,51 +673,48 @@
 					>{/snippet}
 			</EmptyState>
 		{:else}
-			<!-- a new focus renders new columns; without the key the emptied ones linger in their outro -->
-			{#key `${flow}-${shell.focus?.id ?? ''}`}
-				<div class="panorama" data-panorama use:sideways>
-					{#each groups as group, groupIndex (group.id)}
-						<section
-							aria-labelledby={variantsShown
-								? `variant-${group.id} group-${group.id}`
-								: `group-${group.id}`}
-							data-group={group.id}
-							class:block-start={variantsShown && group.variant !== groups[groupIndex - 1]?.variant}
-						>
-							{#if variantsShown && group.variant}
-								<p class="variant-name" id="variant-{group.id}">
-									{t(`variant.${group.variant}.name`)}
-								</p>
-							{/if}
-							<h2 id="group-{group.id}">
-								{group.title} <span class="count">{group.total}</span>
-							</h2>
-							<ul class="rows">
-								{#each group.rows as row (row.id)}
-									<li
-										data-ticket={row.id}
-										tabindex="-1"
-										aria-current={row === current ? 'true' : undefined}
-										in:receive|global={{ key: row.id }}
-										out:send|global={{ key: row.id }}
-										animate:flip={{ duration: glide }}
-									>
-										{#if draft?.anchor === row.id && !draft.below}{@render draftForm(draft)}{/if}
-										{@render ticketRow(row)}
-										{#if draft?.anchor === row.id && draft.below}{@render draftForm(draft)}{/if}
-									</li>
-								{/each}
-							</ul>
-							{#if !group.rows.length}<p class="muted">{t('board.group.empty')}</p>{/if}
-							{#if group.total > group.rows.length}
-								<p class="muted">
-									{t('board.done.more', { shown: group.rows.length, total: group.total })}
-								</p>
-							{/if}
-						</section>
-					{/each}
-				</div>
-			{/key}
+			<div class="panorama" data-panorama use:sideways>
+				{#each groups as group, groupIndex (group.id)}
+					<section
+						aria-labelledby={variantsShown
+							? `variant-${group.id} group-${group.id}`
+							: `group-${group.id}`}
+						data-group={group.id}
+						class:block-start={variantsShown && group.variant !== groups[groupIndex - 1]?.variant}
+					>
+						{#if variantsShown && group.variant}
+							<p class="variant-name" id="variant-{group.id}">
+								{t(`variant.${group.variant}.name`)}
+							</p>
+						{/if}
+						<h2 id="group-{group.id}">
+							{group.title} <span class="count">{group.total}</span>
+						</h2>
+						<ul class="rows">
+							{#each group.rows as row (row.id)}
+								<li
+									data-ticket={row.id}
+									tabindex="-1"
+									aria-current={row === current ? 'true' : undefined}
+									in:receive={{ key: row.id }}
+									out:send={{ key: row.id }}
+									animate:flip={{ duration: glide }}
+								>
+									{#if draft?.anchor === row.id && !draft.below}{@render draftForm(draft)}{/if}
+									{@render ticketRow(row)}
+									{#if draft?.anchor === row.id && draft.below}{@render draftForm(draft)}{/if}
+								</li>
+							{/each}
+						</ul>
+						{#if !group.rows.length}<p class="muted">{t('board.group.empty')}</p>{/if}
+						{#if group.total > group.rows.length}
+							<p class="muted">
+								{t('board.done.more', { shown: group.rows.length, total: group.total })}
+							</p>
+						{/if}
+					</section>
+				{/each}
+			</div>
 		{/if}
 
 		{#if hiddenLine}<p class="hidden-line">{hiddenLine}</p>{/if}

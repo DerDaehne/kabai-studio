@@ -624,3 +624,89 @@ test('> and < move a ticket only along the steps of its own variant', async ({ p
 		knowledge.archive();
 	}
 });
+
+const panoramas = (page: Page) => page.locator('[data-panorama]');
+const chip = (page: Page, project: { key: string; name: string }) =>
+	page.getByRole('button', { name: `${project.key} ${project.name}` });
+const flowToggle = (page: Page) => page.getByRole('button', { name: 'Ablauf zeigen' });
+
+test('a focus change replaces the columns at once, in the flow and in the Lagen', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	seedTicket('Focus switch: software ticket');
+	const knowledge = secondProject(db, 'knowledge');
+	const sections = page.locator('[data-panorama] > section');
+	const quickly = { timeout: 500 };
+	try {
+		await open(page, '/board');
+		await focusSeededProject(page);
+		await showFlow(page);
+
+		await chip(page, knowledge).click();
+		await expect(sections).toHaveCount(VARIANTS.knowledge.length, quickly);
+		await chip(page, PROJECT).click();
+		await expect(sections).toHaveCount(VARIANTS.software.length, quickly);
+
+		await flowToggle(page).click();
+		await expect(headings(page)).toHaveText(named(LAGEN));
+		await chip(page, knowledge).click();
+		await expect(row(page, knowledge.title)).toBeVisible();
+		await flowToggle(page).click();
+		await expect(sections).toHaveCount(VARIANTS.knowledge.length, quickly);
+	} finally {
+		deleteByTitle(db, knowledge.title);
+		knowledge.archive();
+	}
+});
+
+test('a focus change keeps the keyboard focus on a row and renders one panorama', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	seedTicket('Focus keeps keys: software ticket');
+	const knowledge = secondProject(db, 'knowledge');
+	try {
+		await open(page, '/board');
+		await press(page, ' ', 'g');
+		await select(page, 'Focus keeps keys: software ticket');
+
+		await press(page, ' ', ' ');
+		await expect(page.locator('[data-ticket]:focus')).toHaveCount(1);
+		await expect(panoramas(page)).toHaveCount(1);
+
+		await focusSeededProject(page);
+		await expect(page.locator('[data-ticket]:focus')).toHaveCount(1);
+		await expect(panoramas(page)).toHaveCount(1);
+		await expect(chip(page, knowledge)).toBeVisible();
+	} finally {
+		deleteByTitle(db, knowledge.title);
+		knowledge.archive();
+	}
+});
+
+test('moving to a column far to the right in the grouped flow keeps the focused row in view', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	seedTicket('Far right: backlog ticket');
+	seedTicket('Far right: planned ticket', 'Planen');
+	const knowledge = secondProject(db, 'knowledge');
+	try {
+		await open(page, '/board');
+		await press(page, ' ', 'g');
+		await expect(page.locator('.variant-name').first()).toBeVisible();
+		await press(page, 'g', 'g', 'l', 'l');
+
+		const box = await page.locator('[data-ticket]:focus').boundingBox();
+		const width = page.viewportSize()!.width;
+		expect(box!.x).toBeGreaterThanOrEqual(0);
+		expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+	} finally {
+		deleteByTitle(db, knowledge.title);
+		knowledge.archive();
+	}
+});
