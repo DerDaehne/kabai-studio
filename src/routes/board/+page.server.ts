@@ -8,7 +8,7 @@ import { acceptTicket, returnTicket, startTicket } from '$lib/server/domain/inte
 import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketLagen, type TicketLage } from '$lib/server/lagen';
-import { STEP_LABELS, type Step } from '$lib/server/domain/variants';
+import { STEP_LABELS, VARIANTS, type Step, type Variant } from '$lib/server/domain/variants';
 import { FLOW_COOKIE, type BoardColumn, type BoardTicket, type ColumnPhase } from './list';
 import type { RunTraceState } from '$lib/trace/trace';
 import type { Actions, PageServerLoad } from './$types';
@@ -17,7 +17,7 @@ const HUMAN: Actor = { kind: 'user' };
 
 export type BoardPage = {
 	tickets: BoardTicket[];
-	/** Every column of every active project, in step order; the expert view shows them and moves along them. */
+	/** Every column of every active project, by variant and step order; the expert view shows them and moves along them. */
 	columns: BoardColumn[];
 	/** The browser's choice: the expert view with the columns instead of the Lagen. */
 	flow: boolean;
@@ -59,11 +59,13 @@ const TICKETS = `
 	ORDER BY t.id`;
 
 const COLUMNS = `
-	SELECT c.id, c.project_id AS projectId, c.step, c.name, c.phase, c.position
+	SELECT c.id, c.project_id AS projectId, p.variant, c.step, c.name, c.phase, c.position
 	FROM columns c JOIN projects p ON p.id = c.project_id WHERE p.archived = 0`;
 
 const STEP_ORDER = Object.keys(STEP_LABELS) as Step[];
+const VARIANT_ORDER = Object.keys(VARIANTS) as Variant[];
 const stepIndex = (column: BoardColumn) => STEP_ORDER.indexOf(column.step as Step);
+const variantIndex = (column: BoardColumn) => VARIANT_ORDER.indexOf(column.variant);
 
 function boardTicket(row: TicketRow, lage: TicketLage): BoardTicket {
 	return {
@@ -92,7 +94,8 @@ function boardTicket(row: TicketRow, lage: TicketLage): BoardTicket {
 /** Every column once, so the human's moves follow from the columns, not from a lookup per ticket. */
 const boardColumns = () =>
 	(db().prepare(COLUMNS).all() as BoardColumn[]).sort(
-		(a, b) => stepIndex(a) - stepIndex(b) || a.projectId - b.projectId
+		(a, b) =>
+			variantIndex(a) - variantIndex(b) || stepIndex(a) - stepIndex(b) || a.projectId - b.projectId
 	);
 
 // A reconnect reloads the live state; the board reloads with it, as it has no replay of the events it missed.

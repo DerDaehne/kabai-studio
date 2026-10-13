@@ -1,4 +1,5 @@
 import type { Lage, LageReason, Progress } from '$lib/lage';
+import type { Variant } from '$lib/variant';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
 import type { RunTraceState } from '$lib/trace/trace';
 
@@ -10,6 +11,7 @@ export type ColumnPhase = 'open' | 'work' | 'acceptance' | 'done';
 export type BoardColumn = {
 	id: number;
 	projectId: number;
+	variant: Variant;
 	step: string;
 	name: string;
 	phase: ColumnPhase;
@@ -37,7 +39,14 @@ export type BoardTicket = {
 	updatedAt: string;
 };
 
-export type BoardGroup = { id: string; title: string; rows: BoardTicket[]; total: number };
+export type BoardGroup = {
+	id: string;
+	title: string;
+	/** Set in the expert view, where a column belongs to the steps of one variant. */
+	variant?: Variant;
+	rows: BoardTicket[];
+	total: number;
+};
 
 /** The Lagen in the order the board shows them; what waits for the human comes first. */
 export const LAGEN: Lage[] = ['waiting', 'working', 'open', 'acceptance', 'done'];
@@ -69,13 +78,19 @@ export function groupByLage(tickets: BoardTicket[], title: (lage: Lage) => strin
 	});
 }
 
-/** The expert view: one group per step across all projects, in the order of `columns`, empty steps included. */
+/** The expert view: one group per step and variant, in the order of `columns`, empty steps included. */
 export function groupByColumn(tickets: BoardTicket[], columns: BoardColumn[]): BoardGroup[] {
+	const variantOf = new Map(columns.map((column) => [column.projectId, column.variant]));
+	const groupId = (variant: Variant, step: string) => `${variant}-${step}`;
 	const groups = new Map<string, BoardGroup>();
-	for (const column of columns)
-		if (!groups.has(column.step))
-			groups.set(column.step, { id: column.step, title: column.name, rows: [], total: 0 });
-	for (const ticket of tickets) groups.get(ticket.step)?.rows.push(ticket);
+	for (const { variant, step, name } of columns) {
+		const id = groupId(variant, step);
+		if (!groups.has(id)) groups.set(id, { id, title: name, variant, rows: [], total: 0 });
+	}
+	for (const ticket of tickets) {
+		const variant = variantOf.get(ticket.project.id);
+		if (variant) groups.get(groupId(variant, ticket.step))?.rows.push(ticket);
+	}
 	return [...groups.values()].map((group) => ({
 		...group,
 		rows: group.rows.sort(byNumber),

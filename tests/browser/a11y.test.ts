@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { addComment, addTask } from '../../src/lib/server/domain/board.ts';
+import { randomUUID } from 'node:crypto';
+import { addComment, addTask, createProject } from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
 import { createProfile } from '../../src/lib/server/domain/runs.ts';
 import { axeExceptions } from './axe.exceptions.ts';
@@ -114,6 +115,27 @@ test.describe('WCAG 2.1 A/AA, light/dark × phone/desktop', () => {
 		await open(page, '/board');
 
 		await checkEveryCombination(page, 'board');
+	});
+
+	test('board flow with projects of two variants', async ({ page, db, seedTicket }) => {
+		seedTicket('Axe gate: a ticket in the grouped flow');
+		const suffix = randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
+		const { id } = createProject(
+			db,
+			HUMAN,
+			{ key: `A${suffix}`, name: `Axe knowledge ${suffix}` },
+			'knowledge'
+		);
+		try {
+			await open(page, '/board');
+			await page.keyboard.press(' ');
+			await page.keyboard.press('g');
+			await expect(page.locator('.variant-name').first()).toBeVisible();
+
+			await checkEveryCombination(page, 'board-flow');
+		} finally {
+			db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(id);
+		}
 	});
 
 	test('projects', async ({ page }) => {

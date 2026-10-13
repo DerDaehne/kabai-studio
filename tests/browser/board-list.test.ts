@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import * as board from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
 import { createProfile, createRun, finishRun, startRun } from '../../src/lib/server/domain/runs.ts';
+import { STEP_LABELS, VARIANTS, type Variant } from '../../src/lib/server/domain/variants.ts';
 import { expect, open, sidewaysScrollers, test } from './fixtures.ts';
 import { PROJECT } from './global-setup.ts';
 
@@ -95,13 +96,15 @@ function runOn(db: DatabaseSync, ticketId: number, outcome: 'running' | 'failed'
 }
 
 /** A second project with one ticket; projects cannot be deleted, so the clean-up archives it. */
-function secondProject(db: DatabaseSync) {
+function secondProject(db: DatabaseSync, variant: Variant = 'software') {
 	// 10 hex characters (hyphens stripped first) keep collisions astronomically unlikely (16^10 possibilities).
 	const suffix = randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
-	const project = board.createProject(db, HUMAN, {
-		key: `B${suffix}`,
-		name: `Zweitprojekt ${suffix}`
-	});
+	const project = board.createProject(
+		db,
+		HUMAN,
+		{ key: `B${suffix}`, name: `Zweitprojekt ${suffix}` },
+		variant
+	);
 	board.createTicket(db, HUMAN, project.id, { title: `Ticket im Zweitprojekt ${suffix}` });
 	return {
 		key: `B${suffix}`,
@@ -415,6 +418,7 @@ test('o creates a ticket in the column of the selected row, and a second tab sho
 		await open(other, '/board');
 		await focusSeededProject(page);
 		await showFlow(page);
+		await focusSeededProject(other);
 		await showFlow(other);
 		await select(page, anchor.ref);
 
@@ -554,4 +558,68 @@ test.describe('on a phone', () => {
 			second.archive();
 		}
 	});
+});
+
+const stepNames = (variant: Variant) => VARIANTS[variant].map((step) => STEP_LABELS[step]);
+
+/** The variant name above each column and the column's name, in the order shown. */
+const columns = (page: Page) =>
+	page.locator('[data-panorama] > section').evaluateAll((sections) =>
+		sections.map((section) => ({
+			variant: section.querySelector('.variant-name')?.textContent?.trim() ?? '',
+			step: section.querySelector('h2')?.firstChild?.textContent?.trim() ?? ''
+		}))
+	);
+
+const stepsOf = (shown: { variant: string; step: string }[], variant: string) =>
+	shown.filter((column) => column.variant === variant).map((column) => column.step);
+
+test('the flow shows one named block per variant without a focus and only the focused variant with one', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	seedTicket('Flow: software ticket');
+	const knowledge = secondProject(db, 'knowledge');
+	try {
+		await open(page, '/board');
+		await press(page, ' ', 'g');
+		await expect
+			.poll(async () => stepsOf(await columns(page), 'Wissen'))
+			.toEqual(stepNames('knowledge'));
+		const shown = await columns(page);
+		expect(stepsOf(shown, 'Software')).toEqual(stepNames('software'));
+		const blocks = shown.map((column) => column.variant);
+		const blockOrder = blocks.filter((name, at) => name !== blocks[at - 1]);
+		expect(new Set(blockOrder).size).toBe(blockOrder.length);
+
+		await page.getByRole('button', { name: `${knowledge.key} ${knowledge.name}` }).click();
+		await expect(headings(page)).toHaveText(named(stepNames('knowledge')));
+		await expect(page.locator('.variant-name')).toHaveCount(0);
+
+		await page.getByRole('button', { name: `${PROJECT.key} ${PROJECT.name}` }).click();
+		await expect(headings(page)).toHaveText(named(stepNames('software')));
+	} finally {
+		deleteByTitle(db, knowledge.title);
+		knowledge.archive();
+	}
+});
+
+test('> and < move a ticket only along the steps of its own variant', async ({ page, db }) => {
+	const knowledge = secondProject(db, 'knowledge');
+	try {
+		await open(page, '/board');
+		await press(page, ' ', 'g');
+		await page.getByRole('button', { name: `${knowledge.key} ${knowledge.name}` }).click();
+		await select(page, knowledge.title);
+		await press(page, '>');
+		await expect(rowIn(page, 'Recherchieren', knowledge.title)).toBeVisible();
+		await press(page, '<');
+		await expect(rowIn(page, 'Backlog', knowledge.title)).toBeVisible();
+		await press(page, '<');
+		await expect(rowIn(page, 'Backlog', knowledge.title)).toBeVisible();
+	} finally {
+		deleteByTitle(db, knowledge.title);
+		knowledge.archive();
+	}
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Lage } from '$lib/lage';
 import type { ProjectRef } from '$lib/shell/shell.svelte';
+import type { Variant } from '$lib/variant';
 import {
 	DONE_SHOWN,
 	edgeIndex,
@@ -15,12 +16,20 @@ import {
 
 const studio: ProjectRef = { id: 1, code: 'STU', name: 'Studio', palette: 1 };
 const shop: ProjectRef = { id: 2, code: 'SHO', name: 'Shop', palette: 2 };
-const column = (id: number, projectId: number, step: string, name: string, position: number) =>
-	({ id, projectId, step, name, phase: 'work', position }) as BoardColumn;
+const column = (
+	id: number,
+	projectId: number,
+	step: string,
+	name: string,
+	position: number,
+	variant: Variant = 'software'
+) => ({ id, projectId, variant, step, name, phase: 'work', position }) as BoardColumn;
 const backlog = column(1, 1, 'backlog', 'Backlog', 0);
 const refine = column(2, 1, 'refine', 'Präzisieren', 1);
 const plan = column(3, 1, 'plan', 'Planen', 2);
 const shopPlan = column(12, 2, 'plan', 'Planen', 2);
+const shopBacklog = column(20, 2, 'backlog', 'Backlog', 0, 'knowledge');
+const shopResearch = column(21, 2, 'research', 'Recherchieren', 1, 'knowledge');
 
 const ticket = (
 	project: ProjectRef,
@@ -86,6 +95,21 @@ describe('the expert view', () => {
 		expect(groups.map((group) => group.title)).toEqual(['Backlog', 'Präzisieren', 'Planen']);
 		expect(groups[0]).toMatchObject({ rows: [], total: 0 });
 		expect(refs(groups[2].rows)).toEqual(['SHO-2', 'STU-4']);
+	});
+
+	it('keeps the steps of each variant apart, so a shared step is a column of each', () => {
+		const groups = groupByColumn(
+			[ticket(studio, 4, plan), ticket(shop, 2, shopResearch)],
+			[backlog, plan, shopBacklog, shopResearch]
+		);
+		expect(groups.map((group) => [group.variant, group.title])).toEqual([
+			['software', 'Backlog'],
+			['software', 'Planen'],
+			['knowledge', 'Backlog'],
+			['knowledge', 'Recherchieren']
+		]);
+		expect(refs(groups[1].rows)).toEqual(['STU-4']);
+		expect(refs(groups[3].rows)).toEqual(['SHO-2']);
 	});
 });
 

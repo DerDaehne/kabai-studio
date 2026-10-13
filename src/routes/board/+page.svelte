@@ -96,11 +96,18 @@
 	const deleting = new SvelteSet<number>();
 	const present = $derived(data.tickets.filter((ticket) => !deleting.has(ticket.id)));
 	const view = $derived(focusSummary(present, shell.focus, (ticket) => ticket.project.id));
+	/** A focused project shows the steps of its own variant only. */
+	const flowColumns = $derived(
+		shell.focus
+			? data.columns.filter((column) => column.projectId === shell.focus?.id)
+			: data.columns
+	);
 	const groups = $derived(
 		flow
-			? groupByColumn(view.visible, data.columns)
+			? groupByColumn(view.visible, flowColumns)
 			: groupByLage(view.visible, (lage) => t(`lage.${lage}`))
 	);
+	const variantsShown = $derived(new Set(groups.map((group) => group.variant)).size > 1);
 	const rows = $derived(groups.flatMap((group) => group.rows));
 	const groupStarts = $derived(
 		groups.filter((group) => group.rows.length).map((group) => rows.indexOf(group.rows[0]))
@@ -659,10 +666,22 @@
 					>{/snippet}
 			</EmptyState>
 		{:else}
-			{#key flow}
+			<!-- a new focus renders new columns; without the key the emptied ones linger in their outro -->
+			{#key `${flow}-${shell.focus?.id ?? ''}`}
 				<div class="panorama" data-panorama use:sideways>
-					{#each groups as group (group.id)}
-						<section aria-labelledby="group-{group.id}" data-group={group.id}>
+					{#each groups as group, groupIndex (group.id)}
+						<section
+							aria-labelledby={variantsShown
+								? `variant-${group.id} group-${group.id}`
+								: `group-${group.id}`}
+							data-group={group.id}
+							class:block-start={variantsShown && group.variant !== groups[groupIndex - 1]?.variant}
+						>
+							{#if variantsShown && group.variant}
+								<p class="variant-name" id="variant-{group.id}">
+									{t(`variant.${group.variant}.name`)}
+								</p>
+							{/if}
 							<h2 id="group-{group.id}">
 								{group.title} <span class="count">{group.total}</span>
 							</h2>
@@ -745,6 +764,13 @@
 	}
 	.panorama > section {
 		min-width: 0;
+	}
+	.variant-name {
+		margin: 0 0 var(--space-1);
+		color: var(--text-muted);
+		font-size: var(--type-meta);
+		font-weight: var(--weight-medium);
+		text-transform: uppercase;
 	}
 	h2 {
 		margin: 0 0 var(--space-2);
@@ -894,6 +920,9 @@
 			padding: 0 var(--gutter) var(--space-3);
 			overflow: auto hidden;
 			scrollbar-width: thin;
+		}
+		.panorama > section.block-start {
+			margin-inline-start: var(--space-6);
 		}
 		.panorama > section {
 			flex: 0 0 var(--facet-w);
