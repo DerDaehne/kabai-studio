@@ -227,6 +227,7 @@ test('␣g and :ablauf switch to the flow with its columns, run state and profil
 	);
 
 	await open(page, '/board');
+	await focusSeededProject(page);
 	await expect(headings(page)).toHaveText(named(COLUMNS));
 
 	await press(page, ':');
