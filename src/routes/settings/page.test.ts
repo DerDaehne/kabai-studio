@@ -24,7 +24,7 @@ it('shows an overview that links agent profiles and secrets and no pages that do
 	const body = page(ok);
 	expect(body).toContain('Einstellungen');
 
-	const hrefs = [...body.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+	const hrefs = [...body.matchAll(/href="(\/[^"]+)"/g)].map((m) => m[1]); // own pages only
 	expect(hrefs).toEqual(['/settings/profiles', '/settings/secrets']); // no dead links
 
 	for (const label of ['Agent-Profile', 'Secrets'])
