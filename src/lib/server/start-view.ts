@@ -25,6 +25,8 @@ export type QueuedRun = {
 export type RunTrack = {
 	id: number;
 	startedAt: string;
+	/** The run's tokens in and out over all its finished steps, however long ago they ended. */
+	tokens: number;
 	events: TraceEvent[];
 	series: SeriesPoint[];
 };
@@ -58,7 +60,7 @@ export const QUEUED_RUNS = `
 	LIMIT ${QUEUED_SHOWN}`;
 
 export const TRACKED_RUNS = `
-	SELECT r.id, ${iso('r.started_at')} AS startedAt
+	SELECT r.id, ${iso('r.started_at')} AS startedAt, r.tokens_in + r.tokens_out AS tokens
 	FROM runs r
 	JOIN tickets t ON t.id = r.ticket_id
 	JOIN projects p ON p.id = t.project_id
@@ -114,7 +116,11 @@ function tailEvents(db: DatabaseSync, runIds: number[]): Map<number, TraceEvent[
 }
 
 function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
-	const runs = db.prepare(TRACKED_RUNS).all() as { id: number; startedAt: string }[];
+	const runs = db.prepare(TRACKED_RUNS).all() as {
+		id: number;
+		startedAt: string;
+		tokens: number;
+	}[];
 	const series = stepSeries(
 		db,
 		runs.map((run) => run.id),

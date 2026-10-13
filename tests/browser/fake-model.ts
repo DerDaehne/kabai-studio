@@ -3,10 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 /**
- * One answer of the model: closing text, a call of a studio tool, or `hang` — no answer at all, so the run keeps
- * working until the studio aborts the request.
+ * One answer of the model: closing text, a call of a studio tool, `partial` — a first text delta and then silence —
+ * or `hang` — no answer at all, so the run keeps working until the studio aborts the request.
  */
-export type ScriptedReply = { text: string } | { call: { name: string; args: object } } | 'hang';
+export type ScriptedReply =
+	{ text: string } | { call: { name: string; args: object } } | { partial: string } | 'hang';
 
 export type FakeModel = {
 	/** The base URL for an agent profile, including `/v1`. */
@@ -56,12 +57,18 @@ function answer(request: IncomingMessage, response: ServerResponse, reply?: Scri
 	}
 	response.writeHead(200, { 'Content-Type': 'text/event-stream' });
 	if (reply === 'hang') return void response.flushHeaders();
+	if (typeof reply === 'object' && 'partial' in reply) {
+		const delta = { content: reply.partial };
+		return void response.write(
+			`data: ${JSON.stringify(chunk([{ index: 0, delta, finish_reason: null }]))}\n\n`
+		);
+	}
 	for (const chunk of streamOf(reply)) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
 	response.end('data: [DONE]\n\n');
 }
 
 /** The chunks of a streamed chat completion: the reply, its finish reason, then the usage. */
-function streamOf(reply: Exclude<ScriptedReply, 'hang'>) {
+function streamOf(reply: { text: string } | { call: { name: string; args: object } }) {
 	const delta = 'text' in reply ? { content: reply.text } : { tool_calls: [toolCall(reply.call)] };
 	const finishReason = 'text' in reply ? 'stop' : 'tool_calls';
 	return [

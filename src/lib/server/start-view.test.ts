@@ -137,6 +137,31 @@ describe('startView', () => {
 	});
 });
 
+describe('startView tokens', () => {
+	it('gives a tracked run its token total over all steps, however long ago they ended', () => {
+		const s = setup();
+		const id = s.running();
+		runs.appendEvent(s.db, user, id, {
+			type: 'log',
+			payload: { kind: 'step', tokensIn: 100, tokensOut: 10 },
+			usage: { tokensIn: 100, tokensOut: 10, cost: 0 }
+		});
+		s.db
+			.prepare("UPDATE run_events SET created_at = datetime('now', '-3 hours') WHERE run_id = ?")
+			.run(id);
+
+		const [track] = startView(s.db).tracks;
+		expect(track.series.reduce((sum, point) => sum + (point.tokensIn ?? 0), 0)).toBe(0);
+		expect(track.tokens).toBe(110);
+	});
+
+	it('has a zero total while no step reported usage', () => {
+		const s = setup();
+		s.running();
+		expect(startView(s.db).tracks[0].tokens).toBe(0);
+	});
+});
+
 describe('query plans of the start view: no full scan over runs', () => {
 	it.each([
 		['queued runs', QUEUED_RUNS],

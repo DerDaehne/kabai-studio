@@ -228,3 +228,36 @@ export function withLiveEvent(events: TraceEvent[], event: TraceEvent): TraceEve
 	if (event.seq <= last) return events;
 	return event.seq === last + 1 ? [...events, event] : undefined;
 }
+
+/**
+ * The catalogue name of what a running run does: the live phase when the page holds one (it drops it with the next
+ * stored event), else what the stored events say.
+ */
+export function phaseName(events: TraceEvent[], live?: Phase): string {
+	if (live) return live.name;
+	if (hasOpenCall(events)) return 'tool';
+	const last = events.at(-1);
+	if (last?.type === 'log' && last.payload.phase === 'model_loading') return 'model_loading';
+	return 'working';
+}
+
+/** Whether a call in the trailing calls and results has no result yet. */
+function hasOpenCall(events: TraceEvent[]): boolean {
+	const answered = new Set<string | null>();
+	for (const { type, key } of events.toReversed()) {
+		if (type === 'tool_result') answered.add(key);
+		else if (type !== 'tool_call') return false;
+		else if (!answered.has(`${key}:result`)) return true;
+	}
+	return false;
+}
+
+/** The tokens one stored event adds to its run's total: only a finished step reports any. */
+export const stepTokens = ({ type, payload }: TraceEvent) =>
+	type === 'log' && payload.kind === 'step'
+		? numberOf(payload.tokensIn) + numberOf(payload.tokensOut)
+		: 0;
+
+/** The run's token total as the tile shows it; zero means no step reported usage yet, not that none was used. */
+export const tokenFigure = (total: number, format: (n: number) => string) =>
+	total > 0 ? format(total) : '–';

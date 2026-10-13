@@ -85,7 +85,7 @@ export const en = {
 	'start.trace.noSteps': 'no step yet',
 	'start.trace.step': 'step {number}',
 	'start.trace.error': 'error',
-	'start.phase.unknown': 'between steps',
+	'start.phase.working': 'working',
 	'start.phase.thinking': 'thinking',
 	'start.phase.writing': 'writing',
 	'start.phase.tool': 'tool running',

@@ -4,11 +4,16 @@ import {
 	buildTrace,
 	firstLine,
 	liveTraceEvent,
+	phaseName,
 	reasonText,
 	resultText,
 	stepGist,
+	stepTokens,
 	tickerText,
+	tokenFigure,
 	withLiveEvent,
+	type Phase,
+	type TraceEvent,
 	type TraceStep
 } from './trace';
 
@@ -171,5 +176,73 @@ describe('live events', () => {
 		expect(withLiveEvent(loaded, RUN_EVENTS[2])).toBe(loaded);
 		expect(withLiveEvent(loaded, RUN_EVENTS[4])).toBeUndefined();
 		expect(withLiveEvent([], RUN_EVENTS[0])).toEqual([RUN_EVENTS[0]]);
+	});
+});
+
+describe('phaseName', () => {
+	const event = (
+		seq: number,
+		type: string,
+		key: string | null = null,
+		payload = {}
+	): TraceEvent => ({
+		seq,
+		type,
+		key,
+		payload
+	});
+	const live = (name: string): Phase => ({ name, elapsedMs: 0 });
+
+	it('says the run is working while it has no live phase and nothing stored says more', () => {
+		expect(phaseName([])).toBe('working');
+		expect(phaseName([event(1, 'log', 'prompt', { kind: 'prompt' })])).toBe('working');
+	});
+
+	it('takes the live phase over what the stored events say', () => {
+		expect(phaseName([], live('thinking'))).toBe('thinking');
+		expect(phaseName([event(1, 'tool_call', 'c1')], live('writing'))).toBe('writing');
+	});
+
+	it('says a tool runs while the newest call has no result, also with a parallel call left open', () => {
+		expect(phaseName([event(1, 'tool_call', 'c1')])).toBe('tool');
+		const parallel = [
+			event(1, 'tool_call', 'c1'),
+			event(2, 'tool_call', 'c2'),
+			event(3, 'tool_result', 'c1:result')
+		];
+		expect(phaseName(parallel)).toBe('tool');
+		expect(phaseName([...parallel, event(4, 'tool_result', 'c2:result')])).toBe('working');
+	});
+
+	it('does not look past a later event for an open call', () => {
+		expect(phaseName([event(1, 'tool_call', 'c1'), event(2, 'message', 'step:2:message')])).toBe(
+			'working'
+		);
+	});
+
+	it('says the model loads when that notice is the newest event, and not after a later one', () => {
+		const loading = event(1, 'log', 'model_loading', { phase: 'model_loading' });
+		expect(phaseName([loading])).toBe('model_loading');
+		expect(phaseName([loading, event(2, 'message')])).toBe('working');
+	});
+});
+
+describe('run tokens', () => {
+	it('counts the tokens of a finished step only', () => {
+		const step = {
+			seq: 1,
+			type: 'log',
+			key: 'step:1',
+			payload: { kind: 'step', tokensIn: 100, tokensOut: 10 }
+		};
+		expect(stepTokens(step)).toBe(110);
+		expect(stepTokens({ ...step, payload: { kind: 'step' } })).toBe(0);
+		expect(stepTokens({ ...step, payload: { kind: 'prompt', tokensIn: 5 } })).toBe(0);
+	});
+
+	it('shows a dash instead of a zero total', () => {
+		const format = (n: number) => String(n);
+		expect(tokenFigure(0, format)).toBe('–');
+		expect(tokenFigure(110, format)).toBe('110');
 	});
 });

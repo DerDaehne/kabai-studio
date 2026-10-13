@@ -21,6 +21,9 @@
 		clock,
 		firstLine,
 		liveTraceEvent,
+		phaseName,
+		stepTokens,
+		tokenFigure,
 		withLiveEvent,
 		type Phase,
 		type TraceEvent,
@@ -53,6 +56,7 @@
 	// Live trace events and phases fold into the loaded tracks until the next reload replaces them.
 	let events = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.events])));
 	let series = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.series])));
+	let tokens = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.tokens])));
 	const phases: Record<number, Phase> = $state({});
 
 	let now = $state(Date.now());
@@ -119,6 +123,7 @@
 	}
 
 	const PHASES = new Set([
+		'working',
 		'thinking',
 		'writing',
 		'tool',
@@ -127,10 +132,8 @@
 		'model_downloading'
 	]);
 	const phaseWord = (runId: number) => {
-		const name = phases[runId]?.name;
-		return name && PHASES.has(name)
-			? t(`start.phase.${name}` as MessageKey)
-			: t('start.phase.unknown');
+		const name = phaseName(events[runId] ?? [], phases[runId]);
+		return t(`start.phase.${PHASES.has(name) ? name : 'working'}` as MessageKey);
 	};
 
 	const duration = (from: string | null, to: string | number) =>
@@ -146,11 +149,14 @@
 	function follow(event: LiveEvent) {
 		const runId = event.runId as number;
 		if (event.type === 'run.phase') phases[runId] = event as unknown as Phase;
+		if (event.type === 'run.event') delete phases[runId];
 		if (event.type !== 'run.event' || !events[runId]) return;
 		const traced = liveTraceEvent(event);
 		const next = withLiveEvent(events[runId], traced);
 		if (!next) return void invalidateLive();
+		if (next === events[runId]) return;
 		events = { ...events, [runId]: next };
+		tokens = { ...tokens, [runId]: tokens[runId] + stepTokens(traced) };
 		series = { ...series, [runId]: advanceSeries({ runId, points: series[runId] }, traced).points };
 	}
 
@@ -512,7 +518,7 @@
 						/>
 						<StatPair
 							label={t('start.tile.tokens')}
-							value={numbers.format(tokensOf(points).reduce((a, b) => a + b, 0))}
+							value={tokenFigure(tokens[track.id], numbers.format)}
 						/>
 					</span>
 					<Sparkline values={tokensOf(points)} label={t('start.tile.tokensPerMinute')} />

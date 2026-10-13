@@ -86,7 +86,7 @@ export const de: Catalogue = {
 	'start.trace.noSteps': 'noch kein Schritt',
 	'start.trace.step': 'Schritt {number}',
 	'start.trace.error': 'Fehler',
-	'start.phase.unknown': 'zwischen zwei Schritten',
+	'start.phase.working': 'arbeitet',
 	'start.phase.thinking': 'denkt',
 	'start.phase.writing': 'schreibt',
 	'start.phase.tool': 'Werkzeug läuft',

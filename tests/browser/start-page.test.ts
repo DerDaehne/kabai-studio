@@ -74,6 +74,11 @@ function otherProjectWithFailedRun(db: DatabaseSync) {
 const section = (page: Page, name: string) => page.getByRole('region', { name, exact: true });
 const tileOf = (page: Page, ref: string) =>
 	section(page, 'jetzt').locator('.slot').filter({ hasText: ref });
+/** The phase word under a run tile; the state tag beside the ticket may say the same word. */
+const phaseOf = (page: Page, ref: string, word: string) =>
+	tileOf(page, ref)
+		.locator('span.muted')
+		.filter({ hasText: new RegExp(`^${word}$`) });
 const runIdOf = (db: DatabaseSync, ticketId: number) =>
 	(db.prepare('SELECT max(id) AS id FROM runs WHERE ticket_id = ?').get(ticketId) as { id: number })
 		.id;
@@ -393,6 +398,120 @@ test.describe('at 1440 px', () => {
 			headers: { 'x-sveltekit-action': 'true', origin: new URL(page.url()).origin }
 		});
 		expect(stop.ok()).toBe(true);
+	});
+
+	const cancelRun = async (page: Page, db: DatabaseSync, ticketId: number) => {
+		const stop = await page.request.post('/?/stop', {
+			form: { runId: String(runIdOf(db, ticketId)) },
+			headers: { 'x-sveltekit-action': 'true', origin: new URL(page.url()).origin }
+		});
+		expect(stop.ok()).toBe(true);
+	};
+
+	test('a run tile says the agent works while the model has not answered, never "between steps"', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply('hang');
+		const ticket = seedTicket('Wait for the first chunk');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+		await expect(phaseOf(page, ticket.ref, 'arbeitet')).toBeVisible();
+
+		await page.reload();
+		await expect(phaseOf(page, ticket.ref, 'arbeitet')).toBeVisible();
+		await expect(page.locator('main')).not.toContainText('zwischen zwei Schritten');
+		await cancelRun(page, db, ticket.id);
+	});
+
+	test('a streamed delta turns the phase word of the tile and the trace to "schreibt" without a reload', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply({ partial: 'Working on it' });
+		const ticket = seedTicket('Stream one delta, then wait');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+
+		await expect(phaseOf(page, ticket.ref, 'schreibt')).toBeVisible();
+		const track = section(page, 'spur').locator('article').filter({ hasText: ticket.ref });
+		await expect(track).toContainText('schreibt');
+		await cancelRun(page, db, ticket.id);
+	});
+
+	test('a stored event ends the live phase: after a finished step the tile says "arbeitet" again', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply({ call: { name: 'no_such_tool', args: {} } }, 'hang');
+		const ticket = seedTicket('Stream a call, then wait');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+
+		await expect(
+			tileOf(page, ticket.ref).locator('.stat').filter({ hasText: 'Tokens' }).locator('.value')
+		).toHaveText('110');
+		await expect(phaseOf(page, ticket.ref, 'arbeitet')).toBeVisible();
+		await expect(phaseOf(page, ticket.ref, 'schreibt')).toHaveCount(0);
+		await cancelRun(page, db, ticket.id);
+	});
+
+	test('the phase word is plain text outside every live region', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply('hang');
+		const ticket = seedTicket('Read my phase');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+
+		const inTile = phaseOf(page, ticket.ref, 'arbeitet');
+		const inTrace = section(page, 'spur')
+			.locator('article')
+			.filter({ hasText: ticket.ref })
+			.locator('p.detail')
+			.filter({ hasText: /^arbeitet · / });
+		for (const word of [inTile, inTrace]) {
+			await expect(word).toBeVisible();
+			expect(
+				await word.evaluate((el) => el.closest('[aria-live], [role="status"], [role="alert"]'))
+			).toBeNull();
+		}
+		await cancelRun(page, db, ticket.id);
+	});
+
+	test('the token figure of a run tile is a dash before the first step and grows by each step’s usage', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply('hang');
+		const waiting = seedTicket('No step finished yet');
+		await open(page, '/');
+		await queueRun(db, page, waiting.id, fakeModel);
+		const tokens = (ref: string) =>
+			tileOf(page, ref).locator('.stat').filter({ hasText: 'Tokens' }).locator('.value');
+		await expect(tokens(waiting.ref)).toHaveText('–');
+		await cancelRun(page, db, waiting.id);
+
+		fakeModel.reply(
+			{ call: { name: 'no_such_tool', args: {} } },
+			{ call: { name: 'no_such_tool', args: {} } },
+			'hang'
+		);
+		const working = seedTicket('Two steps finished');
+		await queueRun(db, page, working.id, fakeModel);
+		await expect(tokens(working.ref)).toHaveText('220'); // 100 in and 10 out per step
+		await cancelRun(page, db, working.id);
 	});
 
 	test('operations lists a waiting run with its reason and a failed one with code, way out, duration and cost', async ({
