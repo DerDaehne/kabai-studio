@@ -386,7 +386,7 @@
 	}
 	.areas {
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-4);
 		margin-top: var(--space-4);
 	}
@@ -406,6 +406,7 @@
 	.relations,
 	.moves {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-2);
 		margin: 0 0 var(--space-3);
 		padding: 0;

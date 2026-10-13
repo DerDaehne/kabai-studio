@@ -153,6 +153,7 @@
 	.failure,
 	.report {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-1);
 		margin-top: var(--space-3);
 		padding: var(--space-3);
