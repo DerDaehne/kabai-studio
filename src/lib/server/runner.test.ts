@@ -437,6 +437,59 @@ describe('startRunner', () => {
 		expect(s.state(waiting)).toBe('running');
 		expect(consoleError).toHaveBeenCalledOnce(); // finishing the vanished run fails and is logged
 	});
+
+	describe('a run whose ticket is deleted while its executor still works', () => {
+		/** Deletes the ticket of an executing run, then creates a new ticket with a run, which the runner starts at once. */
+		async function deletedWhileExecuting() {
+			const s = setup();
+			const fake = fakeExecutor();
+			start(s.db, { builtin: fake.executor });
+			s.queue(s.cloud);
+			await flush();
+			const [deleted] = fake.calls;
+			board.deleteTicket(s.db, user, s.ticketId);
+			const ticketId = s.newTicket();
+			const runId = s.queue(s.cloud, ticketId);
+			await flush();
+			expect(s.state(runId)).toBe('running');
+			const events = () =>
+				s.db.prepare('SELECT count(*) AS n FROM run_events WHERE run_id = ?').get(runId)!.n;
+			return { ...s, deleted, ticketId, runId, events };
+		}
+
+		it('never hands out the ids of the deleted ticket and run again', async () => {
+			const s = await deletedWhileExecuting();
+			expect(s.ticketId).not.toBe(s.deleted.run.ticketId);
+			expect(s.runId).not.toBe(s.deleted.run.id);
+		});
+
+		it.each([
+			['fails', (deleted: ExecutorCall) => deleted.fail(new Error('provider timed out'))],
+			['succeeds', (deleted: ExecutorCall) => deleted.done()]
+		])(
+			'leaves the new run and ticket alone when the executor of the deleted run %s late, and logs it once',
+			async (_, end) => {
+				const s = await deletedWhileExecuting();
+				const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+				end(s.deleted);
+				await flush();
+
+				expect(s.row(s.runId)).toMatchObject({ state: 'running', error: null, finished_at: null });
+				expect(s.comments()).toEqual([]);
+				expect(consoleError).toHaveBeenCalledOnce();
+			}
+		);
+
+		it('rejects a late event of the deleted run instead of writing it into the new one', async () => {
+			const s = await deletedWhileExecuting();
+
+			expect(() => s.deleted.io.emit({ type: 'message', payload: { text: 'late' } })).toThrow(
+				DomainError
+			);
+			expect(s.events()).toBe(0);
+		});
+	});
 });
 
 describe('priority queue', () => {

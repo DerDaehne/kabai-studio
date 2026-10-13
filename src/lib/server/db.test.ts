@@ -8,7 +8,8 @@ import { latestMigration, migrate, openDb } from './db';
 import * as board from './domain/board';
 import type { Actor } from './domain/core';
 import * as questions from './domain/questions';
-import { liveState } from './live';
+import * as runs from './domain/runs';
+import { liveState, recentFinishedRuns } from './live';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-db-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -950,6 +951,177 @@ describe('016 on a database at 015 with both template generations in real use', 
 		migrate(db);
 		expect(db.prepare('SELECT DISTINCT owner FROM tasks').all()).toEqual([{ owner: 'agent' }]);
 		expect(rowCounts(db).tasks).toBe(2);
+	});
+});
+
+describe('019 on a database at 018 with tickets in every step of every variant and runs in every state', () => {
+	const token = (n: number) => String(n).repeat(64);
+	const STEPS_AT_018: [variant: string, steps: string[]][] = [
+		['software', ['backlog', 'refine', 'plan', 'implement', 'critique', 'acceptance', 'done']],
+		['knowledge', ['backlog', 'research', 'draft', 'critique', 'acceptance', 'done']],
+		['direct', ['backlog', 'implement', 'critique', 'acceptance', 'done']]
+	];
+
+	/**
+	 * Project p has a column 10p+i and a ticket 100+10p+i for the i-th step of its variant, so 113 is software/implement,
+	 * 122 knowledge/draft and 131 direct/implement. Runs in every state hang off the work tickets, and every table that
+	 * points to a ticket or a run holds rows that do.
+	 */
+	function dbBefore019() {
+		const db = openDb(':memory:');
+		migrate(db, shippedBefore('/migrations/019'));
+		const project = db.prepare(
+			'INSERT INTO projects (id, key, name, variant, ticket_seq) VALUES (?, ?, ?, ?, ?)'
+		);
+		const column = db.prepare(
+			'INSERT INTO columns (id, project_id, step, name, position) VALUES (?, ?, ?, ?, ?)'
+		);
+		const ticket = db.prepare(
+			'INSERT INTO tickets (id, project_id, number, column_id, title, position) VALUES (?, ?, ?, ?, ?, ?)'
+		);
+		STEPS_AT_018.forEach(([variant, steps], index) => {
+			const p = index + 1;
+			project.run(p, variant.slice(0, 3).toUpperCase(), variant, variant, steps.length);
+			steps.forEach((step, i) => {
+				column.run(10 * p + i, p, step, step, i);
+				ticket.run(100 + 10 * p + i, p, i + 1, 10 * p + i, `${variant} ${step}`, i);
+			});
+		});
+		db.exec(`
+			UPDATE tickets SET type = 'epic', docs_required = 1, description = 'Alles' WHERE id = 111;
+			UPDATE tickets SET assignee = 'agent (Run 4)', size = 'M', moved_by = '{"kind":"agent","runId":1}',
+				created_at = '2026-10-12 09:00:00', updated_at = '2026-10-12 11:00:00' WHERE id = 113;
+			UPDATE tickets SET review_approved_at = '2026-10-12 10:30:00', review_approved_by = '{"kind":"agent","runId":6}'
+				WHERE id = 114;
+			INSERT INTO tasks (id, ticket_id, title, position, done_at, owner) VALUES
+				(1, 113, 'Parser', 0, '2026-10-12 10:00:00', 'agent'), (2, 113, 'Abnahme', 1, NULL, 'human'),
+				(3, 122, 'Quellen', 0, NULL, 'system');
+			INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, type) VALUES
+				(111, 113, 'parent_of'), (113, 114, 'blocks'), (121, 122, 'relates_to'), (132, 131, 'duplicate_of');
+			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'Lokal', 'builtin', 'openai-compatible', 'm');
+			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger, state, token_hash, worktree_path, branch,
+					resumed_from_run_id, tokens_in, tokens_out, cost, error, created_at, started_at, finished_at, priority,
+					resume_reason, not_before, halted, step_result) VALUES
+				(1, 113, 13, 1, 'manual', 'succeeded', NULL, '/w/1', 'ticket/1', NULL, 10, 2, 0.5, NULL,
+					'2026-10-12 10:00:00', '2026-10-12 10:00:01', '2026-10-12 10:05:00', 'normal', NULL, NULL, 0, 'done'),
+				(2, 113, 13, 1, 'on_enter', 'paused', NULL, NULL, NULL, 1, 3, 1, 0.1, NULL,
+					'2026-10-12 10:05:00', '2026-10-12 10:05:01', '2026-10-12 10:06:00', 'blocker', 'context_budget', NULL, 1, NULL),
+				(3, 113, 13, 1, 'resume', 'queued', NULL, NULL, NULL, 2, 0, 0, 0, NULL,
+					'2026-10-12 10:07:00', NULL, NULL, 'human', 'halt', '2026-10-14T08:00:00.000Z', 0, NULL),
+				(4, 122, 22, 1, 'manual', 'running', '${token(4)}', NULL, NULL, NULL, 0, 0, 0, NULL,
+					'2026-10-12 11:00:00', '2026-10-12 11:00:01', NULL, 'normal', NULL, NULL, 0, NULL),
+				(5, 131, 31, 1, 'manual', 'waiting_approval', '${token(5)}', NULL, NULL, NULL, 0, 0, 0, NULL,
+					'2026-10-12 11:00:00', '2026-10-12 11:00:01', NULL, 'normal', NULL, NULL, 0, NULL),
+				(6, 114, 14, NULL, 'on_enter', 'failed', NULL, NULL, NULL, NULL, 0, 0, 0, '[x] kaputt',
+					'2026-10-12 09:00:00', '2026-10-12 09:00:01', '2026-10-12 09:10:00', 'review', NULL, NULL, 0, 'blocked'),
+				(7, 112, 12, 1, 'manual', 'cancelled', NULL, NULL, NULL, NULL, 0, 0, 0, NULL,
+					'2026-10-12 09:00:00', NULL, '2026-10-12 09:00:30', 'normal', NULL, NULL, 0, NULL),
+				(8, 112, NULL, 1, 'manual', 'paused', NULL, NULL, NULL, NULL, 0, 0, 0, NULL,
+					'2026-10-12 12:00:00', '2026-10-12 12:00:01', '2026-10-12 12:01:00', 'normal', 'quota', NULL, 0, NULL);
+			INSERT INTO run_events (run_id, seq, type, payload, idempotency_key, created_at) VALUES
+				(2, 1, 'message', '{"text":"Stand"}', 'handoff', '2026-10-12 10:05:59'),
+				(2, 2, 'intervention', '{"kind":"stagnation","attempt":1,"max":2}', NULL, '2026-10-12 10:06:00'),
+				(5, 1, 'permission_request', '{"tool":"shell","command":"npm test"}', NULL, '2026-10-12 11:00:02');
+			INSERT INTO comments (id, ticket_id, author_kind, author, body, run_id, redacted_at, redacted_reason) VALUES
+				(1, 113, 'user', 'user', 'Bitte zuerst den Parser.', NULL, NULL, NULL),
+				(2, 113, 'agent', 'agent (Run 1)', 'Parser steht.', 1, NULL, NULL),
+				(3, 114, 'system', 'system', 'Run 6 ist fehlgeschlagen.', 6, NULL, NULL),
+				(4, 112, 'agent', 'agent (Run 8)', '[entfernt]', 8, '2026-10-12 12:02:00', 'Secret');
+			INSERT INTO questions (id, ticket_id, run_id, question, options, answer, answered_at, collected_at) VALUES
+				(1, 112, 8, 'A oder B?', '[{"label":"A"},{"label":"B"}]', NULL, NULL, NULL),
+				(2, 113, 1, 'Wie streng?', '[]', '{"text":"Streng"}', '2026-10-12 10:03:00', '2026-10-12 10:04:00'),
+				(3, 121, NULL, 'Welche Quellen?', '[]', '{"option":1}', '2026-10-12 09:30:00', NULL);
+			INSERT INTO idempotent_calls (run_id, key, request_hash, result) VALUES (4, 'k1', 'h', '{"task_ids":[3]}');
+			INSERT INTO notes (id, slug, title, verified_at, verified_by_run_id) VALUES (1, 'parser', 'Parser', '2026-10-12 10:05:00', 1);
+			INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);
+			INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 113, 'documents');
+		`);
+		return db;
+	}
+
+	const everyRow = (db: ReturnType<typeof openDb>) =>
+		Object.fromEntries(
+			db
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'notes_fts%' AND name <> 'schema_migrations' ORDER BY name"
+				)
+				.all()
+				.map(
+					({ name }) =>
+						[String(name), db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()] as const
+				)
+		);
+	const schemaOf = (db: ReturnType<typeof openDb>, table: string) =>
+		db
+			.prepare(
+				'SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? ORDER BY type DESC, name'
+			)
+			.all(table)
+			.map((entry) => ({ type: entry.type, name: entry.name, sql: normalized(String(entry.sql)) }));
+	/** The statement without comments, quotes around names and layout whitespace. */
+	const normalized = (sql: string) =>
+		sql
+			.replace(/--[^\n]*/g, '')
+			.replace(/"/g, '')
+			.replace(/\s+/g, ' ')
+			.replace(/\s*([(),])\s*/g, '$1')
+			.trim();
+
+	it('keeps every row of every table with all its columns, and nothing points into the void', () => {
+		const db = dbBefore019();
+		const before = everyRow(db);
+
+		expect(migrate(db)).toEqual(['019_no_id_reuse.sql']);
+
+		expect(before.tickets).toHaveLength(18);
+		expect(new Set(before.runs.map((run) => run.state)).size).toBe(7);
+		expect(everyRow(db)).toEqual(before);
+		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+		expect(migrate(db)).toEqual([]);
+	});
+
+	it('declares tickets and runs AUTOINCREMENT and changes nothing else about them, their indexes included', () => {
+		const db = dbBefore019();
+		const before = { tickets: schemaOf(db, 'tickets'), runs: schemaOf(db, 'runs') };
+
+		migrate(db);
+
+		for (const table of ['tickets', 'runs'] as const) {
+			const after = schemaOf(db, table);
+			expect(after[0].sql).toContain(' INTEGER PRIMARY KEY AUTOINCREMENT,');
+			expect(
+				after.map((entry) => ({ ...entry, sql: entry.sql.replace(' AUTOINCREMENT', '') }))
+			).toEqual(before[table]);
+		}
+		expect(schemaOf(db, 'runs').map((entry) => entry.name)).toEqual([
+			'runs',
+			'runs_by_finished_at',
+			'runs_by_resumed_from',
+			'runs_by_state',
+			'runs_by_ticket',
+			'sqlite_autoindex_runs_1' // UNIQUE token_hash
+		]);
+		expect(recentFinishedRuns(db).map((run) => run.id)).toEqual([1, 6, 7]); // pins runs_by_finished_at by name
+	});
+
+	it('continues the ids after the current maximum and never hands out those of a deleted ticket or run again', () => {
+		const db = dbBefore019();
+		migrate(db);
+		const human: Actor = { kind: 'user' };
+		const createTicket = () => board.createTicket(db, human, 1, { title: 'Neu', column_id: 13 }).id;
+		const createRun = (ticketId: number) =>
+			runs.createRun(db, human, { ticketId, profileId: 1 }).id;
+
+		expect(db.prepare('SELECT name, seq FROM sqlite_sequence ORDER BY name').all()).toEqual([
+			{ name: 'runs', seq: 8 },
+			{ name: 'tickets', seq: 134 }
+		]);
+		const deletedTicket = createTicket();
+		expect([deletedTicket, createRun(deletedTicket)]).toEqual([135, 9]);
+		board.deleteTicket(db, human, deletedTicket);
+
+		const ticket = createTicket();
+		expect([ticket, createRun(ticket)]).toEqual([136, 10]);
 	});
 });
 
