@@ -398,9 +398,18 @@ class Runner {
 		this.unsubscribe = subscribe((event) => {
 			if (WAKING_EVENTS.has(event.type)) this.wake();
 			if (PREDECESSOR_EVENTS.has(event.type) && typeof event.ticketId === 'number')
-				queueUnblockedSuccessors(this.db, event.ticketId);
+				queueMicrotask(() => this.continueSuccessors(event.ticketId as number));
 		});
 		this.claimQueuedRuns();
+	}
+
+	/** Deferred, so the move that caused it is published to every subscriber first and its caller never sees a failure of the follow-up. */
+	private continueSuccessors(ticketId: number) {
+		try {
+			queueUnblockedSuccessors(this.db, ticketId);
+		} catch (err) {
+			console.error('continuing the successors of a ticket failed', err);
+		}
 	}
 
 	cancel(runId: number, actor: Actor) {

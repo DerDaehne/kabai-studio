@@ -3,6 +3,7 @@ import { migrate, openDb } from '../db';
 import * as board from './board';
 import type { Actor } from './core';
 import { answerQuestion, latestOpenQuestion, requestHuman } from './questions';
+import { acceptTicket, returnTicket } from './intents';
 import * as runs from './runs';
 import { assemblePrompt } from '../agents/prompt';
 import { ticketLagen } from '../lagen';
@@ -549,24 +550,92 @@ describe('the chain across a blocks predecessor', () => {
 		board.moveTicket(c.db, user, predecessor, doneColumn(c.db, predecessor));
 		expect(queueUnblockedSuccessors(c.db, predecessor)).toHaveLength(1);
 	});
-});
 
-describe('the chain across a blocks predecessor, newest run failed after its step', () => {
 	it('queues nothing when the newest run recorded back but then failed', () => {
-		const c = chain('software', 'critique');
-		const predecessor = board.createTicket(c.db, user, c.projectId, { title: 'Davor' }).id;
-		board.linkRelation(c.db, user, predecessor, c.ticketId, 'blocks');
-		const { finished } = c.work('back', 'Finding');
+		const { c, predecessor, back, finish } = gated();
 		c.db
 			.prepare("UPDATE runs SET state = 'failed', error = 'model gone' WHERE id = ?")
-			.run(finished);
-		board.moveTicket(
-			c.db,
-			user,
-			predecessor,
-			board.columns(c.db, c.projectId).find((col) => col.phase === 'done')!.id
-		);
+			.run(back.finished);
+		finish(predecessor);
 
 		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+	});
+});
+
+describe('releasing a predecessor again and again', () => {
+	const done = (db: ReturnType<typeof chain>['db'], id: number) =>
+		board.columns(db, board.ticket(db, id).project_id).find((col) => col.phase === 'done')!.id;
+
+	it('A: accept -> return -> accept gives one follow-up per release', () => {
+		const c = chain('software', 'critique');
+		const pre = board.createTicket(c.db, user, c.projectId, {
+			title: 'Davor',
+			column_id: c.columnOf('acceptance')
+		}).id;
+		board.linkRelation(c.db, user, pre, c.ticketId, 'blocks');
+		c.work('back', 'Finding 1');
+		acceptTicket(c.db, user, pre);
+		const first = queueUnblockedSuccessors(c.db, pre);
+		expect(first).toHaveLength(1);
+		expect(queueUnblockedSuccessors(c.db, pre)).toEqual([]);
+		returnTicket(c.db, user, pre, 'Nochmal');
+		expect(queueUnblockedSuccessors(c.db, pre)).toEqual([]);
+		// the follow-up still runs while the predecessor is open again and ends back
+		runs.startRun(c.db, system, first[0].id);
+		finishStep(c.db, { kind: 'agent', runId: first[0].id }, c.ticketId, {
+			result: 'back',
+			summary: 'Finding 2'
+		});
+		runs.finishRun(c.db, system, first[0].id, { state: 'succeeded' });
+		expect(queueNextStep(c.db, first[0].id)).toBeUndefined();
+		// predecessor released again: human moves it to done
+		const preRun = runs.pendingRun(c.db, pre)!;
+		runs.finishRun(c.db, system, preRun.id, { state: 'cancelled' });
+		board.moveTicket(c.db, user, pre, done(c.db, pre));
+		const second = queueUnblockedSuccessors(c.db, pre);
+		expect(second).toHaveLength(1);
+		expect(queueUnblockedSuccessors(c.db, pre)).toEqual([]);
+		const onEnter = c.db
+			.prepare("SELECT count(*) AS n FROM runs WHERE ticket_id = ? AND trigger = 'on_enter'")
+			.get(c.ticketId) as { n: number };
+		expect(onEnter.n).toBe(2);
+	});
+
+	it('B: successor in a knowledge project, predecessor in a direct project', () => {
+		const c = chain('knowledge', 'critique');
+		const other = board.createProject(c.db, user, { key: 'DIR', name: 'Direkt' }, 'direct').id;
+		const pre = board.createTicket(c.db, user, other, { title: 'Davor' }).id;
+		board.linkRelation(c.db, user, pre, c.ticketId, 'blocks');
+		c.work('back', 'Finding');
+		board.moveTicket(c.db, user, pre, done(c.db, pre));
+		const queued = queueUnblockedSuccessors(c.db, pre);
+		expect(queued).toHaveLength(1);
+		expect(c.run(queued[0].id)).toMatchObject({ trigger: 'on_enter', step: 'draft' });
+	});
+
+	it('D: a successor the human parked in a work step after its run finished done is started by an unrelated predecessor move', () => {
+		const c = chain('software', 'critique');
+		board.setBlocksSatisfiedAt(c.db, user, c.projectId, 'review_ok');
+		const pre = board.createTicket(c.db, user, c.projectId, {
+			title: 'Davor',
+			column_id: c.columnOf('acceptance')
+		}).id;
+		board.approveReview(c.db, user, pre);
+		board.linkRelation(c.db, user, pre, c.ticketId, 'blocks');
+		expect(board.blockingPredecessors(c.db, c.ticketId)).toEqual([]);
+		const critique = c.current();
+		runs.startRun(c.db, system, critique);
+		finishStep(c.db, { kind: 'agent', runId: critique }, c.ticketId, {
+			result: 'done',
+			summary: 'Passt'
+		});
+		runs.finishRun(c.db, system, critique, { state: 'succeeded' }); // as the runner ends it: the executor returned
+		expect(queueNextStep(c.db, critique)).toBeUndefined();
+		expect(c.stepOf()).toBe('acceptance');
+		board.moveTicket(c.db, user, c.ticketId, c.columnOf('implement')); // human parks S in a work step
+		const before = c.runCount();
+		acceptTicket(c.db, user, pre); // predecessor was already satisfied; this move changes nothing for S
+		expect(queueUnblockedSuccessors(c.db, pre)).toEqual([]);
+		expect(c.runCount()).toBe(before);
 	});
 });

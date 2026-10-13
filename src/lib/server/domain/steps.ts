@@ -182,26 +182,25 @@ export function queueNextStep(db: DatabaseSync, runId: number): { id: number } |
 }
 
 /**
- * The chain across a predecessor: when a ticket moved or was approved, every `blocks` successor that was started and
- * whose newest run finished its step gets the run the chain skipped while the predecessor stood before it. A successor
- * that never ran, or whose newest run failed, was cancelled or stalled, stays as it is.
+ * The chain across a predecessor: when a ticket moved or was approved, every `blocks` successor whose chain stopped at
+ * it gets the run the chain skipped: its newest run finished the step that put the ticket where it stands. A successor
+ * that never ran, whose newest run failed, was cancelled or stalled, or that a human moved since, stays as it is.
  */
 export function queueUnblockedSuccessors(db: DatabaseSync, ticketId: number): { id: number }[] {
-	const newestRuns = db
+	const stoppedAtPredecessor = db
 		.prepare(
-			`SELECT (SELECT max(id) FROM runs WHERE ticket_id = r.to_ticket_id) AS id
-			FROM ticket_relations r WHERE r.from_ticket_id = ? AND r.type = 'blocks'`
+			`SELECT n.id FROM ticket_relations r
+			JOIN tickets s ON s.id = r.to_ticket_id
+			JOIN runs n ON n.id = (SELECT max(id) FROM runs WHERE ticket_id = s.id)
+			WHERE r.from_ticket_id = ? AND r.type = 'blocks'
+				AND n.state = 'succeeded' AND s.moved_by ->> '$.runId' = n.id`
 		)
-		.all(ticketId) as { id: number | null }[];
-	return newestRuns.flatMap(({ id }) => {
-		if (id === null || runState(db, id) !== 'succeeded') return [];
+		.all(ticketId) as { id: number }[];
+	return stoppedAtPredecessor.flatMap(({ id }) => {
 		const queued = queueNextStep(db, id);
 		return queued ? [queued] : [];
 	});
 }
-
-const runState = (db: DatabaseSync, runId: number) =>
-	(db.prepare('SELECT state FROM runs WHERE id = ?').get(runId) as { state: string }).state;
 
 type FinishedRun = {
 	ticket_id: number;

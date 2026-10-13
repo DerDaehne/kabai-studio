@@ -1876,17 +1876,26 @@ describe('the chain of runs', () => {
 	);
 });
 
+/** A started successor whose newest run ended its step with back, as the chain leaves it when a predecessor stands before it. */
+function backedSuccessor(s: ReturnType<typeof setup>) {
+	const successor = s.newTicket();
+	const back = s.queue(s.local, successor);
+	runs.startRun(s.db, system, back);
+	finishStep(s.db, { kind: 'agent', runId: back }, successor, {
+		result: 'back',
+		summary: 'Finding'
+	});
+	runs.finishRun(s.db, system, back, { state: 'succeeded' });
+	return successor;
+}
+
 describe('the chain of runs across a blocks predecessor', () => {
 	/** A started successor whose `back` run ended while its predecessor stood before it, and a runner that stays out of the way. */
 	function gated() {
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor });
-		const successor = s.newTicket();
-		const back = s.queue(s.local, successor);
-		runs.startRun(s.db, system, back);
-		runs.finishRun(s.db, system, back, { state: 'succeeded' });
-		s.db.prepare("UPDATE runs SET step_result = 'back' WHERE id = ?").run(back);
+		const successor = backedSuccessor(s);
 		const stepColumn = (step: Step) =>
 			board.columns(s.db, s.projectId).find((c) => c.step === step)!.id;
 		const predecessor = board.createTicket(s.db, user, s.projectId, {
@@ -1959,4 +1968,86 @@ describe('the chain of runs across a blocks predecessor', () => {
 			expect(g.s.state(followUp.id)).toBe('running');
 		}
 	);
+});
+
+describe('a failing follow-up run', () => {
+	it('C: a failing follow-up neither fails the committed accept nor hides the event from later subscribers', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const successor = backedSuccessor(s);
+		const predecessor = board.createTicket(s.db, user, s.projectId, {
+			title: 'Davor',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'acceptance')!.id
+		}).id;
+		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		s.db.exec(
+			"CREATE TRIGGER refuse_follow_up BEFORE INSERT ON runs WHEN NEW.trigger = 'on_enter' BEGIN SELECT RAISE(ABORT, 'database is locked'); END"
+		);
+		const seen: string[] = [];
+		const unsubscribe = subscribe((e) => seen.push(e.type));
+		let thrown: unknown;
+		try {
+			acceptTicket(s.db, user, predecessor);
+		} catch (err) {
+			thrown = err;
+		}
+		unsubscribe();
+		expect(board.ticket(s.db, predecessor).column_step).toBe('done');
+		expect({ thrown: String(thrown), seen }).toEqual({
+			thrown: 'undefined',
+			seen: ['ticket.moved']
+		});
+		await flush();
+		expect(logged).toHaveBeenCalledOnce();
+	});
+});
+
+describe('the order of events around a follow-up run', () => {
+	it('E: a later subscriber sees the move before the follow-up run it caused', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const successor = backedSuccessor(s);
+		const predecessor = board.createTicket(s.db, user, s.projectId, {
+			title: 'Davor',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'acceptance')!.id
+		}).id;
+		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		const seen: string[] = [];
+		const unsubscribe = subscribe((e) => seen.push(e.type));
+		acceptTicket(s.db, user, predecessor);
+		await flush();
+		unsubscribe();
+		expect(seen.filter((t) => t === 'ticket.moved' || t === 'run.created')).toEqual([
+			'ticket.moved',
+			'run.created'
+		]);
+	});
+});
+
+describe('the review approval of a predecessor', () => {
+	it('queues one follow-up run on the approval alone, without any move', async () => {
+		const s = setup();
+		start(s.db, { builtin: fakeExecutor().executor });
+		board.setBlocksSatisfiedAt(s.db, user, s.projectId, 'review_ok');
+		const successor = backedSuccessor(s);
+		const predecessor = board.createTicket(s.db, user, s.projectId, {
+			title: 'Davor',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'acceptance')!.id
+		}).id;
+		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		await flush();
+		expect(s.db.prepare("SELECT count(*) AS n FROM runs WHERE trigger = 'on_enter'").get()).toEqual(
+			{ n: 0 }
+		);
+
+		board.approveReview(s.db, user, predecessor);
+		await flush();
+
+		expect(s.db.prepare("SELECT count(*) AS n FROM runs WHERE trigger = 'on_enter'").get()).toEqual(
+			{ n: 1 }
+		);
+	});
 });
