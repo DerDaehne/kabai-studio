@@ -9,7 +9,8 @@ import { ROLES, VARIANTS } from '$lib/server/domain/variants';
 import { actions, load, type ProjectPage } from './+page.server';
 import Page from './+page.svelte';
 
-vi.mock('$app/state', () => ({ page: { data: { locale: 'de' } } }));
+const state = vi.hoisted(() => ({ page: { data: { locale: 'de' } } }));
+vi.mock('$app/state', () => state);
 
 const dir = mkdtempSync(join(tmpdir(), 'studio-project-route-'));
 process.env.STUDIO_DATA_DIR = dir;
@@ -63,6 +64,14 @@ describe('the project page', () => {
 		expect(markup).toMatch(/<label [^>]*>Titel<\/label>/);
 		expect(markup).toMatch(/<button [^>]*type="submit"[^>]*>\s*Ticket anlegen<\/button>/);
 		expect(markup).toMatch(/<a [^>]*href="\/projects"/);
+	});
+
+	it('names the variant and its steps in the language of the request', () => {
+		state.page.data.locale = 'en';
+		const shown = text(html(loaded('STU')));
+		state.page.data.locale = 'de';
+		expect(shown).toContain('The Software variant');
+		expect(shown).toContain('Backlog Refine Plan Implement Critique Acceptance Done');
 	});
 
 	it('shows the steps of the other variants and no role text of any step', () => {

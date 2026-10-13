@@ -1,16 +1,14 @@
-/** Every step a column can be; `columns.step` holds one, and the database derives the phase from it. */
-export type Step =
-	| 'backlog'
-	| 'refine'
-	| 'plan'
-	| 'implement'
-	| 'research'
-	| 'draft'
-	| 'critique'
-	| 'acceptance'
-	| 'done';
+import type { Step, Variant } from '../../variant';
+
+export type { Step, Variant };
 export type Phase = 'open' | 'work' | 'acceptance' | 'done';
-export type Variant = 'software' | 'knowledge' | 'direct';
+
+/** What the human calls each variant. */
+export const VARIANT_LABELS: Record<Variant, string> = {
+	software: 'Software',
+	knowledge: 'Wissen',
+	direct: 'Direkt'
+};
 
 /** The steps of each variant in board order; a project stores only its variant. */
 export const VARIANTS: Record<Variant, readonly Step[]> = {

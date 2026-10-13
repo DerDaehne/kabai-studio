@@ -108,6 +108,25 @@ test('a project of the knowledge variant can be created with the keyboard alone'
 	await expect(page.getByText('Variante Wissen')).toBeVisible();
 });
 
+test('an unknown variant is refused at the variant group, focused and announced, keeping the input', async ({
+	page
+}) => {
+	const suffix = uniqueSuffix();
+	await open(page, '/projects');
+	await page.getByLabel('Name', { exact: true }).fill(`Chaos ${suffix}`);
+	await page.getByLabel('Key', { exact: true }).fill(`X${suffix}`);
+	const direct = page.getByRole('radio', { name: 'Direkt' });
+	await direct.check();
+	await direct.evaluate((input: HTMLInputElement) => (input.value = 'chaos'));
+	await page.getByRole('button', { name: 'Projekt anlegen' }).click();
+
+	const focused = page.locator('input[name=variant]:focus');
+	await expect(focused).toHaveCount(1);
+	await expect(focused).toHaveAttribute('aria-invalid', 'true');
+	await expect(focused).toHaveAccessibleDescription(/Die Variante „chaos“ gibt es nicht\. Ausweg:/);
+	await expect(page.getByLabel('Name', { exact: true })).toHaveValue(`Chaos ${suffix}`);
+});
+
 test('a taken key is refused at the key field with a way out, keeping what was typed', async ({
 	page
 }) => {

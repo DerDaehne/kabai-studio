@@ -3,13 +3,14 @@ import { LIVE_DEPENDENCY, type ProjectRef } from '$lib/live';
 import { db } from '$lib/server/db';
 import { domainFail } from '$lib/server/domain-failure';
 import { createProject } from '$lib/server/domain/board';
+import { DEFAULT_VARIANT } from '$lib/variant';
 import type { Actor } from '$lib/server/domain/core';
-import { VARIANTS, type Step, type Variant } from '$lib/server/domain/variants';
+import { VARIANTS } from '$lib/server/domain/variants';
+import type { Step, Variant } from '$lib/variant';
 import { OPEN_QUESTION, projectRef } from '$lib/server/live';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };
-const DEFAULT_VARIANT: Variant = 'software';
 
 export type ProjectRow = ProjectRef & {
 	variant: Variant;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/t';
-	import type { Step } from '$lib/server/domain/variants';
+	import type { Step } from '$lib/variant';
 
 	let { steps, label }: { steps: readonly Step[]; label?: string } = $props();
 </script>
@@ -22,8 +22,8 @@
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 	}
-	li + li::before {
-		content: '→';
-		margin-right: var(--space-2);
+	li:not(:last-child)::after {
+		content: '→' / '';
+		margin-left: var(--space-2);
 	}
 </style>

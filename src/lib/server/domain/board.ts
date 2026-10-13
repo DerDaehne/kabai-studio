@@ -8,7 +8,15 @@ import {
 	tx,
 	type Actor
 } from './core';
-import { STEP_LABELS, VARIANTS, type Phase, type Step, type Variant } from './variants';
+import { DEFAULT_VARIANT } from '../../variant';
+import {
+	STEP_LABELS,
+	VARIANTS,
+	VARIANT_LABELS,
+	type Phase,
+	type Step,
+	type Variant
+} from './variants';
 
 export type Column = { id: number; name: string; step: Step; phase: Phase };
 export type Ticket = {
@@ -265,7 +273,7 @@ export function createProject(
 	db: DatabaseSync,
 	actor: Actor,
 	p: { key: string; name: string; description?: string },
-	variant: Variant = 'software'
+	variant: Variant = DEFAULT_VARIANT
 ): { id: number } {
 	return tx(db, (emit) => {
 		checkNewProject(db, p);
@@ -291,7 +299,7 @@ function checkVariant(variant: string) {
 		throw new DomainError(
 			'invalid_variant',
 			`Die Variante „${variant}“ gibt es nicht.`,
-			`Wähle eine der Varianten: ${Object.keys(VARIANTS).join(', ')}.`
+			`Wähle eine der Varianten: ${Object.values(VARIANT_LABELS).join(', ')}.`
 		);
 }
 

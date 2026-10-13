@@ -144,9 +144,36 @@ describe('creating a project', () => {
 			data: { field: 'variant', name: 'Bunt', key: 'BUNT', variant: 'chaos' }
 		});
 		expect((result as { data: { message: string } }).data.message).toContain(
-			'Ausweg: Wähle eine der Varianten: software, knowledge, direct.'
+			'Ausweg: Wähle eine der Varianten: Software, Wissen, Direkt.'
 		);
 		expect(variantOf('BUNT')).toBeUndefined();
+	});
+
+	it.each(['chaos', 'constructor', 'toString', '__proto__', ''])(
+		'refuses the variant %j with invalid_variant and creates nothing',
+		(variant) => {
+			expect(() =>
+				board.createProject(db(), user, { key: 'BAD', name: 'Bad' }, variant as Variant)
+			).toThrow(expect.objectContaining({ code: 'invalid_variant' }));
+			expect(variantOf('BAD')).toBeUndefined();
+		}
+	);
+
+	it('names the variants a person can pick, not their keys, in the way out', async () => {
+		const result = await create({ name: 'Bunt', key: 'BUNT', variant: 'chaos' });
+		expect((result as { data: { message: string } }).data.message).toContain(
+			'Ausweg: Wähle eine der Varianten: Software, Wissen, Direkt.'
+		);
+	});
+
+	it('marks every radio invalid and linked to the error when the variant is refused', async () => {
+		const form = { field: 'variant', message: 'Nope', name: 'Neu', key: 'NEU', variant: 'chaos' };
+		const markup = html((await loaded()).data, form);
+		for (const variant of Object.keys(VARIANTS)) {
+			const radio = markupOfRadio(markup, variant);
+			expect(radio).toContain('aria-invalid="true"');
+			expect(radio).toContain('variant-error');
+		}
 	});
 
 	it('leads straight into the new project, not to a page in between', async () => {

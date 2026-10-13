@@ -7,6 +7,7 @@
 	import FormField from '$lib/ui/FormField.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import StepBar from '$lib/ui/StepBar.svelte';
+	import { DEFAULT_VARIANT } from '$lib/variant';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -16,7 +17,13 @@
 	const focusOnError = (field: string) => (input: HTMLElement) => {
 		if (form?.field === field) input.focus();
 	};
-	const selectedVariant = $derived(form?.variant ?? 'software');
+	const selectedVariant = $derived(form?.variant ?? DEFAULT_VARIANT);
+	const focusedVariant = $derived(
+		data.variants.some(({ variant }) => variant === selectedVariant)
+			? selectedVariant
+			: data.variants[0].variant
+	);
+	const variantInvalid = $derived(form?.field === 'variant');
 </script>
 
 <h1>{t('projects.heading')}</h1>
@@ -77,17 +84,23 @@
 				/>
 			{/snippet}
 		</FormField>
-		<fieldset aria-describedby={form?.field === 'variant' ? 'variant-error' : undefined}>
+		<fieldset aria-describedby={variantInvalid ? 'variant-error' : undefined}>
 			<legend>{t('projects.variant.legend')}</legend>
 			{#each data.variants as { variant, steps } (variant)}
 				<div class="option">
 					<label>
+						<!-- svelte-ignore a11y_role_supports_aria_props_implicit -->
+						<!-- screen readers announce aria-invalid on a radio although the role does not list it -->
 						<input
 							type="radio"
 							name="variant"
 							value={variant}
 							checked={variant === selectedVariant}
-							aria-describedby="variant-{variant}-description"
+							aria-describedby="variant-{variant}-description{variantInvalid
+								? ' variant-error'
+								: ''}"
+							aria-invalid={variantInvalid ? 'true' : undefined}
+							{@attach variant === focusedVariant ? focusOnError('variant') : undefined}
 						/>
 						{t(`variant.${variant}.name`)}
 					</label>
