@@ -22,3 +22,14 @@ test('signing in leads from the login form to the Stellwerk, after a wrong passw
 		'page'
 	);
 });
+
+test('the login page shows the attribution and the source link without signing in', async ({
+	page
+}) => {
+	await page.goto('/login');
+	await expect(page.getByRole('link', { name: 'kabai-studio' })).toHaveAttribute(
+		'href',
+		'https://github.com/DerDaehne/kabai-studio'
+	);
+	await expect(page.getByText(/DerDaehne/)).toBeVisible();
+});

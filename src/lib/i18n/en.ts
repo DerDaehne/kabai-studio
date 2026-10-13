@@ -100,6 +100,8 @@ export const en = {
 
 	'settings.signedInAs': 'Signed in as {name}',
 	'settings.signOut': 'Sign out',
+	'settings.about.title': 'About kabai studio',
+	'settings.about.licenceText': 'Licence text (AGPL-3.0)',
 
 	'projects.heading': 'Projects',
 	'projects.intro': 'A project collects tickets and moves them through the steps of its variant.',

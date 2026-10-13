@@ -413,16 +413,35 @@ test('a new place starts at the top, back restores the scroll position, also fro
 	await expect.poll(scrollY).toBe(500);
 });
 
-test('every page shows the attribution and has the skip link as its first tab stop', async ({
+test('every page has the skip link as its first tab stop, and the attribution sits in Settings', async ({
 	page,
 	seedTicket
 }) => {
-	const ticket = seedTicket('Attribution everywhere');
+	const ticket = seedTicket('Skip link everywhere');
 	for (const path of ['/', '/takt', '/board', '/projects', '/settings', ticket.path]) {
 		await open(page, path);
 		await page.keyboard.press('Tab');
 		await expect(page.getByRole('link', { name: 'Zum Inhalt springen' }), path).toBeFocused();
-		await expect(page.getByRole('link', { name: 'kabai-studio' }), path).toBeVisible();
+		if (path !== '/settings')
+			await expect(page.getByRole('link', { name: 'kabai-studio' })).toHaveCount(0);
+	}
+	await open(page, '/settings');
+	const about = page.getByRole('region', { name: 'Über kabai studio' });
+	for (const link of ['kabai-studio', 'Lizenztext (AGPL-3.0)']) {
+		await about.getByRole('link', { name: link }).focus();
+		await expect(about.getByRole('link', { name: link })).toBeFocused();
+	}
+});
+
+test('the window does not scroll vertically on the start page and the board', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	for (const path of ['/', '/board']) {
+		await open(page, path);
+		const [scrollHeight, innerHeight] = await page.evaluate(() => [
+			document.documentElement.scrollHeight,
+			window.innerHeight
+		]);
+		expect(scrollHeight, path).toBeLessThanOrEqual(innerHeight);
 	}
 });
 

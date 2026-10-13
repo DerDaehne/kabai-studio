@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/t';
+	import Attribution from '$lib/shell/Attribution.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import type { PageProps } from './$types';
 
@@ -60,10 +61,19 @@
 	</p>
 </section>
 
-<p class="version">
-	Version <code>{data.version}</code> · Build <code>{data.buildDate}</code>
-	{#if data.prerelease}<Badge tone="accent">Vorabversion</Badge>{/if}
-</p>
+<section class="about" id="about" aria-labelledby="about-title">
+	<h2 id="about-title">{t('settings.about.title')}</h2>
+	<Attribution />
+	<p>
+		<a href="https://github.com/DerDaehne/kabai-studio/blob/main/LICENSE"
+			>{t('settings.about.licenceText')}</a
+		>
+	</p>
+	<p class="version">
+		Version <code>{data.version}</code> · Build <code>{data.buildDate}</code>
+		{#if data.prerelease}<Badge tone="accent">Vorabversion</Badge>{/if}
+	</p>
+</section>
 
 <form class="sign-out" method="POST" action="/logout">
 	{t('settings.signedInAs', { name: data.user.name })} · <button>{t('settings.signOut')}</button>
@@ -128,11 +138,17 @@
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 	}
+	.about {
+		display: grid;
+		gap: var(--space-2);
+		max-width: 64ch;
+		margin-top: var(--space-8);
+		scroll-margin-top: var(--head-h);
+	}
 	.version {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		margin-top: var(--space-4);
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 	}

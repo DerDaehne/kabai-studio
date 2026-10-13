@@ -97,6 +97,12 @@ export function globalCommands(handlers: GlobalCommandHandlers): Suggestion[] {
 		...preferenceCommands(handlers.setPreference),
 		...singleKeysCommands(handlers.setSingleKeys),
 		{ id: 'settings', label: ':einstellungen', detail: 'Einstellungen öffnen', href: '/settings' },
+		{
+			id: 'about',
+			label: ':info',
+			detail: 'Über kabai studio: Version, Lizenz, Quellcode',
+			href: '/settings#about'
+		},
 		{ id: 'q', label: ':q', detail: 'Befehlszeile schließen' }
 	];
 }

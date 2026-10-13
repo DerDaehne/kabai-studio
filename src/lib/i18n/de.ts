@@ -101,6 +101,8 @@ export const de: Catalogue = {
 
 	'settings.signedInAs': 'Angemeldet als {name}',
 	'settings.signOut': 'Abmelden',
+	'settings.about.title': 'Über kabai studio',
+	'settings.about.licenceText': 'Lizenztext (AGPL-3.0)',
 
 	'projects.heading': 'Projekte',
 	'projects.intro': 'Ein Projekt sammelt Tickets und führt sie durch die Schritte seiner Variante.',

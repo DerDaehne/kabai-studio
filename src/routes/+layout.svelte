@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Attribution from '$lib/shell/Attribution.svelte';
 	import '$lib/styles/tokens.css';
 	import '$lib/styles/base.css';
 	import { afterNavigate, goto, onNavigate } from '$app/navigation';
@@ -177,19 +178,11 @@
 
 <svelte:window onkeydown={handleKey} />
 
-<!-- Attribution required by LICENSE (additional term §7b): the original project and author stay visible -->
-{#snippet attribution()}
-	<p class="attribution">
-		<a href="https://github.com/DerDaehne/kabai-studio">kabai-studio</a>
-		{t('layout.attribution', { author: 'DerDaehne', licence: 'AGPL-3.0' })}
-	</p>
-{/snippet}
-
 {#if bare}
 	<div class="bare">
 		<div class="brand"><img src={favicon} alt="" width="20" height="20" />kabai studio</div>
 		<main id="main">{@render children()}</main>
-		{@render attribution()}
+		<Attribution />
 	</div>
 {:else}
 	<div class="shell">
@@ -216,7 +209,6 @@
 				</p>
 			{/if}
 			{@render children()}
-			<footer class="page-end">{@render attribution()}</footer>
 		</main>
 
 		<AppBar {openCommandLine} openKeys={() => (keysOpen = true)} />
@@ -276,15 +268,6 @@
 		color: var(--text-muted);
 		font-size: var(--type-meta);
 	}
-	.page-end {
-		margin-top: var(--space-8);
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-	.attribution a {
-		color: inherit;
-		font-weight: 600;
-	}
 	.skip {
 		position: fixed;
 		top: var(--space-2);
@@ -335,7 +318,7 @@
 		color: var(--status-failed);
 		font-weight: 560;
 	}
-	.bare .attribution {
+	.bare :global(.attribution) {
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 		text-align: center;
