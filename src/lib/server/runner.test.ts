@@ -19,7 +19,7 @@ import {
 	resumeAll,
 	resumeRun
 } from './domain/halt';
-import { startTicket } from './domain/intents';
+import { acceptTicket, startTicket } from './domain/intents';
 import { finishStep } from './domain/steps';
 import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
@@ -1872,6 +1872,91 @@ describe('the chain of runs', () => {
 			if (resumedOther) fake.call(resumedOther.id).done(); // a paused run resumes ahead of the chain
 			await flush();
 			expect(s.state(next)).toBe('running');
+		}
+	);
+});
+
+describe('the chain of runs across a blocks predecessor', () => {
+	/** A started successor whose `back` run ended while its predecessor stood before it, and a runner that stays out of the way. */
+	function gated() {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor });
+		const successor = s.newTicket();
+		const back = s.queue(s.local, successor);
+		runs.startRun(s.db, system, back);
+		runs.finishRun(s.db, system, back, { state: 'succeeded' });
+		s.db.prepare("UPDATE runs SET step_result = 'back' WHERE id = ?").run(back);
+		const stepColumn = (step: Step) =>
+			board.columns(s.db, s.projectId).find((c) => c.step === step)!.id;
+		const predecessor = board.createTicket(s.db, user, s.projectId, {
+			title: 'Davor',
+			description: 'Voraussetzung',
+			size: 'S',
+			column_id: stepColumn('acceptance')
+		}).id;
+		board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		const followUps = () =>
+			s.db
+				.prepare("SELECT id, state FROM runs WHERE ticket_id = ? AND trigger = 'on_enter'")
+				.all(successor) as { id: number; state: string }[];
+		return { s, fake, runner, successor, predecessor, stepColumn, followUps };
+	}
+
+	it('queues one follow-up run when the predecessor is accepted', async () => {
+		const g = gated();
+		expect(g.followUps()).toEqual([]);
+		acceptTicket(g.s.db, user, g.predecessor);
+		await flush();
+		expect(g.followUps()).toHaveLength(1);
+	});
+
+	it('queues one follow-up run when a human moves the predecessor to done', async () => {
+		const g = gated();
+		board.moveTicket(g.s.db, user, g.predecessor, g.stepColumn('done'));
+		await flush();
+		expect(g.followUps()).toHaveLength(1);
+	});
+
+	it('queues one follow-up run when the critique approves the predecessor and review approval suffices', async () => {
+		const g = gated();
+		board.setBlocksSatisfiedAt(g.s.db, user, g.s.projectId, 'review_ok');
+		board.moveTicket(g.s.db, user, g.predecessor, g.stepColumn('critique'));
+		board.completeTasks(
+			g.s.db,
+			user,
+			g.predecessor,
+			board.addTasks(g.s.db, user, g.predecessor, ['K']).ids
+		);
+		const critique = g.s.queue(g.s.local, g.predecessor);
+		await flush();
+		expect(g.s.state(critique)).toBe('running');
+		expect(g.followUps()).toEqual([]);
+
+		finishStep(g.s.db, { kind: 'agent', runId: critique }, g.predecessor, {
+			result: 'done',
+			summary: 'Passt'
+		});
+		await flush();
+
+		expect(g.followUps()).toHaveLength(1); // approval and move both fire, one run results
+	});
+
+	it.each(['stop', 'pause'] as const)(
+		'keeps the follow-up run queued through a %s and starts it on resume',
+		async (kind) => {
+			const g = gated();
+			if (kind === 'stop') g.runner.halt();
+			else g.runner.pauseAll();
+			board.moveTicket(g.s.db, user, g.predecessor, g.stepColumn('done'));
+			await flush();
+			const [followUp] = g.followUps();
+			expect(followUp.state).toBe('queued');
+
+			resumeAll(g.s.db, user);
+			await flush();
+
+			expect(g.s.state(followUp.id)).toBe('running');
 		}
 	);
 });

@@ -6,7 +6,7 @@ import { addComment } from './domain/board';
 import { DomainError, tx, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
 import { requestHuman, type QuestionOption } from './domain/questions';
-import { queueNextStep } from './domain/steps';
+import { queueNextStep, queueUnblockedSuccessors } from './domain/steps';
 import {
 	appendEvent,
 	claimRun,
@@ -72,6 +72,7 @@ export type Executor = {
 export const LIMITS: Limits = { global: 4, pools: { cloud: 3, local: 1 } };
 
 const SYSTEM: Actor = { kind: 'system' };
+const PREDECESSOR_EVENTS = new Set(['ticket.moved', 'ticket.review_approved']);
 const WAKING_EVENTS = new Set(['run.created', 'run.state_changed', 'runner.released']);
 const MODEL_LOADING_PHASES: Phase['name'][] = ['model_loading', 'model_downloading'];
 const MAX_LAST_LINE = 120;
@@ -396,6 +397,8 @@ class Runner {
 	start() {
 		this.unsubscribe = subscribe((event) => {
 			if (WAKING_EVENTS.has(event.type)) this.wake();
+			if (PREDECESSOR_EVENTS.has(event.type) && typeof event.ticketId === 'number')
+				queueUnblockedSuccessors(this.db, event.ticketId);
 		});
 		this.claimQueuedRuns();
 	}

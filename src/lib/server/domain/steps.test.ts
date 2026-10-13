@@ -4,7 +4,9 @@ import * as board from './board';
 import type { Actor } from './core';
 import { answerQuestion, latestOpenQuestion, requestHuman } from './questions';
 import * as runs from './runs';
-import { finishStep, queueNextStep, type StepResult } from './steps';
+import { assemblePrompt } from '../agents/prompt';
+import { ticketLagen } from '../lagen';
+import { finishStep, queueNextStep, queueUnblockedSuccessors, type StepResult } from './steps';
 import type { Step, Variant } from './variants';
 
 const user: Actor = { kind: 'user' };
@@ -407,5 +409,144 @@ describe('finishStep with done and an open blocks predecessor', () => {
 		const { db, id, finish } = ticketInPlan(false);
 		expect(finish()).toMatchObject({ next: 'implement', then: 'run' });
 		expect(board.ticket(db, id).column_step).toBe('implement');
+	});
+});
+
+describe('the chain across a blocks predecessor', () => {
+	/** A started successor whose `back` run ended while the predecessor, in another project, was still open. */
+	function gated() {
+		const c = chain('software', 'critique');
+		const otherProject = board.createProject(c.db, user, { key: 'PRE', name: 'Davor' }).id;
+		const predecessor = board.createTicket(c.db, user, otherProject, { title: 'Davor' }).id;
+		board.linkRelation(c.db, user, predecessor, c.ticketId, 'blocks');
+		const back = c.work('back', 'Finding: the header row is missing');
+		const finish = (id: number) => board.moveTicket(c.db, user, id, doneColumn(c.db, id));
+		return { c, predecessor, back, finish };
+	}
+	const doneColumn = (db: ReturnType<typeof chain>['db'], ticketId: number) =>
+		board.columns(db, board.ticket(db, ticketId).project_id).find((col) => col.phase === 'done')!
+			.id;
+	const lageOf = (c: ReturnType<typeof chain>, ticketId: number) =>
+		ticketLagen(c.db).find((row) => row.ticketId === ticketId)!;
+	/** Adds a newest run of the successor that ends in `state`. */
+	const endRun = (c: ReturnType<typeof chain>, state: 'failed' | 'cancelled' | 'paused') => {
+		const id = runs.createRun(c.db, user, { ticketId: c.ticketId, profileId: c.profileId }).id;
+		runs.startRun(c.db, system, id);
+		runs.finishRun(c.db, system, id, { state, error: 'model gone' });
+	};
+
+	it('queues exactly one run for a started successor once its predecessor is done, across projects', () => {
+		const { c, predecessor, back, finish } = gated();
+		expect(lageOf(c, c.ticketId)).toMatchObject({
+			lage: 'open',
+			reason: { kind: 'predecessors' }
+		});
+		finish(predecessor);
+		const queued = queueUnblockedSuccessors(c.db, predecessor);
+
+		expect(queued).toHaveLength(1);
+		expect(c.run(queued[0].id)).toMatchObject({
+			trigger: 'on_enter',
+			profileId: c.profileId,
+			step: 'implement'
+		});
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+		expect(c.runCount()).toBe(back.finished + 1);
+		expect(lageOf(c, c.ticketId)).toMatchObject({ reason: { kind: 'capacity' } });
+	});
+
+	it('gives the follow-up run the context of the back run: its summary among the latest comments', () => {
+		const { c, predecessor, finish } = gated();
+		finish(predecessor);
+		const [queued] = queueUnblockedSuccessors(c.db, predecessor);
+		const profile = runs.getProfile(c.db, c.profileId);
+
+		const { user: prompt } = assemblePrompt(c.db, { id: queued.id, ticketId: c.ticketId, profile });
+
+		expect(prompt).toContain('Finding: the header row is missing');
+	});
+
+	it('queues nothing for a successor that never ran, in the backlog or in a work step', () => {
+		for (const step of ['backlog', 'implement'] as const) {
+			const c = chain('software', 'plan');
+			const predecessor = board.createTicket(c.db, user, c.projectId, { title: 'Davor' }).id;
+			const idle = board.createTicket(c.db, user, c.projectId, {
+				title: 'Idle',
+				column_id: c.columnOf(step)
+			}).id;
+			board.linkRelation(c.db, user, predecessor, idle, 'blocks');
+			board.moveTicket(c.db, user, predecessor, doneColumn(c.db, predecessor));
+
+			expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+			expect(lageOf(c, idle)).toMatchObject({
+				reason: { kind: step === 'backlog' ? 'not_prioritized' : 'ready' }
+			});
+			expect(c.runCount()).toBe(1);
+		}
+	});
+
+	it('queues nothing while the successor has an open question', () => {
+		const { c, predecessor, finish } = gated();
+		requestHuman(c.db, user, c.ticketId, { question: 'Which format?' });
+		finish(predecessor);
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+	});
+
+	it.each(['failed', 'cancelled', 'paused'] as const)(
+		'queues nothing when the newest run of the successor is %s',
+		(state) => {
+			const { c, predecessor, finish } = gated();
+			endRun(c, state);
+			finish(predecessor);
+			expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+		}
+	);
+
+	it('queues nothing when the newest run ended without finishing its step (stalled)', () => {
+		const c = chain('software', 'implement');
+		const predecessor = board.createTicket(c.db, user, c.projectId, { title: 'Davor' }).id;
+		board.linkRelation(c.db, user, predecessor, c.ticketId, 'blocks');
+		runs.startRun(c.db, system, c.current());
+		runs.finishRun(c.db, system, c.current(), { state: 'succeeded' });
+		board.moveTicket(c.db, user, predecessor, doneColumn(c.db, predecessor));
+
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+	});
+
+	it('queues nothing while the successor has a run waiting or running', () => {
+		for (const start of [false, true]) {
+			const { c, predecessor, finish } = gated();
+			const waiting = runs.createRun(c.db, user, {
+				ticketId: c.ticketId,
+				profileId: c.profileId
+			}).id;
+			if (start) runs.startRun(c.db, system, waiting);
+			finish(predecessor);
+			expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+		}
+	});
+
+	it('queues nothing while another predecessor is still open', () => {
+		const { c, predecessor, finish } = gated();
+		const second = board.createTicket(c.db, user, c.projectId, { title: 'Auch davor' }).id;
+		board.linkRelation(c.db, user, second, c.ticketId, 'blocks');
+		finish(predecessor);
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+
+		finish(second);
+		expect(queueUnblockedSuccessors(c.db, second)).toHaveLength(1);
+	});
+
+	it('does not count a predecessor that only reached acceptance as done under the default', () => {
+		const { c, predecessor } = gated();
+		const acceptance = board
+			.columns(c.db, board.ticket(c.db, predecessor).project_id)
+			.find((col) => col.phase === 'acceptance')!;
+		board.moveTicket(c.db, user, predecessor, acceptance.id);
+		expect(board.blockingPredecessors(c.db, c.ticketId)).toHaveLength(1);
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+
+		board.moveTicket(c.db, user, predecessor, doneColumn(c.db, predecessor));
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toHaveLength(1);
 	});
 });
