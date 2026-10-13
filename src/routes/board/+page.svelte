@@ -4,7 +4,7 @@
 	import { t } from '$lib/i18n/t';
 	import type { MessageKey } from '$lib/i18n';
 	import type { Lage } from '$lib/lage';
-	import { tick, untrack } from 'svelte';
+	import { tick } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { crossfade } from 'svelte/transition';
@@ -181,13 +181,6 @@
 		refusal = null;
 		void focusRow(row.id);
 	}
-
-	let shownFocus = shell.focus?.id;
-	$effect(() => {
-		if (shell.focus?.id === shownFocus) return;
-		shownFocus = shell.focus?.id;
-		untrack(() => void focusRow(current?.id));
-	});
 
 	function toggleFlow() {
 		flowChoice = !flow;
