@@ -9,7 +9,7 @@ const DEEPEST_HEADING = 6;
 // Clickable: http(s), mailto and same-origin paths with one leading "/" (never "//" or "/\", which browsers read as a host).
 const ALLOWED_LINK = /^(https?:|mailto:|\/(?![/\\]))/i;
 
-function createMarkdown(breaks: boolean): MarkdownIt {
+function createMarkdown(breaks: boolean) {
 	const md = new MarkdownIt({ html: false, linkify: false, breaks });
 	md.disable('image');
 	md.validateLink = (url) => ALLOWED_LINK.test(url.trim());
