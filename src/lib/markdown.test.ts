@@ -12,7 +12,8 @@ const MALICIOUS = [
 	'[x](data:text/html;base64,AAAA)',
 	'![x](https://evil.example/x.png)',
 	'![](data:image/png;base64,AAAA)',
-	'![x][ref]\n\n[ref]: https://evil.example/x.png'
+	'![x][ref]\n\n[ref]: https://evil.example/x.png',
+	"[x](javascript:alert('https:'))"
 ].join('\n\n');
 
 it('renders common markdown (heading, bold, list, link) as HTML', () => {
@@ -79,6 +80,14 @@ it('gives the first paragraph as short form and the markdown after it as rest', 
 	expect(splitLead('Nur eins').rest).toBe('');
 });
 
+it('keeps the rest directly after the first block, also without a blank line', () => {
+	expect(splitLead('Frage\n- a\n- b').rest).toBe('- a\n- b');
+});
+
+it('counts a lone carriage return as a line break when splitting off the rest', () => {
+	expect(splitLead('Frage\r\r- a\r- b').rest).toBe('- a\n- b');
+});
+
 it('lets only AgentText inject markup: no {@html} elsewhere, no other markdown-it user', () => {
 	const files = (dir: string): string[] =>
 		readdirSync(dir).flatMap((name) => {
@@ -90,6 +99,7 @@ it('lets only AgentText inject markup: no {@html} elsewhere, no other markdown-i
 	);
 	const using = (needle: RegExp) =>
 		source.filter((path) => needle.test(readFileSync(path, 'utf8'))).sort();
-	expect(using(/\{@html/)).toEqual([join('src', 'lib', 'ui', 'AgentText.svelte')]);
-	expect(using(/from 'markdown-it'/)).toEqual([join('src', 'lib', 'markdown.ts')]);
+	expect(using(/\{\s*@html\b/)).toEqual([join('src', 'lib', 'ui', 'AgentText.svelte')]);
+	expect(using(/\.(inner|outer)HTML\s*=|insertAdjacentHTML/)).toEqual([]);
+	expect(using(/['"]markdown-it['"]/)).toEqual([join('src', 'lib', 'markdown.ts')]);
 });

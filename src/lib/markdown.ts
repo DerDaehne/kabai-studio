@@ -63,7 +63,9 @@ export const plainText = (text: string): string =>
 export function splitLead(text: string): { lead: string; rest: string } {
 	const first = textBlocks(text)[0];
 	if (!first) return { lead: '', rest: '' };
-	return { lead: first.text, rest: text.split('\n').slice(first.endLine).join('\n').trim() };
+	// markdown-it counts lines after turning a lone \r into \n, so the split has to as well.
+	const lines = text.replace(/\r\n?/g, '\n').split('\n');
+	return { lead: first.text, rest: lines.slice(first.endLine).join('\n').trim() };
 }
 
 /** The short form of an agent text: its first paragraph as plain text. */
