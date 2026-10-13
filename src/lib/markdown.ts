@@ -5,30 +5,40 @@ const DEEPEST_HEADING = 6;
 
 // html: false escapes raw tags like <script> instead of passing them through. Images are off because an <img src>
 // would load an outside URL as soon as the text is shown (a way to carry data out, and there is no CSP); with the
-// rule off, `![x](u)` stays visible as "!" plus a link the reader has to click. Only http(s) links are kept.
-// breaks: agents write line by line, so a single newline stays a line break.
-const md = new MarkdownIt({ html: false, linkify: false, breaks: true });
-md.disable('image');
-md.validateLink = (url) => /^https?:/i.test(url.trim());
+// rule off, `![x](u)` stays visible as "!" plus a link the reader has to click.
+// Clickable: http(s), mailto and same-origin paths with one leading "/" (never "//" or "/\", which browsers read as a host).
+const ALLOWED_LINK = /^(https?:|mailto:|\/(?![/\\]))/i;
 
-const defaultLinkOpen =
-	md.renderer.rules.link_open ??
-	((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));
-md.renderer.rules.link_open = (tokens, index, options, env, self) => {
-	tokens[index].attrSet('rel', 'noopener noreferrer');
-	return defaultLinkOpen(tokens, index, options, env, self);
-};
+function createMarkdown(breaks: boolean): MarkdownIt {
+	const md = new MarkdownIt({ html: false, linkify: false, breaks });
+	md.disable('image');
+	md.validateLink = (url) => ALLOWED_LINK.test(url.trim());
 
-// Agent headings sit below the page's own structure: # becomes h4, nothing goes deeper than h6.
-md.core.ruler.push('shift_headings', (state) => {
-	for (const token of state.tokens) {
-		if (token.type !== 'heading_open' && token.type !== 'heading_close') continue;
-		token.tag = `h${Math.min(DEEPEST_HEADING, Number(token.tag.slice(1)) + HEADING_SHIFT)}`;
-	}
-});
+	const defaultLinkOpen =
+		md.renderer.rules.link_open ??
+		((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));
+	md.renderer.rules.link_open = (tokens, index, options, env, self) => {
+		tokens[index].attrSet('rel', 'noopener noreferrer');
+		return defaultLinkOpen(tokens, index, options, env, self);
+	};
+
+	// Agent headings sit below the page's own structure: # becomes h4, nothing goes deeper than h6.
+	md.core.ruler.push('shift_headings', (state) => {
+		for (const token of state.tokens) {
+			if (token.type !== 'heading_open' && token.type !== 'heading_close') continue;
+			token.tag = `h${Math.min(DEEPEST_HEADING, Number(token.tag.slice(1)) + HEADING_SHIFT)}`;
+		}
+	});
+	return md;
+}
+
+// Agents write line by line, so their single newlines stay line breaks. Hard-wrapped text (the ticket description) flows.
+const md = createMarkdown(true);
+const mdFlowing = createMarkdown(false);
 
 /** Renders agent or user markdown to safe HTML for `AgentText`. */
-export const renderAgentText = (text: string): string => md.render(text);
+export const renderAgentText = (text: string, { breaks = true } = {}): string =>
+	(breaks ? md : mdFlowing).render(text);
 
 function leafText(token: ReturnType<typeof md.parse>[number]): string {
 	if (token.type === 'fence' || token.type === 'code_block') return token.content.trim();

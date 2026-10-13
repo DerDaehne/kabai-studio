@@ -144,7 +144,9 @@
 		<h2 id="h-auftrag">Auftrag</h2>
 
 		<div class="description">
-			{#if ticket.description.trim()}<AgentText text={ticket.description} />{:else}<p class="muted">
+			{#if ticket.description.trim()}<AgentText text={ticket.description} breaks={false} />{:else}<p
+					class="muted"
+				>
 					Keine Beschreibung.
 				</p>{/if}
 		</div>

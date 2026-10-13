@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { renderAgentText } from '$lib/markdown';
 
-	let { text }: { text: string } = $props();
+	let { text, breaks = true }: { text: string; breaks?: boolean } = $props();
 </script>
 
-<div class="agent-text">{@html renderAgentText(text)}</div>
+<div class="agent-text">{@html renderAgentText(text, { breaks })}</div>
 
 <style>
 	.agent-text {

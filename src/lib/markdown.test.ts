@@ -44,7 +44,8 @@ it('wraps malicious markdown so that nothing executable or remote arrives', () =
 	expect(html).not.toMatch(/<img/i);
 	expect(html).not.toMatch(/\bonerror\s*=\s*"/i);
 	expect(html).toContain('&lt;script&gt;');
-	for (const [, href] of html.matchAll(/href="([^"]*)"/g)) expect(href).toMatch(/^https?:/);
+	for (const [, href] of html.matchAll(/href="([^"]*)"/g))
+		expect(href).toMatch(/^(https?:|mailto:|\/(?![/\\]))/);
 });
 
 it('shows an image as a plain link the reader has to click, never as an <img>', () => {
@@ -54,10 +55,22 @@ it('shows an image as a plain link the reader has to click, never as an <img>', 
 });
 
 it('gives every link rel="noopener noreferrer" and leaves no other scheme clickable', () => {
-	const html = renderAgentText('[a](https://a.example) [b](http://b.example) [c](mailto:x@y.z)');
+	const html = renderAgentText('[a](https://a.example) [b](http://b.example) [c](ftp://c.example)');
 	expect(html.match(/<a /g)).toHaveLength(2);
 	expect(html.match(/rel="noopener noreferrer"/g)).toHaveLength(2);
-	expect(html).not.toContain('mailto:x@y.z"');
+	expect(html).not.toContain('href="ftp:');
+});
+
+it('links same-origin paths and mailto, but not protocol-relative targets', () => {
+	expect(renderAgentText('[Ticket 12](/p/KS/t/12)')).toContain('<a href="/p/KS/t/12"');
+	expect(renderAgentText('[m](mailto:a@b.example)')).toContain('<a href="mailto:a@b.example"');
+	expect(renderAgentText('[x](//evil.example)')).not.toContain('<a');
+	expect(renderAgentText('[x](/\\evil.example)')).toContain('href="/%5Cevil.example"');
+});
+
+it('flows soft line breaks when breaks is off, as for hard-wrapped descriptions', () => {
+	expect(renderAgentText('eins\nzwei', { breaks: false })).toBe('<p>eins\nzwei</p>\n');
+	expect(renderAgentText('eins\nzwei')).toContain('<br>');
 });
 
 it('turns markdown into plain text without markers', () => {
