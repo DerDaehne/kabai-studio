@@ -35,6 +35,24 @@ function finishedRun(db: DatabaseSync, ticketId: number, end: RunEnd): number {
 	return run;
 }
 
+/** Enough projects to make the start page's project list scroll; `remove` takes them away again. */
+function crowdProjects(db: DatabaseSync) {
+	const ids = Array.from(
+		{ length: 20 },
+		(_, i) =>
+			createProject(db, HUMAN, {
+				key: `C${i}${randomUUID()
+					.slice(0, 6)
+					.toUpperCase()
+					.replace(/[^A-Z0-9]/g, 'X')}`,
+				name: `Crowd ${i}`
+			}).id
+	);
+	return {
+		remove: () => ids.forEach((id) => db.prepare('DELETE FROM projects WHERE id = ?').run(id))
+	};
+}
+
 /** A second project with one ticket whose run failed; `remove` takes both away again. */
 function otherProjectWithFailedRun(db: DatabaseSync) {
 	const key = `Z${randomUUID()
@@ -119,30 +137,46 @@ test.describe('at 1440 px', () => {
 	});
 
 	test('the panorama fills the stage: three sections fit, the fourth begins, the wheel scrolls sideways and the window stays', async ({
-		page
+		page,
+		db
 	}) => {
-		await open(page, '/');
-		const lefts = await page
-			.locator('.panorama > section')
-			.evaluateAll((sections) =>
-				sections.map((s) => [s.getBoundingClientRect().left, s.getBoundingClientRect().right])
-			);
-		expect(lefts).toHaveLength(4);
-		for (const [, right] of lefts.slice(0, 3)) expect(right).toBeLessThanOrEqual(1440);
-		expect(lefts[3][0]).toBeLessThan(1440);
-		await expect(page.getByText('← → oder seitlich scrollen')).toBeVisible();
+		const crowded = crowdProjects(db);
+		try {
+			await open(page, '/');
+			const lefts = await page
+				.locator('.panorama > section')
+				.evaluateAll((sections) =>
+					sections.map((s) => [s.getBoundingClientRect().left, s.getBoundingClientRect().right])
+				);
+			expect(lefts).toHaveLength(4);
+			for (const [, right] of lefts.slice(0, 3)) expect(right).toBeLessThanOrEqual(1440);
+			expect(lefts[3][0]).toBeLessThan(1440);
+			await expect(page.getByText('← → oder seitlich scrollen')).toBeVisible();
 
-		const panorama = page.locator('.panorama');
-		const bottom = await panorama.evaluate((el) => el.getBoundingClientRect().bottom);
-		const appBarTop = await page
-			.locator('footer.appbar')
-			.evaluate((el) => el.getBoundingClientRect().top);
-		expect(Math.abs(bottom - appBarTop)).toBeLessThanOrEqual(1);
+			const panorama = page.locator('.panorama');
+			const bottom = await panorama.evaluate((el) => el.getBoundingClientRect().bottom);
+			const appBarTop = await page
+				.locator('footer.appbar')
+				.evaluate((el) => el.getBoundingClientRect().top);
+			expect(Math.abs(bottom - appBarTop)).toBeLessThanOrEqual(1);
 
-		await page.mouse.move(700, 600);
-		await page.mouse.wheel(0, 300);
-		await expect.poll(() => panorama.evaluate((el) => el.scrollLeft)).toBe(300);
-		expect(await page.evaluate(() => window.scrollY)).toBe(0);
+			const projects = await section(page, 'projekte').evaluate((el) => ({
+				scrollHeight: el.scrollHeight,
+				clientHeight: el.clientHeight
+			}));
+			expect(
+				projects.scrollHeight,
+				'the project list overflows, so it keeps a wheel over it'
+			).toBeGreaterThan(projects.clientHeight);
+			// the gap between two sections has no list of its own that could keep the wheel
+			const gapBetweenSections = (lefts[0][1] + lefts[1][0]) / 2;
+			await page.mouse.move(gapBetweenSections, 600);
+			await page.mouse.wheel(0, 300);
+			await expect.poll(() => panorama.evaluate((el) => el.scrollLeft)).toBe(300);
+			expect(await page.evaluate(() => window.scrollY)).toBe(0);
+		} finally {
+			crowded.remove();
+		}
 	});
 
 	test('keys: → and ← change the section, j moves within it, * focuses its project, gt opens the Takt', async ({
