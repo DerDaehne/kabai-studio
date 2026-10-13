@@ -550,3 +550,23 @@ describe('the chain across a blocks predecessor', () => {
 		expect(queueUnblockedSuccessors(c.db, predecessor)).toHaveLength(1);
 	});
 });
+
+describe('the chain across a blocks predecessor, newest run failed after its step', () => {
+	it('queues nothing when the newest run recorded back but then failed', () => {
+		const c = chain('software', 'critique');
+		const predecessor = board.createTicket(c.db, user, c.projectId, { title: 'Davor' }).id;
+		board.linkRelation(c.db, user, predecessor, c.ticketId, 'blocks');
+		const { finished } = c.work('back', 'Finding');
+		c.db
+			.prepare("UPDATE runs SET state = 'failed', error = 'model gone' WHERE id = ?")
+			.run(finished);
+		board.moveTicket(
+			c.db,
+			user,
+			predecessor,
+			board.columns(c.db, c.projectId).find((col) => col.phase === 'done')!.id
+		);
+
+		expect(queueUnblockedSuccessors(c.db, predecessor)).toEqual([]);
+	});
+});
