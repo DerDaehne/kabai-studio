@@ -566,7 +566,7 @@ describe('releasing a predecessor again and again', () => {
 	const done = (db: ReturnType<typeof chain>['db'], id: number) =>
 		board.columns(db, board.ticket(db, id).project_id).find((col) => col.phase === 'done')!.id;
 
-	it('A: accept -> return -> accept gives one follow-up per release', () => {
+	it('accept -> return -> accept gives one follow-up per release', () => {
 		const c = chain('software', 'critique');
 		const pre = board.createTicket(c.db, user, c.projectId, {
 			title: 'Davor',
@@ -601,7 +601,7 @@ describe('releasing a predecessor again and again', () => {
 		expect(onEnter.n).toBe(2);
 	});
 
-	it('B: successor in a knowledge project, predecessor in a direct project', () => {
+	it('successor in a knowledge project, predecessor in a direct project', () => {
 		const c = chain('knowledge', 'critique');
 		const other = board.createProject(c.db, user, { key: 'DIR', name: 'Direkt' }, 'direct').id;
 		const pre = board.createTicket(c.db, user, other, { title: 'Davor' }).id;
@@ -613,7 +613,7 @@ describe('releasing a predecessor again and again', () => {
 		expect(c.run(queued[0].id)).toMatchObject({ trigger: 'on_enter', step: 'draft' });
 	});
 
-	it('D: a successor the human parked in a work step after its run finished done is started by an unrelated predecessor move', () => {
+	it('a successor the human parked in a work step after its run finished done is started by an unrelated predecessor move', () => {
 		const c = chain('software', 'critique');
 		board.setBlocksSatisfiedAt(c.db, user, c.projectId, 'review_ok');
 		const pre = board.createTicket(c.db, user, c.projectId, {

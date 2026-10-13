@@ -1971,7 +1971,7 @@ describe('the chain of runs across a blocks predecessor', () => {
 });
 
 describe('a failing follow-up run', () => {
-	it('C: a failing follow-up neither fails the committed accept nor hides the event from later subscribers', async () => {
+	it('a failing follow-up neither fails the committed accept nor hides the event from later subscribers', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
@@ -2005,7 +2005,7 @@ describe('a failing follow-up run', () => {
 });
 
 describe('the order of events around a follow-up run', () => {
-	it('E: a later subscriber sees the move before the follow-up run it caused', async () => {
+	it('a later subscriber sees the move before the follow-up run it caused', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
