@@ -153,6 +153,8 @@ describe('startView tokens', () => {
 		const [track] = startView(s.db).tracks;
 		expect(track.series.reduce((sum, point) => sum + (point.tokensIn ?? 0), 0)).toBe(0);
 		expect(track.tokens).toBe(110);
+		expect(track.series.reduce((sum, point) => sum + point.steps, 0)).toBe(0);
+		expect(track.steps).toBe(1);
 	});
 
 	it('has a zero total while no step reported usage', () => {

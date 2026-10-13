@@ -12,7 +12,7 @@ import {
 	tickerText,
 	tokenFigure,
 	withLiveEvent,
-	type Phase,
+	type LivePhase,
 	type TraceEvent,
 	type TraceStep
 } from './trace';
@@ -191,7 +191,7 @@ describe('phaseName', () => {
 		key,
 		payload
 	});
-	const live = (name: string): Phase => ({ name, elapsedMs: 0 });
+	const live = (name: string, afterSeq = 0): LivePhase => ({ name, elapsedMs: 0, afterSeq });
 
 	it('says the run is working while it has no live phase and nothing stored says more', () => {
 		expect(phaseName([])).toBe('working');
@@ -200,7 +200,13 @@ describe('phaseName', () => {
 
 	it('takes the live phase over what the stored events say', () => {
 		expect(phaseName([], live('thinking'))).toBe('thinking');
-		expect(phaseName([event(1, 'tool_call', 'c1')], live('writing'))).toBe('writing');
+		expect(phaseName([event(1, 'tool_call', 'c1')], live('writing', 1))).toBe('writing');
+	});
+
+	it('drops a live phase once a stored event is newer than the one it arrived after', () => {
+		const events = [event(1, 'log', 'prompt', { kind: 'prompt' }), event(2, 'tool_call', 'c1')];
+		expect(phaseName(events, live('writing', 2))).toBe('writing');
+		expect(phaseName(events, live('writing', 1))).toBe('tool');
 	});
 
 	it('says a tool runs while the newest call has no result, also with a parallel call left open', () => {

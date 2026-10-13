@@ -27,6 +27,8 @@ export type RunTrack = {
 	startedAt: string;
 	/** The run's tokens in and out over all its finished steps, however long ago they ended. */
 	tokens: number;
+	/** The run's finished steps in all, not only those of the series window. */
+	steps: number;
 	events: TraceEvent[];
 	series: SeriesPoint[];
 };
@@ -60,7 +62,8 @@ export const QUEUED_RUNS = `
 	LIMIT ${QUEUED_SHOWN}`;
 
 export const TRACKED_RUNS = `
-	SELECT r.id, ${iso('r.started_at')} AS startedAt, r.tokens_in + r.tokens_out AS tokens
+	SELECT r.id, ${iso('r.started_at')} AS startedAt, r.tokens_in + r.tokens_out AS tokens,
+		(SELECT count(*) FROM run_events e WHERE e.run_id = r.id AND e.type = 'log' AND e.payload ->> '$.kind' = 'step') AS steps
 	FROM runs r
 	JOIN tickets t ON t.id = r.ticket_id
 	JOIN projects p ON p.id = t.project_id
@@ -120,6 +123,7 @@ function runTracks(db: DatabaseSync, now: Date): RunTrack[] {
 		id: number;
 		startedAt: string;
 		tokens: number;
+		steps: number;
 	}[];
 	const series = stepSeries(
 		db,

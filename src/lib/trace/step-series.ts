@@ -1,4 +1,4 @@
-import { formatCount } from './trace';
+import { formatCount, isStepLog, stepTokens, withLiveEvent } from './trace';
 import type { TraceEvent } from './trace';
 
 /**
@@ -116,4 +116,33 @@ export function tokensSeriesText(points: SeriesPoint[], windowMinutes: number): 
 	const gap = known.length < points.length ? ' (Teil des Zeitraums ohne Token-Daten)' : '';
 	const values = known.map((p) => (p.tokensIn ?? 0) + (p.tokensOut ?? 0));
 	return `${formatCount(total)} Tokens in ${windowMinutes} min, ${trend(values)}${gap}`;
+}
+
+/** What the start page holds of one running run: its newest events and the figures that fold from them. */
+export type RunFold = {
+	events: TraceEvent[];
+	steps: number;
+	tokens: number;
+	series: SeriesPoint[];
+};
+
+/**
+ * The run with one live event folded in. An event already held changes nothing, so a repeat counts no step twice;
+ * `undefined` means events before it were missed and the caller loads the run again.
+ */
+export function foldLiveEvent(
+	run: RunFold,
+	runId: number,
+	event: TraceEvent,
+	receivedAt = new Date()
+): RunFold | undefined {
+	const events = withLiveEvent(run.events, event);
+	if (!events) return undefined;
+	if (events === run.events) return run;
+	return {
+		events,
+		steps: run.steps + (isStepLog(event) ? 1 : 0),
+		tokens: run.tokens + stepTokens(event),
+		series: advanceSeries({ runId, points: run.series }, event, receivedAt).points
+	};
 }

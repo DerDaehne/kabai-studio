@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from './trace';
 import {
 	advanceSeries,
+	foldLiveEvent,
 	minuteKey,
 	stepsSeriesText,
 	tokensSeriesText,
+	type RunFold,
 	type RunSeries
 } from './step-series';
 
@@ -207,5 +209,32 @@ describe('tokensSeriesText', () => {
 			{ minute: 'b', steps: 1, tokensIn: 150, tokensOut: 30 }
 		];
 		expect(tokensSeriesText(points, 30)).toBe('240 Tokens in 30 min, steigend');
+	});
+});
+
+describe('foldLiveEvent', () => {
+	const held = (): RunFold => ({
+		events: [{ seq: 1, type: 'log', key: null, payload: { kind: 'prompt' } }],
+		steps: 4,
+		tokens: 500,
+		series: loaded().points
+	});
+	const at = new Date('2026-10-08T16:42:30Z');
+
+	it('adds a finished step to the events, the step count, the token total and the series', () => {
+		const folded = foldLiveEvent(held(), 1, stepEvent(2, { tokensIn: 100, tokensOut: 10 }), at)!;
+		expect(folded.events.map((event) => event.seq)).toEqual([1, 2]);
+		expect([folded.steps, folded.tokens]).toEqual([5, 610]);
+		expect(folded.series.at(-1)).toMatchObject({ steps: 1, tokensIn: 100, tokensOut: 10 });
+	});
+
+	it('changes nothing when the event was already folded in', () => {
+		const once = foldLiveEvent(held(), 1, stepEvent(2, { tokensIn: 100, tokensOut: 10 }), at)!;
+		const twice = foldLiveEvent(once, 1, stepEvent(2, { tokensIn: 100, tokensOut: 10 }), at)!;
+		expect(twice).toEqual(once);
+	});
+
+	it('asks for a reload when events before it were missed', () => {
+		expect(foldLiveEvent(held(), 1, stepEvent(5), at)).toBeUndefined();
 	});
 });

@@ -6,6 +6,7 @@ import { createProject, createTicket, deleteTicket } from '../../src/lib/server/
 import { haltRuns, releaseHalt } from '../../src/lib/server/domain/halt.ts';
 import { latestOpenQuestion } from '../../src/lib/server/domain/questions.ts';
 import {
+	appendEvent,
 	createProfile,
 	createRun,
 	finishRun,
@@ -459,6 +460,35 @@ test.describe('at 1440 px', () => {
 		).toHaveText('110');
 		await expect(phaseOf(page, ticket.ref, 'arbeitet')).toBeVisible();
 		await expect(phaseOf(page, ticket.ref, 'schreibt')).toHaveCount(0);
+		await cancelRun(page, db, ticket.id);
+	});
+
+	test('a live phase older than an event the page missed does not outlast the reload that brings the event', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		fakeModel.reply({ partial: 'Working on it' });
+		const ticket = seedTicket('Miss an event');
+		await open(page, '/');
+		await queueRun(db, page, ticket.id, fakeModel);
+		await expect(phaseOf(page, ticket.ref, 'schreibt')).toBeVisible();
+
+		// stored in the test process, so it never reaches the page's stream: like an event sent while the connection was down
+		const runId = runIdOf(db, ticket.id);
+		appendEvent(db, { kind: 'agent', runId }, runId, {
+			type: 'tool_call',
+			key: 'missed-call',
+			payload: { step: 1, tool: 'read_file', args: {} }
+		});
+		// any state change reloads the tracks, as the reload after a reconnect does
+		expect((await page.request.delete('/api/halt')).ok()).toBe(true);
+
+		await expect(
+			section(page, 'spur').locator('article').filter({ hasText: ticket.ref })
+		).toContainText('read_file');
+		await expect(phaseOf(page, ticket.ref, 'Werkzeug läuft')).toBeVisible();
 		await cancelRun(page, db, ticket.id);
 	});
 

@@ -15,17 +15,15 @@
 	import { bindKeys, readKey } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
-	import { advanceSeries, type SeriesPoint } from '$lib/trace/step-series';
+	import { foldLiveEvent, type SeriesPoint } from '$lib/trace/step-series';
 	import {
 		buildTrace,
 		clock,
 		firstLine,
 		liveTraceEvent,
 		phaseName,
-		stepTokens,
 		tokenFigure,
-		withLiveEvent,
-		type Phase,
+		type LivePhase,
 		type TraceEvent,
 		type TraceStep
 	} from '$lib/trace/trace';
@@ -53,11 +51,14 @@
 	const shownTiles = $derived(tiles.filter((tile) => inFocus(shell.focus, tile.project.id)));
 	const hiddenTiles = $derived(tiles.filter((tile) => !inFocus(shell.focus, tile.project.id)));
 
-	// Live trace events and phases fold into the loaded tracks until the next reload replaces them.
+	// Live trace events fold into the loaded tracks until the next reload replaces them; a live phase stays beside them.
 	let events = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.events])));
 	let series = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.series])));
 	let tokens = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.tokens])));
-	const phases: Record<number, Phase> = $state({});
+	let steps = $derived(Object.fromEntries(data.tracks.map((track) => [track.id, track.steps])));
+	const phases: Record<number, LivePhase> = $state({});
+	// The newest stored event each run was seen with over the stream, also before its track is loaded.
+	const seenSeq: Record<number, number> = {};
 
 	let now = $state(Date.now());
 	let panorama = $state<HTMLElement>();
@@ -123,7 +124,6 @@
 	}
 
 	const PHASES = new Set([
-		'working',
 		'thinking',
 		'writing',
 		'tool',
@@ -148,16 +148,26 @@
 
 	function follow(event: LiveEvent) {
 		const runId = event.runId as number;
-		if (event.type === 'run.phase') phases[runId] = event as unknown as Phase;
-		if (event.type === 'run.event') delete phases[runId];
-		if (event.type !== 'run.event' || !events[runId]) return;
+		if (event.type === 'run.phase') {
+			const afterSeq = Math.max(seenSeq[runId] ?? 0, events[runId]?.at(-1)?.seq ?? 0);
+			phases[runId] = { ...(event as unknown as LivePhase), afterSeq };
+		}
+		if (event.type !== 'run.event') return;
 		const traced = liveTraceEvent(event);
-		const next = withLiveEvent(events[runId], traced);
-		if (!next) return void invalidateLive();
-		if (next === events[runId]) return;
-		events = { ...events, [runId]: next };
-		tokens = { ...tokens, [runId]: tokens[runId] + stepTokens(traced) };
-		series = { ...series, [runId]: advanceSeries({ runId, points: series[runId] }, traced).points };
+		seenSeq[runId] = Math.max(seenSeq[runId] ?? 0, traced.seq);
+		if (!events[runId]) return;
+		const run = {
+			events: events[runId],
+			steps: steps[runId],
+			tokens: tokens[runId],
+			series: series[runId]
+		};
+		const folded = foldLiveEvent(run, runId, traced);
+		if (!folded) return void invalidateLive();
+		events = { ...events, [runId]: folded.events };
+		steps = { ...steps, [runId]: folded.steps };
+		tokens = { ...tokens, [runId]: folded.tokens };
+		series = { ...series, [runId]: folded.series };
 	}
 
 	onMount(() => onLiveEvent(follow));
@@ -512,10 +522,7 @@
 				{#if track}
 					<span class="muted">{phaseWord(track.id)}</span>
 					<span class="figures">
-						<StatPair
-							label={t('start.tile.steps')}
-							value={numbers.format(points.reduce((sum, p) => sum + p.steps, 0))}
-						/>
+						<StatPair label={t('start.tile.steps')} value={numbers.format(steps[track.id])} />
 						<StatPair
 							label={t('start.tile.tokens')}
 							value={tokenFigure(tokens[track.id], numbers.format)}
