@@ -2,13 +2,13 @@
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { ticketDependency } from '$lib/live';
-	import { renderDescription } from '$lib/markdown';
 	import RunControl from '$lib/runs/RunControl.svelte';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
 	import { reloadsTicket } from '$lib/ticket-live';
 	import { nextMove } from '$lib/ticket-move';
 	import RunTrace from '$lib/trace/RunTrace.svelte';
+	import AgentText from '$lib/ui/AgentText.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
@@ -128,7 +128,7 @@
 {#if ticket.openQuestion}
 	<div class="question" role="status">
 		<Badge tone="waiting">Offene Frage</Badge>
-		<p>{ticket.openQuestion.question}</p>
+		<AgentText text={ticket.openQuestion.question} />
 		<a class="btn btn-sm" href="/takt">In Takt beantworten (gt)</a>
 	</div>
 {/if}
@@ -144,9 +144,7 @@
 		<h2 id="h-auftrag">Auftrag</h2>
 
 		<div class="description">
-			{#if ticket.description.trim()}{@html renderDescription(ticket.description)}{:else}<p
-					class="muted"
-				>
+			{#if ticket.description.trim()}<AgentText text={ticket.description} />{:else}<p class="muted">
 					Keine Beschreibung.
 				</p>{/if}
 		</div>
@@ -194,7 +192,7 @@
 					<span class="author"
 						><Icon name={AUTHOR_ICONS[comment.authorKind]} size={14} />{authorLabel(comment)}</span
 					>
-					<p class="comment-body">{comment.body}</p>
+					<AgentText text={comment.body} />
 				</li>
 			{:else}
 				<li class="muted">Noch keine Kommentare.</li>
@@ -433,10 +431,6 @@
 		color: var(--text-muted);
 		font-size: var(--text-sm);
 		font-weight: 560;
-	}
-	.comment-body {
-		margin: var(--space-1) 0 0;
-		white-space: pre-wrap;
 	}
 	.blocked {
 		margin: 0;

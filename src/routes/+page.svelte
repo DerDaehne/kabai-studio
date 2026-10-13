@@ -12,6 +12,7 @@
 	import type { LiveEvent, ProjectRef, QueuedQuestion } from '$lib/live';
 	import { inFocus } from '$lib/shell/focus';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
+	import { plainText } from '$lib/markdown';
 	import { bindKeys, readKey } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
@@ -20,6 +21,7 @@
 		buildTrace,
 		clock,
 		firstLine,
+		gist,
 		liveTraceEvent,
 		phaseName,
 		tokenFigure,
@@ -116,9 +118,7 @@
 	function stepLine(step: TraceStep): string {
 		const call = step.calls.at(-1);
 		if (!call)
-			return step.message
-				? firstLine(step.message)
-				: t('start.trace.step', { number: step.number });
+			return step.message ? gist(step.message) : t('start.trace.step', { number: step.number });
 		const result = call.result?.isError ? t('start.trace.error') : call.result?.summary;
 		return [call.tool, call.target, result].filter(Boolean).join(' · ');
 	}
@@ -491,14 +491,17 @@
 					<a href={tile.href}>{tile.ticket}</a>
 					<Tag tone={tile.tone}>{stateWord(tile)}</Tag>
 				</span>
-				<span class="question">{question.question}</span>
+				<span class="question">{plainText(question.question)}</span>
 				{#if question.profile}<span class="muted"
 						>{t('start.tile.asks', { profile: question.profile })}</span
 					>{/if}
 				<span class="options">
 					{#each question.options.slice(0, 3) as option, index (index)}
 						<button type="button" class="option" onclick={() => answer(question, index + 1)}
-							>{t('start.answer.option', { number: index + 1, label: option.label })}</button
+							>{t('start.answer.option', {
+								number: index + 1,
+								label: plainText(option.label)
+							})}</button
 						>
 					{/each}
 				</span>
@@ -646,6 +649,11 @@
 	.question {
 		font-size: var(--type-item);
 		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 6;
+		line-clamp: 6;
+		overflow: hidden;
 	}
 	.options {
 		display: none;

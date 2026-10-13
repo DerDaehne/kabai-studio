@@ -22,6 +22,7 @@
 
 <script lang="ts">
 	import { onLiveEvent } from '$lib/shell/live.svelte';
+	import AgentText from '$lib/ui/AgentText.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import { travel } from '$lib/ui/motion';
 	import TraceStep from './TraceStep.svelte';
@@ -105,7 +106,7 @@
 			{trace.state === 'succeeded' ? 'Abschlussbericht' : 'Übergabe'}
 			{#if view.report.generated}<Badge>erzeugt</Badge>{/if}
 		</h4>
-		<p>{view.report.text}</p>
+		<AgentText text={view.report.text} />
 	</section>
 {/if}
 {#if trace.state === 'paused' && trace.continuedBy}
@@ -170,8 +171,5 @@
 		align-items: center;
 		gap: var(--space-2);
 		color: var(--accent-text);
-	}
-	.report p {
-		white-space: pre-wrap;
 	}
 </style>

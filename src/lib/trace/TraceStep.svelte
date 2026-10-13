@@ -1,7 +1,8 @@
 <script lang="ts">
+	import AgentText from '$lib/ui/AgentText.svelte';
 	import {
-		firstLine,
 		formatCount,
+		gist,
 		reasonText,
 		resultText,
 		stepGist,
@@ -33,7 +34,7 @@
 			{@const { text, charsTotal } = step.reasoning}
 			<details class="reasoning">
 				<summary>
-					denkt: {firstLine(text)}
+					denkt: {gist(text)}
 					<span class="muted">({formatCount(charsTotal)} Zeichen)</span>
 				</summary>
 				{#if charsTotal > text.length}
@@ -44,7 +45,7 @@
 				<pre class="mono">{text}</pre>
 			</details>
 		{/if}
-		{#if step.message}<p class="message">{step.message}</p>{/if}
+		{#if step.message}<div class="message"><AgentText text={step.message} /></div>{/if}
 		{#if step.calls.length}
 			<ul class="calls">
 				{#each step.calls as call (call.id)}

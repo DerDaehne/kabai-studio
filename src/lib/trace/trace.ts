@@ -1,3 +1,5 @@
+import { leadText } from '$lib/markdown';
+
 /** One stored or live run event, in seq order; the server has masked the payload already. */
 export type TraceEvent = {
 	seq: number;
@@ -168,10 +170,13 @@ export const firstLine = (text: string) =>
 		.find((line) => line.trim())
 		?.trim() ?? '';
 
+/** One line of a markdown text for a compact row: the first line of its first paragraph, as plain text. */
+export const gist = (text: string) => firstLine(leadText(text));
+
 /** What a step without a call does, for the compact line. */
 export function stepGist(step: TraceStep): string {
-	if (step.message) return firstLine(step.message);
-	if (step.reasoning) return `denkt: ${firstLine(step.reasoning.text)}`;
+	if (step.message) return gist(step.message);
+	if (step.reasoning) return `denkt: ${gist(step.reasoning.text)}`;
 	return `Schritt ${step.number}`;
 }
 

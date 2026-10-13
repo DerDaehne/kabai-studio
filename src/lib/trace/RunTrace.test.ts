@@ -42,7 +42,9 @@ describe('steps', () => {
 	});
 
 	it('shows the message of a step as a line of its own', () => {
-		expect(html()).toMatch(/<p class="message[^"]*">I complete the first task\.<\/p>/);
+		expect(html()).toMatch(
+			/<div class="message[^"]*">(<!--[^>]*-->)*<div class="agent-text[^"]*">(<!--[^>]*-->)*<p>I complete the first task\.<\/p>/
+		);
 	});
 });
 

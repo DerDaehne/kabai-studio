@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
+	import { leadText, plainText, splitLead } from '$lib/markdown';
 	import { failureOf, postAction } from '$lib/form-action';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { focusSummary } from '$lib/shell/focus';
@@ -9,6 +10,7 @@
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
 	import { auraOpacity } from '$lib/ui/aura';
+	import AgentText from '$lib/ui/AgentText.svelte';
 	import AuraList from '$lib/ui/AuraList.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
@@ -35,6 +37,7 @@
 	const queue = $derived(arranged(data.questions, order, answered));
 	const view = $derived(focusSummary(queue, shell.focus, (question) => question.project.id));
 	const card = $derived(view.visible[0]);
+	const cardQuestion = $derived(card ? splitLead(card.question) : undefined);
 	const aurae = $derived(taktAurae(view.visible));
 	const decisionAura = $derived(aurae.get(decisionKey));
 	const queueItems = $derived(
@@ -169,7 +172,7 @@
 					<div class="entry" aria-current={question === card ? 'true' : undefined}>
 						<ProjectTag code={question.project.code} palette={question.project.palette} />
 						<span class="ref">{question.ticket.ref}</span>
-						<span class="text">{question.question}</span>
+						<span class="text">{leadText(question.question)}</span>
 					</div>
 				{/snippet}
 			</AuraList>
@@ -179,7 +182,7 @@
 
 	<section class="stage" aria-label="Entscheidung">
 		<p class="visually-hidden" aria-live="polite">
-			{card ? `${card.ticket.ref}: ${card.question}` : 'Nichts wartet auf dich'}
+			{card ? `${card.ticket.ref}: ${leadText(card.question)}` : 'Nichts wartet auf dich'}
 		</p>
 		{#if card}
 			{#key card.id}
@@ -201,7 +204,10 @@
 								>wartet seit <time datetime={card.askedAt}>{askedLabel(card.askedAt)}</time></span
 							>
 						</p>
-						<h2 class="question" id="question-{card.id}">{card.question}</h2>
+						<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
+						{#if cardQuestion?.rest}<div class="question-rest">
+								<AgentText text={cardQuestion.rest} />
+							</div>{/if}
 						<div class="options" role="group" aria-label="Antworten">
 							{#each card.options as option, index (index)}
 								<button
@@ -210,8 +216,8 @@
 									onclick={() => answer(card, { option: index + 1 })}
 								>
 									<Kbd key={String(index + 1)} />
-									<span class="label">{option.label}</span>
-									{#if option.effect}<span class="effect">{option.effect}</span>{/if}
+									<span class="label">{plainText(option.label)}</span>
+									{#if option.effect}<span class="effect">{plainText(option.effect)}</span>{/if}
 								</button>
 							{/each}
 							{#if ownOpen}
@@ -362,6 +368,9 @@
 		font-size: var(--text-display);
 		line-height: 1.25;
 		overflow-wrap: anywhere;
+	}
+	.question-rest {
+		margin-top: var(--space-3);
 	}
 	.options {
 		display: grid;
