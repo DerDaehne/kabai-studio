@@ -130,6 +130,18 @@ describe('auth flow', () => {
 		expect(foreign.status).toBe(403);
 	});
 
+	it('lets /runner/pair through without a session, but not sub-paths or foreign origins', async () => {
+		expect(await guard('/runner/pair', jar(), { request: { method: 'POST' } })).toBeInstanceOf(
+			Response
+		);
+		expect(await guard('/runner/pair/other')).toEqual({ redirect: '/setup', status: 303 });
+		expect(await guard('/runner')).toEqual({ redirect: '/setup', status: 303 });
+		const foreign = (await guard('/runner/pair', jar(), {
+			request: { method: 'POST', headers: { origin: 'http://evil.example' } }
+		})) as Response;
+		expect(foreign.status).toBe(403);
+	});
+
 	it('lets /api/health through without a session, but no other /api/* path', async () => {
 		expect(((await guard('/api/health')) as Response).status).toBe(200); // resolve() ran, the guard did not short-circuit it
 		expect(((await guard('/api/health/other')) as Response).status).toBe(401);

@@ -15,3 +15,17 @@ export function defaultDataDir(
 	if (platform === 'darwin') return join(home, 'Library', 'Application Support', name);
 	return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), name);
 }
+
+/**
+ * The OS-conventional per-user config directory for `name`: `$XDG_CONFIG_HOME` (falling back to `~/.config`) on Linux
+ * and other non-Apple platforms, `~/Library/Application Support` on macOS. Pure like `defaultDataDir`.
+ */
+export function defaultConfigDir(
+	platform: string,
+	env: Record<string, string | undefined>,
+	name = 'kabai-studio'
+): string {
+	const home = env.HOME || '';
+	if (platform === 'darwin') return join(home, 'Library', 'Application Support', name);
+	return join(env.XDG_CONFIG_HOME || join(home, '.config'), name);
+}

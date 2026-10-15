@@ -28,10 +28,51 @@ export const en = {
 	'layout.attribution': 'by {author} · Free software, {licence}',
 
 	'cli.usage':
-		'Usage: kabai-studio [start|service <install|uninstall|status>|reset-password|restore <file>|--version]',
+		'Usage: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|reset-password|restore <file>|--version]',
 	'cli.unknownCommand': 'Unknown subcommand “{command}”. {usage}',
 	'cli.unknownServiceCommand':
 		'Unknown service subcommand “{action}”. Available: install, uninstall, status.',
+	'cli.runner.usage': 'Usage: kabai-studio runner pair <studio address> <code> [--name <name>]',
+	'cli.runner.usage.hint':
+		'Copy the complete command from studio: Settings → Machines → “Connect a machine”.',
+	'cli.runner.invalidUrl': '“{url}” is not a studio address.',
+	'cli.runner.invalidUrl.hint':
+		'Copy the complete command from studio: Settings → Machines → “Connect a machine”.',
+	'cli.runner.insecureUrl':
+		'Refusing to send the pairing code and credential unencrypted over http:// to {host}.',
+	'cli.runner.insecureUrl.hint':
+		'Use the https:// address of studio; http:// works only for localhost, 127.0.0.1 and [::1].',
+	'cli.runner.unreachable': 'Studio at {origin} is not reachable ({reason}).',
+	'cli.runner.unreachable.hint':
+		'Check the address and that studio is running, then run the command again.',
+	'cli.runner.unexpectedAnswer':
+		'Studio at {origin} answered with HTTP {status} instead of a pairing.',
+	'cli.runner.unexpectedAnswer.hint':
+		'Check that the address leads to studio itself, without a login page or redirect in between.',
+	'cli.runner.writeFailed': 'Could not write {file} ({reason}).',
+	'cli.runner.writeFailed.hint':
+		'Check the permissions of the folder. If the machine already appears in studio, disconnect it there and pair again.',
+	'cli.runner.floor.notJson': '{file} is not valid JSON ({reason}).',
+	'cli.runner.floor.notObject': '{file}: “{field}” must be an object {…}.',
+	'cli.runner.floor.notText': '{file}: “{field}” must be a non-empty text.',
+	'cli.runner.floor.notBoolean': '{file}: “{field}” must be true or false.',
+	'cli.runner.floor.notTextList': '{file}: “{field}” must be a list of non-empty texts.',
+	'cli.runner.floor.pathNotAbsolute': '{file}: “{field}” must be an absolute path.',
+	'cli.runner.floor.pathMissing': '{file}: “{field}” is not an existing folder.',
+	'cli.runner.floor.slots': '{file}: “{field}” must be a whole number of at least 1.',
+	'cli.runner.floor.origin':
+		'{file}: “{field}” must be the studio address, e.g. https://studio.example.',
+	'cli.runner.floor.originMismatch':
+		'{file}: “{field}” is {actual}, but this pairing is with {expected}.',
+	'cli.runner.floor.hint':
+		'Fix the field, or delete the file to get safe defaults, then run the command again.',
+	'cli.runner.paired': 'Paired this machine as “{name}” with {origin}.',
+	'cli.runner.credentialSaved': 'Credential saved in {file}, readable only by you.',
+	'cli.runner.floorCreated': 'Created {file} with safe defaults: no workspaces, no agents, 1 slot.',
+	'cli.runner.floorChecked': 'Checked {file}: valid.',
+	'cli.runner.studioSees':
+		'Studio learns only names and numbers — workspaces: {workspaces} · agents: {agents} · slots: {slots}',
+	'cli.runner.next': 'Next: start the runner with “kabai-studio runner start”.',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'No agent is working.',
@@ -104,6 +145,51 @@ export const en = {
 	'settings.signOut': 'Sign out',
 	'settings.about.title': 'About kabai studio',
 	'settings.about.licenceText': 'Licence text (AGPL-3.0)',
+	'settings.runners.label': 'Machines',
+	'settings.runners.description':
+		'Computers that run coding agents for studio: pair, review and disconnect them.',
+
+	'runners.title': 'Machines',
+	'runners.intro':
+		'Coding agents run on a paired machine, never in studio itself. The machine connects to studio on its own and decides locally what it allows; studio sees only names and numbers.',
+	'runners.connect': 'Connect a machine',
+	'runners.empty.title': 'No machine paired yet',
+	'runners.empty.body':
+		'“Connect a machine” shows a one-time code and the one command to run on the machine.',
+	'runners.neverConnected': 'never connected',
+	'runners.lastSeen': 'last seen {time}',
+	'runners.disconnect': 'Disconnect',
+	'runners.disconnect.title': 'Disconnect “{name}”?',
+	'runners.disconnect.body':
+		'The machine loses access at once. To use it again, pair it with a new code.',
+	'runners.cancel': 'Cancel',
+	'runners.dialog.intro':
+		'Run this command in a terminal on the machine. The code is valid for 10 minutes and works once; a new code replaces it.',
+	'runners.dialog.code': 'Code',
+	'runners.dialog.command': 'Command',
+	'runners.dialog.copy': 'Copy command',
+	'runners.dialog.copied': 'Command copied.',
+	'runners.dialog.copyFailed': 'Copying failed: select the command and copy it by hand.',
+	'runners.dialog.after':
+		'Once the command reports success, close this dialog: the machine is then in the list.',
+	'runners.pair.browserOrigin':
+		'Pairing works only from the kabai-studio command line, not from a browser.',
+	'runners.pair.browserOrigin.hint':
+		'Run the command from Settings → Machines in a terminal on the machine.',
+	'runners.pair.insecureTransport':
+		'Studio at {origin} is not served over HTTPS, so it hands out no machine credential.',
+	'runners.pair.insecureTransport.hint':
+		'Serve studio over HTTPS (for example behind a reverse proxy), or pair on the same machine through 127.0.0.1.',
+	'runners.pair.tooManyAttempts': 'Too many pairing attempts from this address.',
+	'runners.pair.tooManyAttempts.hint': 'Wait a minute, then run the command again.',
+	'runners.pair.invalidRequest': 'This is not a pairing request.',
+	'runners.pair.invalidRequest.hint':
+		'Use the command from Settings → Machines → “Connect a machine”.',
+	'runners.pair.codeInvalid': 'The pairing code is expired, already used or unknown.',
+	'runners.pair.codeInvalid.hint':
+		'Create a new code in studio under Settings → Machines → “Connect a machine” and run the command shown there.',
+	'runners.pair.nameInvalid': 'The machine name must have 1 to {max} printable characters.',
+	'runners.pair.nameInvalid.hint': 'Pass another name with --name <name>.',
 
 	'projects.heading': 'Projects',
 	'projects.intro': 'A project collects tickets and moves them through the steps of its variant.',

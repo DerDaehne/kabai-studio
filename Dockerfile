@@ -28,7 +28,7 @@ ARG STUDIO_VERSION
 ENV STUDIO_VERSION=$STUDIO_VERSION
 COPY --from=build /app/build ./build
 COPY --from=build /app/server.ts ./server.ts
-COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts ./src/lib/server/
+COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts /app/src/lib/server/runner-pair.ts /app/src/lib/server/runner-floor.ts ./src/lib/server/
 COPY --from=build /app/src/lib/server/domain/error.ts ./src/lib/server/domain/
 COPY --from=build /app/src/lib/version.ts ./src/lib/version.ts
 COPY --from=build /app/src/lib/i18n/index.ts /app/src/lib/i18n/de.ts /app/src/lib/i18n/en.ts ./src/lib/i18n/

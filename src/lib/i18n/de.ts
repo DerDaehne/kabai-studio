@@ -29,10 +29,53 @@ export const de: Catalogue = {
 	'layout.attribution': 'von {author} · Freie Software, {licence}',
 
 	'cli.usage':
-		'Verwendung: kabai-studio [start|service <install|uninstall|status>|reset-password|restore <datei>|--version]',
+		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|reset-password|restore <datei>|--version]',
 	'cli.unknownCommand': 'Unbekanntes Unterkommando „{command}“. {usage}',
 	'cli.unknownServiceCommand':
 		'Unbekanntes service-Unterkommando „{action}“. Verfügbar: install, uninstall, status.',
+	'cli.runner.usage':
+		'Verwendung: kabai-studio runner pair <Studio-Adresse> <Code> [--name <name>]',
+	'cli.runner.usage.hint':
+		'Den vollständigen Befehl aus Studio kopieren: Einstellungen → Rechner → „Rechner verbinden“.',
+	'cli.runner.invalidUrl': '„{url}“ ist keine Studio-Adresse.',
+	'cli.runner.invalidUrl.hint':
+		'Den vollständigen Befehl aus Studio kopieren: Einstellungen → Rechner → „Rechner verbinden“.',
+	'cli.runner.insecureUrl':
+		'Code und Credential gehen nicht unverschlüsselt über http:// an {host}.',
+	'cli.runner.insecureUrl.hint':
+		'Die https://-Adresse von Studio verwenden; http:// geht nur für localhost, 127.0.0.1 und [::1].',
+	'cli.runner.unreachable': 'Studio unter {origin} ist nicht erreichbar ({reason}).',
+	'cli.runner.unreachable.hint':
+		'Adresse prüfen und ob Studio läuft, dann den Befehl erneut ausführen.',
+	'cli.runner.unexpectedAnswer':
+		'Studio unter {origin} hat mit HTTP {status} geantwortet statt mit einer Kopplung.',
+	'cli.runner.unexpectedAnswer.hint':
+		'Prüfen, ob die Adresse direkt zu Studio führt, ohne Anmeldeseite oder Weiterleitung dazwischen.',
+	'cli.runner.writeFailed': '{file} lässt sich nicht schreiben ({reason}).',
+	'cli.runner.writeFailed.hint':
+		'Rechte des Ordners prüfen. Steht der Rechner schon in Studio, ihn dort trennen und neu koppeln.',
+	'cli.runner.floor.notJson': '{file} ist kein gültiges JSON ({reason}).',
+	'cli.runner.floor.notObject': '{file}: „{field}“ muss ein Objekt {…} sein.',
+	'cli.runner.floor.notText': '{file}: „{field}“ muss ein nicht leerer Text sein.',
+	'cli.runner.floor.notBoolean': '{file}: „{field}“ muss true oder false sein.',
+	'cli.runner.floor.notTextList': '{file}: „{field}“ muss eine Liste nicht leerer Texte sein.',
+	'cli.runner.floor.pathNotAbsolute': '{file}: „{field}“ muss ein absoluter Pfad sein.',
+	'cli.runner.floor.pathMissing': '{file}: „{field}“ ist kein vorhandener Ordner.',
+	'cli.runner.floor.slots': '{file}: „{field}“ muss eine ganze Zahl ab 1 sein.',
+	'cli.runner.floor.origin':
+		'{file}: „{field}“ muss die Studio-Adresse sein, z. B. https://studio.example.',
+	'cli.runner.floor.originMismatch':
+		'{file}: „{field}“ ist {actual}, gekoppelt wird aber mit {expected}.',
+	'cli.runner.floor.hint':
+		'Das Feld korrigieren oder die Datei löschen, damit sichere Vorgaben entstehen, dann den Befehl erneut ausführen.',
+	'cli.runner.paired': 'Dieser Rechner ist als „{name}“ mit {origin} gekoppelt.',
+	'cli.runner.credentialSaved': 'Credential in {file} gespeichert, nur für dich lesbar.',
+	'cli.runner.floorCreated':
+		'{file} mit sicheren Vorgaben angelegt: keine Workspaces, keine Agents, 1 Slot.',
+	'cli.runner.floorChecked': '{file} geprüft: gültig.',
+	'cli.runner.studioSees':
+		'Studio erfährt nur Namen und Zahlen — Workspaces: {workspaces} · Agents: {agents} · Slots: {slots}',
+	'cli.runner.next': 'Als Nächstes den Runner starten: „kabai-studio runner start“.',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'Kein Agent arbeitet.',
@@ -105,6 +148,52 @@ export const de: Catalogue = {
 	'settings.signOut': 'Abmelden',
 	'settings.about.title': 'Über kabai studio',
 	'settings.about.licenceText': 'Lizenztext (AGPL-3.0)',
+	'settings.runners.label': 'Rechner',
+	'settings.runners.description':
+		'Computer, auf denen Coding-Agents für Studio arbeiten: koppeln, ansehen und trennen.',
+
+	'runners.title': 'Rechner',
+	'runners.intro':
+		'Coding-Agents laufen auf einem gekoppelten Rechner, nie in Studio selbst. Der Rechner verbindet sich von sich aus mit Studio und entscheidet lokal, was er erlaubt; Studio sieht nur Namen und Zahlen.',
+	'runners.connect': 'Rechner verbinden',
+	'runners.empty.title': 'Noch kein Rechner gekoppelt',
+	'runners.empty.body':
+		'„Rechner verbinden“ zeigt einen Einmal-Code und den einen Befehl, der auf dem Rechner auszuführen ist.',
+	'runners.neverConnected': 'noch nie verbunden',
+	'runners.lastSeen': 'zuletzt gesehen {time}',
+	'runners.disconnect': 'Trennen',
+	'runners.disconnect.title': '„{name}“ trennen?',
+	'runners.disconnect.body':
+		'Der Rechner verliert sofort den Zugang. Um ihn wieder zu nutzen, mit einem neuen Code koppeln.',
+	'runners.cancel': 'Abbrechen',
+	'runners.dialog.intro':
+		'Diesen Befehl in einem Terminal auf dem Rechner ausführen. Der Code gilt 10 Minuten und einmal; ein neuer Code ersetzt ihn.',
+	'runners.dialog.code': 'Code',
+	'runners.dialog.command': 'Befehl',
+	'runners.dialog.copy': 'Befehl kopieren',
+	'runners.dialog.copied': 'Befehl kopiert.',
+	'runners.dialog.copyFailed':
+		'Kopieren fehlgeschlagen: den Befehl markieren und von Hand kopieren.',
+	'runners.dialog.after':
+		'Meldet der Befehl Erfolg, diesen Dialog schließen: Dann steht der Rechner in der Liste.',
+	'runners.pair.browserOrigin':
+		'Koppeln geht nur über die Kommandozeile von kabai-studio, nicht aus einem Browser.',
+	'runners.pair.browserOrigin.hint':
+		'Den Befehl aus Einstellungen → Rechner in einem Terminal auf dem Rechner ausführen.',
+	'runners.pair.insecureTransport':
+		'Studio unter {origin} läuft nicht über HTTPS und gibt deshalb kein Rechner-Credential heraus.',
+	'runners.pair.insecureTransport.hint':
+		'Studio über HTTPS bereitstellen (etwa hinter einem Reverse-Proxy) oder auf demselben Rechner über 127.0.0.1 koppeln.',
+	'runners.pair.tooManyAttempts': 'Zu viele Kopplungsversuche von dieser Adresse.',
+	'runners.pair.tooManyAttempts.hint': 'Eine Minute warten, dann den Befehl erneut ausführen.',
+	'runners.pair.invalidRequest': 'Das ist keine Kopplungsanfrage.',
+	'runners.pair.invalidRequest.hint':
+		'Den Befehl aus Einstellungen → Rechner → „Rechner verbinden“ verwenden.',
+	'runners.pair.codeInvalid': 'Der Kopplungs-Code ist abgelaufen, schon benutzt oder unbekannt.',
+	'runners.pair.codeInvalid.hint':
+		'In Studio unter Einstellungen → Rechner → „Rechner verbinden“ einen neuen Code erzeugen und den dort gezeigten Befehl ausführen.',
+	'runners.pair.nameInvalid': 'Der Rechnername muss 1 bis {max} druckbare Zeichen haben.',
+	'runners.pair.nameInvalid.hint': 'Einen anderen Namen mit --name <name> übergeben.',
 
 	'projects.heading': 'Projekte',
 	'projects.intro': 'Ein Projekt sammelt Tickets und führt sie durch die Schritte seiner Variante.',

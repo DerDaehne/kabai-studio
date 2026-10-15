@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { localeFromEnv, translate } from '../i18n/index.ts';
+import { DomainError, formatError } from './domain/error.ts';
 
 export class CliUsageError extends Error {}
 
@@ -17,6 +18,7 @@ export type Command =
 	| { kind: 'service'; action: ServiceAction; print: boolean }
 	| { kind: 'reset-password' }
 	| { kind: 'restore'; file?: string }
+	| { kind: 'runner-pair'; url: string; code: string; name?: string }
 	| { kind: 'version' }
 	| { kind: 'help' };
 
@@ -33,6 +35,7 @@ export function parseCliArgs(argv: string[]): Command {
 	if (sub === 'reset-password') return { kind: 'reset-password' };
 	if (sub === 'restore') return { kind: 'restore', file: rest[0] };
 	if (sub === 'service') return parseServiceArgs(rest);
+	if (sub === 'runner') return parseRunnerArgs(rest);
 	throw new CliUsageError(translate(locale, 'cli.unknownCommand', { command: sub, usage: HELP }));
 }
 
@@ -48,6 +51,33 @@ function parseServiceArgs(rest: string[]): Command {
 			translate(locale, 'cli.unknownServiceCommand', { action: action ?? '' })
 		);
 	return { kind: 'service', action: action as ServiceAction, print: values.print === true };
+}
+
+/** `runner pair <url> <code> [--name <name>]`; anything else is a usage error with a code and the way out. */
+function parseRunnerArgs(rest: string[]): Command {
+	const usage = () =>
+		new CliUsageError(
+			formatError(
+				new DomainError(
+					'invalid_arguments',
+					translate(locale, 'cli.runner.usage'),
+					translate(locale, 'cli.runner.usage.hint')
+				)
+			)
+		);
+	let parsed;
+	try {
+		parsed = parseArgs({
+			args: rest,
+			options: { name: { type: 'string' } },
+			allowPositionals: true
+		});
+	} catch {
+		throw usage(); // an unknown option or --name without a value
+	}
+	const [action, url, code, ...extra] = parsed.positionals;
+	if (action !== 'pair' || !url || !code || extra.length) throw usage();
+	return { kind: 'runner-pair', url, code, name: parsed.values.name };
 }
 
 /**

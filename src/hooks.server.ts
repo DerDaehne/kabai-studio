@@ -73,6 +73,8 @@ export const init: ServerInit = async () => {
 const PUBLIC = new Set(['/login', '/setup']);
 /** Agents have no session: the MCP endpoint checks the run's bearer token on every request itself. */
 const RUN_TOKEN_PATH = '/mcp';
+/** A machine being paired has no session: it trades a one-time code for its credential and refuses browsers itself. */
+const RUNNER_PAIR_PATH = '/runner/pair';
 /** Liveness probe for external monitoring and the container HEALTHCHECK; reports no board data, so no session is required. */
 const HEALTH_PATH = '/api/health';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -99,7 +101,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const token = event.cookies.get(SESSION_COOKIE);
 	const hasSession = !!token && restoreSession(event, token);
 	const path = event.url.pathname;
-	if (hasSession || PUBLIC.has(path) || path === RUN_TOKEN_PATH || path === HEALTH_PATH)
+	if (
+		hasSession ||
+		PUBLIC.has(path) ||
+		path === RUN_TOKEN_PATH ||
+		path === RUNNER_PAIR_PATH ||
+		path === HEALTH_PATH
+	)
 		return withLanguageVary(
 			await resolve(event, { transformPageChunk: ({ html }) => setHtmlLang(html, locale) })
 		);

@@ -45,6 +45,31 @@ describe('parseCliArgs', () => {
 	it('rejects an unknown service subcommand with a usage error', () => {
 		expect(() => parseCliArgs(['service', 'bogus'])).toThrow(CliUsageError);
 	});
+
+	it('parses runner pair with address, code and an optional --name', () => {
+		expect(parseCliArgs(['runner', 'pair', 'https://studio.example', 'ABCD2345'])).toEqual({
+			kind: 'runner-pair',
+			url: 'https://studio.example',
+			code: 'ABCD2345',
+			name: undefined
+		});
+		expect(
+			parseCliArgs(['runner', 'pair', 'https://studio.example', 'ABCD2345', '--name', 'laptop'])
+		).toMatchObject({ kind: 'runner-pair', name: 'laptop' });
+	});
+
+	it.each([
+		['no action', ['runner']],
+		['an unknown action', ['runner', 'start']],
+		['no code', ['runner', 'pair', 'https://studio.example']],
+		['an extra argument', ['runner', 'pair', 'https://studio.example', 'ABCD2345', 'more']],
+		['--name without a value', ['runner', 'pair', 'https://studio.example', 'ABCD2345', '--name']],
+		['an unknown option', ['runner', 'pair', 'https://studio.example', 'ABCD2345', '--force']]
+	])('rejects runner with %s with a coded usage error and the way out', (_, argv) => {
+		expect(() => parseCliArgs(argv)).toThrow(
+			/^\[invalid_arguments\] .*runner pair <studio address> <code>.* Copy the complete command from studio/
+		);
+	});
 });
 
 describe('findFreePort', () => {
