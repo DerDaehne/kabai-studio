@@ -131,3 +131,11 @@ export function sideJump(starts: number[], index: number, forward: boolean, coun
 	const target = groupJump(starts, groupStart, forward, count);
 	return target === groupStart ? index : target;
 }
+
+export const ticketHref = (row: BoardTicket) => `/p/${row.project.code}/t/${row.number}`;
+
+export const canStart = ({ column }: BoardTicket) =>
+	column.phase === 'open' || column.phase === 'work';
+export const canAccept = ({ column }: BoardTicket) => column.phase === 'acceptance';
+export const canGiveBack = ({ column }: BoardTicket) =>
+	column.phase === 'acceptance' || column.phase === 'done';
