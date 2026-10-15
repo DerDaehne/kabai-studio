@@ -9,7 +9,7 @@ export type User = { id: number; name: string };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest();
 /** Constant-time string comparison, also for strings of different length. */
-const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b));
+export const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b));
 
 // OWASP equivalent of N=2^17/p=1, but 32 MiB instead of 128 MiB per hash (less memory DoS with parallel logins).
 const N = 2 ** 15,
@@ -116,8 +116,11 @@ export const SESSION_COOKIE = 'studio_session';
 const SESSION_DAYS = 30;
 const DAY = 86_400_000;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+/** `hostname` as URL.hostname gives it, so IPv6 in brackets. */
+export const isLoopbackHost = (hostname: string) => LOOPBACK.has(hostname);
 const sqlTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
-const tokenHash = (token: string) => sha256(token).toString('hex');
+/** SHA-256 hex: what the DB keeps instead of a high-entropy token. */
+export const tokenHash = (token: string) => sha256(token).toString('hex');
 
 /** Creates a session and returns the plain token (for the cookie only). Removes expired sessions on the way. */
 export function createSession(db: DatabaseSync, userId: number, now = Date.now()): string {
@@ -168,7 +171,7 @@ export function deleteSession(db: DatabaseSync, token: string) {
 
 /** httpOnly, SameSite=Lax, Secure except on loopback (so elsewhere usable over HTTPS only). */
 const cookieOptions = (url: URL) =>
-	({ path: '/', httpOnly: true, sameSite: 'lax', secure: !LOOPBACK.has(url.hostname) }) as const;
+	({ path: '/', httpOnly: true, sameSite: 'lax', secure: !isLoopbackHost(url.hostname) }) as const;
 
 export function setSessionCookie(cookies: Cookies, url: URL, token: string) {
 	cookies.set(SESSION_COOKIE, token, { ...cookieOptions(url), maxAge: SESSION_DAYS * 86_400 });

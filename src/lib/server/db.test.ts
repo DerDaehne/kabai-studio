@@ -696,9 +696,10 @@ describe('016 on a database at 015 with both template generations in real use', 
 			)
 			.all()
 			.map((r) => r.name as string);
-	const rowCounts = (db: ReturnType<typeof openDb>) =>
+	/** Row counts of `only` (default: every table), so tables a later migration adds do not count as a change. */
+	const rowCounts = (db: ReturnType<typeof openDb>, only = tables(db)) =>
 		Object.fromEntries(
-			tables(db).map((table) => [
+			only.map((table) => [
 				table,
 				db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n as number
 			])
@@ -730,7 +731,10 @@ describe('016 on a database at 015 with both template generations in real use', 
 			tasks: 2,
 			projects: 2
 		});
-		expect(rowCounts(db)).toEqual({ ...before, comments: before.comments + 2 });
+		expect(rowCounts(db, Object.keys(before))).toEqual({
+			...before,
+			comments: before.comments + 2
+		});
 		expect(ticketsPerProject()).toEqual(perProjectBefore);
 		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
 		expect(migrate(db)).toEqual([]);
@@ -954,40 +958,39 @@ describe('016 on a database at 015 with both template generations in real use', 
 	});
 });
 
-describe('019 on a database at 018 with tickets in every step of every variant and runs in every state', () => {
-	const token = (n: number) => String(n).repeat(64);
-	const STEPS_AT_018: [variant: string, steps: string[]][] = [
-		['software', ['backlog', 'refine', 'plan', 'implement', 'critique', 'acceptance', 'done']],
-		['knowledge', ['backlog', 'research', 'draft', 'critique', 'acceptance', 'done']],
-		['direct', ['backlog', 'implement', 'critique', 'acceptance', 'done']]
-	];
+const token = (n: number) => String(n).repeat(64);
+const STEPS_AT_018: [variant: string, steps: string[]][] = [
+	['software', ['backlog', 'refine', 'plan', 'implement', 'critique', 'acceptance', 'done']],
+	['knowledge', ['backlog', 'research', 'draft', 'critique', 'acceptance', 'done']],
+	['direct', ['backlog', 'implement', 'critique', 'acceptance', 'done']]
+];
 
-	/**
-	 * Project p has a column 10p+i and a ticket 100+10p+i for the i-th step of its variant, so 113 is software/implement,
-	 * 122 knowledge/draft and 131 direct/implement. Runs in every state hang off the work tickets, and every table that
-	 * points to a ticket or a run holds rows that do.
-	 */
-	function dbBefore019() {
-		const db = openDb(':memory:');
-		migrate(db, shippedBefore('/migrations/019'));
-		const project = db.prepare(
-			'INSERT INTO projects (id, key, name, variant, ticket_seq) VALUES (?, ?, ?, ?, ?)'
-		);
-		const column = db.prepare(
-			'INSERT INTO columns (id, project_id, step, name, position) VALUES (?, ?, ?, ?, ?)'
-		);
-		const ticket = db.prepare(
-			'INSERT INTO tickets (id, project_id, number, column_id, title, position) VALUES (?, ?, ?, ?, ?, ?)'
-		);
-		STEPS_AT_018.forEach(([variant, steps], index) => {
-			const p = index + 1;
-			project.run(p, variant.slice(0, 3).toUpperCase(), variant, variant, steps.length);
-			steps.forEach((step, i) => {
-				column.run(10 * p + i, p, step, step, i);
-				ticket.run(100 + 10 * p + i, p, i + 1, 10 * p + i, `${variant} ${step}`, i);
-			});
+/**
+ * Project p has a column 10p+i and a ticket 100+10p+i for the i-th step of its variant, so 113 is software/implement,
+ * 122 knowledge/draft and 131 direct/implement. Runs in every state hang off the work tickets, and every table that
+ * points to a ticket or a run holds rows that do.
+ */
+function dbBefore019() {
+	const db = openDb(':memory:');
+	migrate(db, shippedBefore('/migrations/019'));
+	const project = db.prepare(
+		'INSERT INTO projects (id, key, name, variant, ticket_seq) VALUES (?, ?, ?, ?, ?)'
+	);
+	const column = db.prepare(
+		'INSERT INTO columns (id, project_id, step, name, position) VALUES (?, ?, ?, ?, ?)'
+	);
+	const ticket = db.prepare(
+		'INSERT INTO tickets (id, project_id, number, column_id, title, position) VALUES (?, ?, ?, ?, ?, ?)'
+	);
+	STEPS_AT_018.forEach(([variant, steps], index) => {
+		const p = index + 1;
+		project.run(p, variant.slice(0, 3).toUpperCase(), variant, variant, steps.length);
+		steps.forEach((step, i) => {
+			column.run(10 * p + i, p, step, step, i);
+			ticket.run(100 + 10 * p + i, p, i + 1, 10 * p + i, `${variant} ${step}`, i);
 		});
-		db.exec(`
+	});
+	db.exec(`
 			UPDATE tickets SET type = 'epic', docs_required = 1, description = 'Alles' WHERE id = 111;
 			UPDATE tickets SET assignee = 'agent (Run 4)', size = 'M', moved_by = '{"kind":"agent","runId":1}',
 				created_at = '2026-10-12 09:00:00', updated_at = '2026-10-12 11:00:00' WHERE id = 113;
@@ -1036,48 +1039,50 @@ describe('019 on a database at 018 with tickets in every step of every variant a
 			INSERT INTO note_projects (note_id, project_id) VALUES (1, 1);
 			INSERT INTO note_tickets (note_id, ticket_id, relation) VALUES (1, 113, 'documents');
 		`);
-		return db;
-	}
+	return db;
+}
 
-	const everyRow = (db: ReturnType<typeof openDb>) =>
-		Object.fromEntries(
-			db
-				.prepare(
-					"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'notes_fts%' AND name <> 'schema_migrations' ORDER BY name"
-				)
-				.all()
-				.map(
-					({ name }) =>
-						[String(name), db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()] as const
-				)
-		);
-	const schemaOf = (db: ReturnType<typeof openDb>, table: string) =>
+const everyRow = (db: ReturnType<typeof openDb>) =>
+	Object.fromEntries(
 		db
 			.prepare(
-				'SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? ORDER BY type DESC, name'
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'notes_fts%' AND name <> 'schema_migrations' ORDER BY name"
 			)
-			.all(table)
-			.map((entry) => ({ type: entry.type, name: entry.name, sql: normalized(String(entry.sql)) }));
-	/** The statement without comments, quotes around names and layout whitespace. */
-	const normalized = (sql: string) =>
-		sql
-			.replace(/--[^\n]*/g, '')
-			.replace(/"/g, '')
-			.replace(/\s+/g, ' ')
-			.replace(/\s*([(),])\s*/g, '$1')
-			.trim();
+			.all()
+			.map(
+				({ name }) =>
+					[String(name), db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()] as const
+			)
+	);
+const schemaOf = (db: ReturnType<typeof openDb>, table: string) =>
+	db
+		.prepare(
+			'SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? ORDER BY type DESC, name'
+		)
+		.all(table)
+		.map((entry) => ({ type: entry.type, name: entry.name, sql: normalized(String(entry.sql)) }));
+/** The statement without comments, quotes around names and layout whitespace. */
+const normalized = (sql: string) =>
+	sql
+		.replace(/--[^\n]*/g, '')
+		.replace(/"/g, '')
+		.replace(/\s+/g, ' ')
+		.replace(/\s*([(),])\s*/g, '$1')
+		.trim();
 
+describe('019 on a database at 018 with tickets in every step of every variant and runs in every state', () => {
 	it('keeps every row of every table with all its columns, and nothing points into the void', () => {
 		const db = dbBefore019();
 		const before = everyRow(db);
 
-		expect(migrate(db)).toEqual(['019_no_id_reuse.sql']);
+		const upTo019 = shippedBefore('/migrations/020');
+		expect(migrate(db, upTo019)).toEqual(['019_no_id_reuse.sql']);
 
 		expect(before.tickets).toHaveLength(18);
 		expect(new Set(before.runs.map((run) => run.state)).size).toBe(7);
 		expect(everyRow(db)).toEqual(before);
 		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-		expect(migrate(db)).toEqual([]);
+		expect(migrate(db, upTo019)).toEqual([]);
 	});
 
 	it('declares tickets and runs AUTOINCREMENT and changes nothing else about them, their indexes included', () => {
@@ -1122,6 +1127,65 @@ describe('019 on a database at 018 with tickets in every step of every variant a
 
 		const ticket = createTicket();
 		expect([ticket, createRun(ticket)]).toEqual([136, 10]);
+	});
+});
+
+describe('020 on a database at 019 with rows in every table', () => {
+	function dbAt019() {
+		const db = dbBefore019();
+		expect(migrate(db, shippedBefore('/migrations/020'))).toEqual(['019_no_id_reuse.sql']);
+		return db;
+	}
+	/** Every table, index and trigger, the automatic ones and sqlite_sequence included. */
+	const wholeSchema = (db: ReturnType<typeof openDb>) =>
+		db
+			.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name')
+			.all()
+			.map((entry) => ({
+				...entry,
+				sql: entry.sql === null ? null : normalized(String(entry.sql))
+			}));
+
+	it('keeps every row of every table, and nothing points into the void', () => {
+		const db = dbAt019();
+		const before = everyRow(db);
+
+		expect(migrate(db)).toEqual(['020_runners.sql']);
+
+		const { runners, ...after } = everyRow(db);
+		expect(runners).toEqual([]);
+		expect(after).toEqual(before);
+		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+		expect(migrate(db)).toEqual([]);
+	});
+
+	it('adds only the STRICT table runners with AUTOINCREMENT, and every other schema entry stays as it was', () => {
+		const db = dbAt019();
+		const before = wholeSchema(db);
+
+		migrate(db);
+
+		const after = wholeSchema(db);
+		expect(after.filter((entry) => entry.tbl_name !== 'runners')).toEqual(before);
+		const added = after.filter((entry) => entry.tbl_name === 'runners');
+		expect(added.map((entry) => entry.name)).toEqual([
+			'sqlite_autoindex_runners_1', // UNIQUE name
+			'sqlite_autoindex_runners_2', // UNIQUE credential_hash
+			'runners'
+		]);
+		expect(added[2].sql).toContain('id INTEGER PRIMARY KEY AUTOINCREMENT,');
+		expect(added[2].sql).toMatch(/\)STRICT$/);
+	});
+
+	it('refuses a credential hash that is not 64 characters long, so a plain credential cannot slip in', () => {
+		const db = dbAt019();
+		migrate(db);
+		const insert = db.prepare('INSERT INTO runners (name, credential_hash) VALUES (?, ?)');
+
+		expect(() => insert.run('laptop', 'x'.repeat(43))).toThrow(/CHECK constraint failed/);
+		expect(() => insert.run('', 'a'.repeat(64))).toThrow(/CHECK constraint failed/);
+		insert.run('laptop', 'a'.repeat(64));
+		expect(() => insert.run('desktop', 'a'.repeat(64))).toThrow(/UNIQUE constraint failed/);
 	});
 });
 
