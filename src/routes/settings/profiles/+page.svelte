@@ -92,7 +92,7 @@
 		background: var(--surface);
 	}
 	.name {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.meta {
 		flex: 1;

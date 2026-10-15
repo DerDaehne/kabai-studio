@@ -666,7 +666,7 @@
 	th {
 		color: var(--text-muted);
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 		text-align: left;
 	}
 	th,
@@ -680,7 +680,7 @@
 	}
 	td.title {
 		width: 100%;
-		font-weight: 520;
+		font-weight: var(--weight-medium);
 	}
 	fieldset {
 		margin: 0;
@@ -690,7 +690,7 @@
 	legend {
 		float: left;
 		margin-right: var(--space-2);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	fieldset label {
 		display: inline-flex;
@@ -728,7 +728,7 @@
 	}
 	.lane .title {
 		overflow: hidden;
-		font-weight: 520;
+		font-weight: var(--weight-medium);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}

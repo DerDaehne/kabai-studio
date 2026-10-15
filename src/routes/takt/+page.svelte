@@ -402,7 +402,7 @@
 		height: 28px;
 	}
 	.label {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.effect {
 		color: var(--text-muted);

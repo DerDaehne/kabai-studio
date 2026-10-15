@@ -107,7 +107,7 @@
 		background: var(--surface-hover);
 	}
 	.label {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.desc {
 		color: var(--text-muted);

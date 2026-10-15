@@ -28,7 +28,7 @@
 		background: var(--tint);
 		color: var(--fg);
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 		line-height: 1;
 		white-space: nowrap;
 	}

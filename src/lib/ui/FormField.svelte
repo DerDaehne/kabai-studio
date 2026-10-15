@@ -36,7 +36,7 @@
 	}
 	label {
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.hint,
 	.error {
@@ -45,6 +45,6 @@
 	}
 	.error {
 		color: var(--status-failed);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 </style>

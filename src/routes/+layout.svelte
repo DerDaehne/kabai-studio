@@ -294,7 +294,7 @@
 		align-items: center;
 		gap: var(--space-2);
 		font-size: var(--text-lg);
-		font-weight: 650;
+		font-weight: var(--weight-semibold);
 		letter-spacing: -0.01em;
 	}
 	.bare main {
@@ -317,7 +317,7 @@
 	}
 	.bare main :global([role='alert']) {
 		color: var(--status-failed);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.bare :global(.attribution) {
 		color: var(--text-muted);

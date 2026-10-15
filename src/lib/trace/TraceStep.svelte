@@ -88,7 +88,7 @@
 		margin: 0;
 		color: var(--text-muted);
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.line,
 	.message {
@@ -107,7 +107,7 @@
 		border-radius: var(--radius-sm);
 	}
 	.tool {
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.reason.empty,
 	.muted {

@@ -376,7 +376,7 @@
 	}
 	legend {
 		padding-inline: var(--space-1);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.group {
 		display: grid;
@@ -403,11 +403,11 @@
 	}
 	.warning {
 		color: var(--status-waiting);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.error {
 		color: var(--status-failed);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.new-key summary {
 		cursor: pointer;

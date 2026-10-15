@@ -158,7 +158,7 @@
 	--leading: 1.43;
 	--leading-tight: 1.25;
 
-	/* Density: 4 px grid, 28 px controls (larger on touch, see below) */
+	/* Density: 4 px grid; controls are Rekta's 32 px with a fine pointer and 44 px with touch (it has no smaller step) */
 	--space-05: 2px;
 	--space-1: 4px;
 	--space-2: 8px;
@@ -166,8 +166,8 @@
 	--space-4: 16px;
 	--space-6: 24px;
 	--space-8: 32px;
-	--control-h: 28px;
-	--control-h-sm: 24px;
+	--control-h: var(--rk-control-height);
+	--control-h-sm: var(--rk-control-height);
 	--radius-sm: 4px;
 	--radius: 8px;
 	--radius-lg: 14px;
@@ -183,7 +183,7 @@
 	--dur-glide: 380ms;
 	--dur-pulse: 1600ms;
 	--dur-sweep: 1400ms;
-	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-out: var(--rk-ease-out);
 	--ease-in: cubic-bezier(0.55, 0, 1, 0.45);
 	--ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
 	/* prettier-ignore */
@@ -229,6 +229,9 @@
 	--motion-long: var(--rk-duration-long);
 	--motion-turnstile: var(--rk-turnstile-angle);
 	--motion-slide: var(--rk-slide-distance);
+	--motion-stagger: var(--rk-duration-stagger);
+	--motion-pivot-glide: var(--rk-duration-pivot-glide);
+	--ease-pivot-glide: var(--rk-ease-pivot-glide);
 	--ease-base: var(--rk-ease-base);
 
 	/* Shell: the window scrolls under a sticky head and above a fixed app bar, whose height the page keeps free */
@@ -284,11 +287,4 @@
 }
 :root[data-theme='dark'] {
 	color-scheme: dark;
-}
-
-@media (pointer: coarse) {
-	:root {
-		--control-h: 36px;
-		--control-h-sm: 32px;
-	}
 }

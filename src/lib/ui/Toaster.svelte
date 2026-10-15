@@ -91,7 +91,7 @@
 	}
 	.toast[data-tone='error'] p {
 		color: var(--status-failed);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	@media (max-width: 719px) {
 		.toaster {

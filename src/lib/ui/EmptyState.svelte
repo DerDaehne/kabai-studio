@@ -23,7 +23,7 @@
 		border-radius: var(--radius-lg);
 	}
 	.title {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.text {
 		color: var(--text-muted);

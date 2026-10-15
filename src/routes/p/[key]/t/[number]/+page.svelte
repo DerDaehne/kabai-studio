@@ -444,7 +444,7 @@
 		gap: var(--space-1);
 		color: var(--text-muted);
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.blocked {
 		margin: 0;

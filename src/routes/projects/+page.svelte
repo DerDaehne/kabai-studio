@@ -140,7 +140,7 @@
 		background: var(--surface);
 	}
 	.name {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 		overflow-wrap: anywhere;
 	}
 	.meta {
@@ -174,7 +174,7 @@
 		margin-bottom: var(--space-1);
 		padding: 0;
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 	.option {
 		padding: var(--space-2) var(--space-3);
@@ -185,7 +185,7 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.option input {
 		width: auto;
@@ -203,6 +203,6 @@
 	.error {
 		color: var(--status-failed);
 		font-size: var(--text-sm);
-		font-weight: 560;
+		font-weight: var(--weight-semibold);
 	}
 </style>

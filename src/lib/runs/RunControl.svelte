@@ -250,7 +250,7 @@
 		align-items: center;
 		gap: var(--space-2);
 		color: inherit;
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 	}
 	.facts,
 	.wait {
