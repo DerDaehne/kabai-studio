@@ -43,10 +43,14 @@ export const renderAgentText = (text: string, { breaks = true } = {}): string =>
 function leafText(token: ReturnType<typeof md.parse>[number]): string {
 	if (token.type === 'fence' || token.type === 'code_block') return token.content.trim();
 	if (token.type !== 'inline') return '';
-	return (token.children ?? [])
-		.map((child) =>
-			child.type === 'softbreak' || child.type === 'hardbreak' ? '\n' : child.content
-		)
+	const children = token.children ?? [];
+	return children
+		.map((child, index) => {
+			if (child.type === 'softbreak' || child.type === 'hardbreak') return '\n';
+			// With images off, `![x](u)` leaves its "!" in the text just before the link.
+			const beforeLink = children[index + 1]?.type === 'link_open';
+			return beforeLink && child.type === 'text' ? child.content.replace(/!$/, '') : child.content;
+		})
 		.join('');
 }
 
@@ -59,7 +63,7 @@ function textBlocks(text: string): { text: string; endLine: number }[] {
 		if (part) blocks.at(-1)?.parts.push(part);
 	}
 	return blocks
-		.map(({ parts, endLine }) => ({ text: parts.join(' '), endLine }))
+		.map(({ parts, endLine }) => ({ text: parts.join('\n'), endLine }))
 		.filter((block) => block.text);
 }
 

@@ -5,6 +5,7 @@ import type { Actor } from './core';
 import { answerQuestion, latestOpenQuestion, requestHuman } from './questions';
 import { acceptTicket, returnTicket } from './intents';
 import * as runs from './runs';
+import { splitLead } from '../../markdown';
 import { assemblePrompt } from '../agents/prompt';
 import { ticketLagen } from '../lagen';
 import { finishStep, queueNextStep, queueUnblockedSuccessors, type StepResult } from './steps';
@@ -223,8 +224,11 @@ describe('the round limit on going back', () => {
 		expect(c.stepOf()).toBe('critique');
 		const question = latestOpenQuestion(c.db, c.ticketId)!;
 		expect(question.question).toMatch(/^Autor und Kritiker sind sich nach 2 Runden nicht einig/);
-		expect(question.question).toContain('Befund 2');
-		expect(question.question).toContain('Befund 3');
+		const { lead, rest } = splitLead(question.question);
+		expect(lead).toContain('Wie soll es weitergehen?');
+		expect(lead).not.toMatch(/Befund \d/);
+		expect(rest).toContain('Befunde der Runde davor:\nBefund 2');
+		expect(rest).toContain('Befunde jetzt:\nBefund 3');
 		expect(question.options.map((o) => o.stopsRun ?? false)).toEqual([false, false, true]);
 	});
 
@@ -296,8 +300,11 @@ describe('the round limit on going back', () => {
 			expect(third.next).toBeUndefined();
 			const question = latestOpenQuestion(c.db, c.ticketId)!.question;
 			expect(question).toMatch(/^Die Schritte sind sich nach 2 Runden nicht einig/);
-			expect(question).toContain('Befund 2');
-			expect(question).toContain('Befund 3');
+			const { lead, rest } = splitLead(question);
+			expect(lead).toContain('Wie soll es weitergehen?');
+			expect(lead).not.toMatch(/Befund \d/);
+			expect(rest).toContain('Befund 2');
+			expect(rest).toContain('Befund 3');
 		}
 	);
 

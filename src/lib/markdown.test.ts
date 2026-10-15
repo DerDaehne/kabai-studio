@@ -77,8 +77,18 @@ it('turns markdown into plain text without markers', () => {
 	const text = plainText(
 		'# Titel\n\n**fett** und `code` mit [Link](https://example.com)\n\n- eins\n- zwei\n\n```js\nconst a = 1;\n```'
 	);
-	expect(text).toBe('Titel\nfett und code mit Link\neins zwei\nconst a = 1;');
+	expect(text).toBe('Titel\nfett und code mit Link\neins\nzwei\nconst a = 1;');
 	expect(text).not.toMatch(/\*\*|^- |#|`/m);
+});
+
+it('leaves the "!" of image syntax out of the plain text, but keeps a real exclamation mark', () => {
+	expect(plainText('Siehe ![Plan](https://example.com/p.png) hier')).toBe('Siehe Plan hier');
+	expect(plainText('Achtung! Danach [Link](https://example.com)')).toBe('Achtung! Danach Link');
+});
+
+it('keeps list items on their own lines when a list is the first block', () => {
+	expect(leadText('- a\n- b\n\nDetail')).toBe('a\nb');
+	expect(splitLead('- a\n- b\n\nDetail').rest).toBe('Detail');
 });
 
 it('gives the first paragraph as short form and the markdown after it as rest', () => {

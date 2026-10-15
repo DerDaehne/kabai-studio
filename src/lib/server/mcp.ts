@@ -239,7 +239,7 @@ const TOOLS = {
 		object({ text: text(MAX_TEXT), idempotency_key: idempotencyKey }, ['text'])
 	),
 	finish_step: define<{ result: StepResult; summary: string } & Idempotent>(
-		'End your step; summary is your handoff. done: checks the exit conditions, then the next step follows. back: to the previous step, summary = your findings. blocked: summary becomes your question to the human. End your turn afterwards.',
+		'End your step; summary is your handoff. done: checks the exit conditions, then the next step follows. back: to the previous step, summary = your findings. blocked: summary becomes your question to the human; first paragraph = the question in one sentence, details after a blank line. End your turn afterwards.',
 		object(
 			{
 				result: { enum: ['done', 'back', 'blocked'] },
@@ -250,7 +250,7 @@ const TOOLS = {
 		)
 	),
 	request_human: define<{ question: string; options?: QuestionOption[] }>(
-		'Ask the human and wait: your ticket stays where it is until the answer comes. Offer 1-3 decidable options when possible. End your turn afterwards.',
+		'Ask the human and wait: your ticket stays where it is until the answer comes. First paragraph = the question in one sentence, details after a blank line. Offer 1-3 decidable options when possible. End your turn afterwards.',
 		object(
 			{
 				question: text(2000),

@@ -309,8 +309,8 @@ function disputeQuestion(db: DatabaseSync, t: Ticket, findings: string) {
 	const who = t.column_step === 'critique' ? 'Autor und Kritiker sind' : 'Die Schritte sind';
 	const question =
 		`${who} sich nach ${BACK_ROUNDS} Runden nicht einig: ` +
-		`„${t.column_name}“ schickt ${t.ref} zum ${BACK_ROUNDS + 1}. Mal zurück.\n\n` +
-		`Befunde der Runde davor:\n${previous}\n\nBefunde jetzt:\n${findings}\n\nWie soll es weitergehen?`;
+		`„${t.column_name}“ schickt ${t.ref} zum ${BACK_ROUNDS + 1}. Mal zurück. Wie soll es weitergehen?\n\n` +
+		`Befunde der Runde davor:\n${previous}\n\nBefunde jetzt:\n${findings}`;
 	return { question, options: DISPUTE_OPTIONS };
 }
 

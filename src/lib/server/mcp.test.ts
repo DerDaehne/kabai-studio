@@ -1181,6 +1181,16 @@ describe('token budget', () => {
 		);
 		expect(estimateTokens(definitions)).toBeLessThanOrEqual(4000);
 	});
+
+	it('tells agents that the first paragraph of a question is its short form', async () => {
+		const { serve, startRun, ticket } = setup();
+		const { token } = startRun(ticket());
+		const { tools } = await resultOf(await rpc(serve, token, 'tools/list'));
+		for (const name of ['request_human', 'finish_step']) {
+			const { description } = tools.find((tool: { name: string }) => tool.name === name);
+			expect(description).toMatch(/first paragraph = the question in one sentence/i);
+		}
+	});
 });
 
 describe('latest question', () => {

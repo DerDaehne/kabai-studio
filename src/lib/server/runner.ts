@@ -279,14 +279,14 @@ function askHumanAfterUsedUpChain(
 ) {
 	const hints = hintsGiven(db, run.id);
 	const lastHint = lastIntervention(db, run.id)?.hint;
-	const stuck =
-		`Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht ` +
-		`(höchstens ${RECOVERY.freshRunsPerChain} je Kette). ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
+	const short = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht. Wie soll es weitergehen?`;
+	const details =
+		`Frische Runs je Kette: höchstens ${RECOVERY.freshRunsPerChain}. ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
 		(lastHint ? `, zuletzt: „${lastHint}“` : '') +
 		'.';
 	const link = `${ticketPath(db, run.ticketId)}?run=${run.id}`;
 	requestHuman(db, actor, run.ticketId, {
-		question: `${stuck} Den Stand zeigt die Run-Akte: ${link}. Wie soll es weitergehen?`,
+		question: `${short}\n\n${details} Den Stand zeigt die Run-Akte: ${link}.`,
 		options: ESCALATION_OPTIONS
 	});
 }
