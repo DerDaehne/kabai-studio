@@ -12,7 +12,7 @@ import { PREDECESSOR_OPEN } from './domain/board';
 import { OPEN_QUESTION } from './domain/core';
 import { waitReasons } from './domain/runs';
 import { VARIANTS, type Step, type Variant } from './domain/variants';
-import { LIMITS } from './runner';
+import { limits } from './runner';
 
 export type TicketLage = {
 	ticketId: number;
@@ -81,7 +81,7 @@ function runInput(row: Row): LageRun | null {
 export function ticketLagen(db: DatabaseSync, options: { projectId?: number } = {}): TicketLage[] {
 	const rows = db.prepare(LAGE_ROWS).all(options.projectId ?? null) as Row[];
 	const capacity = rows.some((row) => runInput(row) === 'queued')
-		? waitReasons(db, LIMITS)
+		? waitReasons(db, limits())
 		: new Map();
 	return rows.map((row) => {
 		const { lage, reason } = lageOf({

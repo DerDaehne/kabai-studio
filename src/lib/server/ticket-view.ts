@@ -16,7 +16,7 @@ import {
 	type RunState,
 	type WaitReason
 } from './domain/runs';
-import { LIMITS } from './runner';
+import { limits } from './runner';
 
 export type TicketComment = {
 	id: number;
@@ -226,7 +226,7 @@ export function runTabs(db: DatabaseSync, ticketId: number): RunTab[] {
 		)
 		.all(ticketId) as RunTabRow[];
 	const waiting = rows.some((row) => row.state === 'queued')
-		? waitReasons(db, LIMITS)
+		? waitReasons(db, limits())
 		: new Map<number, WaitReason>();
 	return rows.map((row) => {
 		const tab = { ...row, halted: row.halted === 1, resumable: row.resumable === 1 };

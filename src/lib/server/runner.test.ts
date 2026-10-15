@@ -24,7 +24,7 @@ import { finishStep } from './domain/steps';
 import { splitLead } from '../markdown';
 import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
-import { LIMITS, startRunner, type Executor, type Resume, type RunContext } from './runner';
+import { limits, startRunner, type Executor, type Resume, type RunContext } from './runner';
 import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
@@ -94,8 +94,14 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
-function start(...args: Parameters<typeof startRunner>) {
-	const runner = startRunner(...args);
+function start(
+	db: Parameters<typeof startRunner>[0],
+	executors: Parameters<typeof startRunner>[1],
+	limitsOrSource?: runs.Limits | (() => runs.Limits),
+	coldStart?: Parameters<typeof startRunner>[3]
+) {
+	const source = typeof limitsOrSource === 'object' ? () => limitsOrSource : limitsOrSource;
+	const runner = startRunner(db, executors, source, coldStart);
 	stopRunners.push(runner.stop);
 	return runner;
 }
@@ -217,6 +223,31 @@ describe('claimRun', () => {
 });
 
 describe('startRunner', () => {
+	it('reads the limits again on every claim: a change takes effect on the next claim without a restart', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		let current: runs.Limits = { global: 5, pools: { local: 1 } };
+		start(s.db, { builtin: fake.executor }, () => current);
+		const [first, second] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		expect([first, second].map(s.state)).toEqual(['running', 'queued']);
+
+		current = { global: 5, pools: { local: 2 } };
+		const third = s.queue(s.local);
+		await flush();
+		expect([first, second, third].map(s.state)).toEqual(['running', 'running', 'queued']);
+	});
+
+	it('gives a pool without an entry the default slots', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor }, { global: 5, pools: {} });
+		const [first, second] = [s.queue(s.local), s.queue(s.local)];
+		await flush();
+		expect([first, second].map(s.state)).toEqual(['running', 'queued']);
+		expect(runs.DEFAULT_POOL_SLOTS).toBe(1);
+	});
+
 	it('holds back runs of a full pool, starts runs of other pools, respects the global limit and claims in FIFO order once a slot frees up', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
@@ -670,7 +701,7 @@ describe('cold start of a model', () => {
 	it('keeps a run whose model is still loading running and reports the loading phase on the bus once the soft threshold passes', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
-		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, limits, coldStart);
 		const id = s.queue(s.local);
 		await flush();
 		const { io } = fake.call(id);
@@ -701,7 +732,7 @@ describe('cold start of a model', () => {
 	it('offers to wait or cancel after the soft threshold, and a run cancelled while loading stays cancelled past the hard limit', async () => {
 		const s = setup();
 		const ignoresSignal: Executor = { execute: () => new Promise(() => {}) };
-		const { runner, phaseEvents } = startCold(s.db, { builtin: ignoresSignal }, LIMITS, coldStart);
+		const { runner, phaseEvents } = startCold(s.db, { builtin: ignoresSignal }, limits, coldStart);
 		const consoleError = vi.spyOn(console, 'error');
 		const id = s.queue(s.local);
 		await flush();
@@ -728,7 +759,7 @@ describe('cold start of a model', () => {
 			model: secret
 		}).id;
 		const fake = fakeExecutor();
-		startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		startCold(s.db, { builtin: fake.executor }, limits, coldStart);
 		const [cold, waiting] = [s.queue(leaky), s.queue(s.local)];
 		await flush();
 
@@ -754,7 +785,7 @@ describe('cold start of a model', () => {
 	it('stops watching a run that ends before its model answered', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
-		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const { phaseEvents } = startCold(s.db, { builtin: fake.executor }, limits, coldStart);
 		const consoleError = vi.spyOn(console, 'error');
 		const id = s.queue(s.local);
 		await flush();
@@ -773,7 +804,7 @@ describe('cold start of a model', () => {
 		const secret = 'sk-phase-line-secret-2718';
 		setSecret(s.db, 'phase-secret', secret, false, randomBytes(32));
 		const fake = fakeExecutor();
-		const { events } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const { events } = startCold(s.db, { builtin: fake.executor }, limits, coldStart);
 		const id = s.queue(s.local);
 		await flush();
 		const { io } = fake.call(id);
@@ -826,7 +857,7 @@ describe('cold start of a model', () => {
 	it('drops a phase reported after the run was cancelled', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
-		const { runner, events } = startCold(s.db, { builtin: fake.executor }, LIMITS, coldStart);
+		const { runner, events } = startCold(s.db, { builtin: fake.executor }, limits, coldStart);
 		const id = s.queue(s.local);
 		await flush();
 		runner.cancel(id);
@@ -1490,7 +1521,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		await flush();
 		expect([queued, fresh].map(s.state)).toEqual(['queued', 'queued']);
 		expect(haltKind(s.db)).toBe('pause');
-		expect(runs.waitReason(s.db, queued, LIMITS)?.text).toBe(
+		expect(runs.waitReason(s.db, queued, limits())?.text).toBe(
 			'wartet: alle Runs angehalten — Fortsetzen mit :fortsetzen all.'
 		);
 		expect(s.comments()).toEqual([]);

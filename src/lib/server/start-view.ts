@@ -4,7 +4,7 @@ import type { SeriesPoint } from '$lib/trace/step-series';
 import type { TraceEvent } from '$lib/trace/trace';
 import { rank, waitReason } from './domain/runs';
 import { projectRef, recentFinishedRuns, type FinishedRun } from './live';
-import { LIMITS } from './runner';
+import { limits } from './runner';
 import { stepSeries } from './step-series';
 import { splitError, wayOutsOf } from './ticket-view';
 
@@ -99,7 +99,7 @@ function queuedRuns(db: DatabaseSync): QueuedRun[] {
 		ticket: `${row.key}-${row.number}`,
 		number: row.number,
 		profile: row.profile,
-		waitText: waitReason(db, row.runId, LIMITS)?.text ?? '',
+		waitText: waitReason(db, row.runId, limits())?.text ?? '',
 		notBefore: row.notBefore
 	}));
 }

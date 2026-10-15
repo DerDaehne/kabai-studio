@@ -13,7 +13,7 @@ import { isDomainError } from '$lib/server/domain/error';
 import { createProfile, getProfile, updateProfile, type Profile } from '$lib/server/domain/runs';
 import { DEFAULT_MAX_STEPS } from '$lib/server/executors/builtin';
 import { listModels } from '$lib/server/model-list';
-import { LIMITS } from '$lib/server/runner';
+import { limits } from '$lib/server/runner';
 import { listSecrets, setSecret } from '$lib/server/secrets';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -33,7 +33,7 @@ export const load: PageServerLoad = ({ params }) => ({
 	values: params.id === 'new' ? NEW_PROFILE : valuesOf(storedProfile(params.id)),
 	secretNames: listSecrets(db()).map((secret) => secret.name),
 	defaultMaxSteps: DEFAULT_MAX_STEPS,
-	poolLimits: LIMITS.pools
+	poolLimits: limits().pools
 });
 
 export const actions: Actions = {

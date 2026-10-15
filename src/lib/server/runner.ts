@@ -68,8 +68,14 @@ export type Executor = {
 	execute(run: RunContext, io: ExecutorIo): Promise<ExecutorResult>;
 };
 
-// ponytail: fixed limits until there is a settings table and per-column overrides; 3 cloud runs plus 1 local GPU run.
-export const LIMITS: Limits = { global: 4, pools: { cloud: 3, local: 1 } };
+/**
+ * The one source of the run limits. The claim and every wait reason call it again each time, so a change takes effect on the
+ * next claim. A pool without an entry gets `DEFAULT_POOL_SLOTS`.
+ */
+// ponytail: fixed values until there is a settings table and per-column overrides; 3 cloud runs plus 1 local GPU run.
+export function limits(): Limits {
+	return { global: 4, pools: { cloud: 3, local: 1 } };
+}
 
 const SYSTEM: Actor = { kind: 'system' };
 const PREDECESSOR_EVENTS = new Set(['ticket.moved', 'ticket.review_approved']);
@@ -341,10 +347,10 @@ export function runner(): RunnerHandle {
 export function startRunner(
 	db: DatabaseSync,
 	executors: Partial<Record<Profile['executor'], Executor>>,
-	limits = LIMITS,
+	readLimits: () => Limits = limits,
 	coldStart: ColdStartLimits = COLD_START_LIMITS
 ) {
-	const instance = new Runner(db, executors, limits, coldStart);
+	const instance = new Runner(db, executors, readLimits, coldStart);
 	failOrphanedRuns(db);
 	instance.start();
 	const handle = {
@@ -374,7 +380,7 @@ export function startRunner(
 class Runner {
 	private readonly db: DatabaseSync;
 	private readonly executors: Partial<Record<Profile['executor'], Executor>>;
-	private readonly limits: Limits;
+	private readonly readLimits: () => Limits;
 	private readonly coldStart: ColdStartLimits;
 	private readonly active = new Map<number, RunControls>();
 	private stopped = false;
@@ -385,12 +391,12 @@ class Runner {
 	constructor(
 		db: DatabaseSync,
 		executors: Partial<Record<Profile['executor'], Executor>>,
-		limits: Limits,
+		readLimits: () => Limits,
 		coldStart: ColdStartLimits
 	) {
 		this.db = db;
 		this.executors = executors;
-		this.limits = limits;
+		this.readLimits = readLimits;
 		this.coldStart = coldStart;
 	}
 
@@ -457,7 +463,7 @@ class Runner {
 
 	private claimQueuedRuns() {
 		try {
-			const next = () => (this.stopped ? undefined : claimRun(this.db, SYSTEM, this.limits));
+			const next = () => (this.stopped ? undefined : claimRun(this.db, SYSTEM, this.readLimits()));
 			for (let run = next(); run; run = next()) {
 				const runId = run.id;
 				this.execute(run).catch((err) =>

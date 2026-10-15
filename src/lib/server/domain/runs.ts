@@ -55,7 +55,9 @@ export type Profile = {
 	/** Parallelism pool, e.g. local or cloud; the runner limits active runs per pool. */
 	pool: string;
 };
-/** Maximum active (running or waiting_approval) runs, overall and per pool; a pool without an entry gets 1 because a local GPU is scarce. */
+/** Slots of a pool without an entry in {@link Limits}: 1, because a local GPU is scarce. */
+export const DEFAULT_POOL_SLOTS = 1;
+/** Maximum active (running or waiting_approval) runs, overall and per pool; a pool without an entry gets {@link DEFAULT_POOL_SLOTS}. */
 export type Limits = { global: number; pools: Record<string, number> };
 
 /** Claim order of queued runs, most urgent first; equal priorities are claimed oldest first. Running runs are never preempted. */
@@ -370,7 +372,7 @@ export function waitReasons(
 		rows.map(({ runId: id, halt, ...counts }) => {
 			const reason = {
 				...counts,
-				poolLimit: limits.pools[counts.pool] ?? 1,
+				poolLimit: limits.pools[counts.pool] ?? DEFAULT_POOL_SLOTS,
 				globalLimit: limits.global
 			};
 			const causes: WaitCause[] = halt ? [{ code: `halt_${halt}` }] : waitCauses(reason);
@@ -465,7 +467,7 @@ WHERE r.state = 'queued'
 	AND NOT EXISTS (SELECT 1 FROM runner_halt)
 	AND (r.not_before IS NULL OR r.not_before <= ?3)
 	AND (SELECT count(*) FROM active) < ?1
-	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), 1)
+	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), ?4)
 ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
 
 /**
@@ -476,7 +478,7 @@ export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = n
 	return tx(db, (emit) => {
 		const next = db
 			.prepare(CLAIM)
-			.get(limits.global, JSON.stringify(limits.pools), now.toISOString()) as
+			.get(limits.global, JSON.stringify(limits.pools), now.toISOString(), DEFAULT_POOL_SLOTS) as
 			{ id: number; ticketId: number; projectId: number; profileId: number } | undefined;
 		if (!next) return undefined;
 		const { profileId, ...claimed } = next;
