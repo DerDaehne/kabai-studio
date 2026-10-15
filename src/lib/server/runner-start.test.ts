@@ -296,6 +296,25 @@ describe('frames from the server', () => {
 		wss.close();
 	});
 
+	it('does not count a first frame other than welcome as connected', async () => {
+		const server = createServer();
+		const wss = new WebSocketServer({ noServer: true });
+		const closes: number[] = [];
+		server.on('upgrade', (request, socket, head) =>
+			wss.handleUpgrade(request, socket, head, (ws) => {
+				ws.on('close', (code) => closes.push(code));
+				ws.on('message', () => ws.send(JSON.stringify({ type: 'prepare', workspace: 'site' })));
+			})
+		);
+		writeConfig(`http://127.0.0.1:${await listen(server)}`);
+		const running = runnerStartCommand(ctx());
+		await vi.waitFor(() => expect(closes).toEqual([1008]));
+		expect(lines.some((line) => line.startsWith('Connected'))).toBe(false);
+		stop.abort();
+		await running;
+		wss.close();
+	});
+
 	it('treats a second welcome like any other unsupported frame', async () => {
 		const server = createServer();
 		const wss = new WebSocketServer({ noServer: true });
