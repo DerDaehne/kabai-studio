@@ -179,6 +179,14 @@
 	}
 
 	onMount(() => onLiveEvent(follow));
+
+	// Tiles build in while the view arrives; one that a live update adds later appears without it
+	let arriving = $state(true);
+	onMount(() => {
+		const arrivalMs = tokenMs('--motion-moderate') + 10 * tokenMs('--motion-stagger') + 50;
+		const timer = setTimeout(() => (arriving = false), arrivalMs);
+		return () => clearTimeout(timer);
+	});
 	$effect(() => {
 		if (!data.tracks.length) return;
 		const timer = setInterval(() => (now = Date.now()), 1000);
@@ -308,7 +316,7 @@
 {#if !projects.length}
 	<NoProject />
 {:else}
-	<div class="start">
+	<div class="start" data-rk-arriving={arriving ? '' : undefined}>
 		<header class="titles">
 			<p class="lage" role="status">
 				{#if lageLine}{lageLine}{:else}{t('start.lage.none')}
@@ -781,9 +789,9 @@
 	}
 
 	@media (prefers-reduced-motion: no-preference) {
-		:global(:root:not([data-motion='off'])) .slot {
+		:global(:root:not([data-motion='off'])) .start[data-rk-arriving] .slot {
 			animation: tile-in var(--motion-moderate) var(--ease-base) both;
-			animation-delay: calc(var(--i) * 30ms);
+			animation-delay: calc(var(--i) * var(--motion-stagger));
 		}
 	}
 	@keyframes tile-in {
