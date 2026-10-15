@@ -2,8 +2,11 @@ import { readFileSync } from 'node:fs';
 import type { OnNavigate } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	cubicBezier,
 	duration,
+	easing,
 	motionMode,
+	pivotGlideTarget,
 	reducedCrossfadeMs,
 	shift,
 	spring,
@@ -134,5 +137,62 @@ describe('motion values', () => {
 			2
 		);
 		expect(spring(1)).toBe(1);
+	});
+});
+
+describe('easing.out', () => {
+	it("is the curve of Rekta's --rk-ease-out token", () => {
+		const tokens = readFileSync(new URL('../styles/rekta.tokens.css', import.meta.url), 'utf8');
+		const [x1, y1, x2, y2] = tokens
+			.match(/--rk-ease-out: cubic-bezier\(([^)]+)\)/)![1]
+			.split(',')
+			.map(Number);
+		const rekta = cubicBezier(x1, y1, x2, y2);
+		for (const progress of [0, 0.25, 0.5, 0.75, 1])
+			expect(easing.out(progress)).toBeCloseTo(rekta(progress), 6);
+	});
+
+	it('starts at 0, ends at 1 and rises in between', () => {
+		expect([easing.out(0), easing.out(1)]).toEqual([0, 1]);
+		expect(easing.out(0.5)).toBeGreaterThan(easing.out(0.25));
+	});
+});
+
+describe('pivotGlideTarget', () => {
+	const gap = 10;
+	// five titles, the active one drawn 100 wide, the others 50; the titles may fill 200
+	const strip = (active: number) => [50, 50, 50, 50, 50].map((w, i) => (i === active ? 100 : w));
+	const lefts = (widths: number[]) =>
+		widths.map((_, i) => widths.slice(0, i).reduce((x, w) => x + w + gap, 0));
+
+	it('holds a strip that fits still, whichever title is active', () => {
+		for (let active = 0; active < 3; active++)
+			expect(pivotGlideTarget([40, 40, 40], active, gap, 200)).toBe(0);
+	});
+
+	it('shows the start for the first title and the end for the last', () => {
+		const first = strip(0);
+		const last = strip(4);
+		expect(pivotGlideTarget(first, 0, gap, 200)).toBe(0);
+		const total = lefts(last)[4] + last[4];
+		expect(pivotGlideTarget(last, 4, gap, 200)).toBe(total - 200);
+	});
+
+	it('keeps the active title whole and the one before it inside the edge, for every title', () => {
+		for (let active = 0; active < 5; active++) {
+			const widths = strip(active);
+			const x = lefts(widths);
+			const to = pivotGlideTarget(widths, active, gap, 200);
+			expect(x[active] + widths[active] - to, `title ${active} whole`).toBeLessThanOrEqual(200);
+			expect(x[active] - to, `title ${active} not cut at the left`).toBeGreaterThanOrEqual(0);
+			if (active > 0)
+				expect(x[active - 1] - to, `predecessor of ${active}`).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	it('moves on with the place in the order, never back', () => {
+		const targets = [0, 1, 2, 3, 4].map((i) => pivotGlideTarget(strip(i), i, gap, 200));
+		expect(targets).toEqual([...targets].sort((a, b) => a - b));
+		expect(new Set(targets).size).toBeGreaterThan(2);
 	});
 });

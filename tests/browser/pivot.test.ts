@@ -76,21 +76,32 @@ const twoFrames = (page: Page) =>
 		() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 	);
 const scrollY = (page: Page) => page.evaluate(() => window.scrollY);
+const titleRowScroll = (page: Page) =>
+	page.evaluate(
+		(selector) => document.querySelector(`${selector} [role="tablist"]`)!.scrollLeft,
+		SHOWCASE
+	);
+
+/** True when `scroll` reads the same now and a few frames later: a glide that is still running moves in between. */
+async function rowHasStopped(
+	page: Page,
+	scroll: (page: Page) => Promise<number>
+): Promise<boolean> {
+	const before = await scroll(page);
+	await twoFrames(page);
+	await twoFrames(page);
+	return before === (await scroll(page));
+}
 const blur = (page: Page) =>
 	page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
-/** Waits until `facet` is selected, has glided to the left edge and every transition has ended. */
+/** Waits until `facet` is selected, the title row has stopped gliding and every transition has ended. */
 async function settledTitles(page: Page, facet: string): Promise<Titles> {
 	await expect(showcaseOf(page).locator(`[id$="-tab-${facet}"]`)).toHaveAttribute(
 		'aria-selected',
 		'true'
 	);
-	await expect
-		.poll(async () => {
-			const { tabs, edge } = await measureTitles(page);
-			return Math.abs(tabs[facet].left - edge);
-		})
-		.toBeLessThanOrEqual(1);
+	await expect.poll(() => rowHasStopped(page, titleRowScroll)).toBe(true);
 	await expect.poll(() => runningAnimations(page)).toBe(0);
 	return measureTitles(page);
 }
@@ -165,23 +176,31 @@ test('arrows and h/l switch facets round the end; focus inside the pivot follows
 	expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
 });
 
-test('the active title stands large at the left edge, the one before it has scrolled out, the bar keeps its height', async ({
+test('the pivot glides by the place of the active title: it is whole, the one before it stays in reach, the bar keeps its height', async ({
 	page
 }) => {
 	await page.setViewportSize(PHONE);
 	await open(page, '/dev/ui');
 	await showcaseOf(page).scrollIntoViewIfNeeded();
 	const start = await settledTitles(page, 'fragen');
+	const expectWhole = (titles: Titles, facet: string) => {
+		const tab = titles.tabs[facet];
+		expect(tab.left, `${facet} starts inside the row`).toBeGreaterThanOrEqual(titles.row.left - 1);
+		expect(tab.right, `${facet} ends inside the row`).toBeLessThanOrEqual(titles.row.right + 1);
+	};
+	expectWhole(start, 'fragen');
 
 	await tabOf(page, 'Angehalten').click();
 	const after = await settledTitles(page, 'angehalten');
 	expect(after.row.height).toBe(start.row.height);
+	expectWhole(after, 'angehalten');
+	expect(
+		after.tabs.laeuft.left,
+		'the title before is in reach, not scrolled out'
+	).toBeGreaterThanOrEqual(after.row.left - 1);
 	const active = after.tabs.angehalten;
 	expect(active.top, 'the large title fits the bar').toBeGreaterThanOrEqual(after.row.top);
 	expect(active.bottom).toBeLessThanOrEqual(after.row.bottom);
-	expect(after.tabs.laeuft.right, 'the title before has scrolled out').toBeLessThanOrEqual(
-		after.edge
-	);
 	expect(after.tabs.angehalten.height).toBeGreaterThan(start.tabs.angehalten.height * 1.3);
 	expect(start.tabs.fragen.height).toBeGreaterThan(after.tabs.fragen.height * 1.3);
 	for (const uninvolved of ['laeuft', 'fertig']) {
@@ -190,11 +209,47 @@ test('the active title stands large at the left edge, the one before it has scro
 	}
 
 	await tabOf(page, 'Fertig').click();
-	expect(
-		(await settledTitles(page, 'fertig')).row.height,
-		'the last title reaches the edge too'
-	).toBe(start.row.height);
+	const last = await settledTitles(page, 'fertig');
+	expect(last.row.height, 'the last title reaches the end too').toBe(start.row.height);
+	expectWhole(last, 'fertig');
+
+	await tabOf(page, 'Fragen').click();
+	await settledTitles(page, 'fragen');
+	expect(await titleRowScroll(page), 'the first title shows the start of the strip').toBe(0);
 	expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
+});
+
+test('a title row that fits holds still while the facets change', async ({ page }) => {
+	await page.setViewportSize({ width: 1299, height: 900 });
+	await open(page, '/dev/ui');
+	await showcaseOf(page).scrollIntoViewIfNeeded();
+	const row = showcaseOf(page).getByRole('tablist');
+	expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+	for (const name of ['Angehalten', 'Fertig', 'Fragen']) {
+		await tabOf(page, name).click();
+		await settledTitles(page, name.toLowerCase());
+		expect(await titleRowScroll(page), name).toBe(0);
+	}
+});
+
+test('a facet before the active one slides in from the left, one after it from the right', async ({
+	page
+}) => {
+	await page.setViewportSize(PHONE);
+	await open(page, '/dev/ui');
+	const slideOffset = () =>
+		showcaseOf(page)
+			.locator('[role="tabpanel"]:not([hidden])')
+			.evaluate((panel) => {
+				const [slide] = panel.getAnimations();
+				slide.pause();
+				slide.currentTime = 0;
+				return parseFloat(getComputedStyle(panel).translate);
+			});
+	await tabOf(page, 'Läuft').click();
+	expect(await slideOffset(), 'forward comes from the right').toBeGreaterThan(0);
+	await tabOf(page, 'Fragen').click();
+	expect(await slideOffset(), 'back comes from the left').toBeLessThan(0);
 });
 
 test('a switch slides the panel in; with reduced motion title and panel jump without animation', async ({
@@ -209,8 +264,7 @@ test('a switch slides the panel in; with reduced motion title and panel jump wit
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 	await tabOf(page, 'Fertig').click();
 	await twoFrames(page);
-	const { tabs, edge } = await measureTitles(page);
-	expect(Math.abs(tabs.fertig.left - edge), 'the title jumps to the edge').toBeLessThanOrEqual(1);
+	expect(await titleRowScroll(page), 'the row jumps to the end at once').toBeGreaterThan(0);
 	expect(await panelAnimations(page), 'the panel does not slide').toBe(0);
 	expect(await runningAnimations(page), 'nothing slides or scales over time').toBe(0);
 });

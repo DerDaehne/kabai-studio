@@ -1,5 +1,5 @@
 import type { OnNavigate } from '@sveltejs/kit';
-import { circIn, cubicInOut, expoOut } from 'svelte/easing';
+import { circIn, cubicInOut } from 'svelte/easing';
 import { prefersReducedMotion } from 'svelte/motion';
 import type { TransitionConfig } from 'svelte/transition';
 
@@ -37,7 +37,12 @@ export function spring(t: number): number {
 }
 
 /** Script counterparts of --ease-out, --ease-in, --ease-inout and --ease-spring. */
-export const easing = { out: expoOut, in: circIn, inOut: cubicInOut, spring } as const;
+export const easing = {
+	out: cubicBezier(0.4, 0, 0.5, 1),
+	in: circIn,
+	inOut: cubicInOut,
+	spring
+} as const;
 
 export type MotionMode = 'full' | 'reduced';
 
@@ -114,23 +119,82 @@ export function tokenMs(name: string): number {
 	return value.endsWith('ms') ? parseFloat(value) : parseFloat(value) * 1000 || 0;
 }
 
+type Ease = (progress: number) => number;
+
+/** The timing function of a CSS `cubic-bezier(x1, y1, x2, y2)`, solved for x by Newton's method like a browser does. */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): Ease {
+	const coefficient = (a: number, b: number) => [1 - 3 * b + 3 * a, 3 * b - 6 * a, 3 * a] as const;
+	const [ax, bx, cx] = coefficient(x1, x2);
+	const [ay, by, cy] = coefficient(y1, y2);
+	const curve = (a: number, b: number, c: number, t: number) => ((a * t + b) * t + c) * t;
+	return (x) => {
+		let t = x;
+		for (let step = 0; step < 8; step++) {
+			const error = curve(ax, bx, cx, t) - x;
+			const slope = (3 * ax * t + 2 * bx) * t + cx;
+			if (Math.abs(error) < 1e-4 || Math.abs(slope) < 1e-6) break;
+			t -= error / slope;
+		}
+		return curve(ay, by, cy, Math.min(1, Math.max(0, t)));
+	};
+}
+
+/** The easing token `--ease-pivot-glide` as a function; the in-out ease of the same shape if it is not a cubic-bezier. */
+function pivotGlideEase(): Ease {
+	const token = getComputedStyle(document.documentElement).getPropertyValue('--ease-pivot-glide');
+	const numbers = /cubic-bezier\(([^)]+)\)/.exec(token)?.[1].split(',').map(Number);
+	return numbers?.length === 4
+		? cubicBezier(...(numbers as [number, number, number, number]))
+		: easing.inOut;
+}
+
 const glides = new WeakMap<HTMLElement, number>();
 
 /**
- * Scrolls `element` sideways to `left` with the ease-in-out of `--ease-inout` over `durationMs`; at once for 0, which
- * is what the duration tokens become under reduced motion. Each frame scrolls instantly so CSS smooth scrolling
- * cannot fight the easing.
+ * Scrolls `element` sideways to `left` with `ease` over `durationMs`; at once for 0, which is what the duration
+ * tokens become under reduced motion. Each frame scrolls instantly so CSS smooth scrolling cannot fight the easing.
  */
-export function glideScrollLeft(element: HTMLElement, left: number, durationMs: number): void {
+export function glideScrollLeft(
+	element: HTMLElement,
+	left: number,
+	durationMs: number,
+	ease: Ease = easing.inOut
+): void {
 	const from = element.scrollLeft;
 	const started = performance.now();
 	const frame = (now: number) => {
 		const progress = durationMs > 0 ? Math.min(1, (now - started) / durationMs) : 1;
-		element.scrollTo({ left: from + (left - from) * easing.inOut(progress), behavior: 'instant' });
+		element.scrollTo({ left: from + (left - from) * ease(progress), behavior: 'instant' });
 		if (progress < 1) glides.set(element, requestAnimationFrame(frame));
 	};
 	cancelAnimationFrame(glides.get(element) ?? 0);
 	frame(started);
+}
+
+/** Glides a pivot's row or panorama to `left` with the duration and curve of the pivot glide tokens. */
+export function glidePivot(element: HTMLElement, left: number, jump: boolean): void {
+	glideScrollLeft(element, left, jump ? 0 : tokenMs('--motion-pivot-glide'), pivotGlideEase());
+}
+
+/**
+ * Where a strip of titles scrolls to so that it glides by the active title's place in the fixed order: the first title
+ * shows the start, the last the end, those between move it in proportion. The titles before the active one stay in
+ * reach (the one just before starts inside the edge), the active one is always whole, and a strip that fits holds still.
+ * `widths` are the drawn widths, the active one at its large size; `room` is the width the titles may fill.
+ */
+export function pivotGlideTarget(
+	widths: number[],
+	active: number,
+	gap: number,
+	room: number
+): number {
+	const lefts = widths.map((_, index) => widths.slice(0, index).reduce((x, w) => x + w + gap, 0));
+	const total = lefts[lefts.length - 1] + widths[widths.length - 1];
+	const farthest = Math.max(0, total - room);
+	const proportional = widths.length > 1 ? (farthest * active) / (widths.length - 1) : 0;
+	const reachBack = active > 0 ? lefts[active - 1] : lefts[active];
+	const activeWhole = lefts[active] + widths[active] - room;
+	return Math.min(farthest, Math.max(0, activeWhole, Math.min(proportional, reachBack)));
 }
 
 /**
@@ -143,15 +207,23 @@ function makeRoomForActive(row: HTMLElement, active: HTMLElement | null) {
 		parseFloat(getComputedStyle(row).fontSize) / parseFloat(getComputedStyle(small).fontSize);
 	row.style.setProperty('--active-scale', String(scale));
 	row.style.setProperty('--active-room', `${active ? active.offsetWidth * (scale - 1) : 0}px`);
+	return scale;
 }
 
-/**
- * Brings the active title of a pivot's title row to its left edge, gliding unless `jump`; the titles before it scroll
- * out of view. The row sets the active size as its font size, the titles the small one (see `--active-scale`).
- */
+/** Glides a pivot's title row by the place of the active title (see `pivotGlideTarget`), at once if `jump`. */
 export function revealActiveTitle(row: HTMLElement, active: HTMLElement | null, jump: boolean) {
-	makeRoomForActive(row, active);
-	const first = row.firstElementChild as HTMLElement;
-	const left = active ? active.offsetLeft - first.offsetLeft : 0;
-	glideScrollLeft(row, left, jump ? 0 : tokenMs('--motion-moderate'));
+	const scale = makeRoomForActive(row, active);
+	const titles = [...row.children] as HTMLElement[];
+	const style = getComputedStyle(row);
+	const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+	const widths = titles.map((title) => title.offsetWidth * (title === active ? scale : 1));
+	const left = active
+		? pivotGlideTarget(
+				widths,
+				titles.indexOf(active),
+				parseFloat(style.columnGap) || 0,
+				row.clientWidth - padding
+			)
+		: 0;
+	glidePivot(row, left, jump);
 }

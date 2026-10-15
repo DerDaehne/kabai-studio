@@ -63,8 +63,6 @@
 				{#if openQuestionsOf(place)}<span class="count">{openQuestionsOf(place)}</span>{/if}
 			</a>
 		{/each}
-		<!-- room for the last title to reach the left edge as well -->
-		<span class="end" aria-hidden="true"></span>
 	</nav>
 	{#key shell.signals}
 		{#if shell.signals}<span class="wave" aria-hidden="true"></span>{/if}
@@ -94,6 +92,13 @@
 	}
 	.titles::-webkit-scrollbar {
 		display: none;
+	}
+	/* The scaled title grows by transform, which the scroll range only learns of once the transition has run; this makes
+	   the room real at once, so a jump (resize, fonts) can reach the end */
+	.titles::after {
+		content: '';
+		flex: none;
+		margin-left: calc(var(--active-room, 0px) - var(--space-6));
 	}
 	a {
 		flex: none;
@@ -138,9 +143,6 @@
 		line-height: 1.5;
 		text-align: center;
 		vertical-align: super;
-	}
-	.end {
-		flex: 0 0 100%;
 	}
 	.wave {
 		position: absolute;

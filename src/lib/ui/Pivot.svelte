@@ -7,7 +7,7 @@
 	import { onMount, tick, untrack, type Snippet } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { bindKeys } from '$lib/shell/router.svelte';
-	import { glideScrollLeft, revealActiveTitle, tokenMs } from './motion';
+	import { glidePivot, revealActiveTitle } from './motion';
 	import { sideways } from './sideways';
 
 	type Props = {
@@ -34,6 +34,8 @@
 	let titleRow = $state<HTMLElement>();
 	let facetRow = $state<HTMLElement>();
 	let switched = $state(false);
+	/** Which side the facet that just came in comes from: -1 for one before the facet it replaces, else 1. */
+	let slideFrom = $state(1);
 
 	const activeIndex = () => facets.findIndex((facet) => facet.id === active);
 	const roundTheEnd = (index: number) => ((index % facets.length) + facets.length) % facets.length;
@@ -41,6 +43,7 @@
 	function select(facet: Facet) {
 		if (facet.id === active) return;
 		switched = true;
+		slideFrom = facets.indexOf(facet) < activeIndex() ? -1 : 1;
 		active = facet.id;
 		onchange?.(facet.id);
 	}
@@ -69,7 +72,7 @@
 		const facet = facetRow.children[activeIndex()] as HTMLElement | undefined;
 		const first = facetRow.firstElementChild as HTMLElement;
 		const left = facet ? facet.offsetLeft - first.offsetLeft : 0;
-		glideScrollLeft(facetRow, left, jump ? 0 : tokenMs('--motion-moderate'));
+		glidePivot(facetRow, left, jump);
 	}
 
 	function reveal(jump: boolean) {
@@ -113,10 +116,14 @@
 				{@render counter(facet)}
 			</button>
 		{/each}
-		<!-- room for the last title to reach the left edge as well -->
-		<span class="end" aria-hidden="true"></span>
 	</div>
-	<div class="facets" class:switched bind:this={facetRow} use:sideways>
+	<div
+		class="facets"
+		class:switched
+		style:--slide-from={slideFrom}
+		bind:this={facetRow}
+		use:sideways
+	>
 		{#each facets as facet (facet.id)}
 			<!-- a facet may scroll by itself and hold nothing focusable, so keyboards reach it directly -->
 			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -154,6 +161,13 @@
 	}
 	.titles::-webkit-scrollbar {
 		display: none;
+	}
+	/* The scaled title grows by transform, which the scroll range only learns of once the transition has run; this makes
+	   the room real at once, so a jump (resize, fonts) can reach the end */
+	.titles::after {
+		content: '';
+		flex: none;
+		margin-left: calc(var(--active-room, 0px) - var(--space-6));
 	}
 	[role='tab'] {
 		flex: none;
@@ -193,9 +207,6 @@
 		font-weight: var(--weight-medium);
 		vertical-align: super;
 	}
-	.end {
-		flex: 0 0 100%;
-	}
 	section {
 		padding-top: var(--space-3);
 	}
@@ -211,7 +222,7 @@
 	@keyframes facet-in {
 		from {
 			opacity: 0;
-			translate: var(--motion-slide) 0;
+			translate: calc(var(--motion-slide) * var(--slide-from, 1)) 0;
 		}
 	}
 

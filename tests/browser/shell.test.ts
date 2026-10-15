@@ -23,7 +23,12 @@ type Box = {
 	width: number;
 	height: number;
 };
-type Head = { head: Box; navLeft: number; edge: number; titles: Record<string, Box> };
+type Head = {
+	head: Box;
+	row: Box;
+	scroll: number;
+	titles: Record<string, Box>;
+};
 
 /** Where the head and each of its titles are drawn right now, scaling included. */
 function measureHead(page: Page): Promise<Head> {
@@ -36,22 +41,29 @@ function measureHead(page: Page): Promise<Head> {
 		]);
 		return {
 			head: box(nav.closest('header')!),
-			navLeft: nav.getBoundingClientRect().left,
-			edge: nav.getBoundingClientRect().left + parseFloat(getComputedStyle(nav).paddingLeft),
+			row: box(nav),
+			scroll: nav.scrollLeft,
 			titles: Object.fromEntries(titles)
 		};
 	});
 }
 
-/** Waits until `active` is current, has glided to the left edge and every size transition has ended. */
+const twoFrames = (page: Page) =>
+	page.evaluate(
+		() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+	);
+
+/** Waits until `active` is current, the title row has stopped gliding and every size transition has ended. */
 async function settledHead(page: Page, active: string): Promise<Head> {
 	await expect(titleOf(page, active)).toHaveAttribute('aria-current', 'page');
 	await expect
 		.poll(async () => {
-			const { titles, edge } = await measureHead(page);
-			return Math.abs(titles[active].left - edge);
+			const before = (await measureHead(page)).scroll;
+			await twoFrames(page);
+			await twoFrames(page);
+			return before === (await measureHead(page)).scroll;
 		})
-		.toBeLessThanOrEqual(1);
+		.toBe(true);
 	await expect
 		.poll(() =>
 			page.evaluate(
@@ -66,26 +78,33 @@ async function settledHead(page: Page, active: string): Promise<Head> {
 	return measureHead(page);
 }
 
-test('the head pivot keeps its order and height: the active title glides to the left edge, the ones before it scroll out of view, only the old and the new active title change size', async ({
+function expectWholeTitle(head: Head, title: string) {
+	expect(head.titles[title].left, `${title} starts inside the row`).toBeGreaterThanOrEqual(
+		head.row.left - 1
+	);
+	expect(head.titles[title].right, `${title} ends inside the row`).toBeLessThanOrEqual(
+		head.row.right + 1
+	);
+}
+
+test('a head pivot that fits holds still: only the old and the new active title change size', async ({
 	page
 }) => {
 	await page.setViewportSize(DESKTOP);
 	await open(page, '/');
 	const start = await settledHead(page, 'kabai studio');
-	expect(start.navLeft, 'the title row reaches the screen edge, nothing clips it earlier').toBe(0);
+	expect(start.row.left, 'the title row reaches the screen edge, nothing clips it earlier').toBe(0);
+	expect(start.scroll).toBe(0);
 
 	await titleOf(page, 'takt').click();
 	await expect(page).toHaveURL('/takt');
 	const takt = await settledHead(page, 'takt');
-
+	expect(takt.scroll, 'a row that fits does not glide').toBe(0);
 	expect(takt.head.height).toBe(start.head.height);
-	const before = takt.titles['kabai studio'];
-	expect(before.left, 'the title before the active one has scrolled out to the left').toBeLessThan(
-		0
-	);
-	expect(before.right, '…but visibly, not cut off at the gutter').toBeGreaterThan(0);
 	expect(takt.titles.takt.height).toBeGreaterThan(start.titles.takt.height * 1.5);
-	expect(start.titles['kabai studio'].height).toBeGreaterThan(before.height * 1.5);
+	expect(start.titles['kabai studio'].height).toBeGreaterThan(
+		takt.titles['kabai studio'].height * 1.5
+	);
 	for (const other of ['board', 'projekte', 'einstellungen']) {
 		expect(takt.titles[other].width, other).toBeCloseTo(start.titles[other].width, 0);
 		expect(takt.titles[other].height, other).toBeCloseTo(start.titles[other].height, 0);
@@ -94,21 +113,43 @@ test('the head pivot keeps its order and height: the active title glides to the 
 	await titleOf(page, 'einstellungen').click();
 	await expect(page).toHaveURL('/settings');
 	const last = await settledHead(page, 'einstellungen');
+	expect(last.scroll).toBe(0);
+	expect(last.head.height).toBe(start.head.height);
+	expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
+});
+
+test('on a phone the head pivot glides by the place of the active title: whole, with the one before it in reach', async ({
+	page
+}) => {
+	await page.setViewportSize(PHONE);
+	await open(page, '/');
+	const start = await settledHead(page, 'kabai studio');
+	expect(start.scroll, 'the first title shows the start of the strip').toBe(0);
+
+	await titleOf(page, 'board').click();
+	await expect(page).toHaveURL('/board');
+	const board = await settledHead(page, 'board');
+	expect(board.scroll, 'a row that does not fit glides').toBeGreaterThan(0);
+	expectWholeTitle(board, 'board');
+	expect(board.titles.takt.left, 'the title before is in reach').toBeGreaterThanOrEqual(
+		board.row.left - 1
+	);
+	expect(board.head.height).toBe(start.head.height);
+
+	await titleOf(page, 'einstellungen').click();
+	await expect(page).toHaveURL('/settings');
+	const last = await settledHead(page, 'einstellungen');
+	expect(last.scroll).toBeGreaterThan(board.scroll);
+	expectWholeTitle(last, 'einstellungen');
 	expect(last.head.height).toBe(start.head.height);
 	expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
 
 	await page.emulateMedia({ reducedMotion: 'reduce' });
 	await titleOf(page, 'board').click();
 	await expect(titleOf(page, 'board')).toHaveAttribute('aria-current', 'page');
-	const twoFramesLater = await page
-		.evaluate(
-			() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-		)
-		.then(() => measureHead(page));
-	expect(
-		Math.abs(twoFramesLater.titles.board.left - twoFramesLater.edge),
-		'with reduced motion the title jumps to the edge instead of gliding'
-	).toBeLessThanOrEqual(1);
+	await twoFrames(page);
+	const jumped = await measureHead(page);
+	expect(jumped.scroll, 'with reduced motion the row jumps instead of gliding').toBe(board.scroll);
 });
 
 test('the focus ring of the active head title is not cut off by its row', async ({ page }) => {
