@@ -157,7 +157,10 @@
 	async function focusRow(id: number | undefined) {
 		await tick();
 		// a row that slides to another group leaves an inert copy behind until the slide ends
-		document.querySelector<HTMLElement>(`[data-ticket="${id}"]:not([inert])`)?.focus();
+		const row = document.querySelector<HTMLElement>(`[data-ticket="${id}"]:not([inert])`);
+		// the browser's own focus scroll leaves a row that is only partly visible where it is
+		row?.focus({ preventScroll: true });
+		row?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}
 
 	/** A row re-rendered into another group is a new element; the old one went inert or away with the focus. */

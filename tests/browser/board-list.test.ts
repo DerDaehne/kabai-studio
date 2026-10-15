@@ -710,3 +710,36 @@ test('moving to a column far to the right in the grouped flow keeps the focused 
 		knowledge.archive();
 	}
 });
+
+test('every move with many columns leaves the focused row fully in view, in Lagen and flow', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	seedTicket('Many columns: backlog ticket');
+	seedTicket('Many columns: planned ticket', 'Planen');
+	const others = [secondProject(db, 'knowledge'), secondProject(db, 'direct'), secondProject(db)];
+	const moves = ['l', 'l', 'l', 'l', 'l', 'h', 'h', 'h', 'j', 'j', 'k', 'l', 'h'];
+	const width = page.viewportSize()!.width;
+	try {
+		await open(page, '/board');
+		for (const view of ['Lagen', 'flow']) {
+			if (view === 'flow') {
+				await press(page, ' ', 'g');
+				await expect(page.locator('.variant-name').first()).toBeVisible();
+			}
+			await press(page, 'g', 'g');
+			for (const key of moves) {
+				await press(page, key);
+				const box = await page.locator('[data-ticket]:focus').boundingBox();
+				expect(box!.x, `${view} after ${key}`).toBeGreaterThanOrEqual(0);
+				expect(box!.x + box!.width, `${view} after ${key}`).toBeLessThanOrEqual(width);
+			}
+		}
+	} finally {
+		for (const other of others) {
+			deleteByTitle(db, other.title);
+			other.archive();
+		}
+	}
+});
