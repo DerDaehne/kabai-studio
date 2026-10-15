@@ -60,7 +60,7 @@ export const en = {
 	'start.hidden.other': '{count} more in {projects} other projects',
 	'start.tile.asks': '{profile} asks',
 	'start.tile.more': 'more',
-	'start.tile.moreLabel': 'more of the question from {ref}',
+	'start.tile.moreLabel': 'Full question for {ref}',
 	'start.tile.tokens': 'tokens',
 	'start.tile.steps': 'steps',
 	'start.tile.tokensPerMinute': 'tokens per minute',

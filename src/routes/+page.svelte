@@ -43,8 +43,14 @@
 	import { nowTiles, runHref, type NowTile } from './start';
 
 	let { data }: PageProps = $props();
-	// Short forms longer than this probably get clamped, so they offer the full text as well.
-	const LONG_LEAD = 80;
+	/** Marks the node `data-clamped` while its text is cut off by the line clamp. */
+	function clamped(node: HTMLElement, _text: string) {
+		const mark = () => node.toggleAttribute('data-clamped', node.scrollHeight > node.clientHeight);
+		const observer = new ResizeObserver(mark);
+		observer.observe(node);
+		mark();
+		return { update: mark, destroy: () => observer.disconnect() };
+	}
 
 	const locale = $derived(page.data.locale);
 	const projects = $derived(data.live?.projects ?? []);
@@ -494,18 +500,23 @@
 					<a href={tile.href}>{tile.ticket}</a>
 					<Tag tone={tile.tone}>{stateWord(tile)}</Tag>
 				</span>
-				<span class="question">{short.lead}</span>
-				{#if short.rest || short.lead.length > LONG_LEAD}<a
-						class="more"
-						href={tile.href}
-						aria-label={t('start.tile.moreLabel', { ref: tile.ticket })}>{t('start.tile.more')}</a
-					>{/if}
+				<span class="question" use:clamped={short.lead}>{short.lead}</span>
+				<a
+					class="more"
+					data-detail={short.rest ? '' : undefined}
+					href={tile.href}
+					aria-label={t('start.tile.moreLabel', { ref: tile.ticket })}>{t('start.tile.more')}</a
+				>
 				{#if question.profile}<span class="muted"
 						>{t('start.tile.asks', { profile: question.profile })}</span
 					>{/if}
 				<span class="options">
 					{#each question.options.slice(0, 3) as option, index (index)}
-						<button type="button" class="option" onclick={() => answer(question, index + 1)}
+						<button
+							type="button"
+							class="option"
+							title={plainText(option.label)}
+							onclick={() => answer(question, index + 1)}
 							>{t('start.answer.option', {
 								number: index + 1,
 								label: plainText(option.label)
@@ -644,6 +655,8 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
 		height: 100%;
 	}
 	.tile-head {
@@ -665,9 +678,18 @@
 		overflow: hidden;
 	}
 	.more {
+		display: none;
 		align-self: start;
+		align-items: center;
+		min-height: 44px;
+		padding-inline: var(--space-2);
+		margin-inline: calc(-1 * var(--space-2));
 		font-size: var(--type-meta);
 		text-decoration: underline;
+	}
+	.more[data-detail],
+	.question:global([data-clamped]) ~ .more {
+		display: inline-flex;
 	}
 	.options {
 		display: none;
@@ -684,6 +706,10 @@
 		font: inherit;
 		text-align: start;
 		cursor: pointer;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.figures {
 		display: flex;
@@ -815,6 +841,11 @@
 		}
 		.options {
 			display: flex;
+		}
+	}
+	@media (min-width: 760px) and (pointer: fine) {
+		.more {
+			min-height: 0;
 		}
 	}
 	@media (min-width: 1920px) {
