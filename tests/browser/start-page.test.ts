@@ -138,7 +138,15 @@ test.describe('at 1440 px', () => {
 		await expect(tileOf(second, ticket.ref).filter({ hasText: question })).toBeHidden();
 		const finished = section(page, 'betrieb').getByRole('listitem').filter({ hasText: ticket.ref });
 		await expect(finished.filter({ hasText: 'wartet' })).toBeVisible(); // the follow-up run waits out the undo window
-		await expect(finished.filter({ hasText: 'fertig' })).toBeVisible({ timeout: 30_000 });
+		// the real window is 10 s; waiting it out would eat the test's budget, so the follow-up is released here
+		const released = db
+			.prepare(
+				"UPDATE runs SET not_before = NULL WHERE ticket_id = ? AND state = 'queued' AND not_before IS NOT NULL"
+			)
+			.run(ticket.id).changes;
+		expect(released).toBe(1);
+		expect((await page.request.delete('/api/halt')).ok()).toBe(true);
+		await expect(finished.filter({ hasText: 'fertig' })).toBeVisible({ timeout: 15_000 });
 		await second.close();
 	});
 
@@ -540,6 +548,18 @@ test.describe('at 1440 px', () => {
 		);
 		const working = seedTicket('Two steps finished');
 		await queueRun(db, page, working.id, fakeModel);
+		// the second step's usage event must have landed before the figure can read 220
+		await expect
+			.poll(
+				() =>
+					(
+						db
+							.prepare('SELECT tokens_in + tokens_out AS total FROM runs WHERE ticket_id = ?')
+							.get(working.id) as { total: number }
+					).total,
+				{ timeout: 15_000 }
+			)
+			.toBe(220);
 		await expect(tokens(working.ref)).toHaveText('220'); // 100 in and 10 out per step
 		await cancelRun(page, db, working.id);
 	});
