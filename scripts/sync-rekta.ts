@@ -93,6 +93,8 @@ export function buildAt(clone: string, ref: string): Build {
 		throw new RektaProblem(
 			`Rekta Design ${commit} has no ${GENERATOR}; adapt scripts/sync-rekta.ts to its new build.`
 		);
+	// dist/ is untracked, so a file left over from an earlier build in this clone must not pass for this commit's output
+	for (const { output } of VENDORED_FILES) rmSync(join(clone, output), { force: true });
 	try {
 		for (const args of [[GENERATOR, '--check'], [GENERATOR]])
 			execFileSync(process.execPath, args, { cwd: clone, stdio: ['ignore', 'inherit', 'inherit'] });
@@ -101,6 +103,11 @@ export function buildAt(clone: string, ref: string): Build {
 			`Rekta Design ${commit}: ${GENERATOR} failed (output above); fix the source or pin another commit.`
 		);
 	}
+	for (const { output } of VENDORED_FILES)
+		if (!existsSync(join(clone, output)))
+			throw new RektaProblem(
+				`Rekta Design ${commit}: ${GENERATOR} wrote no ${output}; adapt VENDORED_FILES in scripts/sync-rekta.ts to its new build.`
+			);
 	const files = Object.fromEntries(
 		VENDORED_FILES.map(({ output, target }) => [target, readFileSync(join(clone, output), 'utf8')])
 	) as Record<TargetName, string>;

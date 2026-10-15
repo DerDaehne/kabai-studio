@@ -107,6 +107,13 @@ describe('buildAt', () => {
 	});
 });
 
+describe('buildAt without a vendored output', () => {
+	it('is a one-line problem, not a stack trace', () => {
+		const { source } = fakeRekta(buildScript({ 'dist/rekta.tokens.css': 'tokens' }));
+		expect(() => buildAt(clone(source), 'origin/HEAD')).toThrow(/wrote no dist\/rekta\.css/);
+	});
+});
+
 describe('check', () => {
 	const files = { 'rekta.tokens.css': 'tokens', 'rekta.css': 'components' } as const;
 
@@ -142,6 +149,23 @@ describe('check', () => {
 		);
 		expect(problems[0]).not.toContain('rekta.tokens.css');
 		expect(problems[0]).toContain('run the sync to update');
+	});
+
+	it("reports upstream dropping one vendored output instead of reading the pinned build's stale file", () => {
+		const pinned = pinnedRekta();
+		writeFileSync(
+			join(pinned.source, 'scripts/build.mjs'),
+			generatorThatWrites({
+				'dist/rekta.tokens.css': 'tokens',
+				'dist/rekta.components.css': 'components'
+			})
+		);
+		pinned.git('commit', '--quiet', '-am', 'rename the component sheet');
+
+		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
+
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain('rekta.css');
 	});
 
 	it('flags a pinned commit that no longer builds the vendored file', () => {
