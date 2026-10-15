@@ -298,7 +298,7 @@ const roundsUsedUp = (db: DatabaseSync, t: Ticket) =>
 	findingsSinceHuman(db, t).length >= BACK_ROUNDS;
 
 // Fixed wording like the runner's escalation; the answer resumes the run that wanted to go back, which follows the chosen option.
-const DISPUTE_OPTIONS: QuestionOption[] = [
+export const DISPUTE_OPTIONS: QuestionOption[] = [
 	{ label: 'Zurückgehen: noch eine Runde, mit meinem Hinweis' },
 	{ label: 'Weitergehen: der Schritt schließt mit done ab' },
 	{ label: 'Aufhören: Ticket bleibt beim Menschen', stopsRun: true }
@@ -306,10 +306,10 @@ const DISPUTE_OPTIONS: QuestionOption[] = [
 
 function disputeQuestion(db: DatabaseSync, t: Ticket, findings: string) {
 	const [previous] = findingsSinceHuman(db, t);
-	const who = t.column_step === 'critique' ? 'Autor und Kritiker sind' : 'Die Schritte sind';
+	const who = t.column_step === 'critique' ? 'Autor und Prüfung sind' : 'Die Schritte sind';
 	const question =
-		`${who} sich nach ${BACK_ROUNDS} Runden nicht einig: ` +
-		`„${t.column_name}“ schickt ${t.ref} zum ${BACK_ROUNDS + 1}. Mal zurück. Wie soll es weitergehen?\n\n` +
+		`${who} sich nach ${BACK_ROUNDS} Runden nicht einig. Wie soll es weitergehen?\n\n` +
+		`„${t.column_name}“ schickt ${t.ref} zum ${BACK_ROUNDS + 1}. Mal zurück.\n\n` +
 		`Befunde der Runde davor:\n${previous}\n\nBefunde jetzt:\n${findings}`;
 	return { question, options: DISPUTE_OPTIONS };
 }

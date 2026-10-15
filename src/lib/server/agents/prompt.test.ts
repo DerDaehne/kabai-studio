@@ -720,6 +720,21 @@ describe('previous state', () => {
 		expect(previousState(prompt)).toMatch(/h\n\[handoff cut to fit 1,500 tokens\]$/);
 	});
 
+	it('gives a resumed run only the short form of a long question, since the findings are in the comments', () => {
+		const w = world();
+		const r = runsOf(w);
+		const first = r.started();
+		const question = requestHuman(w.db, { kind: 'agent', runId: first }, w.parser, {
+			question: `Which format?\n\nFindings:\n${'long finding text '.repeat(200)}`,
+			options: [{ label: 'CSV' }]
+		}).id;
+		r.pause(first, { text: 'Summary: waiting.' });
+		answerQuestion(w.db, user, question, { option: 1 });
+		const state = previousState(assembleRun(w, r.queued(first)));
+		expect(state).toContain('Question: Which format?\n');
+		expect(state).not.toContain('long finding text');
+	});
+
 	it("reads the human's answer without collecting it, so the human can still retract it until the prompt is sent", () => {
 		const w = world();
 		const r = runsOf(w);

@@ -959,8 +959,8 @@ describe('parking and resuming a run', () => {
 				.get(s.ticketId)
 		).toEqual({ step: 'implement' }); // the question leaves the ticket where it is
 		const question =
-			`Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht), und seine Kette hat ihren frischen Run schon verbraucht. Wie soll es weitergehen?\n\n` +
-			`Frische Runs je Kette: höchstens 1. 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
+			`Run ${exhausted} kommt nicht weiter (Kontext-Budget erreicht). Wie soll es weitergehen?\n\n` +
+			`Seine Kette hat den frischen Run schon verbraucht (höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
 		expect(question).not.toContain('Event');
 		const stored = s.db.prepare('SELECT run_id, question, options FROM questions').all() as {
 			run_id: number;
@@ -1034,8 +1034,8 @@ describe('parking and resuming a run', () => {
 		const runsBefore = (s.db.prepare('SELECT count(*) AS n FROM runs').get() as { n: number }).n;
 
 		const question =
-			`Run ${exhausted} kommt nicht weiter (Stillstand oder Längenlimit), und seine Kette hat ihren frischen Run schon verbraucht. Wie soll es weitergehen?\n\n` +
-			`Frische Runs je Kette: höchstens 1. 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
+			`Run ${exhausted} kommt nicht weiter (Stillstand oder Längenlimit). Wie soll es weitergehen?\n\n` +
+			`Seine Kette hat den frischen Run schon verbraucht (höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
 		const askComment = [
 			question,
 			'1. Neuer Versuch mit frischem Kontext und meinem Hinweis',

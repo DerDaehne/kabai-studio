@@ -1,5 +1,6 @@
 import type { ModelMessage, ToolCallPart, ToolResultPart } from 'ai';
 import type { DatabaseSync } from 'node:sqlite';
+import { leadText } from '../../markdown';
 import { contextBudget } from '../../agents/model-catalog';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
@@ -395,7 +396,7 @@ function answerSection(answer: HumanAnswer | undefined): string {
 	if (!answer) return '';
 	return [
 		'### Human answer — act on it',
-		`Question: ${answer.question}`,
+		`Question: ${leadText(answer.question)}`,
 		`Answer: ${answerText(answer)}`
 	].join('\n');
 }

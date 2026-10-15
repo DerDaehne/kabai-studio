@@ -279,9 +279,9 @@ function askHumanAfterUsedUpChain(
 ) {
 	const hints = hintsGiven(db, run.id);
 	const lastHint = lastIntervention(db, run.id)?.hint;
-	const short = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}), und seine Kette hat ihren frischen Run schon verbraucht. Wie soll es weitergehen?`;
+	const short = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}). Wie soll es weitergehen?`;
 	const details =
-		`Frische Runs je Kette: höchstens ${RECOVERY.freshRunsPerChain}. ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
+		`Seine Kette hat den frischen Run schon verbraucht (höchstens ${RECOVERY.freshRunsPerChain} je Kette). ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
 		(lastHint ? `, zuletzt: „${lastHint}“` : '') +
 		'.';
 	const link = `${ticketPath(db, run.ticketId)}?run=${run.id}`;

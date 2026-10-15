@@ -223,7 +223,7 @@ describe('the round limit on going back', () => {
 		expect(third.next).toBeUndefined();
 		expect(c.stepOf()).toBe('critique');
 		const question = latestOpenQuestion(c.db, c.ticketId)!;
-		expect(question.question).toMatch(/^Autor und Kritiker sind sich nach 2 Runden nicht einig/);
+		expect(question.question).toMatch(/^Autor und Prüfung sind sich nach 2 Runden nicht einig/);
 		const { lead, rest } = splitLead(question.question);
 		expect(lead).toContain('Wie soll es weitergehen?');
 		expect(lead).not.toMatch(/Befund \d/);
