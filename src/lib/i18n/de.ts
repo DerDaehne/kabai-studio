@@ -60,6 +60,8 @@ export const de: Catalogue = {
 	'start.hidden.one': '{count} weitere in {projects} anderen Projekt',
 	'start.hidden.other': '{count} weitere in {projects} anderen Projekten',
 	'start.tile.asks': '{profile} fragt',
+	'start.tile.more': 'mehr',
+	'start.tile.moreLabel': 'mehr zur Frage von {ref}',
 	'start.tile.tokens': 'Tokens',
 	'start.tile.steps': 'Schritte',
 	'start.tile.tokensPerMinute': 'Tokens je Minute',

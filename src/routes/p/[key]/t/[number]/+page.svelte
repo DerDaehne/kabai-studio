@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { ticketDependency } from '$lib/live';
+	import { splitLead } from '$lib/markdown';
 	import RunControl from '$lib/runs/RunControl.svelte';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import { bindKeys } from '$lib/shell/router.svelte';
@@ -126,9 +127,13 @@
 <RunControl runs={data.runs} start={data.start} selected={data.trace?.id} {form} />
 
 {#if ticket.openQuestion}
-	<div class="question" role="status">
-		<Badge tone="waiting">Offene Frage</Badge>
-		<AgentText text={ticket.openQuestion.question} />
+	{@const question = splitLead(ticket.openQuestion.question)}
+	<div class="question">
+		<div class="question-lead" role="status">
+			<Badge tone="waiting">Offene Frage</Badge>
+			<p>{question.lead}</p>
+		</div>
+		{#if question.rest}<AgentText text={question.rest} />{/if}
 		<a class="btn btn-sm" href="/takt">In Takt beantworten (gt)</a>
 	</div>
 {/if}
@@ -374,17 +379,23 @@
 		margin: 0;
 	}
 	.question {
-		display: flex;
-		align-items: baseline;
+		display: grid;
+		justify-items: start;
 		gap: var(--space-3);
 		margin-top: var(--space-3);
 		padding: var(--space-3);
 		border-radius: var(--radius-lg);
 		background: var(--status-waiting-tint);
 	}
-	.question p {
-		flex: 1;
+	.question-lead {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-3);
+	}
+	.question-lead p {
 		margin: 0;
+		white-space: pre-line;
+		overflow-wrap: anywhere;
 	}
 	.areas {
 		display: grid;

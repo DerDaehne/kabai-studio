@@ -368,6 +368,7 @@
 		font-size: var(--text-display);
 		line-height: 1.25;
 		overflow-wrap: anywhere;
+		white-space: pre-line;
 	}
 	.question-rest {
 		margin-top: var(--space-3);

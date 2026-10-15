@@ -12,7 +12,7 @@
 	import type { LiveEvent, ProjectRef, QueuedQuestion } from '$lib/live';
 	import { inFocus } from '$lib/shell/focus';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
-	import { plainText } from '$lib/markdown';
+	import { plainText, splitLead } from '$lib/markdown';
 	import { bindKeys, readKey } from '$lib/shell/router.svelte';
 	import { shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
@@ -43,6 +43,8 @@
 	import { nowTiles, runHref, type NowTile } from './start';
 
 	let { data }: PageProps = $props();
+	// Short forms longer than this probably get clamped, so they offer the full text as well.
+	const LONG_LEAD = 80;
 
 	const locale = $derived(page.data.locale);
 	const projects = $derived(data.live?.projects ?? []);
@@ -485,13 +487,19 @@
 {#snippet tileContent(tile: NowTile)}
 	{#if tile.question}
 		{@const question = tile.question}
+		{@const short = splitLead(question.question)}
 		<div class="tile-frame" data-item={tile.key} data-project={tile.project.id} tabindex="-1">
 			<Tile tone={tile.tone} size={tile.size}>
 				<span class="tile-head">
 					<a href={tile.href}>{tile.ticket}</a>
 					<Tag tone={tile.tone}>{stateWord(tile)}</Tag>
 				</span>
-				<span class="question">{plainText(question.question)}</span>
+				<span class="question">{short.lead}</span>
+				{#if short.rest || short.lead.length > LONG_LEAD}<a
+						class="more"
+						href={tile.href}
+						aria-label={t('start.tile.moreLabel', { ref: tile.ticket })}>{t('start.tile.more')}</a
+					>{/if}
 				{#if question.profile}<span class="muted"
 						>{t('start.tile.asks', { profile: question.profile })}</span
 					>{/if}
@@ -651,9 +659,15 @@
 		overflow-wrap: anywhere;
 		display: -webkit-box;
 		-webkit-box-orient: vertical;
-		-webkit-line-clamp: 6;
-		line-clamp: 6;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		white-space: pre-line;
 		overflow: hidden;
+	}
+	.more {
+		align-self: start;
+		font-size: var(--type-meta);
+		text-decoration: underline;
 	}
 	.options {
 		display: none;
@@ -794,6 +808,10 @@
 		}
 		.slot[data-size='2x2'] {
 			grid-row: span 2;
+		}
+		.question {
+			-webkit-line-clamp: 3;
+			line-clamp: 3;
 		}
 		.options {
 			display: flex;
