@@ -1,3 +1,5 @@
+# Patches and minors arrive in the grouped weekly PR and are merged within a week.
+# Every major gets an evaluation ticket within a week of its release and is upgraded only after that.
 version: 2
 updates:
   - package-ecosystem: 'npm'
@@ -5,15 +7,21 @@ updates:
     schedule:
       interval: 'weekly'
     groups:
+      # kit and adapter-node peer-depend on each other's major, so separate PRs can never install.
+      sveltekit:
+        patterns:
+          - '@sveltejs/kit'
+          - '@sveltejs/adapter-node'
       minor-patch:
         update-types:
           - 'minor'
           - 'patch'
     ignore:
-      # Node types must match the runtime major (Node 24).
+      # Node runtime majors stay ignored: the types must match the runtime (Node 24) and move
+      # together with the runtime, never alone.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
-      # svelte-check pins its TypeScript peer range; bump TypeScript majors together with it.
+      # svelte-check and typescript-eslint do not support TypeScript 7 yet; bump it together with them.
       - dependency-name: 'typescript'
         update-types: ['version-update:semver-major']
 
