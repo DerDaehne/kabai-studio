@@ -24,6 +24,7 @@ import { backupDir, db } from '$lib/server/db';
 import { DomainError, formatError } from '$lib/server/domain/error';
 import { builtinExecutor } from '$lib/server/executors/builtin';
 import { startRunner } from '$lib/server/runner';
+import { installRunnerChannel } from '$lib/server/runner-channel';
 import { initSecrets, maskConsole } from '$lib/server/secrets';
 
 // Safe default: without HOST, adapter-node binds to 0.0.0.0, with an empty HOST even to all interfaces (IPv4+IPv6),
@@ -48,6 +49,9 @@ export const init: ServerInit = async () => {
 		startBackups(db(), backupDir()); // backs up now if due, then checks hourly for "older than a day"
 		// acp profiles fail with a clear reason until their executor is installed, instead of waiting forever
 		startRunner(db(), { builtin: builtinExecutor(db()) });
+		// adapter-node creates the HTTP server only after this hook ran, so server.ts picks the handler up from here.
+		(globalThis as { studioRunnerUpgrade?: unknown }).studioRunnerUpgrade =
+			installRunnerChannel(db()).handleUpgrade;
 		if (!hasOwner(db())) {
 			const token = issueSetupToken();
 			console.log(

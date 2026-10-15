@@ -84,7 +84,7 @@ function studioOrigin(input: string, say: Say): string {
 }
 
 /** The checked floor, or undefined when there is none yet. */
-function readFloor(file: string, origin: string, say: Say): Floor | undefined {
+export function readFloor(file: string, origin: string, say: Say): Floor | undefined {
 	if (!existsSync(file)) return undefined;
 	const invalid = (key: MessageKey, params: Record<string, string>) =>
 		new DomainError(

@@ -48,7 +48,18 @@ the following third-party material under its own licence.
    Barlow (latin subset, weights 300 to 700), unmodified.
 
 
-3. What is not included
+3. ws — node_modules/ws, used by the runner channel (server) and `kabai-studio runner start`
+
+   Copyright (c) 2011 Einar Otto Stangvik
+   Copyright (c) 2013 Arnout Kazemier and contributors
+   Copyright (c) 2016 Luigi Pinca and contributors
+   Source: https://github.com/websockets/ws (version 8.22.0), unmodified.
+
+   Licensed under the MIT License, the same text as the Rekta Design notice above.
+   The Docker image ships it as node_modules/ws together with its LICENSE file.
+
+
+4. What is not included
 
    No Porsche fonts, icons, logos, marks or other Porsche assets. kabai studio is
    independent of, and not endorsed by, Dr. Ing. h.c. F. Porsche AG or the Porsche

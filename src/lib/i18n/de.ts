@@ -29,12 +29,12 @@ export const de: Catalogue = {
 	'layout.attribution': 'von {author} · Freie Software, {licence}',
 
 	'cli.usage':
-		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|reset-password|restore <datei>|--version]',
+		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|reset-password|restore <datei>|--version]',
 	'cli.unknownCommand': 'Unbekanntes Unterkommando „{command}“. {usage}',
 	'cli.unknownServiceCommand':
 		'Unbekanntes service-Unterkommando „{action}“. Verfügbar: install, uninstall, status.',
 	'cli.runner.usage':
-		'Verwendung: kabai-studio runner pair <Studio-Adresse> <Code> [--name <name>]',
+		'Verwendung: kabai-studio runner pair <Studio-Adresse> <Code> [--name <name>] oder kabai-studio runner start',
 	'cli.runner.usage.hint':
 		'Den vollständigen Befehl aus Studio kopieren: Einstellungen → Rechner → „Rechner verbinden“.',
 	'cli.runner.invalidUrl': '„{url}“ ist keine Studio-Adresse.',
@@ -76,6 +76,38 @@ export const de: Catalogue = {
 	'cli.runner.studioSees':
 		'Studio erfährt nur Namen und Zahlen — Workspaces: {workspaces} · Agents: {agents} · Slots: {slots}',
 	'cli.runner.next': 'Als Nächstes den Runner starten: „kabai-studio runner start“.',
+	'cli.runner.start.notPaired': 'Dieser Rechner ist noch nicht gekoppelt ({file} fehlt).',
+	'cli.runner.start.notPaired.hint': 'Erst koppeln: kabai-studio runner pair {origin} <Code>',
+	'cli.runner.start.rePair.hint': 'Neu koppeln: kabai-studio runner pair {origin} <Code>',
+	'cli.runner.start.credentialInvalid': '{file} ist keine gültige Credential-Datei des Runners.',
+	'cli.runner.start.floorMissing': 'Die lokale Untergrenze {file} fehlt.',
+	'cli.runner.start.insecureUrl':
+		'Das Credential geht nicht über ws:// an {host}: Studio liegt nicht auf diesem Rechner und nicht hinter https.',
+	'cli.runner.start.insecureUrl.hint':
+		'Mit der https://-Adresse von Studio neu koppeln: kabai-studio runner pair <https-Adresse> <Code>.',
+	'cli.runner.start.connected': 'Verbunden mit {origin} als „{name}“.',
+	'cli.runner.start.lost': 'Verbindung verloren ({reason}); neuer Versuch in {seconds} s.',
+	'cli.runner.start.stopped': 'Runner beendet.',
+	'cli.runner.start.frameNotSupported':
+		'[frame_not_supported] Studio hat einen Frame gesendet, den diese Version nicht annimmt; die Verbindung wird geschlossen.',
+	'cli.runner.start.rejected':
+		'Studio hat das Credential abgewiesen: Es ist unbekannt oder wurde widerrufen.',
+	'cli.runner.start.revoked':
+		'Studio hat diesen Rechner getrennt; sein Credential gilt nicht mehr.',
+	'cli.runner.start.protocol': 'Studio und dieser Runner sprechen verschiedene Protokollversionen.',
+	'cli.runner.start.protocol.hint':
+		'Studio und kabai-studio auf diesem Rechner auf dieselbe Version bringen, dann „kabai-studio runner start“ erneut ausführen.',
+	'cli.runner.start.refused.browser_origin_forbidden':
+		'Studio unter {origin} hat die Verbindung abgewiesen, weil sie einen Browser-Origin-Header trägt.',
+	'cli.runner.start.refused.browser_origin_forbidden.hint':
+		'Direkt oder über einen Proxy verbinden, der keinen Origin-Header ergänzt, dann „kabai-studio runner start“ erneut ausführen.',
+	'cli.runner.start.refused.insecure_transport':
+		'Studio unter {origin} nimmt Runner nur über https an.',
+	'cli.runner.start.refused.insecure_transport.hint':
+		'Studio hinter https stellen, ORIGIN auf diese Adresse setzen, neu koppeln, dann „kabai-studio runner start“ ausführen.',
+	'cli.runner.start.refused.other': 'Studio unter {origin} hat die Verbindung abgewiesen.',
+	'cli.runner.start.refused.other.hint':
+		'Adresse von Studio und einen vorgeschalteten Proxy prüfen, dann „kabai-studio runner start“ erneut ausführen.',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'Kein Agent arbeitet.',
@@ -160,7 +192,10 @@ export const de: Catalogue = {
 	'runners.empty.body':
 		'„Rechner verbinden“ zeigt einen Einmal-Code und den einen Befehl, der auf dem Rechner auszuführen ist.',
 	'runners.neverConnected': 'noch nie verbunden',
-	'runners.lastSeen': 'zuletzt gesehen {time}',
+	'runners.connected':
+		'verbunden seit {time} · Slots: {slots} · Workspaces: {workspaces} · Agents: {agents}',
+	'runners.notConnected':
+		'nicht verbunden seit {time} – dort „kabai-studio runner start“ ausführen',
 	'runners.disconnect': 'Trennen',
 	'runners.disconnect.title': '„{name}“ trennen?',
 	'runners.disconnect.body':

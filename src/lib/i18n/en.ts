@@ -28,11 +28,12 @@ export const en = {
 	'layout.attribution': 'by {author} · Free software, {licence}',
 
 	'cli.usage':
-		'Usage: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|reset-password|restore <file>|--version]',
+		'Usage: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|reset-password|restore <file>|--version]',
 	'cli.unknownCommand': 'Unknown subcommand “{command}”. {usage}',
 	'cli.unknownServiceCommand':
 		'Unknown service subcommand “{action}”. Available: install, uninstall, status.',
-	'cli.runner.usage': 'Usage: kabai-studio runner pair <studio address> <code> [--name <name>]',
+	'cli.runner.usage':
+		'Usage: kabai-studio runner pair <studio address> <code> [--name <name>], or kabai-studio runner start',
 	'cli.runner.usage.hint':
 		'Copy the complete command from studio: Settings → Machines → “Connect a machine”.',
 	'cli.runner.invalidUrl': '“{url}” is not a studio address.',
@@ -73,6 +74,36 @@ export const en = {
 	'cli.runner.studioSees':
 		'Studio learns only names and numbers — workspaces: {workspaces} · agents: {agents} · slots: {slots}',
 	'cli.runner.next': 'Next: start the runner with “kabai-studio runner start”.',
+	'cli.runner.start.notPaired': 'This machine is not paired yet ({file} does not exist).',
+	'cli.runner.start.notPaired.hint': 'Pair it first: kabai-studio runner pair {origin} <code>',
+	'cli.runner.start.rePair.hint': 'Pair again: kabai-studio runner pair {origin} <code>',
+	'cli.runner.start.credentialInvalid': '{file} is not a valid runner credential file.',
+	'cli.runner.start.floorMissing': 'The local floor {file} is missing.',
+	'cli.runner.start.insecureUrl':
+		'The credential does not go over ws:// to {host}: studio is not on this machine and not on https.',
+	'cli.runner.start.insecureUrl.hint':
+		'Pair again with studio’s https:// address: kabai-studio runner pair <https-address> <code>.',
+	'cli.runner.start.connected': 'Connected to {origin} as “{name}”.',
+	'cli.runner.start.lost': 'Connection lost ({reason}); trying again in {seconds} s.',
+	'cli.runner.start.stopped': 'Runner stopped.',
+	'cli.runner.start.frameNotSupported':
+		'[frame_not_supported] Studio sent a frame this version does not accept; the connection is closed.',
+	'cli.runner.start.rejected': 'Studio refused the credential: it is unknown or was revoked.',
+	'cli.runner.start.revoked': 'Studio disconnected this machine; its credential no longer works.',
+	'cli.runner.start.protocol': 'Studio and this runner speak different protocol versions.',
+	'cli.runner.start.protocol.hint':
+		'Update studio and the kabai-studio on this machine to the same version, then run “kabai-studio runner start” again.',
+	'cli.runner.start.refused.browser_origin_forbidden':
+		'Studio at {origin} refused the connection because it carries a browser Origin header.',
+	'cli.runner.start.refused.browser_origin_forbidden.hint':
+		'Connect directly or through a proxy that does not add an Origin header, then run “kabai-studio runner start” again.',
+	'cli.runner.start.refused.insecure_transport':
+		'Studio at {origin} takes runners only over https.',
+	'cli.runner.start.refused.insecure_transport.hint':
+		'Put studio behind https, set ORIGIN to that address, pair again, then run “kabai-studio runner start”.',
+	'cli.runner.start.refused.other': 'Studio at {origin} refused the connection.',
+	'cli.runner.start.refused.other.hint':
+		'Check studio’s address and any proxy in front of it, then run “kabai-studio runner start” again.',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'No agent is working.',
@@ -157,7 +188,9 @@ export const en = {
 	'runners.empty.body':
 		'“Connect a machine” shows a one-time code and the one command to run on the machine.',
 	'runners.neverConnected': 'never connected',
-	'runners.lastSeen': 'last seen {time}',
+	'runners.connected':
+		'connected since {time} · slots: {slots} · workspaces: {workspaces} · agents: {agents}',
+	'runners.notConnected': 'not connected since {time} – run “kabai-studio runner start” there',
 	'runners.disconnect': 'Disconnect',
 	'runners.disconnect.title': 'Disconnect “{name}”?',
 	'runners.disconnect.body':

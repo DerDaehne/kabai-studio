@@ -11,6 +11,8 @@
 // it happens to resolve to: adapter-node (like the browser's Origin header) compares origins as
 // plain strings, never resolved IPs — "localhost" can resolve to ::1 on one machine and 127.0.0.1
 // on another, so defaulting it to a fixed "127.0.0.1" origin would mismatch on the ::1 ones.
+import type { IncomingMessage, Server } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { hostname } from 'node:os';
 import { defaultDataDir } from './src/lib/server/data-dir.ts';
 import {
@@ -25,6 +27,8 @@ import {
 import { pairRunnerCommand } from './src/lib/server/runner-pair.ts';
 import { localeFromEnv } from './src/lib/i18n/index.ts';
 import { resolveVersion } from './src/lib/version.ts';
+
+type UpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
 const LOOPBACK_ORIGIN_HOST: Record<string, string> = {
 	'': '127.0.0.1',
@@ -88,7 +92,11 @@ async function runStart(): Promise<void> {
 	// build` (svelte-check runs before it in CI), and a literal specifier would make it resolve the
 	// module for types right now and fail.
 	const entry = './build/index.js';
-	await import(entry);
+	const { server } = (await import(entry)) as { server: { server: Server } };
+	// adapter-node runs the init hook while handler.js loads, before index.js creates the HTTP server, so the hook leaves
+	// the upgrade handler on globalThis for this line.
+	const { studioRunnerUpgrade } = globalThis as { studioRunnerUpgrade?: UpgradeHandler };
+	if (studioRunnerUpgrade) server.server.on('upgrade', studioRunnerUpgrade);
 }
 
 /** `entryPath` is this same file's own path: whatever path started this process is the right one to
@@ -121,6 +129,23 @@ async function runRunnerPair(command: Extract<Command, { kind: 'runner-pair' }>)
 	finish(result.exitCode, result.message);
 }
 
+/** Holds this machine's connection to studio until the credential is refused or the process is told to stop. */
+async function runRunnerStart(): Promise<void> {
+	const { runnerStartCommand } = await import('./src/lib/server/runner-start.ts');
+	const stop = new AbortController();
+	for (const signalName of ['SIGINT', 'SIGTERM'] as const)
+		process.once(signalName, () => stop.abort());
+	const result = await runnerStartCommand({
+		env: process.env,
+		platform: process.platform,
+		locale: localeFromEnv(process.env),
+		version: resolveVersion(),
+		log: (line) => console.log(line),
+		signal: stop.signal
+	});
+	finish(result.exitCode, result.message);
+}
+
 /** Re-execs an existing standalone script (reset-password.ts/restore.ts) as a subcommand: trims this
  * process's own argv down to what the script itself reads, then imports it — the script's top-level
  * code does the rest, exactly as `node src/lib/server/<script>.ts` already does. */
@@ -142,6 +167,7 @@ async function main(): Promise<void> {
 	if (command.kind === 'help') return void console.log(HELP);
 	if (command.kind === 'service') return runService(command);
 	if (command.kind === 'runner-pair') return runRunnerPair(command);
+	if (command.kind === 'runner-start') return runRunnerStart();
 	if (command.kind === 'reset-password')
 		return runLegacyScript('./src/lib/server/reset-password.ts', []);
 	if (command.kind === 'restore')

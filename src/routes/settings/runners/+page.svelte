@@ -2,7 +2,9 @@
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { RUNNERS_DEPENDENCY } from '$lib/live';
 	import { t } from '$lib/i18n/t';
+	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -22,6 +24,15 @@
 		connectOpen = open;
 		if (!open) invalidateAll();
 	}
+
+	$effect(() =>
+		onLiveEvent((event) => {
+			if (event.type.startsWith('machine.')) void invalidateLive(RUNNERS_DEPENDENCY);
+		})
+	);
+
+	const utc = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+	const keys = (list: string[]) => (list.length ? list.join(', ') : '–');
 
 	async function copyCommand() {
 		try {
@@ -63,9 +74,18 @@
 			<li>
 				<span class="name">{runner.name}</span>
 				<span class="seen">
-					{runner.last_seen_at
-						? t('runners.lastSeen', { time: `${runner.last_seen_at.slice(0, 16)} UTC` })
-						: t('runners.neverConnected')}
+					{#if runner.connection}
+						{t('runners.connected', {
+							time: utc(runner.connection.connectedAt),
+							slots: runner.connection.slots,
+							workspaces: keys(runner.connection.workspaces),
+							agents: keys(runner.connection.agents)
+						})}
+					{:else if runner.last_seen_at}
+						{t('runners.notConnected', { time: utc(runner.last_seen_at.replace(' ', 'T')) })}
+					{:else}
+						{t('runners.neverConnected')}
+					{/if}
 				</span>
 				<Button variant="ghost" size="sm" onclick={() => (disconnecting = runner)}
 					>{t('runners.disconnect')}</Button

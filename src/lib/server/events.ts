@@ -14,7 +14,7 @@ type ProjectEvent = {
 
 /** Concerns every project, so it has no projectId and reaches every connection. */
 type GlobalEvent = {
-	type: 'runner.halted' | 'runner.released';
+	type: 'runner.halted' | 'runner.released' | 'machine.connected' | 'machine.disconnected';
 	projectId?: undefined;
 	actor: Actor;
 	[key: string]: unknown;

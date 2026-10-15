@@ -47,6 +47,10 @@ describe('parseCliArgs', () => {
 		expect(() => parseCliArgs(['service', 'bogus'])).toThrow(CliUsageError);
 	});
 
+	it('parses runner start without arguments', () => {
+		expect(parseCliArgs(['runner', 'start'])).toEqual({ kind: 'runner-start' });
+	});
+
 	it('parses runner pair with address, code and an optional --name', () => {
 		expect(parseCliArgs(['runner', 'pair', 'https://studio.example', 'ABCD2345'])).toEqual({
 			kind: 'runner-pair',
@@ -61,7 +65,8 @@ describe('parseCliArgs', () => {
 
 	it.each([
 		['no action', ['runner']],
-		['an unknown action', ['runner', 'start']],
+		['an unknown action', ['runner', 'stop']],
+		['start with an argument', ['runner', 'start', 'https://studio.example']],
 		['no code', ['runner', 'pair', 'https://studio.example']],
 		['an extra argument', ['runner', 'pair', 'https://studio.example', 'ABCD2345', 'more']],
 		['--name without a value', ['runner', 'pair', 'https://studio.example', 'ABCD2345', '--name']],

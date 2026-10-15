@@ -15,7 +15,8 @@ COPY . .
 RUN npm run build
 
 # Runtime: build/ plus the entry point. adapter-node bundles every dependency into build/ (no
-# "dependencies" entry in package.json), so no npm install or node_modules are needed here.
+# "dependencies" entry in package.json), so no npm install is needed here. The one exception is ws (dependency-free):
+# `runner start` runs from source under server.ts and imports it, so its folder is copied.
 # server.ts runs under Node's type stripping and statically (or via runLegacyScript dynamically)
 # imports every source file below, all Node-builtin-only (one `import type` from @sveltejs/kit in
 # auth.ts, erased by type stripping); every file it can reach must be copied here (CI starts the
@@ -28,7 +29,8 @@ ARG STUDIO_VERSION
 ENV STUDIO_VERSION=$STUDIO_VERSION
 COPY --from=build /app/build ./build
 COPY --from=build /app/server.ts ./server.ts
-COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts /app/src/lib/server/runner-pair.ts /app/src/lib/server/runner-floor.ts ./src/lib/server/
+COPY --from=build /app/src/lib/server/cli.ts /app/src/lib/server/data-dir.ts /app/src/lib/server/reset-password.ts /app/src/lib/server/restore.ts /app/src/lib/server/auth.ts /app/src/lib/server/db.ts /app/src/lib/server/backup.ts /app/src/lib/server/runner-pair.ts /app/src/lib/server/runner-floor.ts /app/src/lib/server/runner-start.ts /app/src/lib/server/runner-protocol.ts ./src/lib/server/
+COPY --from=build /app/node_modules/ws ./node_modules/ws
 COPY --from=build /app/src/lib/server/domain/error.ts ./src/lib/server/domain/
 COPY --from=build /app/src/lib/version.ts ./src/lib/version.ts
 COPY --from=build /app/src/lib/i18n/index.ts /app/src/lib/i18n/de.ts /app/src/lib/i18n/en.ts ./src/lib/i18n/

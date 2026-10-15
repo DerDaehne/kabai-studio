@@ -26,8 +26,16 @@ it('offers exactly one command with the studio origin and a code that pairs once
 	expect(pairing.command).toBe(`kabai-studio runner pair https://studio.example ${pairing.code}`);
 
 	const paired = pairRunner(db(), { code: pairing.code, name: 'laptop' });
-	expect(await load({} as never)).toEqual({
-		runners: [{ id: paired.id, name: 'laptop', created_at: expect.any(String), last_seen_at: null }]
+	expect(await load({ depends: () => {} } as never)).toEqual({
+		runners: [
+			{
+				id: paired.id,
+				name: 'laptop',
+				created_at: expect.any(String),
+				last_seen_at: null,
+				connection: null
+			}
+		]
 	});
 	expect(() => pairRunner(db(), { code: pairing.code, name: 'again' })).toThrow();
 });

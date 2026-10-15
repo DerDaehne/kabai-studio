@@ -54,3 +54,6 @@ export const BOARD_DEPENDENCY = 'studio:board';
 
 /** The ticket page's load depends on this; invalidating it reloads just that one ticket. */
 export const ticketDependency = (id: number) => `studio:ticket:${id}`;
+
+/** The machines page's load depends on this; it reloads when a runner connects or drops. */
+export const RUNNERS_DEPENDENCY = 'studio:runners';

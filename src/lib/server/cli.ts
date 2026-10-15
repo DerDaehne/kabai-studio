@@ -19,6 +19,7 @@ export type Command =
 	| { kind: 'reset-password' }
 	| { kind: 'restore'; file?: string }
 	| { kind: 'runner-pair'; url: string; code: string; name?: string }
+	| { kind: 'runner-start' }
 	| { kind: 'version' }
 	| { kind: 'help' };
 
@@ -53,7 +54,7 @@ function parseServiceArgs(rest: string[]): Command {
 	return { kind: 'service', action: action as ServiceAction, print: values.print === true };
 }
 
-/** `runner pair <url> <code> [--name <name>]`; anything else is a usage error with a code and the way out. */
+/** `runner pair <url> <code> [--name <name>]` or `runner start`; anything else is a usage error with a code and the way out. */
 function parseRunnerArgs(rest: string[]): Command {
 	const usage = () =>
 		new CliUsageError(
@@ -76,6 +77,7 @@ function parseRunnerArgs(rest: string[]): Command {
 		throw usage(); // an unknown option or --name without a value
 	}
 	const [action, url, code, ...extra] = parsed.positionals;
+	if (action === 'start' && !url && !parsed.values.name) return { kind: 'runner-start' };
 	if (action !== 'pair' || !url || !code || extra.length) throw usage();
 	return { kind: 'runner-pair', url, code, name: parsed.values.name };
 }
