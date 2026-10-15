@@ -112,6 +112,17 @@ describe('runner pair', () => {
 		expect(statSync(configDir).mode & 0o777).toBe(0o700);
 	});
 
+	it('reports a failing runner.json write as a coded error instead of a stack trace', async () => {
+		fetchMock.mockImplementationOnce(async () => {
+			mkdirSync(floorFile(), { recursive: true });
+			return Response.json({ id: 1, name: 'workstation', credential: CREDENTIAL }, { status: 201 });
+		});
+
+		const result = await pair();
+
+		expect(result.message).toMatch(/^\[credential_write_failed\]/);
+	});
+
 	it('creates a missing runner.json with safe defaults and names what studio will learn', async () => {
 		const result = await pair();
 

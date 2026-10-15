@@ -36,7 +36,8 @@ its own database — no compatibility with kabai required.
   [Agent Client Protocol](https://agentclientprotocol.com), only on a paired machine
   (Settings → Machines, `kabai-studio runner pair <url> <code>`), also when it is the
   server's own. The runner connects outbound, has no database and no listening port,
-  and enforces a local floor (`runner.json`) the server cannot override. Agents reach
+  and enforces a local floor (`runner.json`) the server cannot override. The server never installs anything on a runner; installing an
+  agent happens only in the terminal on that machine, confirmed by the owner. Agents reach
   studio data through a built-in MCP endpoint with a per-run token.
 - Code projects: one git worktree per ticket, risky actions need approval.
 

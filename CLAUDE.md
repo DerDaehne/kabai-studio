@@ -136,7 +136,8 @@ Deviations only with a new ADR:
 - **The PWA is the only user interface; agents never run in the browser.**
 - **Runner:** connects outbound to studio, pairs by one-time code, and enforces a local
   floor (`runner.json`) that the server cannot override; the server learns only its keys
-  and slots. The server never installs anything on a runner.
+  and slots. The server never installs anything on a runner; installing an agent happens only in the
+  terminal on that machine, confirmed by the owner.
 - **Isolation:** one git worktree per ticket + approvals for shell/network, on the server
   and on runners.
 - **Tools = MCP servers.**

@@ -56,7 +56,7 @@ async function pair(args: PairArgs, ctx: PairContext, say: Say): Promise<string>
 	const paired = await exchangeCode(origin, args.code, args.name ?? ctx.hostname, ctx, say);
 	const credential = { studioOrigin: origin, ...paired };
 	writePrivateFile(credentialFile, `${JSON.stringify(credential, null, '\t')}\n`, say);
-	const floor = existingFloor ?? createDefaultFloor(floorFile, origin);
+	const floor = existingFloor ?? createDefaultFloor(floorFile, origin, say);
 	return successMessage(
 		{ origin, name: paired.name, credentialFile, floorFile, floor, floorCreated: !existingFloor },
 		say
@@ -189,9 +189,20 @@ function prepareDir(dir: string, say: Say): void {
 	}
 }
 
-function createDefaultFloor(file: string, origin: string): Floor {
+function createDefaultFloor(file: string, origin: string, say: Say): Floor {
 	const floor = defaultFloor(origin);
-	writeFileSync(file, `${JSON.stringify(floor, null, '\t')}\n`, { flag: 'wx' });
+	try {
+		writeFileSync(file, `${JSON.stringify(floor, null, '\t')}\n`, { flag: 'wx' });
+	} catch (err) {
+		throw new DomainError(
+			'credential_write_failed',
+			say('cli.runner.writeFailed', {
+				file,
+				reason: String((err as NodeJS.ErrnoException).code ?? err)
+			}),
+			say('cli.runner.writeFailed.hint')
+		);
+	}
 	return floor;
 }
 

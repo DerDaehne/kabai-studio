@@ -46,7 +46,12 @@ function consumePairingCode(input: string, now: number): void {
 
 function validRunnerName(raw: string): string {
 	const name = raw.trim();
-	if (name.length > 0 && name.length <= RUNNER_NAME_MAX && !/\p{Cc}/u.test(name)) return name;
+	if (
+		name.length > 0 &&
+		name.length <= RUNNER_NAME_MAX &&
+		!/[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(name)
+	)
+		return name;
 	throw new DomainError(
 		'invalid_runner_name',
 		`Der Rechnername muss 1 bis ${RUNNER_NAME_MAX} druckbare Zeichen haben.`,

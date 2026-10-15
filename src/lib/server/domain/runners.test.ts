@@ -135,7 +135,7 @@ describe('pairing a runner', () => {
 
 	it('refuses an empty, overlong or control-character name before using up the code', () => {
 		const { code } = issuePairingCode();
-		for (const name of ['  ', 'x'.repeat(65), 'evil\nname'])
+		for (const name of ['  ', 'x'.repeat(65), 'evil\nname', 'evil\u202Ename'])
 			expect(refusal(() => pairRunner(db, { code, name })).code).toBe('invalid_runner_name');
 
 		expect(pairRunner(db, { code, name: 'x'.repeat(64) }).name).toHaveLength(64);
