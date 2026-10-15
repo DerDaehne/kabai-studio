@@ -3,5 +3,6 @@ package-lock.json
 /.svelte-kit
 /data
 /test-results
-# Vendored unchanged; its SHA-256 header would no longer match a reformatted file
+# Vendored unchanged; their SHA-256 header would no longer match a reformatted file
 src/lib/styles/rekta.css
+src/lib/styles/rekta.tokens.css

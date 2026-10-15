@@ -1,12 +1,12 @@
 /*
  * Design tokens of kabai studio: ground, surfaces, text and focus come from Rekta Design, plus one accent
- * ("spring" green), glass layers lit by auras, and the tile language of Rekta (rekta.css, vendored unchanged).
+ * ("spring" green), glass layers lit by auras, and the tile language of Rekta (rekta.tokens.css, vendored unchanged).
  * Light/dark follows prefers-color-scheme; <html data-theme="light|dark"> overrides it, both for light-dark()
- * here and for the matching Rekta colour overrides in rekta.css.
+ * here and for the matching Rekta colour overrides in rekta.tokens.css.
  * contrast.test.ts checks every text and control pair against WCAG AA in every glass strength.
- * Components use the semantic tokens only, never the scales or the --rekta-* values.
+ * Components use the semantic tokens only, never the scales or the --rk-* values.
  */
-@import './rekta.css';
+@import './rekta.tokens.css';
 
 :root {
 	color-scheme: light dark;
@@ -44,18 +44,18 @@
 	/* Opaque surfaces: ground < surface < raised; sunken for tracks, code and the command line.
 	   Rekta has three opaque steps for these five roles, so raised and sunken sit halfway between two of
 	   them — every role stays its own colour in both themes (rekta-design.test.ts checks that). */
-	--bg: var(--rekta-color-bg);
-	--surface: var(--rekta-color-surface);
+	--bg: var(--rk-bg);
+	--surface: var(--rk-surface);
 	--surface-raised: light-dark(
-		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-bg)),
-		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-surface-2))
+		color-mix(in srgb, var(--rk-surface) 50%, var(--rk-bg)),
+		color-mix(in srgb, var(--rk-surface) 50%, var(--rk-surface-2))
 	);
 	--surface-sunken: light-dark(
-		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-surface-2)),
-		color-mix(in srgb, var(--rekta-color-surface) 50%, var(--rekta-color-bg))
+		color-mix(in srgb, var(--rk-surface) 50%, var(--rk-surface-2)),
+		color-mix(in srgb, var(--rk-surface) 50%, var(--rk-bg))
 	);
-	--surface-hover: var(--rekta-color-surface-2);
-	--text: var(--rekta-color-text-primary);
+	--surface-hover: var(--rk-surface-2);
+	--text: var(--rk-text-primary);
 
 	/* Borders only on input fields and diff tables; cards float without one */
 	--border: light-dark(var(--gray-150), var(--gray-800));
@@ -83,7 +83,7 @@
 	--on-accent: var(--gray-950);
 	--accent-text: light-dark(var(--a-800), var(--a-300));
 	--accent-tint: light-dark(var(--a-100), #17321f);
-	--focus: var(--rekta-color-focus);
+	--focus: var(--rk-focus);
 	--fill-sel: light-dark(rgb(62 178 104 / 0.1), rgb(96 201 129 / 0.13));
 	--fill-soft: light-dark(rgb(20 30 35 / 0.05), rgb(255 255 255 / 0.05));
 
@@ -92,18 +92,18 @@
 	   auras, the accent) — contrast.test.ts holds the word to contrast-high, so the state's colour lives in
 	   its tint, and the word always names the state. Tone: info = running, warning =
 	   waiting or paused, error = failed, success = done. */
-	--status-running: var(--rekta-color-text-contrast-high);
-	--status-running-tint: var(--rekta-color-status-info-soft);
-	--status-waiting: var(--rekta-color-text-contrast-high);
-	--status-waiting-tint: var(--rekta-color-status-warning-soft);
-	--status-failed: var(--rekta-color-text-contrast-high);
-	--status-failed-tint: var(--rekta-color-status-error-soft);
-	--status-succeeded: var(--rekta-color-text-contrast-high);
-	--status-succeeded-tint: var(--rekta-color-status-success-soft);
-	--status-paused: var(--rekta-color-text-contrast-high);
-	--status-paused-tint: var(--rekta-color-status-warning-soft);
+	--status-running: var(--rk-text-contrast-high);
+	--status-running-tint: var(--rk-status-info-soft);
+	--status-waiting: var(--rk-text-contrast-high);
+	--status-waiting-tint: var(--rk-status-warning-soft);
+	--status-failed: var(--rk-text-contrast-high);
+	--status-failed-tint: var(--rk-status-error-soft);
+	--status-succeeded: var(--rk-text-contrast-high);
+	--status-succeeded-tint: var(--rk-status-success-soft);
+	--status-paused: var(--rk-text-contrast-high);
+	--status-paused-tint: var(--rk-status-warning-soft);
 	--status-neutral: var(--text-muted);
-	--status-neutral-tint: var(--rekta-color-surface-2);
+	--status-neutral-tint: var(--rk-surface-2);
 
 	/* Project palette: text / fill / dot per slot, hues at least 45 degrees away from the accent */
 	--project-1: light-dark(#00686a, #7edddf);
@@ -146,10 +146,10 @@
 	--blur-card: 30px;
 	--blur-float: 34px;
 	--glass-sat: 1.9;
-	--text-muted: var(--rekta-color-text-contrast-high);
+	--text-muted: var(--rk-text-contrast-high);
 
-	--font-sans: var(--rekta-typography-font-family-base);
-	--font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+	--font-sans: var(--rk-font-sans);
+	--font-mono: var(--rk-font-mono);
 	--text-sm: 12.5px;
 	--text-base: 14px;
 	--text-lg: 16px;
@@ -193,49 +193,49 @@
 	--shift-lg: 32px;
 
 	/* Rekta tile language. Text on tiles stays in --text, which contrast.test.ts holds to AA on every fill. */
-	--tile-neutral: var(--rekta-color-surface);
-	--tile-info: var(--rekta-color-status-info-tile);
-	--tile-success: var(--rekta-color-status-success-tile);
-	--tile-warning: var(--rekta-color-status-warning-tile);
-	--tile-error: var(--rekta-color-status-error-tile);
-	--radius-tile: var(--rekta-radius-tile);
+	--tile-neutral: var(--rk-surface);
+	--tile-info: var(--rk-status-info-tile);
+	--tile-success: var(--rk-status-success-tile);
+	--tile-warning: var(--rk-status-warning-tile);
+	--tile-error: var(--rk-status-error-tile);
+	--radius-tile: var(--rk-radius-tile);
 	/* Small marks (tag squares, sparklines, progress) carry the full state colour, always next to words */
-	--mark-neutral: var(--rekta-color-text-contrast-medium);
-	--mark-info: var(--rekta-color-status-info-full);
-	--mark-success: var(--rekta-color-status-success-full);
-	--mark-warning: var(--rekta-color-status-warning-full);
-	--mark-error: var(--rekta-color-status-error-full);
-	--rule: var(--rekta-color-text-contrast-low);
+	--mark-neutral: var(--rk-text-contrast-medium);
+	--mark-info: var(--rk-status-info-full);
+	--mark-success: var(--rk-status-success-full);
+	--mark-warning: var(--rk-status-warning-full);
+	--mark-error: var(--rk-status-error-full);
+	--rule: var(--rk-text-contrast-low);
 
 	/* Type roles: UI words 12 and 13 px, body 15, items 18, nothing below 12 px.
 	   Headings light, figures medium, the main title semibold. */
-	--type-label: var(--rekta-typography-size-xxs);
-	--type-meta: var(--rekta-typography-size-xs);
-	--type-body: var(--rekta-typography-size-s);
-	--type-item: var(--rekta-typography-size-m);
-	--type-figure: var(--rekta-typography-size-l);
-	--type-group: var(--rekta-typography-size-group);
-	--type-pivot: var(--rekta-typography-size-pivot-inactive);
-	--type-pivot-active: var(--rekta-typography-size-pivot-active);
-	--type-nav: var(--rekta-typography-size-nav-inactive);
-	--type-nav-active: var(--rekta-typography-size-nav-active);
-	--type-title: var(--rekta-typography-size-title);
-	--weight-light: var(--rekta-typography-weight-light);
-	--weight-medium: var(--rekta-typography-weight-medium);
-	--weight-semibold: var(--rekta-typography-weight-semibold);
+	--type-label: var(--rk-font-size-xxs);
+	--type-meta: var(--rk-font-size-xs);
+	--type-body: var(--rk-font-size-s);
+	--type-item: var(--rk-font-size-m);
+	--type-figure: var(--rk-font-size-l);
+	--type-group: var(--rk-font-size-group);
+	--type-pivot: var(--rk-font-size-pivot-inactive);
+	--type-pivot-active: var(--rk-font-size-pivot-active);
+	--type-nav: var(--rk-font-size-nav-inactive);
+	--type-nav-active: var(--rk-font-size-nav-active);
+	--type-title: var(--rk-font-size-title);
+	--weight-light: var(--rk-font-weight-light);
+	--weight-medium: var(--rk-font-weight-medium);
+	--weight-semibold: var(--rk-font-weight-semibold);
 
-	--motion-short: var(--rekta-motion-duration-short);
-	--motion-moderate: var(--rekta-motion-duration-moderate);
-	--motion-long: var(--rekta-motion-duration-long);
-	--motion-turnstile: var(--rekta-motion-turnstile-angle);
-	--motion-slide: var(--rekta-motion-slide-distance);
-	--ease-base: var(--rekta-motion-easing-base);
+	--motion-short: var(--rk-duration-short);
+	--motion-moderate: var(--rk-duration-moderate);
+	--motion-long: var(--rk-duration-long);
+	--motion-turnstile: var(--rk-turnstile-angle);
+	--motion-slide: var(--rk-slide-distance);
+	--ease-base: var(--rk-ease-base);
 
 	/* Shell: the window scrolls under a sticky head and above a fixed app bar, whose height the page keeps free */
-	--gutter: clamp(var(--rekta-spacing-m), 2.5vw, var(--rekta-spacing-xl));
+	--gutter: clamp(var(--rk-space-m), 2.5vw, var(--rk-space-xl));
 	--appbar-h: 64px;
 	--head-h: calc(var(--type-nav-active) * 1.25 + var(--space-2) + var(--space-1));
-	--sheet-max-w: var(--rekta-breakpoint-sideways-scroll-min);
+	--sheet-max-w: var(--rk-bp-sideways-scroll-min);
 	/* What a panorama fills between head and app bar; its sections scroll down inside themselves */
 	--stage-h: calc(100dvh - var(--head-h) - var(--appbar-h) - env(safe-area-inset-bottom));
 	/* A pivot facet's width side by side in the panorama, unless the facet brings its own */
@@ -250,7 +250,7 @@
 	--blur-card: 22px;
 	--blur-float: 26px;
 	--glass-sat: 1.5;
-	--text-muted: var(--rekta-color-text-contrast-high);
+	--text-muted: var(--rk-text-contrast-high);
 }
 
 :root[data-glass='solid'] {
@@ -261,7 +261,7 @@
 	--blur-card: 0px;
 	--blur-float: 12px;
 	--glass-sat: 1.2;
-	--text-muted: var(--rekta-color-text-contrast-high);
+	--text-muted: var(--rk-text-contrast-high);
 }
 
 /* The system wish for less transparency wins over any glass choice: same values as solid, declared last */
@@ -275,7 +275,7 @@
 		--blur-card: 0px;
 		--blur-float: 12px;
 		--glass-sat: 1.2;
-		--text-muted: var(--rekta-color-text-contrast-high);
+		--text-muted: var(--rk-text-contrast-high);
 	}
 }
 
@@ -284,13 +284,6 @@
 }
 :root[data-theme='dark'] {
 	color-scheme: dark;
-}
-
-/* The in-app motion setting; rekta.css itself only follows the system wish and data-motion='off' */
-:root[data-motion='reduced'] {
-	--rekta-motion-duration-short: 0s;
-	--rekta-motion-duration-moderate: 0s;
-	--rekta-motion-duration-long: 0s;
 }
 
 @media (pointer: coarse) {

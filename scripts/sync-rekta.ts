@@ -1,8 +1,7 @@
-// Vendors the Rekta Design tokens: builds the token stylesheet in a throwaway clone of Rekta Design and writes it,
-// byte for byte, below a provenance header into src/lib/styles/rekta.css. Which generator and output file hold the
-// tokens depends on the Rekta version (BUILD_LAYOUTS).
+// Vendors Rekta Design: builds a Rekta commit once in a throwaway clone and writes its token stylesheet and its
+// component stylesheet, byte for byte, each below its own provenance header into src/lib/styles.
 //
-//   node scripts/sync-rekta.ts [source] [--ref <commit>]   update the vendored file (default: upstream, its HEAD)
+//   node scripts/sync-rekta.ts [source] [--ref <commit>]   update the vendored files (default: upstream, its HEAD)
 //   node scripts/sync-rekta.ts --check [source]             rebuild the pinned commit and upstream HEAD, report drift
 //
 // `source` is anything `git clone` accepts; a local checkout stays untouched. The header always names the public
@@ -16,14 +15,18 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 export const UPSTREAM = 'https://github.com/DerDaehne/Rekta-Design';
-const VENDORED = new URL('../src/lib/styles/rekta.css', import.meta.url);
+const STYLES = new URL('../src/lib/styles/', import.meta.url);
 const HEADER_END = '\n */\n';
 
-/** Known Rekta build layouts. Since 0.2 dist/rekta.css is the component sheet, so the tokens live elsewhere. */
-export const BUILD_LAYOUTS = [
-	{ generator: 'scripts/build-css.mjs', output: 'dist/rekta.css' },
-	{ generator: 'scripts/build.mjs', output: 'dist/rekta.tokens.css' }
+export const GENERATOR = 'scripts/build.mjs';
+
+/** What the generator writes and where the app keeps it. */
+export const VENDORED_FILES = [
+	{ output: 'dist/rekta.tokens.css', target: 'rekta.tokens.css' },
+	{ output: 'dist/rekta.css', target: 'rekta.css' }
 ] as const;
+
+export type TargetName = (typeof VENDORED_FILES)[number]['target'];
 
 /** A failure the maintainer can act on; reported as one line instead of a stack trace. */
 export class RektaProblem extends Error {}
@@ -31,7 +34,7 @@ export class RektaProblem extends Error {}
 export interface Build {
 	commit: string;
 	generator: string;
-	css: string;
+	files: Record<TargetName, string>;
 }
 
 export interface Vendored {
@@ -44,13 +47,19 @@ export function sha256(text: string): string {
 	return createHash('sha256').update(text).digest('hex');
 }
 
-export function provenanceHeader(commit: string, generator: string, body: string): string {
+export function provenanceHeader(
+	commit: string,
+	generator: string,
+	output: string,
+	body: string
+): string {
 	return [
 		'/*!',
-		' * Rekta Design tokens, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.',
+		' * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.',
 		` * Source: ${UPSTREAM}`,
 		` * Commit: ${commit}`,
 		` * Generator: ${generator} of Rekta Design`,
+		` * Output: ${output}`,
 		` * SHA-256 of everything below this header: ${sha256(body)}`,
 		' * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.',
 		' * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).',
@@ -80,23 +89,22 @@ function git(cwd: string, ...args: string[]): string {
 export function buildAt(clone: string, ref: string): Build {
 	git(clone, 'checkout', '--quiet', '--detach', ref);
 	const commit = git(clone, 'rev-parse', 'HEAD');
-	const layout = BUILD_LAYOUTS.find(({ generator }) => existsSync(join(clone, generator)));
-	if (!layout) {
-		const looked = BUILD_LAYOUTS.map(({ generator }) => generator).join(', ');
+	if (!existsSync(join(clone, GENERATOR)))
 		throw new RektaProblem(
-			`Rekta Design ${commit} has no known build (looked for ${looked}); adapt scripts/sync-rekta.ts.`
+			`Rekta Design ${commit} has no ${GENERATOR}; adapt scripts/sync-rekta.ts to its new build.`
 		);
-	}
-	const { generator, output } = layout;
 	try {
-		for (const args of [[generator, '--check'], [generator]])
+		for (const args of [[GENERATOR, '--check'], [GENERATOR]])
 			execFileSync(process.execPath, args, { cwd: clone, stdio: ['ignore', 'inherit', 'inherit'] });
 	} catch {
 		throw new RektaProblem(
-			`Rekta Design ${commit}: ${generator} failed (output above); fix the source or pin another commit.`
+			`Rekta Design ${commit}: ${GENERATOR} failed (output above); fix the source or pin another commit.`
 		);
 	}
-	return { commit, generator, css: readFileSync(join(clone, output), 'utf8') };
+	const files = Object.fromEntries(
+		VENDORED_FILES.map(({ output, target }) => [target, readFileSync(join(clone, output), 'utf8')])
+	) as Record<TargetName, string>;
+	return { commit, generator: GENERATOR, files };
 }
 
 function withClone<T>(source: string, work: (clone: string) => T): T {
@@ -111,9 +119,13 @@ function withClone<T>(source: string, work: (clone: string) => T): T {
 }
 
 function sync(source: string, ref: string): void {
-	const { commit, generator, css } = withClone(source, (clone) => buildAt(clone, ref));
-	writeFileSync(VENDORED, provenanceHeader(commit, generator, css) + css);
-	console.log(`src/lib/styles/rekta.css now holds Rekta Design ${commit}.`);
+	const { commit, generator, files } = withClone(source, (clone) => buildAt(clone, ref));
+	for (const { output, target } of VENDORED_FILES)
+		writeFileSync(
+			new URL(target, STYLES),
+			provenanceHeader(commit, generator, output, files[target]) + files[target]
+		);
+	console.log(`src/lib/styles/rekta.tokens.css and rekta.css now hold Rekta Design ${commit}.`);
 }
 
 function attempt(build: () => Build, problems: string[]): Build | undefined {
@@ -125,36 +137,49 @@ function attempt(build: () => Build, problems: string[]): Build | undefined {
 	}
 }
 
-/** Returns the problems found; an empty list means the vendored file is genuine and current. */
-export function check(source: string, vendoredText: string): string[] {
-	const vendored = splitVendored(vendoredText);
-	if (!vendored.commit) return ['rekta.css has no provenance header; run the sync to recreate it.'];
-	if (sha256(vendored.body) !== vendored.sha256)
-		return ['rekta.css differs from the hash in its header: it was edited by hand. Run the sync.'];
-	const pinned = vendored.commit;
+/** The first reason the vendored files cannot be trusted offline, or undefined when they can. */
+function offlineProblem(vendored: Record<TargetName, Vendored>): string | undefined {
+	for (const { target } of VENDORED_FILES) {
+		if (!vendored[target].commit)
+			return `${target} has no provenance header; run the sync to recreate it.`;
+		if (sha256(vendored[target].body) !== vendored[target].sha256)
+			return `${target} differs from the hash in its header: it was edited by hand. Run the sync.`;
+	}
+	const [first, ...others] = VENDORED_FILES;
+	const mixed = others.find(
+		({ target }) => vendored[target].commit !== vendored[first.target].commit
+	);
+	if (mixed)
+		return `${mixed.target} comes from another Rekta commit than ${first.target}; run the sync.`;
+}
+
+/** Returns the problems found; an empty list means both vendored files are genuine and current. */
+export function check(source: string, vendoredTexts: Record<TargetName, string>): string[] {
+	const vendored = Object.fromEntries(
+		VENDORED_FILES.map(({ target }) => [target, splitVendored(vendoredTexts[target])])
+	) as Record<TargetName, Vendored>;
+	const offline = offlineProblem(vendored);
+	if (offline) return [offline];
+	const pinned = vendored[VENDORED_FILES[0].target].commit!;
+	const differing = (build: Build) =>
+		VENDORED_FILES.map(({ target }) => target).filter(
+			(target) => build.files[target] !== vendored[target].body
+		);
 	return withClone(source, (clone) => {
 		const problems: string[] = [];
 		const rebuilt = attempt(() => buildAt(clone, pinned), problems);
-		if (rebuilt && rebuilt.css !== vendored.body)
-			problems.push(
-				`The pinned commit ${pinned} no longer builds the vendored rekta.css (generator ${rebuilt.generator}).`
-			);
+		for (const target of rebuilt ? differing(rebuilt) : [])
+			problems.push(`The pinned commit ${pinned} no longer builds the vendored ${target}.`);
 		const upstream = attempt(() => buildAt(clone, 'origin/HEAD'), problems);
-		if (!upstream) return problems;
-		if (upstream.css === vendored.body) {
+		const drifted = upstream ? differing(upstream) : [];
+		if (upstream && drifted.length === 0)
 			console.log(
-				`Rekta Design HEAD is ${upstream.commit}; the tokens match the pinned ${pinned}.`
+				`Rekta Design HEAD is ${upstream.commit}; both files match the pinned ${pinned}.`
 			);
-			return problems;
-		}
-		const pinnedGenerator = rebuilt?.generator ?? 'unknown';
-		const advice =
-			upstream.generator === pinnedGenerator
-				? 'run the sync to update.'
-				: 'the generator changed, so review the new Rekta version before syncing.';
-		problems.push(
-			`Rekta Design ${upstream.commit} (generator ${upstream.generator}) changed the tokens against the pinned ${pinned} (generator ${pinnedGenerator}); ${advice}`
-		);
+		if (upstream && drifted.length > 0)
+			problems.push(
+				`Rekta Design ${upstream.commit} changed ${drifted.join(' and ')} against the pinned ${pinned}; review the Rekta changelog, then run the sync to update.`
+			);
 		return problems;
 	});
 }
@@ -175,10 +200,13 @@ function main(): void {
 		console.error(error.message);
 		process.exit(1);
 	}
-	const problems = check(source, readFileSync(VENDORED, 'utf8'));
+	const texts = Object.fromEntries(
+		VENDORED_FILES.map(({ target }) => [target, readFileSync(new URL(target, STYLES), 'utf8')])
+	) as Record<TargetName, string>;
+	const problems = check(source, texts);
 	for (const problem of problems) console.error(problem);
 	if (problems.length > 0) process.exit(1);
-	console.log('rekta.css is genuine and current.');
+	console.log('rekta.tokens.css and rekta.css are genuine and current.');
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

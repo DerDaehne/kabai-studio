@@ -1,0 +1,237 @@
+/*!
+ * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
+ * Source: https://github.com/DerDaehne/Rekta-Design
+ * Commit: 74fdd88248d3a95b035b471698bb700bd7fa3722
+ * Generator: scripts/build.mjs of Rekta Design
+ * Output: dist/rekta.tokens.css
+ * SHA-256 of everything below this header: 43565860606cb97c4b25ba71f6f88bd34810f207e43ff530b9a74af7b8258586
+ * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
+ * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
+ * No Porsche fonts, icons, assets or marks are included.
+ */
+/* Rekta Design tokens. Generated from tokens/rekta.tokens.json by scripts/build.mjs; do not edit. */
+
+/* Light, comfortable, full motion. */
+:root {
+  --rk-bg: #ffffff;
+  --rk-surface: #eeeff2;
+  --rk-surface-2: #e4e5e9;
+  --rk-text-primary: #010205;
+  --rk-text-contrast-low: #d8d8db;
+  --rk-text-contrast-medium: #6b6d70;
+  --rk-text-contrast-high: #535457;
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+  --rk-status-info-full: #2762ec;
+  --rk-status-info-soft: #d3e1ff;
+  --rk-status-info-tile: #7da1f4;
+  --rk-status-success-full: #007b5d;
+  --rk-status-success-soft: #e1fff2;
+  --rk-status-success-tile: #61caa6;
+  --rk-status-warning-full: #a37e00;
+  --rk-status-warning-soft: #fff4d2;
+  --rk-status-warning-tile: #f8d866;
+  --rk-status-error-full: #aa0013;
+  --rk-status-error-soft: #ffe2e4;
+  --rk-status-error-tile: #c86065;
+  --rk-focus: #1a44ea;
+  --rk-hover: rgba(148, 149, 152, 0.18);
+  --rk-disabled: #949598;
+  --rk-shading: rgba(1, 2, 5, 0.67);
+  --rk-glass: rgba(255, 255, 255, 0.82);
+  --rk-control-height: 2.75rem;
+  --rk-row-height: 2.75rem;
+  --rk-control-padding: 16px;
+  --rk-font-sans: Barlow, "Arial Narrow", Arial, sans-serif;
+  --rk-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --rk-font-weight-light: 300;
+  --rk-font-weight-regular: 400;
+  --rk-font-weight-medium: 500;
+  --rk-font-weight-semibold: 600;
+  --rk-font-weight-bold: 700;
+  --rk-font-size-xxs: 0.75rem;
+  --rk-font-size-xs: 0.8125rem;
+  --rk-font-size-s: 0.9375rem;
+  --rk-font-size-m: 1.125rem;
+  --rk-font-size-l: clamp(1.375rem, 1.5cqi, 1.75rem);
+  --rk-font-size-xl: clamp(1.625rem, 2cqi, 2.125rem);
+  --rk-font-size-xxl: clamp(1.875rem, 2.6cqi, 2.75rem);
+  --rk-font-size-nav-active: clamp(2.5rem, 4.2cqi, 4.5rem);
+  --rk-font-size-nav-inactive: clamp(1.375rem, 1.9cqi, 2rem);
+  --rk-font-size-pivot-active: clamp(1.75rem, 2.6cqi, 2.625rem);
+  --rk-font-size-pivot-inactive: clamp(1.25rem, 1.6cqi, 1.625rem);
+  --rk-font-size-group: clamp(1.375rem, 1.7cqi, 1.875rem);
+  --rk-font-size-title: clamp(1.875rem, 2.8cqi, 3rem);
+  --rk-line-height-body: 1.5;
+  --rk-line-height-compact: 1.35;
+  --rk-line-height-tight: 1.15;
+  --rk-line-height-title: 1.1;
+  --rk-line-height-nav: 1.3;
+  --rk-space-xs: 4px;
+  --rk-space-s: 8px;
+  --rk-space-m: 16px;
+  --rk-space-l: 32px;
+  --rk-space-xl: 48px;
+  --rk-radius-s: 4px;
+  --rk-radius-m: 8px;
+  --rk-radius-l: 12px;
+  --rk-radius-tile: 2px;
+  --rk-tile-unit: 9.375rem;
+  --rk-tile-unit-ultrawide: 10.625rem;
+  --rk-appbar-height: 3.5rem;
+  --rk-touch-target: 2.75rem;
+  --rk-pane-min: 15rem;
+  --rk-duration-press: 100ms;
+  --rk-duration-short: 250ms;
+  --rk-duration-moderate: 400ms;
+  --rk-duration-long: 600ms;
+  --rk-duration-pivot-glide: 500ms;
+  --rk-duration-pivot-size: 220ms;
+  --rk-duration-stagger: 30ms;
+  --rk-duration-pulse: 1400ms;
+  --rk-duration-busy: 1200ms;
+  --rk-duration-float: 150ms;
+  --rk-duration-dots: 2400ms;
+  --rk-ease-base: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --rk-ease-in: cubic-bezier(0, 0, 0.2, 1);
+  --rk-ease-out: cubic-bezier(0.4, 0, 0.5, 1);
+  --rk-ease-pivot-glide: cubic-bezier(0.65, 0, 0.35, 1);
+  --rk-turnstile-angle: 40deg;
+  --rk-turnstile-perspective: 800px;
+  --rk-slide-distance: 24px;
+  --rk-tile-tilt: 8deg;
+  --rk-tile-press-scale: 0.97;
+  --rk-row-tilt: 2deg;
+  --rk-row-press-scale: 0.99;
+  --rk-duration-toast: 5000ms;
+  --rk-duration-wheel-latch: 200ms;
+  --rk-duration-tap-delay: 100ms;
+  --rk-duration-busy-delay: 300ms;
+  --rk-duration-busy-min: 500ms;
+  --rk-duration-tip-delay: 500ms;
+  --rk-duration-long-press: 500ms;
+  --rk-duration-stale: 30000ms;
+  --rk-layer-sticky: 10;
+  --rk-layer-appbar: 20;
+  --rk-layer-banner: 30;
+  --rk-layer-toast: 40;
+  --rk-layer-float: 50;
+  --rk-bp-mobile: 375px;
+  --rk-bp-sideways-scroll-min: 760px;
+  --rk-bp-short-height: 480px;
+  --rk-bp-desktop: 1440px;
+  --rk-bp-wide: 1920px;
+  --rk-bp-ultrawide: 2560px;
+  color-scheme: light;
+}
+
+/* Dark: the system setting, unless the page chose light; and an explicit choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --rk-bg: #0e0e12;
+    --rk-surface: #212225;
+    --rk-surface-2: #2a2b2f;
+    --rk-text-primary: #fbfcff;
+    --rk-text-contrast-low: #404044;
+    --rk-text-contrast-medium: #88898c;
+    --rk-text-contrast-high: #afb0b3;
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+    --rk-status-info-full: #178bff;
+    --rk-status-info-soft: #04294e;
+    --rk-status-info-tile: #244592;
+    --rk-status-success-full: #00ce9d;
+    --rk-status-success-soft: #003324;
+    --rk-status-success-tile: #337a62;
+    --rk-status-warning-full: #f7cb47;
+    --rk-status-warning-soft: #362b0a;
+    --rk-status-warning-tile: #6e5900;
+    --rk-status-error-full: #fc4040;
+    --rk-status-error-soft: #3a0f0f;
+    --rk-status-error-tile: #76171f;
+    --rk-focus: #178bff;
+    --rk-hover: rgba(148, 149, 152, 0.18);
+    --rk-disabled: #7e7f82;
+    --rk-shading: rgba(38, 38, 41, 0.67);
+    --rk-glass: rgba(14, 14, 18, 0.82);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --rk-bg: #0e0e12;
+  --rk-surface: #212225;
+  --rk-surface-2: #2a2b2f;
+  --rk-text-primary: #fbfcff;
+  --rk-text-contrast-low: #404044;
+  --rk-text-contrast-medium: #88898c;
+  --rk-text-contrast-high: #afb0b3;
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+  --rk-status-info-full: #178bff;
+  --rk-status-info-soft: #04294e;
+  --rk-status-info-tile: #244592;
+  --rk-status-success-full: #00ce9d;
+  --rk-status-success-soft: #003324;
+  --rk-status-success-tile: #337a62;
+  --rk-status-warning-full: #f7cb47;
+  --rk-status-warning-soft: #362b0a;
+  --rk-status-warning-tile: #6e5900;
+  --rk-status-error-full: #fc4040;
+  --rk-status-error-soft: #3a0f0f;
+  --rk-status-error-tile: #76171f;
+  --rk-focus: #178bff;
+  --rk-hover: rgba(148, 149, 152, 0.18);
+  --rk-disabled: #7e7f82;
+  --rk-shading: rgba(38, 38, 41, 0.67);
+  --rk-glass: rgba(14, 14, 18, 0.82);
+  color-scheme: dark;
+}
+
+/* Compact density: a fine primary pointer and no coarse one, unless the page chose comfortable; and an explicit choice. */
+@media (pointer: fine) and (not (any-pointer: coarse)) {
+  :root:not([data-density="comfortable"]) {
+    --rk-control-height: 2rem;
+    --rk-row-height: 2rem;
+    --rk-control-padding: 12px;
+  }
+}
+:root[data-density="compact"] {
+  --rk-control-height: 2rem;
+  --rk-row-height: 2rem;
+  --rk-control-padding: 12px;
+}
+:root[data-density="comfortable"] {
+  --rk-control-height: 2.75rem;
+  --rk-row-height: 2.75rem;
+  --rk-control-padding: 16px;
+}
+
+/* Reduced motion: every transition becomes instant, never skipped. timing.* (wall time) stays. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="on"]) {
+    --rk-duration-press: 0s;
+    --rk-duration-short: 0s;
+    --rk-duration-moderate: 0s;
+    --rk-duration-long: 0s;
+    --rk-duration-pivot-glide: 0s;
+    --rk-duration-pivot-size: 0s;
+    --rk-duration-stagger: 0s;
+    --rk-duration-pulse: 0s;
+    --rk-duration-busy: 0s;
+    --rk-duration-float: 0s;
+    --rk-duration-dots: 0s;
+  }
+}
+:root[data-motion="off"] {
+  --rk-duration-press: 0s;
+  --rk-duration-short: 0s;
+  --rk-duration-moderate: 0s;
+  --rk-duration-long: 0s;
+  --rk-duration-pivot-glide: 0s;
+  --rk-duration-pivot-size: 0s;
+  --rk-duration-stagger: 0s;
+  --rk-duration-pulse: 0s;
+  --rk-duration-busy: 0s;
+  --rk-duration-float: 0s;
+  --rk-duration-dots: 0s;
+}

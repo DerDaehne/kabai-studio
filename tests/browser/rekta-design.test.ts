@@ -84,7 +84,7 @@ test('every tile tone takes its Rekta fill, in light and in dark', async ({ page
 		);
 		expect(mismatches, theme).toEqual([]);
 		const infoFill = await page.evaluate(() =>
-			getComputedStyle(document.documentElement).getPropertyValue('--rekta-color-status-info-tile')
+			getComputedStyle(document.documentElement).getPropertyValue('--rk-status-info-tile')
 		);
 		expect(infoFill, theme).toBe(theme === 'light' ? '#7da1f4' : '#244592');
 	}
@@ -97,13 +97,13 @@ test('the focus ring uses the Rekta focus colour, in light and in dark', async (
 		await setTheme(page, theme);
 		const colors = await page.evaluate(() => {
 			const probe = document.createElement('span');
-			probe.style.color = 'var(--rekta-color-focus)';
+			probe.style.color = 'var(--rk-focus)';
 			document.body.append(probe);
 			const rektaFocus = getComputedStyle(probe).color;
 			probe.remove();
 			return { rektaFocus, outline: getComputedStyle(document.activeElement!).outlineColor };
 		});
-		// Comparing against --rekta-color-focus directly, not --focus, so this fails if --focus
+		// Comparing against --rk-focus directly, not --focus, so this fails if --focus
 		// ever points somewhere else again (e.g. back at the old spring-green accent).
 		expect(colors.outline, theme).toBe(colors.rektaFocus);
 	}
@@ -141,8 +141,34 @@ test('the in-app reduced motion setting stops the Rekta durations as well', asyn
 		return value.endsWith('ms') ? parseFloat(value) / 1000 : parseFloat(value);
 	};
 	expect(await shortSeconds()).toBe(0.25);
-	await page.evaluate(() => (document.documentElement.dataset.motion = 'reduced'));
+	await page.evaluate(() => (document.documentElement.dataset.motion = 'off'));
 	expect(await shortSeconds()).toBe(0);
+});
+
+test('a motion choice stored before data-motion="off" still stops all animation after a reload', async ({
+	page
+}) => {
+	await open(page, '/dev/ui');
+	await page.evaluate(() => localStorage.setItem('studio-motion', 'reduced'));
+	await open(page, '/dev/ui');
+	try {
+		const state = await page.evaluate(() => ({
+			motion: document.documentElement.dataset.motion,
+			short: getComputedStyle(document.documentElement).getPropertyValue('--rk-duration-short'),
+			// A running animation longer than the 0.01 ms the stylesheet leaves; the spinner keeps turning on purpose
+			longRunning: document
+				.getAnimations()
+				.filter((animation) => animation.playState === 'running')
+				.filter((animation) => Number(animation.effect?.getComputedTiming().duration) > 1)
+				.map((animation) => (animation.effect as KeyframeEffect).target?.className)
+				.filter((className) => !String(className).includes('spinner'))
+		}));
+		expect(state.motion).toBe('off');
+		expect(parseFloat(state.short)).toBe(0);
+		expect(state.longRunning).toEqual([]);
+	} finally {
+		await page.evaluate(() => localStorage.removeItem('studio-motion'));
+	}
 });
 
 test('the tile showcase passes axe WCAG 2.1 A/AA in light and dark, on a phone and on a desktop', async ({

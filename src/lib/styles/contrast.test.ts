@@ -57,13 +57,13 @@ const reducedTransparencyRule = css.match(
 );
 const rootDeclarations = declarationsOf(ruleBody(':root'));
 
-// The base tokens point into the vendored rekta.css, which carries dark mode on its own rule
+// The base tokens point into the vendored rekta.tokens.css, which carries dark mode on its own rule
 // (:root[data-theme='dark'], the same values as its prefers-color-scheme block) instead of light-dark().
-const rekta = readFileSync(new URL('./rekta.css', import.meta.url), 'utf8');
+const rekta = readFileSync(new URL('./rekta.tokens.css', import.meta.url), 'utf8');
 const rektaLight = declarationsOf(ruleBody(':root', rekta));
 const rektaDark = new Map([
 	...rektaLight,
-	...declarationsOf(ruleBody(":root[data-theme='dark']", rekta))
+	...declarationsOf(ruleBody(':root[data-theme="dark"]', rekta))
 ]);
 const rektaByMode: Record<Mode, Declarations> = { light: rektaLight, dark: rektaDark };
 
@@ -285,7 +285,7 @@ describe('the default, spring accent with bold glass', () => {
 	});
 
 	it('fails the check when --text-muted points at the low-contrast Rekta step', () => {
-		const lowContrastMuted = new Map([['--text-muted', 'var(--rekta-color-text-contrast-low)']]);
+		const lowContrastMuted = new Map([['--text-muted', 'var(--rk-text-contrast-low)']]);
 		expect(
 			belowMinimum(checkContrast(withStrength('bold', lowContrastMuted))).length
 		).toBeGreaterThan(0);
@@ -321,7 +321,7 @@ describe('prefers-reduced-transparency', () => {
 	});
 });
 
-// The Rekta tile language takes its values from the same vendored rekta.css declarations as rektaLight/rektaDark.
+// The Rekta tile language takes its values from the same vendored rekta.tokens.css declarations as rektaLight/rektaDark.
 const tones = ['neutral', 'info', 'success', 'warning', 'error'];
 
 function checkTileContrast(
@@ -333,14 +333,14 @@ function checkTileContrast(
 		const opaque = (...tokens: string[]): Backdrops =>
 			Object.fromEntries(tokens.map((token) => [token, color(token)]));
 		const fills = opaque(...tones.map((tone) => `--tile-${tone}`));
-		const rektaGround = opaque('--rekta-color-bg', '--rekta-color-surface');
+		const rektaGround = opaque('--rk-bg', '--rk-surface');
 		return [
 			// The tile's focus ring is drawn in its text colour, so this pair covers the ring as well
 			worstCase(color, mode, '--text', fills, 'tile fills'),
 			worstCase(color, mode, '--text-muted', opaque('--tile-neutral'), 'neutral tile'),
-			worstCase(color, mode, '--rekta-color-text-primary', fills, 'tile fills'),
-			worstCase(color, mode, '--rekta-color-text-contrast-high', rektaGround, 'Rekta ground'),
-			worstCase(color, mode, '--rekta-color-focus', rektaGround, 'Rekta ground', 3)
+			worstCase(color, mode, '--rk-text-primary', fills, 'tile fills'),
+			worstCase(color, mode, '--rk-text-contrast-high', rektaGround, 'Rekta ground'),
+			worstCase(color, mode, '--rk-focus', rektaGround, 'Rekta ground', 3)
 		];
 	});
 }
@@ -356,12 +356,12 @@ describe('Rekta tile language, from the vendored values', () => {
 	it('fails the check when a dark tile fill gets as light as its light-theme counterpart', () => {
 		const lighterInfoTile = new Map([
 			...rektaDark,
-			['--rekta-color-status-info-tile', rektaLight.get('--rekta-color-status-info-tile')!]
+			['--rk-status-info-tile', rektaLight.get('--rk-status-info-tile')!]
 		]);
 		const results = checkTileContrast({ light: rektaLight, dark: lighterInfoTile });
 		expect(belowMinimum(results).map(({ fg, mode }) => `${fg} ${mode}`)).toEqual([
 			'--text dark',
-			'--rekta-color-text-primary dark'
+			'--rk-text-primary dark'
 		]);
 	});
 });

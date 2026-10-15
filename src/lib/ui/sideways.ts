@@ -1,6 +1,6 @@
 import type { Action } from 'svelte/action';
 
-/** Rekta's sideways-scroll breakpoint (`--rekta-breakpoint-sideways-scroll-min`): narrower screens only scroll down. */
+/** Rekta's sideways-scroll breakpoint (`--rk-bp-sideways-scroll-min`): narrower screens only scroll down. */
 export const SIDEWAYS_MIN_WIDTH = 760;
 
 const DOM_DELTA_LINE = 1;

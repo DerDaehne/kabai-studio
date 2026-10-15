@@ -55,7 +55,7 @@ jobs:
           retention-days: 7
 
   # Needs the network, so it stays out of the per-push CI: the pinned Rekta Design commit must still build the
-  # vendored rekta.css, and Rekta's default branch must not have moved the tokens on since.
+  # vendored rekta.tokens.css and rekta.css, and Rekta's default branch must not have moved them on since.
   rekta-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 5

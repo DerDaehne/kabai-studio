@@ -781,7 +781,7 @@
 	}
 
 	@media (prefers-reduced-motion: no-preference) {
-		:global(:root:not([data-motion='reduced'])) .slot {
+		:global(:root:not([data-motion='off'])) .slot {
 			animation: tile-in var(--motion-moderate) var(--ease-base) both;
 			animation-delay: calc(var(--i) * 30ms);
 		}

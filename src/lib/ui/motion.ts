@@ -44,7 +44,7 @@ export type MotionMode = 'full' | 'reduced';
 /** Reduced when the system asks for it or the user chose it in the app (data-motion on the root element). */
 export function motionMode(): MotionMode {
 	const userPrefersReduced =
-		typeof document !== 'undefined' && document.documentElement.dataset.motion === 'reduced';
+		typeof document !== 'undefined' && document.documentElement.dataset.motion === 'off';
 	return prefersReducedMotion.current || userPrefersReduced ? 'reduced' : 'full';
 }
 

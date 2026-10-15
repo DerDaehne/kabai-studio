@@ -167,7 +167,7 @@
 			display: none;
 		}
 	}
-	:global(:root[data-motion='reduced']) .wave {
+	:global(:root[data-motion='off']) .wave {
 		display: none;
 	}
 	:global(::view-transition-group(head)) {

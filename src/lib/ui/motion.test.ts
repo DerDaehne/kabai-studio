@@ -49,7 +49,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe.each([
 	['the system prefers reduced motion', () => (system.prefersReducedMotion = true)],
-	['the user chose reduced motion', () => (dataset.motion = 'reduced')]
+	['the user chose reduced motion', () => (dataset.motion = 'off')]
 ])('when %s', (_, reduce) => {
 	beforeEach(reduce);
 

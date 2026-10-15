@@ -9,7 +9,9 @@ import {
 	provenanceHeader,
 	RektaProblem,
 	sha256,
-	splitVendored
+	splitVendored,
+	VENDORED_FILES,
+	type TargetName
 } from '../../../scripts/sync-rekta.ts';
 
 // Builds throwaway git repos that imitate Rekta Design layouts, so the drift check runs without a network.
@@ -50,47 +52,47 @@ function clone(source: string): string {
 	return target;
 }
 
-const vendoredFor = (commit: string, generator: string, css: string) =>
-	provenanceHeader(commit, generator, css) + css;
+const buildScript = (files: Record<string, string>) => ({
+	'scripts/build.mjs': generatorThatWrites(files)
+});
+
+const vendoredFor = (commit: string, files: Record<TargetName, string>) =>
+	Object.fromEntries(
+		VENDORED_FILES.map(({ output, target }) => [
+			target,
+			provenanceHeader(commit, 'scripts/build.mjs', output, files[target]) + files[target]
+		])
+	) as Record<TargetName, string>;
+
+const upstreamFiles = (tokens: string, components: string) => ({
+	'dist/rekta.tokens.css': tokens,
+	'dist/rekta.css': components
+});
 
 describe('provenanceHeader', () => {
-	it('names the generator it is given', () => {
-		const header = provenanceHeader('a'.repeat(40), 'scripts/build.mjs', 'x');
+	it('names the generator and the output file it is given', () => {
+		const header = provenanceHeader('a'.repeat(40), 'scripts/build.mjs', 'dist/rekta.css', 'x');
 		expect(header).toContain(' * Generator: scripts/build.mjs of Rekta Design\n');
+		expect(header).toContain(' * Output: dist/rekta.css\n');
 		expect(splitVendored(header + 'x').sha256).toBe(sha256('x'));
 	});
 });
 
 describe('buildAt', () => {
-	it('takes the tokens from dist/rekta.tokens.css for scripts/build.mjs, never the component sheet', () => {
-		const { source, commit } = fakeRekta({
-			'scripts/build.mjs': generatorThatWrites({
-				'dist/rekta.tokens.css': 'tokens',
-				'dist/rekta.css': 'components'
-			})
-		});
+	it('returns both stylesheets of one build and its commit', () => {
+		const { source, commit } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
 		expect(buildAt(clone(source), 'origin/HEAD')).toEqual({
 			commit,
 			generator: 'scripts/build.mjs',
-			css: 'tokens'
+			files: { 'rekta.tokens.css': 'tokens', 'rekta.css': 'components' }
 		});
 	});
 
-	it('takes the tokens from dist/rekta.css for the older scripts/build-css.mjs', () => {
-		const { source } = fakeRekta({
-			'scripts/build-css.mjs': generatorThatWrites({ 'dist/rekta.css': 'old tokens' })
-		});
-		expect(buildAt(clone(source), 'origin/HEAD')).toMatchObject({
-			generator: 'scripts/build-css.mjs',
-			css: 'old tokens'
-		});
-	});
-
-	it('reports an unknown layout with commit, searched generators and a way out', () => {
+	it('reports a missing generator with commit and a way out', () => {
 		const { source, commit } = fakeRekta({ 'README.md': 'nothing to build' });
 		expect(() => buildAt(clone(source), 'origin/HEAD')).toThrow(
 			new RektaProblem(
-				`Rekta Design ${commit} has no known build (looked for scripts/build-css.mjs, scripts/build.mjs); adapt scripts/sync-rekta.ts.`
+				`Rekta Design ${commit} has no scripts/build.mjs; adapt scripts/sync-rekta.ts to its new build.`
 			)
 		);
 	});
@@ -106,53 +108,75 @@ describe('buildAt', () => {
 });
 
 describe('check', () => {
-	it('reports drift naming both commits and both generators, and advises a review', () => {
-		const pinned = fakeRekta({
-			'scripts/build-css.mjs': generatorThatWrites({ 'dist/rekta.css': 'old tokens' })
-		});
+	const files = { 'rekta.tokens.css': 'tokens', 'rekta.css': 'components' } as const;
+
+	function pinnedRekta() {
+		const pinned = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
 		const git = (...args: string[]) =>
 			execFileSync('git', [...gitIdentity, ...args], {
 				cwd: pinned.source,
 				encoding: 'utf8'
 			}).trim();
+		return { ...pinned, git };
+	}
+
+	it('is silent when both files match the pin and upstream', () => {
+		const { source, commit } = pinnedRekta();
+		expect(check(source, vendoredFor(commit, files))).toEqual([]);
+	});
+
+	it('names the one file that drifted upstream, with both commits and a way out', () => {
+		const pinned = pinnedRekta();
 		writeFileSync(
 			join(pinned.source, 'scripts/build.mjs'),
-			generatorThatWrites({ 'dist/rekta.tokens.css': 'new tokens', 'dist/rekta.css': 'old tokens' })
+			generatorThatWrites(upstreamFiles('tokens', 'new components'))
 		);
-		git('rm', '--quiet', 'scripts/build-css.mjs');
-		git('add', '.');
-		git('commit', '--quiet', '-m', 'next');
-		const head = git('rev-parse', 'HEAD');
+		pinned.git('commit', '--quiet', '-am', 'next');
+		const head = pinned.git('rev-parse', 'HEAD');
 
-		const problems = check(
-			pinned.source,
-			vendoredFor(pinned.commit, 'scripts/build-css.mjs', 'old tokens')
-		);
+		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
 
 		expect(problems).toHaveLength(1);
-		expect(problems[0]).toContain(`Rekta Design ${head} (generator scripts/build.mjs)`);
-		expect(problems[0]).toContain(`pinned ${pinned.commit} (generator scripts/build-css.mjs)`);
-		expect(problems[0]).toContain('review the new Rekta version before syncing');
+		expect(problems[0]).toContain(
+			`Rekta Design ${head} changed rekta.css against the pinned ${pinned.commit}`
+		);
+		expect(problems[0]).not.toContain('rekta.tokens.css');
+		expect(problems[0]).toContain('run the sync to update');
+	});
+
+	it('flags a pinned commit that no longer builds the vendored file', () => {
+		const { source, commit } = pinnedRekta();
+		const problems = check(source, vendoredFor(commit, { ...files, 'rekta.css': 'other' }));
+		expect(problems[0]).toBe(
+			`The pinned commit ${commit} no longer builds the vendored rekta.css.`
+		);
+	});
+
+	it('flags a file edited by hand', () => {
+		const { source, commit } = pinnedRekta();
+		const texts = vendoredFor(commit, files);
+		texts['rekta.css'] += '/* tweak */';
+		expect(check(source, texts)).toEqual([
+			'rekta.css differs from the hash in its header: it was edited by hand. Run the sync.'
+		]);
+	});
+
+	it('flags two files that come from different commits', () => {
+		const { source, commit } = pinnedRekta();
+		const texts = vendoredFor(commit, files);
+		const other = vendoredFor('b'.repeat(40), files);
+		texts['rekta.css'] = other['rekta.css'];
+		expect(check(source, texts)[0]).toContain('rekta.css comes from another Rekta commit');
 	});
 
 	it('turns an unbuildable upstream into a problem line instead of throwing', () => {
-		const pinned = fakeRekta({
-			'scripts/build-css.mjs': generatorThatWrites({ 'dist/rekta.css': 'old tokens' })
-		});
-		const git = (...args: string[]) =>
-			execFileSync('git', [...gitIdentity, ...args], {
-				cwd: pinned.source,
-				encoding: 'utf8'
-			}).trim();
-		git('rm', '--quiet', 'scripts/build-css.mjs');
-		git('commit', '--quiet', '-m', 'drop generator');
+		const pinned = pinnedRekta();
+		pinned.git('rm', '--quiet', 'scripts/build.mjs');
+		pinned.git('commit', '--quiet', '-m', 'drop generator');
 
-		const problems = check(
-			pinned.source,
-			vendoredFor(pinned.commit, 'scripts/build-css.mjs', 'old tokens')
-		);
+		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
 
 		expect(problems).toHaveLength(1);
-		expect(problems[0]).toMatch(/has no known build/);
+		expect(problems[0]).toMatch(/has no scripts\/build.mjs/);
 	});
 });

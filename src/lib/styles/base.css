@@ -247,7 +247,7 @@ input[type='radio'] {
 		scroll-behavior: auto !important;
 	}
 }
-:root[data-motion='reduced'] {
+:root[data-motion='off'] {
 	*,
 	*::before,
 	*::after {

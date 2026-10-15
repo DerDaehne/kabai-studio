@@ -132,11 +132,11 @@
 	};
 
 	// Appearance preferences are data attributes on <html> (read by the stylesheets and motion.ts) and are kept in
-	// localStorage; app.html restores them before the first paint. "system" follows the operating system.
+	// localStorage ("reduced" motion is data-motion="off", the value Rekta reads); app.html restores them before the first paint. "system" follows the operating system.
 	function storePreference({ name, value }: Preference) {
 		const root = document.documentElement;
 		if (value === 'system') delete root.dataset[name];
-		else root.dataset[name] = value;
+		else root.dataset[name] = name === 'motion' && value === 'reduced' ? 'off' : value;
 		try {
 			if (value === 'system') localStorage.removeItem(`studio-${name}`);
 			else localStorage.setItem(`studio-${name}`, value);
