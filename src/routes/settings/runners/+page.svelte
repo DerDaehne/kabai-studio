@@ -150,7 +150,7 @@
 		border-block-end: 1px solid var(--rule);
 	}
 	.name {
-		font-weight: 620;
+		font-weight: var(--weight-semibold);
 		overflow-wrap: anywhere;
 	}
 	.seen {
