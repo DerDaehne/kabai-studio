@@ -1137,14 +1137,16 @@ describe('020 on a database at 019 with rows in every table', () => {
 		return db;
 	}
 	/** Every table, index and trigger, the automatic ones and sqlite_sequence included. */
+	type SchemaEntry = { type: string; name: string; tbl_name: string; sql: string | null };
 	const wholeSchema = (db: ReturnType<typeof openDb>) =>
-		db
-			.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name')
-			.all()
-			.map((entry) => ({
-				...entry,
-				sql: entry.sql === null ? null : normalized(String(entry.sql))
-			}));
+		(
+			db
+				.prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name')
+				.all() as SchemaEntry[]
+		).map((entry) => ({
+			...entry,
+			sql: entry.sql === null ? null : normalized(String(entry.sql))
+		}));
 
 	it('keeps every row of every table, and nothing points into the void', () => {
 		const db = dbAt019();

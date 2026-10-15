@@ -16,6 +16,7 @@ import {
 	systemdUnit,
 	systemdUnitPath
 } from './cli.ts';
+import { localeFromEnv, translate } from '../i18n/index.ts';
 
 describe('parseCliArgs', () => {
 	it('defaults to start when no subcommand is given', () => {
@@ -66,9 +67,10 @@ describe('parseCliArgs', () => {
 		['--name without a value', ['runner', 'pair', 'https://studio.example', 'ABCD2345', '--name']],
 		['an unknown option', ['runner', 'pair', 'https://studio.example', 'ABCD2345', '--force']]
 	])('rejects runner with %s with a coded usage error and the way out', (_, argv) => {
-		expect(() => parseCliArgs(argv)).toThrow(
-			/^\[invalid_arguments\] .*runner pair <studio address> <code>.* Copy the complete command from studio/
-		);
+		// cli.ts picks its language from LANG at load time, so the hint is expected in that same language.
+		const hint = translate(localeFromEnv(process.env), 'cli.runner.usage.hint');
+		expect(() => parseCliArgs(argv)).toThrow(/^\[invalid_arguments\] .*kabai-studio runner pair /);
+		expect(() => parseCliArgs(argv)).toThrow(hint);
 	});
 });
 

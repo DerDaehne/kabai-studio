@@ -3,6 +3,11 @@ import type { Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { addComment, addTask, createProject } from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import {
+	disconnectRunner,
+	issuePairingCode,
+	pairRunner
+} from '../../src/lib/server/domain/runners.ts';
 import { createProfile } from '../../src/lib/server/domain/runs.ts';
 import { axeExceptions } from './axe.exceptions.ts';
 import { expect, open, queueRun, test } from './fixtures.ts';
@@ -162,5 +167,19 @@ test.describe('WCAG 2.1 A/AA, light/dark × phone/desktop', () => {
 		await open(page, '/settings/profiles');
 
 		await checkEveryCombination(page, 'settings-profiles');
+	});
+
+	test('settings/runners with the connect dialog open', async ({ page, db }) => {
+		const machine = pairRunner(db, { code: issuePairingCode().code, name: 'Axe gate machine' });
+		try {
+			await open(page, '/settings/runners');
+			await checkEveryCombination(page, 'settings-runners');
+
+			await page.getByRole('button', { name: 'Rechner verbinden' }).click();
+			await expect(page.getByRole('textbox', { name: 'Befehl' })).toBeFocused();
+			await checkEveryCombination(page, 'settings-runners-connect');
+		} finally {
+			disconnectRunner(db, machine.id);
+		}
 	});
 });

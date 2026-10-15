@@ -118,25 +118,34 @@ agents (role prompts, MCP tool descriptions, agent error codes) stay English and
 
 Deviations only with a new ADR:
 
-- **One package, one process:** SvelteKit + `adapter-node`; orchestrator and runner
-  are server modules under `src/lib/server/`, started from the `init` hook in
-  `src/hooks.server.ts`.
+- **One package; the server is one process and the only database writer:** SvelteKit +
+  `adapter-node`; orchestrator and runner are server modules under `src/lib/server/`,
+  started from the `init` hook in `src/hooks.server.ts`. The same binary has a runner
+  mode (`kabai-studio runner`) for an owner's machine, with no database and no
+  listening port.
 - **Own SQLite database:** one file, WAL. No ORM — plain SQL + a small migration
   runner (`migrations/NNN_name.sql`). Hard invariants as constraints, **workflow
   rules in the domain layer** (`src/lib/server/domain/`), which is the **only write
   path** for UI and MCP. Events go through an in-process bus (`EventEmitter`) and
   reach the browser via SSE.
-- **Agents:** `acp` executor (existing coding agents via the Agent Client Protocol)
-  and `builtin` executor (own tool loop with the Vercel AI SDK). Agents reach studio
-  data **only** through the studio MCP endpoint with a run token — never directly
-  via the database.
-- **The PWA is the only client**; agents never run in the client.
-- **Isolation:** one git worktree per ticket + approvals for shell/network.
+- **Agents:** `builtin` executor (own tool loop with the Vercel AI SDK) in the server
+  process; `acp` executor for coding agents (existing agents via the Agent Client
+  Protocol), which run **only** in a paired `kabai-studio runner`, also on the server's
+  own machine. Agents reach studio data **only** through the studio MCP endpoint with a
+  run token — never directly via the database.
+- **The PWA is the only user interface; agents never run in the browser.**
+- **Runner:** connects outbound to studio, pairs by one-time code, and enforces a local
+  floor (`runner.json`) that the server cannot override; the server learns only its keys
+  and slots. The server never installs anything on a runner.
+- **Isolation:** one git worktree per ticket + approvals for shell/network, on the server
+  and on runners.
 - **Tools = MCP servers.**
 - **Secrets:** entered in the UI, stored AES-256-GCM encrypted in the database (key
   `secret.key` in the data directory or `STUDIO_SECRET_KEY`); never sent back to the
   browser, never put into prompts, masked in logs and run events.
-- **Auth:** one owner account, passkey + password (scrypt via `node:crypto`).
+- **Auth:** one owner account, passkey + password (scrypt via `node:crypto`). A runner
+  holds a credential of its own; the server keeps only its SHA-256, accepts it only
+  without a browser `Origin` and over TLS (loopback excepted), and "disconnect" revokes it.
 - **Delivery:** published on GitHub only — a container image on GHCR and single
   binaries attached to GitHub releases; no npm package. One command on the host, no
   required configuration; setup through the onboarding assistant instead of a

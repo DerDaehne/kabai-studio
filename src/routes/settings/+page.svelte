@@ -27,6 +27,12 @@
 			>
 		</a>
 	</li>
+	<li>
+		<a href="/settings/runners">
+			<span class="label">{t('settings.runners.label')}</span>
+			<span class="desc">{t('settings.runners.description')}</span>
+		</a>
+	</li>
 </ul>
 
 <section class="backup" aria-labelledby="backup-title">

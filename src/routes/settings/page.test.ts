@@ -20,14 +20,14 @@ const ok: BackupStatus = {
 const page = (backup: BackupStatus) =>
 	render(Page, { props: { data: { backup, retention, user: { name: 'owner' } } } as any }).body;
 
-it('shows an overview that links agent profiles and secrets and no pages that do not exist yet', () => {
+it('shows an overview that links agent profiles, secrets and machines and no pages that do not exist yet', () => {
 	const body = page(ok);
 	expect(body).toContain('Einstellungen');
 
 	const hrefs = [...body.matchAll(/href="(\/[^"]+)"/g)].map((m) => m[1]); // own pages only
-	expect(hrefs).toEqual(['/settings/profiles', '/settings/secrets']); // no dead links
+	expect(hrefs).toEqual(['/settings/profiles', '/settings/secrets', '/settings/runners']); // no dead links
 
-	for (const label of ['Agent-Profile', 'Secrets'])
+	for (const label of ['Agent-Profile', 'Secrets', 'Rechner'])
 		// one explaining sentence per entry
 		expect(body).toMatch(
 			new RegExp(`${label}<\/span>\\s*<span class="desc[^"]*">[^<]{10,}<\/span>`)

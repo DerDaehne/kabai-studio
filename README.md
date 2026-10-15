@@ -18,7 +18,7 @@ its own database — no compatibility with kabai required.
 ## Architecture (short)
 
 - One SvelteKit app (TypeScript, Svelte 5, `adapter-node`) = web server +
-  orchestrator + runner in a single process.
+  orchestrator + runner in a single process, the only database writer.
 - Own SQLite database (single file, WAL) via `node:sqlite`, stored in the OS-conventional
   per-user data directory (`$XDG_DATA_HOME` or `~/.local/share/kabai-studio` on Linux,
   `~/Library/Application Support/kabai-studio` on macOS; override with `STUDIO_DATA_DIR`);
@@ -30,11 +30,14 @@ its own database — no compatibility with kabai required.
 - Backups: daily and before every migration into `<data>/backups/studio-YYYYMMDD-HHMM.db`
   (UTC); 7 daily + 4 weekly are kept. Status under Settings. Backups hold secrets
   only encrypted — `secret.key` is not included.
-- PWA as the only client (Linux, macOS, mobile) — agents never run in the client.
-- Agents run hybrid: coding agents (opencode, Claude Code, Codex, …) via the
-  [Agent Client Protocol](https://agentclientprotocol.com), lightweight tasks via
-  a built-in tool loop (Vercel AI SDK). Agents reach studio data through a
-  built-in MCP endpoint with a per-run token.
+- PWA as the only user interface (Linux, macOS, mobile) — agents never run in the browser.
+- Agents run hybrid: lightweight tasks via a built-in tool loop (Vercel AI SDK) in the
+  server process; coding agents (opencode, Claude Code, Codex, …) via the
+  [Agent Client Protocol](https://agentclientprotocol.com), only on a paired machine
+  (Settings → Machines, `kabai-studio runner pair <url> <code>`), also when it is the
+  server's own. The runner connects outbound, has no database and no listening port,
+  and enforces a local floor (`runner.json`) the server cannot override. Agents reach
+  studio data through a built-in MCP endpoint with a per-run token.
 - Code projects: one git worktree per ticket, risky actions need approval.
 
 ## Development
@@ -67,6 +70,7 @@ node server.ts service status       # one line: running or not, and the next ste
 node server.ts service uninstall
 node server.ts reset-password       # same as npm run reset-password
 node server.ts restore <backup-file>   # same as npm run restore --
+node server.ts runner pair <url> <code> [--name <name>]   # pair this machine as a runner; copy the command from Settings → Machines
 node server.ts --version
 ```
 
