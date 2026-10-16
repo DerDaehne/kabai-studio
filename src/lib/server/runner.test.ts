@@ -24,6 +24,7 @@ import { finishStep } from './domain/steps';
 import { splitLead } from '../markdown';
 import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
+import { assemblePrompt } from './agents/prompt';
 import { recoveryHint, type Stall } from './agents/loop-guard';
 import type { Executor, ExecutorFacts, RunContext } from './executors/contract';
 import { limits, startRunner } from './runner';
@@ -1282,6 +1283,116 @@ describe('resuming after the human answers', () => {
 		expect(s.state(followUp)).toBe('running');
 		expect(fake.call(followUp).run).toMatchObject({ ticketId, profile: { id: s.local } });
 		expect(columnOf()).toBe(inProgress);
+	});
+});
+
+describe('collecting the answer of a run that resumes after a question', () => {
+	/** A run that asked and was answered, and the resumed run the runner starts once the undo window has passed. */
+	async function resumedAfterAnswer(profile: 'local' | 'cloud') {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const asking = s.queue(s[profile], s.ticketId);
+		await flush();
+		const { run, done } = fake.call(asking);
+		const questionId = requestHuman(s.db, { kind: 'agent', runId: asking }, run.ticketId, {
+			question: 'Export all columns or only id and title?',
+			options: [{ label: 'All' }, { label: 'Only id and title' }]
+		}).id;
+		done();
+		await flush();
+		answerQuestion(s.db, user, questionId, { option: 2 });
+		vi.advanceTimersByTime(10_000);
+		await flush();
+		const collected = () =>
+			s.db.prepare('SELECT collected_at FROM questions WHERE id = ?').get(questionId)!
+				.collected_at as string | null;
+		const answerComments = () =>
+			(
+				s.db.prepare("SELECT count(*) AS n FROM comments WHERE body LIKE 'Antwort:%'").get() as {
+					n: number;
+				}
+			).n;
+		const resumeAgain = async () => {
+			const again = runs.createRun(s.db, user, {
+				ticketId: run.ticketId,
+				profileId: s[profile],
+				resumedFromRunId: asking
+			}).id;
+			await flush();
+			return again;
+		};
+		return { s, fake, asking, resumed: lastRunId(s), collected, answerComments, resumeAgain };
+	}
+
+	it.each(['local', 'cloud'] as const)(
+		'leaves the answer uncollected when a %s resume fails before its first sign of life, so the next resume still shows it',
+		async (profile) => {
+			const w = await resumedAfterAnswer(profile);
+			const { io } = w.fake.call(w.resumed);
+			io.emit({ type: 'log', payload: { kind: 'prompt' } });
+			expect(w.collected()).toBeNull();
+
+			w.fake.call(w.resumed).fail(new Error('connection refused'));
+			await flush();
+			expect(w.s.state(w.resumed)).toBe('failed');
+			expect(w.collected()).toBeNull();
+			expect(w.answerComments()).toBe(0);
+
+			const next = await w.resumeAgain();
+			expect(
+				assemblePrompt(w.s.db, {
+					id: next,
+					ticketId: w.s.ticketId,
+					profile: runs.getProfile(w.s.db, w.s[profile])
+				}).user
+			).toContain('Answer: 2. Only id and title');
+		}
+	);
+
+	it.each(['local', 'cloud'] as const)(
+		'collects the answer exactly once, with the first event other than a log of a %s resume',
+		async (profile) => {
+			const w = await resumedAfterAnswer(profile);
+			const { io } = w.fake.call(w.resumed);
+
+			io.emit({ type: 'log', payload: { kind: 'prompt' } });
+			expect(w.collected()).toBeNull();
+			io.emit({ type: 'message', payload: { step: 1, text: 'Exporting.' } });
+			expect(w.collected()).not.toBeNull();
+			io.emit({ type: 'message', key: 'second', payload: { step: 2, text: 'Still exporting.' } });
+			io.phase({ name: 'writing', elapsedMs: 5 });
+
+			expect(w.answerComments()).toBe(1);
+		}
+	);
+
+	it.each(['local', 'cloud'] as const)(
+		'collects the answer with the first phase of a %s resume other than loading the model',
+		async (profile) => {
+			const w = await resumedAfterAnswer(profile);
+			const { io } = w.fake.call(w.resumed);
+
+			io.phase({ name: 'model_loading', elapsedMs: 5 });
+			expect(w.collected()).toBeNull();
+			io.phase({ name: 'thinking', elapsedMs: 9 });
+
+			expect(w.collected()).not.toBeNull();
+			expect(w.answerComments()).toBe(1);
+		}
+	);
+
+	it('collects nothing for a run that does not resume an answered question', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		start(s.db, { builtin: fake.executor });
+		const plain = s.queue(s.local);
+		await flush();
+
+		fake.call(plain).io.emit({ type: 'message', payload: { step: 1, text: 'Working.' } });
+
+		expect(s.db.prepare('SELECT count(*) AS n FROM comments').get()).toEqual({ n: 0 });
 	});
 });
 

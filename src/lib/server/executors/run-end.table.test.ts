@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { interventionOf, type Stall } from '../agents/loop-guard';
 import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
-import { answerQuestion } from '../domain/questions';
+import { answerQuestion, requestHuman } from '../domain/questions';
 import * as runs from '../domain/runs';
+import { finishStep, type StepResult } from '../domain/steps';
 import { subscribe } from '../events';
 import { startRunner } from '../runner';
 import { builtinExecutor } from './builtin';
+import type { Executor, ExecutorFacts, ExecutorIo, RunContext } from './contract';
 import { call, fakeProvider, type Reply } from './fake-model';
 
 const user: Actor = { kind: 'user' };
@@ -30,12 +33,44 @@ type Scenario = {
 	name: string;
 	profile?: Partial<runs.Profile>;
 	column?: string;
+	/** What the fake model sends to the real builtin executor. */
 	replies: (park: () => void) => Reply[];
+	/** What an executor that only reports facts does for the same scenario: the domain effects of its tools, then its facts. */
+	facts: (executor: FakeRun) => ExecutorFacts;
+	/** How many runs of the scenario's chain execute; later ones wait. */
+	executions?: number;
 	/** The run to observe: the first one, the fresh run it handed off to, or the run that resumes it once the human answered. */
 	observe?: 'first' | 'fresh' | 'resumed';
 	expected: Row;
 };
 
+type FakeRun = {
+	db: ReturnType<typeof setup>['db'];
+	run: RunContext;
+	io: ExecutorIo;
+	/** 0 for the first run of the scenario, 1 for the run that follows it. */
+	nth: number;
+	park: () => void;
+};
+const agentOf = (run: RunContext): Actor => ({ kind: 'agent', runId: run.id });
+const toolResult = ({ io }: FakeRun, tool: string) =>
+	io.emit({ type: 'tool_result', payload: { tool, isError: false } });
+const stepLog = ({ io }: FakeRun, step: number) =>
+	io.emit({ type: 'log', payload: { kind: 'step', step } });
+function finish(executor: FakeRun, result: StepResult, summary: string) {
+	finishStep(executor.db, agentOf(executor.run), executor.run.ticketId, { result, summary });
+	toolResult(executor, 'finish_step');
+}
+function ask(executor: FakeRun, question: string, options: { label: string }[] = []) {
+	requestHuman(executor.db, agentOf(executor.run), executor.run.ticketId, { question, options });
+	toolResult(executor, 'request_human');
+}
+const stall: Stall = {
+	kind: 'length_stop',
+	cause: 'length_stop',
+	reason: 'Step 3 hit the output limit before it finished.',
+	stepTokens: 1
+};
 const cutOff = (): Reply => ({
 	chunks: [{ reasoning: 'Let me reconsider.\n' }],
 	finish: 'length'
@@ -48,6 +83,10 @@ const SCENARIOS: Scenario[] = [
 		replies: () => [
 			{ chunks: [call('c1', 'finish_step', { result: 'done', summary: 'Plan: one writer.' })] }
 		],
+		facts: (x) => {
+			finish(x, 'done', 'Plan: one writer.');
+			return { ending: 'end_turn' };
+		},
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -66,6 +105,10 @@ const SCENARIOS: Scenario[] = [
 	{
 		name: 'S2 request_human pauses without a follow-up run',
 		replies: () => [{ chunks: [call('c1', 'request_human', { question: 'Which columns?' })] }],
+		facts: (x) => {
+			ask(x, 'Which columns?');
+			return { ending: 'end_turn' };
+		},
 		expected: {
 			state: 'paused',
 			errorCode: null,
@@ -87,6 +130,10 @@ const SCENARIOS: Scenario[] = [
 		replies: () => [
 			{ chunks: [call('c1', 'finish_step', { result: 'blocked', summary: 'Which format?' })] }
 		],
+		facts: (x) => {
+			finish(x, 'blocked', 'Which format?');
+			return { ending: 'end_turn' };
+		},
 		expected: {
 			state: 'paused',
 			errorCode: null,
@@ -109,6 +156,13 @@ const SCENARIOS: Scenario[] = [
 			{ chunks: [call('c1', 'add_comment', { text: 'one' })] },
 			{ chunks: [call('c2', 'add_comment', { text: 'two' })] }
 		],
+		facts: (x) => {
+			stepLog(x, 1);
+			toolResult(x, 'add_comment');
+			stepLog(x, 2);
+			toolResult(x, 'add_comment');
+			return { ending: 'turn_limit' };
+		},
 		expected: {
 			state: 'failed',
 			errorCode: 'step_limit',
@@ -132,6 +186,13 @@ const SCENARIOS: Scenario[] = [
 			{ chunks: [call('c1', 'add_comment', { text: 'one' })] },
 			{ chunks: [call('c2', 'finish_step', { result: 'done', summary: 'Planned' })] }
 		],
+		facts: (x) => {
+			stepLog(x, 1);
+			toolResult(x, 'add_comment');
+			stepLog(x, 2);
+			finish(x, 'done', 'Planned');
+			return { ending: 'turn_limit' };
+		},
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -158,6 +219,10 @@ const SCENARIOS: Scenario[] = [
 				]
 			}
 		],
+		facts: (x) => {
+			x.park();
+			return { ending: 'parked', lastMessage: 'Commenting now.' };
+		},
 		expected: {
 			state: 'paused',
 			errorCode: null,
@@ -173,6 +238,10 @@ const SCENARIOS: Scenario[] = [
 	{
 		name: 'S7 parked in the last step without a tool call succeeds without a follow-up run',
 		replies: (park) => [{ chunks: [{ pause: park }, { text: 'Nothing left to do.' }] }],
+		facts: (x) => {
+			x.park();
+			return { ending: 'end_turn', lastMessage: 'Nothing left to do.' };
+		},
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -192,6 +261,11 @@ const SCENARIOS: Scenario[] = [
 				chunks: [{ pause: park }, call('c1', 'finish_step', { result: 'done', summary: 'Planned' })]
 			}
 		],
+		facts: (x) => {
+			x.park();
+			finish(x, 'done', 'Planned');
+			return { ending: 'parked' };
+		},
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -210,6 +284,7 @@ const SCENARIOS: Scenario[] = [
 	{
 		name: 'S9 stalled with a fresh run left hands off to a recovery run',
 		replies: () => [cutOff(), cutOff(), cutOff()],
+		facts: () => ({ ending: 'stalled', stall }),
 		expected: {
 			state: 'paused',
 			errorCode: null,
@@ -229,6 +304,13 @@ const SCENARIOS: Scenario[] = [
 		name: 'S10 stalled with the chain used up asks the human',
 		observe: 'fresh',
 		replies: () => Array.from({ length: 6 }, cutOff),
+		facts: ({ io, nth }) => {
+			if (nth === 1)
+				for (const attempt of [1, 2])
+					io.emit({ type: 'intervention', payload: interventionOf(stall, attempt, 2) });
+			return { ending: 'stalled', stall };
+		},
+		executions: 2,
 		expected: {
 			state: 'paused',
 			errorCode: null,
@@ -251,6 +333,10 @@ const SCENARIOS: Scenario[] = [
 			{ chunks: [call('c1', 'add_comment', { text: 'Header row done.' })] },
 			{ chunks: [] }
 		],
+		facts: (x) => {
+			toolResult(x, 'add_comment');
+			return { ending: 'end_turn' };
+		},
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -280,6 +366,18 @@ const SCENARIOS: Scenario[] = [
 			},
 			{ chunks: [{ text: 'Exporting id and title.' }] }
 		],
+		facts: (x) => {
+			if (x.nth === 0) {
+				ask(x, 'Which columns go into the export?', [
+					{ label: 'All' },
+					{ label: 'Only id and title' }
+				]);
+				return { ending: 'end_turn' };
+			}
+			x.io.emit({ type: 'message', payload: { step: 1, text: 'Exporting id and title.' } });
+			return { ending: 'end_turn', lastMessage: 'Exporting id and title.' };
+		},
+		executions: 2,
 		expected: {
 			state: 'succeeded',
 			errorCode: null,
@@ -323,8 +421,35 @@ function setup(profile: Partial<runs.Profile>) {
 const ended = (state: () => unknown) =>
 	vi.waitFor(() => expect(state()).not.toMatch(/^(queued|running)$/), { timeout: 3000 });
 
-/** Runs one scenario through the real builtin executor and reads the row off the database and the bus. */
-async function driveBuiltin(scenario: Scenario): Promise<Row> {
+type Environment = {
+	db: ReturnType<typeof setup>['db'];
+	ticketId: number;
+	/** Asks the run to park for the quota. */
+	parkRun: (runId: number) => void;
+	firstRun: () => number;
+};
+type ExecutorFor = (scenario: Scenario, env: Environment) => Executor;
+
+/** The real builtin executor on a fake model: it works the tool loop and reports its facts. */
+const builtinDriver: ExecutorFor = (scenario, env) => {
+	const provider = fakeProvider(...scenario.replies(() => env.parkRun(env.firstRun())));
+	return builtinExecutor(env.db, { fetch: provider.fetch });
+};
+
+/** An executor that does what the scenario's tools do in the domain and reports only facts. */
+const factsOnlyDriver: ExecutorFor = (scenario, env) => {
+	let executions = 0;
+	return {
+		async execute(run, io) {
+			const nth = executions++;
+			if (nth >= (scenario.executions ?? 1)) return new Promise<ExecutorFacts>(() => {});
+			return scenario.facts({ db: env.db, run, io, nth, park: () => env.parkRun(run.id) });
+		}
+	};
+};
+
+/** Runs one scenario with the given executor and reads the row off the database and the bus. */
+async function drive(scenario: Scenario, executorFor: ExecutorFor): Promise<Row> {
 	const s = setup(scenario.profile ?? {});
 	const { db } = s;
 	const busEvents: { runId: number; eventType: string; key?: string; actorKind: string }[] = [];
@@ -344,14 +469,16 @@ async function driveBuiltin(scenario: Scenario): Promise<Row> {
 			s.columns[scenario.column],
 			s.ticketId
 		);
-	let park = () => {};
-	const provider = fakeProvider(...scenario.replies(() => park()));
-	const runner = startRunner(db, {
-		builtin: builtinExecutor(db, { fetch: provider.fetch })
-	});
+	let first = 0;
+	const env: Environment = {
+		db,
+		ticketId: s.ticketId,
+		parkRun: (runId) => runner.park(runId, 'quota', '2099-01-01T00:00:00Z'),
+		firstRun: () => first
+	};
+	const runner = startRunner(db, { builtin: executorFor(scenario, env) });
 	cleanups.push(runner.stop);
-	const first = runs.createRun(db, user, { ticketId: s.ticketId, profileId: s.profileId }).id;
-	park = () => runner.park(first, 'quota', '2099-01-01T00:00:00Z');
+	first = runs.createRun(db, user, { ticketId: s.ticketId, profileId: s.profileId }).id;
 	const state = (id: number) =>
 		(db.prepare('SELECT state FROM runs WHERE id = ?').get(id) as { state: string }).state;
 	await ended(() => state(first));
@@ -440,12 +567,14 @@ async function rowOf(
 }
 
 describe('what the end of a run leaves behind', () => {
-	describe('with the builtin executor', () => {
+	describe.each([
+		['the builtin executor', builtinDriver],
+		['an executor that reports only facts', factsOnlyDriver]
+	] as const)('with %s', (_driver, executorFor) => {
 		it.each(SCENARIOS.map((scenario) => [scenario.name, scenario] as const))(
 			'%s',
 			async (_name, scenario) => {
-				const row = await driveBuiltin(scenario);
-				expect(row).toEqual(scenario.expected);
+				expect(await drive(scenario, executorFor)).toEqual(scenario.expected);
 			}
 		);
 	});
