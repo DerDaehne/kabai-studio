@@ -5,7 +5,15 @@ import * as board from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
 import { requestHuman } from '../../src/lib/server/domain/questions.ts';
 import { createProfile, createRun, finishRun, startRun } from '../../src/lib/server/domain/runs.ts';
-import { expect, open, queueRun, sidewaysScrollers, test, type SeededTicket } from './fixtures.ts';
+import {
+	expect,
+	intoWorkStep,
+	open,
+	queueRun,
+	sidewaysScrollers,
+	test,
+	type SeededTicket
+} from './fixtures.ts';
 import { pageOverflowX, WIDTHS } from './widths.ts';
 
 const HUMAN: Actor = { kind: 'user' };
@@ -19,6 +27,7 @@ function asked(db: DatabaseSync, ticket: SeededTicket, question: string, optionL
 		base_url: 'http://127.0.0.1:1',
 		model: 'fake'
 	}).id;
+	intoWorkStep(db, ticket.id);
 	const run = createRun(db, HUMAN, { ticketId: ticket.id, profileId: profile }).id;
 	startRun(db, HUMAN, run);
 	requestHuman(db, { kind: 'agent', runId: run }, ticket.id, {
@@ -37,6 +46,7 @@ function failedRun(db: DatabaseSync, ticketId: number) {
 		base_url: 'http://127.0.0.1:1',
 		model: 'fake'
 	}).id;
+	intoWorkStep(db, ticketId);
 	const run = createRun(db, HUMAN, { ticketId, profileId: profile }).id;
 	startRun(db, HUMAN, run);
 	finishRun(db, HUMAN, run, {
@@ -119,6 +129,7 @@ test.describe('below 1300 px', () => {
 		const { profileId } = db
 			.prepare('SELECT agent_profile_id AS profileId FROM runs WHERE id = ?')
 			.get(firstRun) as { profileId: number };
+		intoWorkStep(db, second.id);
 		createRun(db, HUMAN, { ticketId: second.id, profileId });
 		expect((await page.request.post(`/api/runs/${firstRun}/pause`)).ok()).toBe(true);
 		const secondRun = await runWorking(db, second.id);
@@ -266,8 +277,9 @@ test('on a phone one decision stands alone: tap to answer, undo from the notice,
 	await expect(decision(page)).toContainText('Phone first?');
 	await page.getByRole('button', { name: /Go/ }).click();
 	await expect(decision(page)).toContainText('Phone second?');
-	const notice = page.locator('.toast', { hasText: 'Antwort gesendet' });
+	const notice = page.locator('.rk-toast', { hasText: 'Antwort gesendet' });
 	await expect(notice).toBeVisible();
+	await expect(page.locator('.rk-toast')).toHaveCount(1);
 	expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
 	expect(await sidewaysScrollers(page)).toEqual([]);
 

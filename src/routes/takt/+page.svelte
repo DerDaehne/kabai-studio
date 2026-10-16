@@ -255,7 +255,7 @@
 							>
 								<Kbd key={String(index + 1)} />
 								<span class="label">{plainText(option.label)}</span>
-								{#if option.effect}<span class="effect">{option.effect}</span>{/if}
+								{#if option.effect}<span class="effect">{plainText(option.effect)}</span>{/if}
 							</button>
 						{/each}
 						{#if ownOpen}
