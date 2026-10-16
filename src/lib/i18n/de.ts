@@ -29,12 +29,12 @@ export const de: Catalogue = {
 	'layout.attribution': 'von {author} · Freie Software, {licence}',
 
 	'cli.usage':
-		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|reset-password|restore <datei>|--version]',
+		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|runner service <install|uninstall|status>|reset-password|restore <datei>|--version]',
 	'cli.unknownCommand': 'Unbekanntes Unterkommando „{command}“. {usage}',
 	'cli.unknownServiceCommand':
 		'Unbekanntes service-Unterkommando „{action}“. Verfügbar: install, uninstall, status.',
 	'cli.runner.usage':
-		'Verwendung: kabai-studio runner pair <Studio-Adresse> <Code> [--name <name>] oder kabai-studio runner start',
+		'Verwendung: kabai-studio runner pair <Studio-Adresse> <Code> [--name <name>], kabai-studio runner start oder kabai-studio runner service <install|uninstall|status> [--print]',
 	'cli.runner.usage.hint':
 		'Den vollständigen Befehl aus Studio kopieren: Einstellungen → Rechner → „Rechner verbinden“.',
 	'cli.runner.invalidUrl': '„{url}“ ist keine Studio-Adresse.',
@@ -112,6 +112,31 @@ export const de: Catalogue = {
 	'cli.runner.start.refused.other': 'Studio unter {origin} hat die Verbindung abgewiesen.',
 	'cli.runner.start.refused.other.hint':
 		'Adresse von Studio und einen vorgeschalteten Proxy prüfen, dann „kabai-studio runner start“ erneut ausführen.',
+	'cli.runner.service.unavailable.systemd':
+		'systemd ist auf diesem Rechner nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
+	'cli.runner.service.unavailable.launchd':
+		'launchd ist auf diesem Rechner nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.',
+	'cli.runner.service.noStatus': 'Kein Status abrufbar.',
+	'cli.runner.service.fs.write':
+		'{path} lässt sich nicht schreiben ({code}). Rechte im Ordner prüfen.',
+	'cli.runner.service.fs.remove':
+		'{path} lässt sich nicht entfernen ({code}). Rechte im Ordner prüfen.',
+	'cli.runner.service.installed.systemd':
+		'Runner-Dienst installiert: {path}. Jetzt starten mit „systemctl --user start kabai-studio-runner“. Für Betrieb auch ohne aktive Anmeldung: „loginctl enable-linger $(whoami)“.',
+	'cli.runner.service.installed.launchd':
+		'Runner-Agent installiert und geladen: {path}. Er verbindet jetzt und bei jeder Anmeldung.',
+	'cli.runner.service.none.systemd': 'Kein Runner-Dienst installiert, nichts zu tun.',
+	'cli.runner.service.none.launchd': 'Kein Runner-Agent installiert, nichts zu tun.',
+	'cli.runner.service.removed.systemd': 'Runner-Dienst entfernt: {path}.',
+	'cli.runner.service.removed.launchd': 'Runner-Agent entfernt: {path}.',
+	'cli.runner.service.running.systemd': 'Der Runner läuft (systemd-User-Dienst aktiv).',
+	'cli.runner.service.running.launchd': 'Der Runner läuft (launchd-Agent geladen).',
+	'cli.runner.service.stopped.systemd':
+		'Der Runner läuft nicht. Log ansehen mit „journalctl --user -u kabai-studio-runner“, oder „kabai-studio runner service install“ erneut ausführen.',
+	'cli.runner.service.stopped.launchd':
+		'Der Runner läuft nicht (oder ist nicht geladen). „kabai-studio runner service install“ erneut ausführen.',
+	'cli.runner.service.unsupported':
+		'runner service wird unter {platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'Kein Agent arbeitet.',

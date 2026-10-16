@@ -300,3 +300,16 @@ const bodyCode = (body: string) => {
 		return '';
 	}
 };
+
+/** The checks `runner start` makes before it connects, for callers that must not write anything unless they would pass. */
+export function checkPairing(
+	ctx: Pick<StartContext, 'env' | 'platform' | 'locale'>
+): PairResult | undefined {
+	try {
+		prepare(ctx as StartContext, (key, params) => translate(ctx.locale, key, params));
+		return undefined;
+	} catch (err) {
+		if (!(err instanceof DomainError)) throw err;
+		return { exitCode: 1, message: formatError(err) };
+	}
+}

@@ -22,6 +22,7 @@ import {
 	parseCliArgs,
 	realRunner,
 	runServiceCommand,
+	runnerServiceProfile,
 	type Command
 } from './src/lib/server/cli.ts';
 import { pairRunnerCommand } from './src/lib/server/runner-pair.ts';
@@ -118,6 +119,31 @@ function runService(command: Extract<Command, { kind: 'service' }>): void {
 	finish(result.exitCode, result.message);
 }
 
+/** Same unit as `service`, but running `runner start`; refuses to install a service that would only fail for lack of a pairing. */
+async function runRunnerService(
+	command: Extract<Command, { kind: 'runner-service' }>
+): Promise<void> {
+	const locale = localeFromEnv(process.env);
+	const { checkPairing } = await import('./src/lib/server/runner-start.ts');
+	const profile = runnerServiceProfile(locale, () =>
+		checkPairing({ env: process.env, platform: process.platform, locale })
+	);
+	const result = runServiceCommand(
+		command.action,
+		command.print,
+		process.platform,
+		{
+			env: process.env,
+			execPath: process.execPath,
+			entryPath: process.argv[1] ?? '',
+			dataDir: ''
+		},
+		realRunner,
+		profile
+	);
+	finish(result.exitCode, result.message);
+}
+
 async function runRunnerPair(command: Extract<Command, { kind: 'runner-pair' }>): Promise<void> {
 	const result = await pairRunnerCommand(command, {
 		env: process.env,
@@ -167,6 +193,7 @@ async function main(): Promise<void> {
 	if (command.kind === 'help') return void console.log(HELP);
 	if (command.kind === 'service') return runService(command);
 	if (command.kind === 'runner-pair') return runRunnerPair(command);
+	if (command.kind === 'runner-service') return runRunnerService(command);
 	if (command.kind === 'runner-start') return runRunnerStart();
 	if (command.kind === 'reset-password')
 		return runLegacyScript('./src/lib/server/reset-password.ts', []);

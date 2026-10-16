@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { localeFromEnv, translate } from '../i18n/index.ts';
+import { localeFromEnv, translate, type Locale } from '../i18n/index.ts';
 import { DomainError, formatError } from './domain/error.ts';
 
 export class CliUsageError extends Error {}
@@ -20,6 +20,7 @@ export type Command =
 	| { kind: 'restore'; file?: string }
 	| { kind: 'runner-pair'; url: string; code: string; name?: string }
 	| { kind: 'runner-start' }
+	| { kind: 'runner-service'; action: ServiceAction; print: boolean }
 	| { kind: 'version' }
 	| { kind: 'help' };
 
@@ -54,7 +55,7 @@ function parseServiceArgs(rest: string[]): Command {
 	return { kind: 'service', action: action as ServiceAction, print: values.print === true };
 }
 
-/** `runner pair <url> <code> [--name <name>]` or `runner start`; anything else is a usage error with a code and the way out. */
+/** `runner pair <url> <code> [--name <name>]`, `runner start` or `runner service <action> [--print]`; anything else is a usage error with a code and the way out. */
 function parseRunnerArgs(rest: string[]): Command {
 	const usage = () =>
 		new CliUsageError(
@@ -70,17 +71,23 @@ function parseRunnerArgs(rest: string[]): Command {
 	try {
 		parsed = parseArgs({
 			args: rest,
-			options: { name: { type: 'string' } },
+			options: { name: { type: 'string' }, print: { type: 'boolean', default: false } },
 			allowPositionals: true
 		});
 	} catch {
 		throw usage(); // an unknown option or --name without a value
 	}
 	const [action, url, code, ...extra] = parsed.positionals;
-	if (action === 'start' && !url && !parsed.values.name) return { kind: 'runner-start' };
-	if (action !== 'pair' || !url || !code || extra.length) throw usage();
-	return { kind: 'runner-pair', url, code, name: parsed.values.name };
+	const { name, print } = parsed.values;
+	if (action === 'start' && !url && !name && !print) return { kind: 'runner-start' };
+	if (action === 'service' && isServiceAction(url) && !code && !name)
+		return { kind: 'runner-service', action: url, print: print === true };
+	if (print || action !== 'pair' || !url || !code || extra.length) throw usage();
+	return { kind: 'runner-pair', url, code, name };
 }
+
+const isServiceAction = (value: string | undefined): value is ServiceAction =>
+	SERVICE_ACTIONS.has(value ?? '');
 
 /**
  * The first free port at or after `startPort` on `host`. A pre-start probe, not a hold: another
@@ -136,16 +143,26 @@ export const realRunner: CommandRunner = (cmd, args) => {
 const SYSTEMD_LABEL = 'kabai-studio';
 const LAUNCHD_LABEL = 'studio.kabai.kabai-studio';
 
-export const systemdUnitPath = (env: Record<string, string | undefined>): string =>
+const RUNNER_SYSTEMD_LABEL = 'kabai-studio-runner';
+const RUNNER_LAUNCHD_LABEL = 'studio.kabai.kabai-studio-runner';
+/** A revoked machine exits with 1; the pause keeps it from hammering studio and lets it reconnect after a new pairing. */
+const RUNNER_RESTART_SECONDS = 30;
+
+export const systemdUnitPath = (
+	env: Record<string, string | undefined>,
+	label = SYSTEMD_LABEL
+): string =>
 	join(
 		env.XDG_CONFIG_HOME || join(env.HOME || '', '.config'),
 		'systemd',
 		'user',
-		'kabai-studio.service'
+		`${label}.service`
 	);
 
-export const launchdPlistPath = (env: Record<string, string | undefined>): string =>
-	join(env.HOME || '', 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
+export const launchdPlistPath = (
+	env: Record<string, string | undefined>,
+	label = LAUNCHD_LABEL
+): string => join(env.HOME || '', 'Library', 'LaunchAgents', `${label}.plist`);
 
 export function systemdUnit(ctx: ServiceContext): string {
 	return [
@@ -186,115 +203,249 @@ export function launchdPlist(ctx: ServiceContext): string {
 `;
 }
 
-const UNAVAILABLE = {
-	systemd:
-		'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
-	launchd:
-		'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.'
+type ServiceTextId =
+	| 'unavailable.systemd'
+	| 'unavailable.launchd'
+	| 'noStatus'
+	| 'fs.write'
+	| 'fs.remove'
+	| 'installed.systemd'
+	| 'installed.launchd'
+	| 'none.systemd'
+	| 'none.launchd'
+	| 'removed.systemd'
+	| 'removed.launchd'
+	| 'running.systemd'
+	| 'running.launchd'
+	| 'stopped.systemd'
+	| 'stopped.launchd'
+	| 'unsupported';
+
+type Say = (id: ServiceTextId, params?: Record<string, string>) => string;
+
+/** What differs between the studio service and the runner service; the install/uninstall/status flow is shared. */
+export type ServiceProfile = {
+	systemdLabel: string;
+	launchdLabel: string;
+	systemdUnit: (ctx: ServiceContext) => string;
+	launchdPlist: (ctx: ServiceContext) => string;
+	say: Say;
+	/** Checked after `--print` and before anything is written; a result stops the install. */
+	preflight?: () => ServiceResult | undefined;
 };
+
+const STUDIO_TEXTS: Record<ServiceTextId, string> = {
+	'unavailable.systemd':
+		'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
+	'unavailable.launchd':
+		'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.',
+	noStatus: 'Kein Status abrufbar.',
+	'fs.write': '{path} lässt sich nicht schreiben ({code}). Rechte im Verzeichnis prüfen.',
+	'fs.remove': '{path} lässt sich nicht entfernen ({code}). Rechte im Verzeichnis prüfen.',
+	'installed.systemd':
+		'systemd-User-Unit installiert: {path}. ' +
+		'Für Autostart auch ohne aktive Anmeldung: „loginctl enable-linger $(whoami)“.',
+	'installed.launchd': 'launchd-Agent installiert: {path}.',
+	'none.systemd': 'Keine systemd-User-Unit installiert — nichts zu tun.',
+	'none.launchd': 'Kein launchd-Agent installiert — nichts zu tun.',
+	'removed.systemd': 'systemd-User-Unit entfernt: {path}.',
+	'removed.launchd': 'launchd-Agent entfernt: {path}.',
+	'running.systemd': 'kabai studio läuft (systemd-User-Dienst aktiv).',
+	'running.launchd': 'kabai studio läuft (launchd-Agent geladen).',
+	'stopped.systemd':
+		'kabai studio läuft nicht. Logs ansehen: „journalctl --user -u kabai-studio“ — ' +
+		'oder „kabai-studio service install“ erneut ausführen.',
+	'stopped.launchd':
+		'kabai studio läuft nicht (oder nicht geladen). Logs: siehe StandardOutPath in der plist — ' +
+		'oder „kabai-studio service install“ erneut ausführen.',
+	unsupported:
+		'service wird unter {platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).'
+};
+
+const fill = (template: string, params: Record<string, string> = {}): string =>
+	template.replace(/\{(\w+)\}/g, (_, key: string) => params[key] ?? '');
+
+export const STUDIO_PROFILE: ServiceProfile = {
+	systemdLabel: SYSTEMD_LABEL,
+	launchdLabel: LAUNCHD_LABEL,
+	systemdUnit,
+	launchdPlist,
+	say: (id, params) => fill(STUDIO_TEXTS[id], params)
+};
+
+/** Pure like `systemdUnit`; `XDG_CONFIG_HOME` is passed on only when set, so the service reads the folder `runner pair` wrote to. */
+export function runnerSystemdUnit(ctx: ServiceContext): string {
+	const configHome = ctx.env.XDG_CONFIG_HOME;
+	return [
+		'[Unit]',
+		'Description=kabai studio runner',
+		'After=network.target',
+		'',
+		'[Service]',
+		`ExecStart=${ctx.execPath} ${ctx.entryPath} runner start`,
+		...(configHome ? [`Environment=XDG_CONFIG_HOME=${configHome}`] : []),
+		'Restart=on-failure',
+		`RestartSec=${RUNNER_RESTART_SECONDS}`,
+		'',
+		'[Install]',
+		'WantedBy=default.target',
+		''
+	].join('\n');
+}
+
+export function runnerLaunchdPlist(ctx: ServiceContext): string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>${RUNNER_LAUNCHD_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${ctx.execPath}</string>
+		<string>${ctx.entryPath}</string>
+		<string>runner</string>
+		<string>start</string>
+	</array>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+	<key>ThrottleInterval</key><integer>${RUNNER_RESTART_SECONDS}</integer>
+</dict>
+</plist>
+`;
+}
+
+export function runnerServiceProfile(
+	locale: Locale,
+	preflight: ServiceProfile['preflight']
+): ServiceProfile {
+	return {
+		systemdLabel: RUNNER_SYSTEMD_LABEL,
+		launchdLabel: RUNNER_LAUNCHD_LABEL,
+		systemdUnit: runnerSystemdUnit,
+		launchdPlist: runnerLaunchdPlist,
+		say: (id, params) => translate(locale, `cli.runner.service.${id}`, params),
+		preflight
+	};
+}
 
 /**
  * Runs an fs operation on the unit/plist file and turns a permission or disk error into the
  * same one-line exit-code-1 contract as every other CLI error, not a raw Node stack trace.
  */
-function tryFs(path: string, verb: string, fn: () => void): ServiceResult | undefined {
+function tryFs(
+	profile: ServiceProfile,
+	textId: 'fs.write' | 'fs.remove',
+	path: string,
+	fn: () => void
+): ServiceResult | undefined {
 	try {
 		fn();
 		return undefined;
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
-		return {
-			exitCode: 1,
-			message: `${path} lässt sich nicht ${verb} (${code}). Rechte im Verzeichnis prüfen.`
-		};
+		return { exitCode: 1, message: profile.say(textId, { path, code }) };
 	}
 }
 
-const writeUnitFile = (path: string, content: string): ServiceResult | undefined =>
-	tryFs(path, 'schreiben', () => {
+const writeUnitFile = (
+	profile: ServiceProfile,
+	path: string,
+	content: string
+): ServiceResult | undefined =>
+	tryFs(profile, 'fs.write', path, () => {
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, content, { mode: 0o600 });
 	});
 
-const removeUnitFile = (path: string): ServiceResult | undefined =>
-	tryFs(path, 'entfernen', () => rmSync(path, { force: true }));
+const removeUnitFile = (profile: ServiceProfile, path: string): ServiceResult | undefined =>
+	tryFs(profile, 'fs.remove', path, () => rmSync(path, { force: true }));
 
-function installSystemd(ctx: ServiceContext, print: boolean, run: CommandRunner): ServiceResult {
-	const unit = systemdUnit(ctx);
+function installSystemd(
+	ctx: ServiceContext,
+	print: boolean,
+	run: CommandRunner,
+	profile: ServiceProfile
+): ServiceResult {
+	const unit = profile.systemdUnit(ctx);
 	if (print) return { exitCode: 0, message: unit };
+	const refused = profile.preflight?.();
+	if (refused) return refused;
 	if (run('systemctl', ['--version']).status !== 0)
-		return { exitCode: 1, message: UNAVAILABLE.systemd };
-	const path = systemdUnitPath(ctx.env);
-	const writeError = writeUnitFile(path, unit);
+		return { exitCode: 1, message: profile.say('unavailable.systemd') };
+	const path = systemdUnitPath(ctx.env, profile.systemdLabel);
+	const writeError = writeUnitFile(profile, path, unit);
 	if (writeError) return writeError;
 	run('systemctl', ['--user', 'daemon-reload']);
-	run('systemctl', ['--user', 'enable', SYSTEMD_LABEL]);
-	return {
-		exitCode: 0,
-		message:
-			`systemd-User-Unit installiert: ${path}. ` +
-			`Für Autostart auch ohne aktive Anmeldung: „loginctl enable-linger $(whoami)“.`
-	};
+	run('systemctl', ['--user', 'enable', profile.systemdLabel]);
+	return { exitCode: 0, message: profile.say('installed.systemd', { path }) };
 }
 
-function uninstallSystemd(ctx: ServiceContext, run: CommandRunner): ServiceResult {
-	const path = systemdUnitPath(ctx.env);
-	if (!existsSync(path))
-		return { exitCode: 0, message: 'Keine systemd-User-Unit installiert — nichts zu tun.' };
-	run('systemctl', ['--user', 'disable', '--now', SYSTEMD_LABEL]);
-	const removeError = removeUnitFile(path);
+function uninstallSystemd(
+	ctx: ServiceContext,
+	run: CommandRunner,
+	profile: ServiceProfile
+): ServiceResult {
+	const path = systemdUnitPath(ctx.env, profile.systemdLabel);
+	if (!existsSync(path)) return { exitCode: 0, message: profile.say('none.systemd') };
+	run('systemctl', ['--user', 'disable', '--now', profile.systemdLabel]);
+	const removeError = removeUnitFile(profile, path);
 	if (removeError) return removeError;
 	run('systemctl', ['--user', 'daemon-reload']);
-	return { exitCode: 0, message: `systemd-User-Unit entfernt: ${path}.` };
+	return { exitCode: 0, message: profile.say('removed.systemd', { path }) };
 }
 
-function statusSystemd(run: CommandRunner): ServiceResult {
-	const r = run('systemctl', ['--user', 'is-active', SYSTEMD_LABEL]);
+function statusSystemd(run: CommandRunner, profile: ServiceProfile): ServiceResult {
+	const r = run('systemctl', ['--user', 'is-active', profile.systemdLabel]);
 	if (r.status === null)
-		return { exitCode: 1, message: `${UNAVAILABLE.systemd} Kein Status abrufbar.` };
-	if (r.stdout.trim() === 'active')
-		return { exitCode: 0, message: 'kabai studio läuft (systemd-User-Dienst aktiv).' };
-	return {
-		exitCode: 0,
-		message:
-			'kabai studio läuft nicht. Logs ansehen: „journalctl --user -u kabai-studio“ — ' +
-			'oder „kabai-studio service install“ erneut ausführen.'
-	};
+		return {
+			exitCode: 1,
+			message: `${profile.say('unavailable.systemd')} ${profile.say('noStatus')}`
+		};
+	if (r.stdout.trim() === 'active') return { exitCode: 0, message: profile.say('running.systemd') };
+	return { exitCode: 0, message: profile.say('stopped.systemd') };
 }
 
-function installLaunchd(ctx: ServiceContext, print: boolean, run: CommandRunner): ServiceResult {
-	const plist = launchdPlist(ctx);
+function installLaunchd(
+	ctx: ServiceContext,
+	print: boolean,
+	run: CommandRunner,
+	profile: ServiceProfile
+): ServiceResult {
+	const plist = profile.launchdPlist(ctx);
 	if (print) return { exitCode: 0, message: plist };
-	if (run('launchctl', ['list']).status !== 0) return { exitCode: 1, message: UNAVAILABLE.launchd };
-	const path = launchdPlistPath(ctx.env);
-	const writeError = writeUnitFile(path, plist);
+	const refused = profile.preflight?.();
+	if (refused) return refused;
+	if (run('launchctl', ['list']).status !== 0)
+		return { exitCode: 1, message: profile.say('unavailable.launchd') };
+	const path = launchdPlistPath(ctx.env, profile.launchdLabel);
+	const writeError = writeUnitFile(profile, path, plist);
 	if (writeError) return writeError;
 	run('launchctl', ['load', path]);
-	return { exitCode: 0, message: `launchd-Agent installiert: ${path}.` };
+	return { exitCode: 0, message: profile.say('installed.launchd', { path }) };
 }
 
-function uninstallLaunchd(ctx: ServiceContext, run: CommandRunner): ServiceResult {
-	const path = launchdPlistPath(ctx.env);
-	if (!existsSync(path))
-		return { exitCode: 0, message: 'Kein launchd-Agent installiert — nichts zu tun.' };
+function uninstallLaunchd(
+	ctx: ServiceContext,
+	run: CommandRunner,
+	profile: ServiceProfile
+): ServiceResult {
+	const path = launchdPlistPath(ctx.env, profile.launchdLabel);
+	if (!existsSync(path)) return { exitCode: 0, message: profile.say('none.launchd') };
 	run('launchctl', ['unload', path]);
-	const removeError = removeUnitFile(path);
+	const removeError = removeUnitFile(profile, path);
 	if (removeError) return removeError;
-	return { exitCode: 0, message: `launchd-Agent entfernt: ${path}.` };
+	return { exitCode: 0, message: profile.say('removed.launchd', { path }) };
 }
 
-function statusLaunchd(run: CommandRunner): ServiceResult {
-	const r = run('launchctl', ['list', LAUNCHD_LABEL]);
+function statusLaunchd(run: CommandRunner, profile: ServiceProfile): ServiceResult {
+	const r = run('launchctl', ['list', profile.launchdLabel]);
 	if (r.status === null)
-		return { exitCode: 1, message: `${UNAVAILABLE.launchd} Kein Status abrufbar.` };
-	if (r.status === 0)
-		return { exitCode: 0, message: 'kabai studio läuft (launchd-Agent geladen).' };
-	return {
-		exitCode: 0,
-		message:
-			'kabai studio läuft nicht (oder nicht geladen). Logs: siehe StandardOutPath in der plist — ' +
-			'oder „kabai-studio service install“ erneut ausführen.'
-	};
+		return {
+			exitCode: 1,
+			message: `${profile.say('unavailable.launchd')} ${profile.say('noStatus')}`
+		};
+	if (r.status === 0) return { exitCode: 0, message: profile.say('running.launchd') };
+	return { exitCode: 0, message: profile.say('stopped.launchd') };
 }
 
 /** Dispatches `service <action>` to the systemd (Linux) or launchd (macOS) implementation. */
@@ -303,17 +454,17 @@ export function runServiceCommand(
 	print: boolean,
 	platform: string,
 	ctx: ServiceContext,
-	run: CommandRunner = realRunner
+	run: CommandRunner = realRunner,
+	profile: ServiceProfile = STUDIO_PROFILE
 ): ServiceResult {
 	if (platform !== 'linux' && platform !== 'darwin')
-		return {
-			exitCode: 1,
-			message: `service wird unter ${platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).`
-		};
+		return { exitCode: 1, message: profile.say('unsupported', { platform }) };
 	const linux = platform === 'linux';
 	if (action === 'install')
-		return linux ? installSystemd(ctx, print, run) : installLaunchd(ctx, print, run);
+		return linux
+			? installSystemd(ctx, print, run, profile)
+			: installLaunchd(ctx, print, run, profile);
 	if (action === 'uninstall')
-		return linux ? uninstallSystemd(ctx, run) : uninstallLaunchd(ctx, run);
-	return linux ? statusSystemd(run) : statusLaunchd(run);
+		return linux ? uninstallSystemd(ctx, run, profile) : uninstallLaunchd(ctx, run, profile);
+	return linux ? statusSystemd(run, profile) : statusLaunchd(run, profile);
 }

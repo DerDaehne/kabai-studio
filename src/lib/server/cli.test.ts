@@ -1,6 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +21,7 @@ import {
 	launchdPlistPath,
 	parseCliArgs,
 	runServiceCommand,
+	runnerServiceProfile,
 	systemdUnit,
 	systemdUnitPath
 } from './cli.ts';
@@ -262,5 +271,225 @@ describe('CLI language', () => {
 
 	it('speaks German with LANG=de_DE.UTF-8', () => {
 		expect(cli(['--help'], { LANG: 'de_DE.UTF-8' }).stdout).toMatch(/^Verwendung: kabai-studio \[/);
+	});
+});
+
+describe('parseCliArgs runner service', () => {
+	it.each(['install', 'uninstall', 'status'] as const)('parses runner service %s', (action) => {
+		expect(parseCliArgs(['runner', 'service', action])).toEqual({
+			kind: 'runner-service',
+			action,
+			print: false
+		});
+	});
+
+	it('parses --print', () => {
+		expect(parseCliArgs(['runner', 'service', 'install', '--print'])).toMatchObject({
+			kind: 'runner-service',
+			print: true
+		});
+	});
+
+	it.each([
+		['no action', ['runner', 'service']],
+		['an unknown action', ['runner', 'service', 'bogus']],
+		['an extra argument', ['runner', 'service', 'install', 'more']],
+		['--print on start', ['runner', 'start', '--print']]
+	])('rejects %s with a coded usage error', (_, argv) => {
+		expect(() => parseCliArgs(argv)).toThrow(/^\[invalid_arguments\] /);
+	});
+});
+
+describe('runner service', () => {
+	let dir: string;
+	beforeEach(() => (dir = mkdtempSync(join(tmpdir(), 'kabai-studio-runner-service-'))));
+	afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+	const ctx = (extraEnv: Record<string, string> = {}) => ({
+		env: { HOME: dir, ...extraEnv },
+		execPath: '/usr/bin/node',
+		entryPath: '/opt/kabai-studio/server.ts',
+		dataDir: ''
+	});
+	const profile = (locale: 'en' | 'de' = 'en', refusal?: string) =>
+		runnerServiceProfile(locale, () => (refusal ? { exitCode: 1, message: refusal } : undefined));
+	const recorder = (stdout = ''): { calls: string[][]; run: CommandRunner } => {
+		const calls: string[][] = [];
+		return {
+			calls,
+			run: (cmd, args) => {
+				calls.push([cmd, ...args]);
+				return { status: 0, stdout };
+			}
+		};
+	};
+	const unitPath = () => systemdUnitPath({ HOME: dir }, 'kabai-studio-runner');
+	const plistPath = () => launchdPlistPath({ HOME: dir }, 'studio.kabai.kabai-studio-runner');
+
+	it('prints a systemd unit that runs runner start and waits 30 s between restarts', () => {
+		const { calls, run } = recorder();
+		const result = runServiceCommand('install', true, 'linux', ctx(), run, profile());
+		expect(result.message).toContain(
+			'ExecStart=/usr/bin/node /opt/kabai-studio/server.ts runner start'
+		);
+		expect(result.message).toContain('Restart=on-failure');
+		expect(result.message).toContain('RestartSec=30');
+		expect(result.message).toContain('WantedBy=default.target');
+		expect(result.message).not.toContain('XDG_CONFIG_HOME');
+		expect(calls).toEqual([]);
+		expect(existsSync(dir + '/.config')).toBe(false);
+	});
+
+	it('passes XDG_CONFIG_HOME on only when it is set', () => {
+		const result = runServiceCommand(
+			'install',
+			true,
+			'linux',
+			ctx({ XDG_CONFIG_HOME: '/custom/xdg' }),
+			recorder().run,
+			profile()
+		);
+		expect(result.message).toContain('Environment=XDG_CONFIG_HOME=/custom/xdg');
+	});
+
+	it('prints a launchd plist that keeps the runner alive with a 30 s throttle', () => {
+		const result = runServiceCommand('install', true, 'darwin', ctx(), recorder().run, profile());
+		expect(result.message).toContain('studio.kabai.kabai-studio-runner');
+		expect(result.message).toContain('<string>runner</string>\n\t\t<string>start</string>');
+		expect(result.message).toContain('<key>RunAtLoad</key><true/>');
+		expect(result.message).toContain('<key>KeepAlive</key><true/>');
+		expect(result.message).toContain('<key>ThrottleInterval</key><integer>30</integer>');
+	});
+
+	it.each([['linux'], ['darwin']])(
+		'install on %s writes nothing and runs no command when the pairing check fails',
+		(platform) => {
+			const { calls, run } = recorder();
+			const refusal = '[not_paired] This machine is not paired yet. Pair it first.';
+			const result = runServiceCommand(
+				'install',
+				false,
+				platform,
+				ctx(),
+				run,
+				profile('en', refusal)
+			);
+			expect(result).toEqual({ exitCode: 1, message: refusal });
+			expect(calls).toEqual([]);
+			expect(existsSync(unitPath())).toBe(false);
+			expect(existsSync(plistPath())).toBe(false);
+		}
+	);
+
+	it('install writes the unit 0600, reloads, enables without --now and names one start command', () => {
+		const { calls, run } = recorder();
+		const result = runServiceCommand('install', false, 'linux', ctx(), run, profile());
+		expect(result.exitCode).toBe(0);
+		expect(statSync(unitPath()).mode & 0o777).toBe(0o600);
+		expect(calls).toContainEqual(['systemctl', '--user', 'daemon-reload']);
+		expect(calls).toContainEqual(['systemctl', '--user', 'enable', 'kabai-studio-runner']);
+		expect(calls.flat()).not.toContain('--now');
+		expect(result.message).toContain('systemctl --user start kabai-studio-runner');
+		expect(result.message).toContain('loginctl enable-linger');
+	});
+
+	it('install writes the plist 0600 and loads it on macOS', () => {
+		const { calls, run } = recorder();
+		const result = runServiceCommand('install', false, 'darwin', ctx(), run, profile());
+		expect(result.exitCode).toBe(0);
+		expect(statSync(plistPath()).mode & 0o777).toBe(0o600);
+		expect(calls).toContainEqual(['launchctl', 'load', plistPath()]);
+	});
+
+	it('uninstall disables --now and removes the file on Linux and macOS', () => {
+		const { calls, run } = recorder();
+		runServiceCommand('install', false, 'linux', ctx(), run, profile());
+		runServiceCommand('install', false, 'darwin', ctx(), run, profile());
+		runServiceCommand('uninstall', false, 'linux', ctx(), run, profile());
+		runServiceCommand('uninstall', false, 'darwin', ctx(), run, profile());
+		expect(calls).toContainEqual([
+			'systemctl',
+			'--user',
+			'disable',
+			'--now',
+			'kabai-studio-runner'
+		]);
+		expect(calls).toContainEqual(['launchctl', 'unload', plistPath()]);
+		expect(existsSync(unitPath())).toBe(false);
+		expect(existsSync(plistPath())).toBe(false);
+	});
+
+	it('status says running or not running and names the way out', () => {
+		const running = runServiceCommand(
+			'status',
+			false,
+			'linux',
+			ctx(),
+			recorder('active\n').run,
+			profile()
+		);
+		expect(running.message).toMatch(/is running/);
+		const stopped = runServiceCommand(
+			'status',
+			false,
+			'linux',
+			ctx(),
+			recorder('inactive\n').run,
+			profile()
+		);
+		expect(stopped.message).toContain('not running');
+		expect(stopped.message).toContain('journalctl --user -u kabai-studio-runner');
+		const mac = runServiceCommand(
+			'status',
+			false,
+			'darwin',
+			ctx(),
+			() => ({ status: 113, stdout: '' }),
+			profile()
+		);
+		expect(mac.message).toContain('runner service install');
+		const de = runServiceCommand(
+			'status',
+			false,
+			'linux',
+			ctx(),
+			recorder('active\n').run,
+			profile('de')
+		);
+		expect(de.message).toContain('läuft');
+	});
+
+	it('leaves the studio service texts and unit content untouched', () => {
+		const result = runServiceCommand('status', false, 'linux', ctx(), recorder('active\n').run);
+		expect(result.message).toBe('kabai studio läuft (systemd-User-Dienst aktiv).');
+	});
+
+	it('has every runner service text in both catalogues, with failures as one line', () => {
+		const ids = [
+			'unavailable.systemd',
+			'unavailable.launchd',
+			'noStatus',
+			'fs.write',
+			'fs.remove',
+			'installed.systemd',
+			'installed.launchd',
+			'none.systemd',
+			'none.launchd',
+			'removed.systemd',
+			'removed.launchd',
+			'running.systemd',
+			'running.launchd',
+			'stopped.systemd',
+			'stopped.launchd',
+			'unsupported'
+		] as const;
+		for (const locale of ['en', 'de'] as const) {
+			const { say } = profile(locale);
+			for (const id of ids) {
+				const text = say(id, { path: '/p', code: 'EACCES', platform: 'win32' });
+				expect(text).not.toBe(`cli.runner.service.${id}`);
+				expect(text).not.toContain('\n');
+			}
+		}
 	});
 });

@@ -6,7 +6,9 @@
 import { expect, test } from '@playwright/test';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -174,6 +176,113 @@ test('service status reports exactly one outcome: running, not running, or unava
 		expect(lines[0]).toMatch(/läuft|verfügbar/);
 	} finally {
 		await stop(server);
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+/** What `runner pair` leaves behind, pointing at `origin`. */
+function writePairing(home: string, origin: string, { floor = true } = {}): string {
+	const configHome = join(home, 'xdg-config');
+	const configDir = join(configHome, 'kabai-studio');
+	mkdirSync(configDir, { recursive: true });
+	writeFileSync(
+		join(configDir, 'runner-credential.json'),
+		JSON.stringify({ studioOrigin: origin, name: 'service-machine', credential: 'c'.repeat(43) }),
+		{ mode: 0o600 }
+	);
+	if (floor)
+		writeFileSync(
+			join(configDir, 'runner.json'),
+			JSON.stringify({ studioOrigin: origin, slots: 1, workspaces: {}, agents: {} })
+		);
+	return configHome;
+}
+
+test('runner service install --print shows a unit that runs runner start, and writes nothing', async () => {
+	const home = throwawayHome();
+	const configHome = join(home, 'xdg-config');
+	const server = startServer(['runner', 'service', 'install', '--print'], {
+		HOME: home,
+		XDG_CONFIG_HOME: configHome
+	});
+	try {
+		expect(await waitUntilExited(server)).toBe(0);
+		expect(server.output()).toMatch(/ExecStart=.* runner start\n/);
+		expect(server.output()).toContain('RestartSec=30');
+		expect(existsSync(configHome)).toBe(false);
+	} finally {
+		await stop(server);
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test.describe('runner service install without a complete pairing', () => {
+	for (const [label, pairFirst, floor, code] of [
+		['credential', false, false, 'not_paired'],
+		['runner.json', true, false, 'runner_json_missing']
+	] as const) {
+		test(`missing ${label} exits 1 with [${code}] and writes no unit`, async () => {
+			const home = throwawayHome();
+			const configHome = pairFirst
+				? writePairing(home, 'http://127.0.0.1:1', { floor })
+				: join(home, 'xdg-config');
+			const server = startServer(['runner', 'service', 'install'], {
+				HOME: home,
+				XDG_CONFIG_HOME: configHome
+			});
+			try {
+				expect(await waitUntilExited(server)).toBe(1);
+				expect(server.output()).toContain(`[${code}]`);
+				expect(server.output().trim().split('\n')).toHaveLength(1);
+				expect(existsSync(join(configHome, 'systemd'))).toBe(false);
+			} finally {
+				await stop(server);
+				rmSync(home, { recursive: true, force: true });
+			}
+		});
+	}
+});
+
+test('the ExecStart line from --print starts a runner that connects to a test server', async () => {
+	const home = throwawayHome();
+	const received: { authorization?: string; hello?: { type: string } }[] = [];
+	const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+	wss.on('connection', (socket, request) => {
+		const seen: (typeof received)[number] = { authorization: request.headers.authorization };
+		received.push(seen);
+		socket.on('message', (data) => {
+			seen.hello = JSON.parse(data.toString());
+			socket.send(JSON.stringify({ type: 'welcome', name: 'service-machine' }));
+		});
+	});
+	await new Promise<void>((resolve) => wss.once('listening', resolve));
+	const port = (wss.address() as AddressInfo).port;
+	const configHome = writePairing(home, `http://127.0.0.1:${port}`);
+	const env = { HOME: home, XDG_CONFIG_HOME: configHome };
+	const printed = startServer(['runner', 'service', 'install', '--print'], env);
+	let runner: Server | undefined;
+	try {
+		expect(await waitUntilExited(printed)).toBe(0);
+		const unit = printed.output();
+		const [execPath, ...args] = unit.match(/^ExecStart=(.*)$/m)![1].split(' ');
+		expect(unit).toContain(`Environment=XDG_CONFIG_HOME=${configHome}`);
+		let output = '';
+		const proc = spawn(execPath, args, {
+			env: { ...process.env, ...env },
+			stdio: ['ignore', 'pipe', 'pipe']
+		});
+		for (const stream of [proc.stdout, proc.stderr])
+			stream?.on('data', (chunk: Buffer) => (output += chunk.toString()));
+		runner = { proc, output: () => output };
+		const deadline = Date.now() + 10_000;
+		while (!output.includes('service-machine') && Date.now() < deadline) await sleep(100);
+		expect(output).toContain('service-machine'); // the welcome was received
+		expect(received[0]?.authorization).toBe(`Bearer ${'c'.repeat(43)}`);
+		expect(received[0]?.hello?.type).toBe('hello');
+	} finally {
+		if (runner) await stop(runner);
+		await stop(printed);
+		await new Promise<void>((resolve) => wss.close(() => resolve()));
 		rmSync(home, { recursive: true, force: true });
 	}
 });

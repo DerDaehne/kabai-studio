@@ -16,6 +16,7 @@ import { CLOSE, DEAD_AFTER_MS } from './runner-protocol';
 import {
 	MAX_BACKOFF_MS,
 	MIN_BACKOFF_MS,
+	checkPairing,
 	runnerStartCommand,
 	type StartContext
 } from './runner-start';
@@ -589,5 +590,24 @@ describe('timers', () => {
 			await running;
 			stop = new AbortController();
 		}
+	});
+});
+
+describe('checkPairing', () => {
+	it('passes for a paired machine with a floor', () => {
+		writeConfig('http://127.0.0.1:1');
+		expect(checkPairing(ctx())).toBeUndefined();
+	});
+
+	it('refuses without a credential, with the code and the way out', () => {
+		expect(checkPairing(ctx())?.message).toMatch(/^\[not_paired\] .*runner pair /);
+	});
+
+	it('refuses without runner.json', () => {
+		writeConfig('http://127.0.0.1:1');
+		rmSync(join(configDir, FLOOR_FILE));
+		const result = checkPairing(ctx());
+		expect(result?.exitCode).toBe(1);
+		expect(result?.message).toMatch(/^\[runner_json_missing\] /);
 	});
 });
