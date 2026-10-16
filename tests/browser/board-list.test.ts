@@ -522,8 +522,12 @@ for (const [name, undoKeys] of [
 
 			await press(page, 'd', 'd');
 			await expect(row(page, title)).toBeHidden();
+			await page.getByRole('button', { name: 'Rückgängig', exact: true }).hover();
+			await page.clock.runFor(11_000);
+			await page.waitForTimeout(300);
+			expect(stored()).toBe(1);
 			await page.mouse.move(0, 0);
-			await page.clock.fastForward(10_500);
+			await page.clock.runFor(11_000);
 			await expect.poll(stored).toBe(0);
 		} finally {
 			deleteByTitle(db, title);
