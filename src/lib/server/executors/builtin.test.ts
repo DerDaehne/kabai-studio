@@ -147,7 +147,11 @@ function setup(profile: Partial<runs.Profile> = {}) {
 	}).id;
 	const busEvents: StudioEvent[] = [];
 	cleanups.push(subscribe((event) => busEvents.push(event)));
-	const queue = () => runs.createRun(db, user, { ticketId, profileId }).id;
+	/** Queues a run on the ticket, or on a ticket of its own: a ticket has at most one active run. */
+	const queue = (onTicket = ticketId) =>
+		runs.createRun(db, user, { ticketId: onTicket, profileId }).id;
+	const otherTicket = () =>
+		board.createTicket(db, user, projectId, { title: 'Other', column_id: columns['Planen'] }).id;
 	const run = (id: number) => db.prepare('SELECT * FROM runs WHERE id = ?').get(id)!;
 	const events = (id: number) =>
 		db
@@ -161,7 +165,19 @@ function setup(profile: Partial<runs.Profile> = {}) {
 			}));
 	const comments = () =>
 		db.prepare('SELECT author_kind, run_id, body FROM comments ORDER BY id').all();
-	return { db, projectId, ticketId, columns, profileId, busEvents, queue, run, events, comments };
+	return {
+		db,
+		projectId,
+		ticketId,
+		columns,
+		profileId,
+		busEvents,
+		queue,
+		otherTicket,
+		run,
+		events,
+		comments
+	};
 }
 
 /** Starts a runner with the builtin executor; `executed` collects each run's context and result. */
@@ -359,14 +375,14 @@ describe('builtin executor', () => {
 	});
 
 	it('stops the provider request on cancel, records nothing more and frees the pool slot', async () => {
-		const { db, queue, run, events, busEvents } = setup();
+		const { db, queue, otherTicket, run, events, busEvents } = setup();
 		const provider = fakeProvider(
 			{ chunks: [{ reasoning: 'Let me think\n' }, 'hang'] },
 			{ chunks: [{ text: 'Done.' }] }
 		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
 		const cancelled = queue();
-		const waiting = queue();
+		const waiting = queue(otherTicket());
 		await vi.waitFor(() =>
 			expect(busEvents.some((e) => e.type === 'run.phase' && e.runId === cancelled)).toBe(true)
 		);
@@ -382,14 +398,14 @@ describe('builtin executor', () => {
 	});
 
 	it('stops the provider request when the kill switch halts every run, and the next run waits for the release', async () => {
-		const { db, queue, run, events, busEvents, comments } = setup();
+		const { db, queue, otherTicket, run, events, busEvents, comments } = setup();
 		const provider = fakeProvider(
 			{ chunks: [{ reasoning: 'Let me think\n' }, 'hang'] },
 			{ chunks: [{ text: 'Done.' }] }
 		);
 		const { runner } = startBuiltin(db, { fetch: provider.fetch });
 		const halted = queue();
-		const waiting = queue();
+		const waiting = queue(otherTicket());
 		await vi.waitFor(() =>
 			expect(busEvents.some((e) => e.type === 'run.phase' && e.runId === halted)).toBe(true)
 		);
@@ -660,6 +676,10 @@ describe('builtin executor', () => {
 		await ended(() => run(asked).state);
 		const { id } = db.prepare('SELECT id FROM questions').get() as { id: number };
 		answerQuestion(db, user, id, { option: 2 });
+		const queuedByAnswer = db
+			.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?')
+			.get(asked) as { id: number };
+		runs.finishRun(db, user, queuedByAnswer.id, { state: 'cancelled' });
 		const resumed = runs.createRun(db, user, { ticketId, profileId, resumedFromRunId: asked }).id;
 		await ended(() => run(resumed).state);
 

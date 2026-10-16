@@ -16,17 +16,17 @@ const reviewer: Actor = { kind: 'agent', runId: 2 };
 /** Agent actors act in real runs (comments.run_id has a FK), so this creates runs 1 and 2 in a separate project. */
 function withRuns(db: DatabaseSync) {
 	const p = board.createProject(db, user, { key: 'RUN', name: 'Runs' }).id;
-	const ticketId = board.createTicket(db, user, p, {
-		title: 'Runs',
-		column_id: board.columns(db, p).find((c) => c.step === 'implement')!.id
-	}).id;
+	const implement = board.columns(db, p).find((c) => c.step === 'implement')!.id;
 	const profileId = runs.createProfile(db, user, {
 		name: 'Test',
 		executor: 'builtin',
 		provider: 'openai-compatible',
 		model: 'm'
 	}).id;
-	for (let i = 0; i < 2; i++) runs.createRun(db, user, { ticketId, profileId });
+	for (let i = 0; i < 2; i++) {
+		const ticketId = board.createTicket(db, user, p, { title: 'Runs', column_id: implement }).id;
+		runs.createRun(db, user, { ticketId, profileId });
+	}
 }
 
 function setup() {

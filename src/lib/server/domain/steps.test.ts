@@ -596,7 +596,9 @@ describe('releasing a predecessor again and again', () => {
 		runs.finishRun(c.db, system, first[0].id, { state: 'succeeded' });
 		expect(queueNextStep(c.db, first[0].id)).toBeUndefined();
 		// predecessor released again: human moves it to done
-		const preRun = runs.pendingRun(c.db, pre)!;
+		const preRun = c.db
+			.prepare("SELECT id FROM runs WHERE ticket_id = ? AND state = 'queued'")
+			.get(pre) as { id: number };
 		runs.finishRun(c.db, system, preRun.id, { state: 'cancelled' });
 		board.moveTicket(c.db, user, pre, done(c.db, pre));
 		const second = queueUnblockedSuccessors(c.db, pre);

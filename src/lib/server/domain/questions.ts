@@ -41,7 +41,7 @@ type Continuation =
 	| { kind: 'resume'; run: PausedRun }
 	| { kind: 'waiting'; followUpIds: number[] }
 	| { kind: 'stopped'; reason: string }
-	| { kind: 'none'; reason: string };
+	| { kind: 'none'; reason: string; wayOut?: string };
 
 const QUESTION_COLUMNS = 'id, ticket_id, run_id, question, options, answer, collected_at';
 
@@ -189,8 +189,8 @@ export function answerQuestion(
 			actor,
 			questionId: q.id
 		});
-		continueAfterAnswer(db, emit, actor, q, continuation);
-		return { resumesRun: continuation.kind === 'resume' || continuation.kind === 'waiting' };
+		const effective = continueAfterAnswer(db, emit, actor, q, continuation);
+		return { resumesRun: effective.kind === 'resume' || effective.kind === 'waiting' };
 	});
 }
 
@@ -233,15 +233,17 @@ function continueAfterAnswer(
 	emit: Emit,
 	actor: Actor,
 	q: OpenQuestion,
-	continuation: Continuation
-) {
+	planned: Continuation
+): Continuation {
 	const notBefore = new Date(Date.now() + ANSWER_UNDO_WINDOW_MS).toISOString();
-	if (continuation.kind === 'waiting') return holdBack(db, continuation.followUpIds, notBefore);
-	if (continuation.kind === 'resume') return resumeRun(db, actor, q.t, continuation.run, notBefore);
-	if (continuation.kind === 'stopped') return; // the human's own choice: the ask-time comment already explains it
-	if (q.answer !== null) return; // only a changed answer: the way out is already on the ticket
-	const wayOut = `Die Antwort auf Frage ${q.id} setzt keinen Run fort: ${continuation.reason}.\nAusweg: Starte einen Run für das Ticket, er liest die Antwort.`;
+	if (planned.kind === 'waiting') holdBack(db, planned.followUpIds, notBefore);
+	const continuation =
+		planned.kind === 'resume' ? resumeOrNone(db, actor, q.t, planned.run, notBefore) : planned;
+	if (continuation.kind !== 'none') return continuation;
+	if (q.answer !== null) return continuation; // only a changed answer: the way out is already on the ticket
+	const wayOut = `Die Antwort auf Frage ${q.id} setzt keinen Run fort: ${continuation.reason}.\nAusweg: ${continuation.wayOut ?? 'Starte einen Run für das Ticket, er liest die Antwort.'}`;
 	appendComment(db, emit, actor, q.t, wayOut, true);
+	return continuation;
 }
 
 /** A changed answer gets its own undo window. */
@@ -250,14 +252,28 @@ function holdBack(db: DatabaseSync, runIds: number[], notBefore: string) {
 	for (const id of runIds) update.run(notBefore, id);
 }
 
-function resumeRun(db: DatabaseSync, actor: Actor, t: Ticket, run: PausedRun, notBefore: string) {
-	const { id } = createRun(db, actor, {
-		ticketId: t.id,
-		profileId: run.profileId,
-		resumedFromRunId: run.id,
-		notBefore
-	});
-	prioritizeRun(db, actor, id);
+/** A run of the ticket that is already pending turns the answer into a plain stored answer with a way out. */
+function resumeOrNone(
+	db: DatabaseSync,
+	actor: Actor,
+	t: Ticket,
+	run: PausedRun,
+	notBefore: string
+): Continuation {
+	try {
+		const { id } = createRun(db, actor, {
+			ticketId: t.id,
+			profileId: run.profileId,
+			resumedFromRunId: run.id,
+			notBefore
+		});
+		prioritizeRun(db, actor, id);
+		return { kind: 'resume', run };
+	} catch (err) {
+		if (err instanceof DomainError && err.code === 'run_pending')
+			return { kind: 'none', reason: err.message.replace(/\.$/, ''), wayOut: err.hint };
+		throw err;
+	}
 }
 
 /** Takes the answer back while the run it would resume still waits: that run is cancelled and the question is open again. */

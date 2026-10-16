@@ -151,11 +151,11 @@ describe('stop', () => {
 		stops.push(startRunner(db(), { builtin: { execute: hold } }).stop);
 		const { id, number } = newTicket();
 		const profileId = newProfile();
+		const heldBack = new Date(Date.now() + 3_600_000).toISOString();
+		const waiting = createRun(db(), user, { ticketId: id, profileId, notBefore: heldBack }).id;
+		expect(await post('stop', number, { runId: String(waiting) })).toBeUndefined();
 		const running = createRun(db(), user, { ticketId: id, profileId }).id;
 		await settled(() => signals.has(running));
-		const waiting = createRun(db(), user, { ticketId: id, profileId }).id;
-
-		expect(await post('stop', number, { runId: String(waiting) })).toBeUndefined();
 		expect(await post('stop', number, { runId: String(running) })).toBeUndefined();
 
 		const states = Object.fromEntries(shown(number).runs.map((tab) => [tab.id, tab.state]));

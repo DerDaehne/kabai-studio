@@ -161,7 +161,11 @@ describe('startTicket („los“)', () => {
 		const halted = startTicket(s.db, user, id, profileId).runId;
 		runs.startRun(s.db, user, halted);
 		pauseRun(s.db, user, halted);
-		const other = runs.createRun(s.db, user, { ticketId: id, profileId }).id;
+		const other = s.db
+			.prepare(
+				"INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger) SELECT ticket_id, column_id, agent_profile_id, 'manual' FROM runs WHERE id = ? RETURNING id"
+			)
+			.get(halted)!.id as number;
 
 		expect(caught(() => resumeRun(s.db, user, halted))).toMatchObject({
 			code: 'run_pending',

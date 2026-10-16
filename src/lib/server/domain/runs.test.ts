@@ -28,19 +28,21 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 function setup(db = openDb(':memory:')) {
 	migrate(db);
 	const projectId = board.createProject(db, user, { key: 'STU', name: 'Studio' }).id;
-	const ticketId = board.createTicket(db, user, projectId, {
-		title: 'T',
-		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
-	}).id;
+	const implement = board.columns(db, projectId).find((c) => c.step === 'implement')!.id;
+	const newTicket = () =>
+		board.createTicket(db, user, projectId, { title: 'T', column_id: implement }).id;
+	const ticketId = newTicket();
 	const profileId = runs.createProfile(db, user, LOCAL).id;
-	const queued = () => runs.createRun(db, system, { ticketId, profileId }).id;
-	const running = () => {
-		const id = queued();
+	/** Every call without a ticket queues its run on a ticket of its own: a ticket has at most one active run. */
+	const queued = (onTicket: number = newTicket()) =>
+		runs.createRun(db, system, { ticketId: onTicket, profileId }).id;
+	const running = (onTicket?: number) => {
+		const id = queued(onTicket);
 		runs.startRun(db, system, id);
 		return id;
 	};
 	const row = (id: number) => db.prepare('SELECT * FROM runs WHERE id = ?').get(id)!;
-	return { db, projectId, ticketId, profileId, queued, running, row };
+	return { db, projectId, ticketId, newTicket, profileId, queued, running, row };
 }
 
 function caught(fn: () => unknown): DomainError {
@@ -119,7 +121,7 @@ describe('state transitions', () => {
 
 	it('ends the run on paused and resumes only a paused run of the same ticket', () => {
 		const { db, projectId, ticketId, profileId, running, row } = setup();
-		const paused = running();
+		const paused = running(ticketId);
 		runs.finishRun(db, system, paused, { state: 'paused' });
 		expect(caught(() => runs.setRunState(db, system, paused, 'running')).code).toBe(
 			'invalid_run_transition'
@@ -137,7 +139,8 @@ describe('state transitions', () => {
 			resumed_from_run_id: paused
 		});
 
-		const done = running();
+		runs.finishRun(db, system, next, { state: 'cancelled' });
+		const done = running(ticketId);
 		runs.finishRun(db, system, done, { state: 'succeeded' });
 		const err = caught(() =>
 			runs.createRun(db, system, { ticketId, profileId, resumedFromRunId: done })
@@ -187,7 +190,7 @@ describe('run token', () => {
 
 	it('is valid while the run is active and expires with its end', () => {
 		const { db, projectId, ticketId, queued, row } = setup();
-		const id = queued();
+		const id = queued(ticketId);
 		const { token } = runs.startRun(db, system, id);
 		expect(runs.runForToken(db, token)).toEqual({ runId: id, ticketId, projectId });
 		runs.setRunState(db, system, id, 'waiting_approval');
@@ -545,10 +548,11 @@ describe('assignee', () => {
 		const { db, ticketId, queued, profileId } = setup();
 		const assignee = () =>
 			db.prepare('SELECT assignee FROM tickets WHERE id = ?').get(ticketId)?.assignee;
-		const first = queued();
+		const first = queued(ticketId);
 		expect(assignee()).toBeNull();
 		runs.startRun(db, system, first);
 		expect(assignee()).toBe(`agent (Run ${first})`);
+		runs.finishRun(db, system, first, { state: 'succeeded' });
 
 		const second = runs.createRun(db, system, { ticketId, profileId }).id;
 		expect(runs.claimRun(db, system, { global: 4, pools: { local: 2 } })?.id).toBe(second);

@@ -9,6 +9,7 @@ import type { Step, Variant } from './domain/variants';
 import * as notes from './domain/notes';
 import * as questions from './domain/questions';
 import * as runs from './domain/runs';
+import { queueNextStep } from './domain/steps';
 import { mcpEndpoint } from './mcp';
 import { setSecret } from './secrets';
 
@@ -41,8 +42,13 @@ function setup() {
 		db
 			.prepare('SELECT c.name FROM tickets t JOIN columns c ON c.id = t.column_id WHERE t.id = ?')
 			.get(id)?.name;
+	/** Starts the run that continues `resumedFromRunId`: the one an answer already queued, else a new one. */
 	const startRun = (ticketId: number, resumedFromRunId?: number) => {
-		const runId = runs.createRun(db, user, { ticketId, profileId, resumedFromRunId }).id;
+		const queuedByAnswer = db
+			.prepare("SELECT id FROM runs WHERE resumed_from_run_id = ? AND state = 'queued'")
+			.get(resumedFromRunId ?? null)?.id as number | undefined;
+		const runId =
+			queuedByAnswer ?? runs.createRun(db, user, { ticketId, profileId, resumedFromRunId }).id;
 		return { runId, token: runs.startRun(db, system, runId).token };
 	};
 	const serve = mcpEndpoint(db);
@@ -1029,6 +1035,7 @@ describe('idempotency_key', () => {
 			message: expect.stringContaining('einem Run, den er fortsetzt')
 		});
 		expect(count(db, 'comments')).toBe(1);
+		runs.finishRun(db, system, third.runId, { state: 'succeeded' });
 		const unrelated = startRun(own);
 		await call(unrelated.token, 'add_comment', { text: 'A', idempotency_key: 'k' });
 		expect(count(db, 'comments')).toBe(2);
@@ -1752,6 +1759,27 @@ describe('finish_step hands off and is safe to repeat', () => {
 		const before = writableRows(w.db);
 		expect((await w.finish('blocked', 'Which format?')).body).toEqual(first);
 		expect(writableRows(w.db)).toBe(before);
+	});
+
+	it('answers the same when the chain refuses the follow-up run because another run of the ticket waits', async () => {
+		const w = inStep('software', 'plan');
+		w.db
+			.prepare(
+				`INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, state, halted, finished_at)
+				SELECT ?, column_id, agent_profile_id, 'manual', 'paused', 1, CURRENT_TIMESTAMP FROM runs WHERE id = ?`
+			)
+			.run(w.id, w.runId);
+		const runsBefore = w.db.prepare('SELECT count(*) AS n FROM runs').get()?.n;
+
+		expect((await w.finish('done', 'Plan: one CSV writer.')).body).toEqual({
+			next: 'implement',
+			then: 'run',
+			note: 'End your turn now.'
+		});
+		runs.finishRun(w.db, { kind: 'system' }, w.runId, { state: 'succeeded' });
+
+		expect(queueNextStep(w.db, w.runId)).toBeUndefined();
+		expect(w.db.prepare('SELECT count(*) AS n FROM runs').get()?.n).toBe(runsBefore);
 	});
 
 	it('a repeat with the same idempotency_key returns the first result', async () => {

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { StudioEvent } from '../events';
 import {
 	appendComment,
 	applyMove,
@@ -10,8 +11,9 @@ import {
 	type Ticket
 } from './board';
 import { DomainError, tx, type Actor } from './core';
-import { assertNoPendingRun, createRun, notInWork, prioritizeRun } from './runs';
-import { hasOpenQuestion } from './steps';
+import { abandonHaltedRuns, createRun, notInWork, prioritizeRun } from './runs';
+
+type Emit = (event: StudioEvent) => void;
 
 // The human's intents: each is one call and needs no knowledge of the variant's columns.
 
@@ -50,7 +52,7 @@ export function startTicket(
 				cols
 			);
 		}
-		const runId = queueRunForHuman(db, actor, t, profileId);
+		const runId = queueRunForHuman(db, emit, actor, t, profileId);
 		return { runId, predecessors: blockingPredecessors(db, t.id) };
 	});
 }
@@ -66,6 +68,7 @@ export function acceptTicket(db: DatabaseSync, actor: Actor, ticketId: number) {
 				`${t.ref} liegt in „${t.column_name}“, nicht in der Abnahme.`,
 				'Abnehmen geht, sobald die Kritik das Ticket freigegeben hat und es in der Abnahme liegt.'
 			);
+		abandonHaltedRuns(db, emit, actor, t, `du hast ${t.ref} abgenommen`);
 		const done = columns(db, t.project_id).find((c) => c.phase === 'done')!;
 		applyMove(db, emit, actor, t, done.id);
 	});
@@ -89,7 +92,7 @@ export function returnTicket(
 		const beforeCritique = cols[cols.findIndex((c) => c.step === 'critique') - 1];
 		appendComment(db, emit, actor, t, comment);
 		writeMove(db, emit, actor, t, beforeCritique, cols);
-		return { runId: queueRunForHuman(db, actor, t) };
+		return { runId: queueRunForHuman(db, emit, actor, t) };
 	});
 }
 
@@ -109,14 +112,15 @@ function assertReturnable(t: Ticket, comment: string) {
 }
 
 /** A run the human starts goes ahead of background work in the queue. */
-function queueRunForHuman(db: DatabaseSync, actor: Actor, t: Ticket, profileId?: number): number {
-	assertNoPendingRun(db, t);
-	if (hasOpenQuestion(db, t.id))
-		throw new DomainError(
-			'open_question',
-			`${t.ref} wartet auf deine Antwort auf eine offene Frage.`,
-			'Beantworte zuerst die Frage; die Antwort setzt die Arbeit fort.'
-		);
+function queueRunForHuman(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	t: Ticket,
+	profileId?: number
+): number {
+	if (t.column_phase !== 'work')
+		abandonHaltedRuns(db, emit, actor, t, `du hast ${t.ref} neu gestartet`);
 	const { id } = createRun(db, actor, { ticketId: t.id, profileId: profileFor(db, t, profileId) });
 	prioritizeRun(db, actor, id);
 	return id;

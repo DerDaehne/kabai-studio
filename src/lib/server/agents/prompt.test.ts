@@ -598,7 +598,14 @@ function runsOf(w: World) {
 		event(runId, { type: 'message', key: 'handoff', payload: handoff });
 		runs.finishRun(w.db, system, runId, { state: 'paused' });
 	};
-	return { queued, started, event, pause };
+	/** The run `answerQuestion` queued to continue the paused run. */
+	const followUp = (pausedRunId: number) =>
+		(
+			w.db
+				.prepare("SELECT id FROM runs WHERE resumed_from_run_id = ? AND state = 'queued'")
+				.get(pausedRunId) as { id: number }
+		).id;
+	return { queued, started, event, pause, followUp };
 }
 
 const assembleRun = (w: World, runId: number) =>
@@ -642,6 +649,7 @@ describe('previous state', () => {
 		const w = world();
 		const r = runsOf(w);
 		const { first } = answeredRun(w, r);
+		runs.finishRun(w.db, system, r.followUp(first), { state: 'cancelled' });
 		const prompt = assembleRun(w, r.queued(first));
 		expect(previousState(prompt)).toMatchSnapshot();
 		expect(previousState(prompt)).not.toContain('Search once');
@@ -665,7 +673,7 @@ describe('previous state', () => {
 		}).id;
 		r.pause(first, { text: 'Handoff of the stuck run.' });
 		answerQuestion(w.db, user, question, { option: 1 });
-		const prompt = assembleRun(w, r.queued(first));
+		const prompt = assembleRun(w, r.followUp(first));
 		expect(previousState(prompt)).toContain(
 			'Answer: 1. Neuer Versuch mit frischem Kontext und meinem Hinweis'
 		);
@@ -712,7 +720,7 @@ describe('previous state', () => {
 				"UPDATE run_events SET payload = json_object('text', ?) WHERE run_id = ? AND idempotency_key = 'handoff'"
 			)
 			.run('h'.repeat(20_000), first);
-		const prompt = assembleRun(w, r.queued(first));
+		const prompt = assembleRun(w, r.followUp(first));
 		const block = prompt.blocks.find((b) => b.name === 'previous_state')!;
 		expect(block.chars / 4).toBeLessThanOrEqual(1500);
 		expect(block.truncated).toBe(true);
@@ -730,7 +738,7 @@ describe('previous state', () => {
 		}).id;
 		r.pause(first, { text: 'Summary: waiting.' });
 		answerQuestion(w.db, user, question, { option: 1 });
-		const state = previousState(assembleRun(w, r.queued(first)));
+		const state = previousState(assembleRun(w, r.followUp(first)));
 		expect(state).toContain('Question: Which format?\n');
 		expect(state).not.toContain('long finding text');
 	});
@@ -739,7 +747,7 @@ describe('previous state', () => {
 		const w = world();
 		const r = runsOf(w);
 		const { first, question } = answeredRun(w, r);
-		const resumed = r.queued(first);
+		const resumed = r.followUp(first);
 		const events: StudioEvent[] = [];
 		const unsubscribe = subscribe((event) => events.push(event));
 		const changes = () => (w.db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;

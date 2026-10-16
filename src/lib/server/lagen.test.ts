@@ -175,22 +175,13 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(id).reason.kind).not.toBe('failure');
 	});
 
-	it('shows a run that holds for the human before a newer queued run', () => {
+	it('shows a run that holds for the human', () => {
 		const s = setup();
 		const id = s.ticket(s.project('STU'));
 		const holding = s.run(id);
 		runs.startRun(s.db, user, holding);
 		runs.setRunState(s.db, user, holding, 'waiting_approval');
-		s.run(id);
 		expect(s.lageOfTicket(id)).toMatchObject({ lage: 'waiting', reason: { kind: 'approval' } });
-	});
-
-	it('shows a ticket as in progress while an older run works and a newer one queues', () => {
-		const s = setup();
-		const id = s.ticket(s.project('STU'));
-		runs.startRun(s.db, user, s.run(id));
-		s.run(id);
-		expect(s.lageOfTicket(id).lage).toBe('working');
 	});
 
 	it('counts a failed run only while the ticket is still in the step it failed in', () => {
@@ -209,11 +200,10 @@ describe('ticketLagen', () => {
 		expect(s.lageOfTicket(id).reason.kind).not.toBe('failure');
 	});
 
-	it('shows a ticket as in progress when an older run works and the newest failed in an earlier step', () => {
+	it('shows a ticket as in progress when a run works and an older one failed in an earlier step', () => {
 		const s = setup();
 		const stu = s.project('STU');
 		const id = s.ticket(stu);
-		runs.startRun(s.db, user, s.run(id));
 		const failed = s.run(id);
 		runs.startRun(s.db, user, failed);
 		runs.finishRun(s.db, user, failed, { state: 'failed', error: 'boom' });
@@ -223,6 +213,7 @@ describe('ticketLagen', () => {
 			)
 			.get(stu, 'implement', stu)!.id as number;
 		board.moveTicket(s.db, user, id, next);
+		runs.startRun(s.db, user, s.run(id));
 		expect(s.lageOfTicket(id).lage).toBe('working');
 	});
 

@@ -54,7 +54,8 @@ function setup(db = openDb(':memory:')) {
 		model: 'm',
 		pool: 'cloud'
 	}).id;
-	const queue = (profileId: number, ticket = ticketId) =>
+	/** Queues a run on a ticket of its own unless one is given: a ticket has at most one active run. */
+	const queue = (profileId: number, ticket = newTicket()) =>
 		runs.createRun(db, user, { ticketId: ticket, profileId }).id;
 	const row = (id: number) => db.prepare('SELECT * FROM runs WHERE id = ?').get(id)!;
 	const state = (id: number) => row(id).state;
@@ -457,7 +458,7 @@ describe('startRunner', () => {
 			title: 'Other',
 			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'implement')!.id
 		}).id;
-		const [deleted, waiting] = [s.queue(s.local), s.queue(s.local, otherTicket)];
+		const [deleted, waiting] = [s.queue(s.local, s.ticketId), s.queue(s.local, otherTicket)];
 		await flush();
 		expect(s.state(waiting)).toBe('queued');
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -476,7 +477,7 @@ describe('startRunner', () => {
 			const s = setup();
 			const fake = fakeExecutor();
 			start(s.db, { builtin: fake.executor });
-			s.queue(s.cloud);
+			s.queue(s.cloud, s.ticketId);
 			await flush();
 			const [deleted] = fake.calls;
 			board.deleteTicket(s.db, user, s.ticketId);
@@ -534,13 +535,26 @@ describe('priority queue', () => {
 		const reviewColumn = column('critique');
 		const ticketIn = (columnId = column('implement')) =>
 			board.createTicket(s.db, user, s.projectId, { title: 'T', column_id: columnId }).id;
-		const blockingTicket = ticketIn();
-		board.linkRelation(s.db, user, blockingTicket, ticketIn(), 'blocks');
+		const newBlockingTicket = () => {
+			const blocker = ticketIn();
+			board.linkRelation(s.db, user, blocker, ticketIn(), 'blocks');
+			return blocker;
+		};
+		const blockingTicket = newBlockingTicket();
 		const reviewTicket = ticketIn(reviewColumn);
 		const queueWith = (ticketId: number, trigger: 'manual' | 'on_enter') =>
 			runs.createRun(s.db, user, { ticketId, profileId: s.local, trigger }).id;
 		const priority = (id: number) => s.row(id).priority;
-		return { ...s, column, ticketIn, blockingTicket, reviewTicket, queueWith, priority };
+		return {
+			...s,
+			column,
+			ticketIn,
+			blockingTicket,
+			newBlockingTicket,
+			reviewTicket,
+			queueWith,
+			priority
+		};
 	}
 
 	it('derives the priority when a run is created: normal by default, blocker for a ticket with waiting successors, review for a run triggered in critique', () => {
@@ -548,7 +562,7 @@ describe('priority queue', () => {
 		expect(s.priority(s.queue(s.local))).toBe('normal');
 		expect(s.priority(s.queueWith(s.blockingTicket, 'manual'))).toBe('blocker');
 		expect(s.priority(s.queueWith(s.reviewTicket, 'on_enter'))).toBe('review');
-		expect(s.priority(s.queueWith(s.reviewTicket, 'manual'))).toBe('normal');
+		expect(s.priority(s.queueWith(s.ticketIn(s.column('critique')), 'manual'))).toBe('normal');
 	});
 
 	it('gives a ticket whose blocks successors are all done the normal priority', () => {
@@ -600,7 +614,7 @@ describe('priority queue', () => {
 			s.queue(s.local),
 			s.queueWith(s.reviewTicket, 'on_enter'),
 			s.queueWith(s.blockingTicket, 'manual'),
-			s.queueWith(s.blockingTicket, 'manual'),
+			s.queueWith(s.newBlockingTicket(), 'manual'),
 			s.queue(s.local)
 		];
 		runs.prioritizeRun(s.db, user, human);
@@ -805,7 +819,7 @@ describe('cold start of a model', () => {
 		setSecret(s.db, 'phase-secret', secret, false, randomBytes(32));
 		const fake = fakeExecutor();
 		const { events } = startCold(s.db, { builtin: fake.executor }, limits, coldStart);
-		const id = s.queue(s.local);
+		const id = s.queue(s.local, s.ticketId);
 		await flush();
 		const { io } = fake.call(id);
 		const storedEventTypes = () =>
@@ -905,7 +919,7 @@ describe('parking and resuming a run', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
-		const [resumed, waitsForHuman] = [s.queue(s.local), s.queue(s.local)];
+		const [resumed, waitsForHuman] = [s.queue(s.local, s.ticketId), s.queue(s.local)];
 		await flush();
 		const intervention: runs.Intervention = {
 			kind: 'context_budget',
@@ -964,7 +978,7 @@ describe('parking and resuming a run', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
-		s.queue(s.local);
+		s.queue(s.local, s.ticketId);
 		const pauseLatest = async (resume: Resume) => {
 			fake.call(lastRunId(s)).done({ state: 'paused', resume });
 			await flush();
@@ -1049,7 +1063,7 @@ describe('parking and resuming a run', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
-		s.queue(s.local);
+		s.queue(s.local, s.ticketId);
 		await flush();
 		fake
 			.call(lastRunId(s))
@@ -1114,7 +1128,7 @@ describe('parking and resuming a run', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
-		const first = s.queue(s.local);
+		const first = s.queue(s.local, s.ticketId);
 		await flush();
 		fake.call(first).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
 		await flush();
@@ -1304,7 +1318,7 @@ describe('stop (kill switch)', () => {
 		const limits = { global: 10, pools: { local: 10, cloud: 10 } };
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor }, limits);
-		const paused = s.queue(s.local);
+		const paused = s.queue(s.local, s.ticketId);
 		await flush();
 		fake.call(paused).done({ state: 'paused' });
 		await flush();
@@ -1318,7 +1332,7 @@ describe('stop (kill switch)', () => {
 			resumeReason: 'quota'
 		}).id;
 		const heldBack = runs.createRun(s.db, system, {
-			ticketId: s.ticketId,
+			ticketId: s.newTicket(),
 			profileId: s.local,
 			notBefore: '2026-10-03T12:01:00Z'
 		}).id;
@@ -1545,7 +1559,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		const s = setup();
 		const fake = fakeExecutor();
 		const runner = start(s.db, { builtin: fake.executor });
-		const halted = s.queue(s.local);
+		const halted = s.queue(s.local, s.ticketId);
 		await flush();
 		runner.pause(halted);
 		const [busy, older] = [s.queue(s.local, s.newTicket()), s.queue(s.local, s.newTicket())];
@@ -1820,7 +1834,7 @@ describe('the chain of runs', () => {
 				}
 			}
 		});
-		const failed = s.queue(s.local);
+		const failed = s.queue(s.local, s.ticketId);
 		await vi.waitFor(() => expect(s.state(failed)).toBe('failed'));
 		await flush();
 		expect(board.ticket(s.db, s.ticketId).column_step).toBe('critique');
@@ -1860,7 +1874,7 @@ describe('the chain of runs', () => {
 	it('lets a ticket wait for the human when its run ends without finish_step, instead of leaving it ready', async () => {
 		const s = setup();
 		start(s.db, { builtin: { execute: async () => {} } });
-		const silent = s.queue(s.local);
+		const silent = s.queue(s.local, s.ticketId);
 		await vi.waitFor(() => expect(s.state(silent)).toBe('succeeded'));
 		await flush();
 

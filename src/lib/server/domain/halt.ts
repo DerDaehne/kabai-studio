@@ -1,14 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { addComment, ticket } from './board';
 import { DomainError, tx, type Actor } from './core';
-import {
-	assertNoPendingRun,
-	awaitsResume,
-	createRun,
-	finishRun,
-	prioritizeRun,
-	type RunState
-} from './runs';
+import { awaitsResume, createRun, finishRun, prioritizeRun, type RunState } from './runs';
 
 /** `stop` cancelled the active runs, `pause` paused them so they can be resumed; both hold the queue. */
 export type HaltKind = 'stop' | 'pause';
@@ -139,7 +132,6 @@ export function resumeRun(db: DatabaseSync, actor: Actor, runId: number): { id: 
 				`Das Agent-Profil von Run ${runId} gibt es nicht mehr.`,
 				'Starte in der Run-Akte einen neuen Run mit einem anderen Profil (:run).'
 			);
-		assertNoPendingRun(db, ticket(db, run.ticket_id), run.id);
 		const { id } = createRun(db, actor, {
 			ticketId: run.ticket_id,
 			profileId: run.agent_profile_id,

@@ -3,8 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { StudioEvent } from '../events';
 import { mask } from '../secrets';
-import { ticket, type Ticket } from './board';
-import { actorLabel, DomainError, tx, type Actor } from './core';
+import { appendComment, ticket, type Ticket } from './board';
+import { actorLabel, DomainError, OPEN_QUESTION, tx, type Actor } from './core';
 
 export type RunState =
 	'queued' | 'running' | 'waiting_approval' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
@@ -165,8 +165,9 @@ function transition(
 }
 
 /**
- * Creates a `queued` run that records the ticket's column as its role; only a ticket in a work step gets one
- * (`not_in_work`). With `resumedFromRunId` it continues a paused run.
+ * Creates a `queued` run that records the ticket's column as its role. The one place that admits a run: the ticket must
+ * stand in a work step (`not_in_work`), have no other pending run (`run_pending`) and no open question (`open_question`).
+ * With `resumedFromRunId` it continues a paused run, which does not stand in its own way.
  */
 export function createRun(
 	db: DatabaseSync,
@@ -185,8 +186,7 @@ export function createRun(
 		if (t.column_phase !== 'work') throw notInWork(t);
 		getProfile(db, r.profileId);
 		if (r.resumedFromRunId !== undefined) assertResumable(db, t, r.resumedFromRunId);
-		// ponytail: one run per ticket is enforced by the paths that create runs (los, return, chain, resume), not here, since
-		// the queue's pool and priority logic is still tested with several runs on one ticket; move assertNoPendingRun here then.
+		assertAdmitted(db, t, r.resumedFromRunId);
 		const trigger = r.resumedFromRunId === undefined ? (r.trigger ?? 'manual') : 'resume';
 		const priority = derivePriority(db, t.id, t.column_id, trigger);
 		const notBefore = r.notBefore === undefined ? null : canonicalTime(r.notBefore);
@@ -225,7 +225,7 @@ export function notInWork(t: Ticket): DomainError {
  * A run of the ticket is active, waits in the queue, or was paused by the human and waits to be resumed; a second one
  * would work the same step twice. `except` is the run being resumed, which does not stand in its own way.
  */
-export function pendingRun(db: DatabaseSync, ticketId: number, except?: number) {
+function pendingRun(db: DatabaseSync, ticketId: number, except?: number) {
 	return db
 		.prepare(
 			`SELECT id, state FROM runs r WHERE ticket_id = ? AND id IS NOT ?
@@ -236,7 +236,7 @@ export function pendingRun(db: DatabaseSync, ticketId: number, except?: number) 
 }
 
 /** One run per ticket: refuses a second one, with the way out that fits the run already there. */
-export function assertNoPendingRun(db: DatabaseSync, t: Ticket, except?: number) {
+function assertNoPendingRun(db: DatabaseSync, t: Ticket, except?: number) {
 	const pending = pendingRun(db, t.id, except);
 	if (!pending) return;
 	throw new DomainError(
@@ -246,6 +246,52 @@ export function assertNoPendingRun(db: DatabaseSync, t: Ticket, except?: number)
 			? `Setz ihn fort (:fortsetzen ${pending.id}) statt einen zweiten zu starten.`
 			: 'Warte, bis er endet, oder brich ihn in der Run-Akte ab (x); danach erneut „los“.'
 	);
+}
+
+const hasOpenQuestion = (db: DatabaseSync, ticketId: number) =>
+	db
+		.prepare(`SELECT 1 FROM questions q WHERE q.ticket_id = ? AND ${OPEN_QUESTION}`)
+		.get(ticketId) !== undefined;
+
+function assertAdmitted(db: DatabaseSync, t: Ticket, resumedFromRunId?: number) {
+	assertNoPendingRun(db, t, resumedFromRunId);
+	assertNoOpenQuestion(db, t);
+}
+
+function assertNoOpenQuestion(db: DatabaseSync, t: Ticket) {
+	if (!hasOpenQuestion(db, t.id)) return;
+	throw new DomainError(
+		'open_question',
+		`${t.ref} wartet auf deine Antwort auf eine offene Frage.`,
+		'Beantworte zuerst die Frage; die Antwort setzt die Arbeit fort.'
+	);
+}
+
+/**
+ * The human restarts or accepts a ticket from outside the work phase. A run paused earlier would block the new run
+ * and can no longer be resumed; it is left behind, and the ticket says so.
+ */
+export function abandonHaltedRuns(
+	db: DatabaseSync,
+	emit: Emit,
+	actor: Actor,
+	t: Ticket,
+	because: string
+) {
+	const dropped = db
+		.prepare(`SELECT id FROM runs WHERE ticket_id = ? AND ${awaitsResume('runs')} ORDER BY id`)
+		.all(t.id) as { id: number }[];
+	for (const { id } of dropped) {
+		db.prepare('UPDATE runs SET halted = 0 WHERE id = ?').run(id);
+		appendComment(
+			db,
+			emit,
+			{ ...actor, runId: id },
+			t,
+			`Run ${id} (angehalten) wird nicht fortgesetzt: ${because}.\nAusweg: Braucht es die Arbeit noch, gib das Ticket zurück oder starte es mit „los“.`,
+			true
+		);
+	}
 }
 
 function assertResumable(db: DatabaseSync, t: Ticket, previousRunId: number) {

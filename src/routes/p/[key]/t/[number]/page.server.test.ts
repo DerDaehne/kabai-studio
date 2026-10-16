@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
-import { createProfile, createRun } from '$lib/server/domain/runs';
+import { createProfile, createRun, finishRun } from '$lib/server/domain/runs';
 import { findTicketId, type TicketDetail } from '$lib/server/ticket-view';
 import { LIVE_DEPENDENCY } from '$lib/live';
 import type { RunTrace } from '$lib/trace/trace';
@@ -81,6 +81,7 @@ describe('load', () => {
 			model: 'm'
 		}).id;
 		const older = createRun(db(), user, { ticketId: id, profileId }).id;
+		finishRun(db(), user, older, { state: 'cancelled' });
 		const newer = createRun(db(), user, { ticketId: id, profileId }).id;
 		expect((await loadTicket(number)).trace?.id).toBe(newer);
 		expect((await loadTicket(number, `?run=${older}`)).trace?.id).toBe(older);

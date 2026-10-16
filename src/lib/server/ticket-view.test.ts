@@ -179,10 +179,11 @@ describe('runTrace', () => {
 	it('shows the newest run of the ticket unless a run is selected', () => {
 		const { db, ticketId, newRun } = withRuns();
 		const older = newRun();
+		finishRun(db, user, older, { state: 'cancelled' });
 		const newer = newRun();
 		expect(runTrace(db, ticketId)?.id).toBe(newer);
 		expect(runTrace(db, ticketId, older)?.id).toBe(older);
-		expect(runTrace(db, ticketId, older)?.state).toBe('queued');
+		expect(runTrace(db, ticketId, older)?.state).toBe('cancelled');
 	});
 
 	it('loads the events of the run in seq order with their key and payload', () => {
@@ -260,6 +261,7 @@ describe('runTrace', () => {
 			continuedBy: continuation
 		});
 
+		finishRun(db, user, continuation, { state: 'cancelled' });
 		const asking = running();
 		requestHuman(db, { kind: 'agent', runId: asking }, ticketId, { question: 'Weiter so?' });
 		finishRun(db, user, asking, { state: 'paused' });
@@ -277,6 +279,12 @@ describe('runTrace', () => {
 		expect(runTrace(db, ticketId, runId)?.continuedBy).toBe(next);
 	});
 });
+
+const newTicket = (db: ReturnType<typeof setup>['db'], projectId: number) =>
+	board.createTicket(db, user, projectId, {
+		title: 'T',
+		column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+	}).id;
 
 describe('runTabs', () => {
 	function withProfile(pool = 'local') {
@@ -331,16 +339,19 @@ describe('runTabs', () => {
 	});
 
 	it('gives only a queued run the reason it waits, in the words of waitReason', () => {
-		const { db, ticketId, profileId } = withProfile();
-		const busy = createRun(db, user, { ticketId, profileId }).id;
+		const { db, projectId, ticketId, profileId } = withProfile();
+		const earlier = createRun(db, user, { ticketId, profileId }).id;
+		startRun(db, user, earlier);
+		finishRun(db, user, earlier, { state: 'succeeded' });
+		const busy = createRun(db, user, { ticketId: newTicket(db, projectId), profileId }).id;
 		startRun(db, user, busy);
 		createRun(db, user, { ticketId, profileId });
-		const [waiting, running] = runTabs(db, ticketId);
+		const [waiting, ended] = runTabs(db, ticketId);
 		expect(waiting.waitText).toBe('wartet: Pool „local“ ist voll (1 von 1 aktiv).');
-		expect(running.waitText).toBeUndefined();
+		expect(ended.waitText).toBeUndefined();
 	});
 
-	it('reads the wait reasons of all queued runs at once, however many there are', () => {
+	it('reads the wait reason of a queued run in a fixed number of statements, however many runs the ticket has', () => {
 		const { db, ticketId, profileId } = withProfile();
 		const statements = () => {
 			const prepare = db.prepare.bind(db);
@@ -348,12 +359,15 @@ describe('runTabs', () => {
 			db.prepare = ((sql: string) => (count++, prepare(sql))) as typeof db.prepare;
 			const tabs = runTabs(db, ticketId);
 			db.prepare = prepare;
-			expect(tabs.every((tab) => tab.waitText)).toBe(true);
+			expect(tabs[0].waitText).toBeTruthy();
 			return count;
 		};
-		createRun(db, user, { ticketId, profileId });
+		let current = createRun(db, user, { ticketId, profileId }).id;
 		const one = statements();
-		for (let i = 0; i < 5; i++) createRun(db, user, { ticketId, profileId });
+		for (let i = 0; i < 5; i++) {
+			finishRun(db, user, current, { state: 'cancelled' });
+			current = createRun(db, user, { ticketId, profileId }).id;
+		}
 		expect(statements()).toBe(one);
 	});
 
@@ -440,7 +454,7 @@ describe('runStart', () => {
 			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
 		}).id;
 		createRun(db, user, { ticketId, profileId: alpha });
-		createRun(db, user, { ticketId, profileId: zeta });
+		createRun(db, user, { ticketId: newTicket(db, projectId), profileId: zeta });
 		const otherProject = board.createProject(db, user, { key: 'WEB', name: 'Website' }).id;
 		const otherTicket = board.createTicket(db, user, otherProject, {
 			title: 'W',

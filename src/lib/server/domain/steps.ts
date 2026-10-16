@@ -10,9 +10,9 @@ import {
 	type Column,
 	type Ticket
 } from './board';
-import { DomainError, OPEN_QUESTION, tx, type Actor } from './core';
+import { DomainError, tx, type Actor } from './core';
 import { requestHuman, type QuestionOption } from './questions';
-import { createRun, pendingRun } from './runs';
+import { createRun } from './runs';
 import type { Step } from './variants';
 
 export type StepResult = 'done' | 'back' | 'blocked';
@@ -165,19 +165,22 @@ export function queueNextStep(db: DatabaseSync, runId: number): { id: number } |
 		if (!run || run.agent_profile_id === null) return undefined;
 		if (run.step_result !== 'done' && run.step_result !== 'back') return undefined;
 		const t = ticket(db, run.ticket_id);
-		if (
-			t.column_phase !== 'work' ||
-			hasOpenQuestion(db, t.id) ||
-			pendingRun(db, t.id) ||
-			blockingPredecessors(db, t.id).length > 0
-		)
-			return undefined;
+		if (t.column_phase !== 'work' || blockingPredecessors(db, t.id).length > 0) return undefined;
 		const actor: Actor = { kind: 'system', runId };
-		return createRun(db, actor, {
-			ticketId: t.id,
-			profileId: run.agent_profile_id,
-			trigger: 'on_enter'
-		});
+		try {
+			return createRun(db, actor, {
+				ticketId: t.id,
+				profileId: run.agent_profile_id,
+				trigger: 'on_enter'
+			});
+		} catch (err) {
+			if (
+				err instanceof DomainError &&
+				(err.code === 'run_pending' || err.code === 'open_question')
+			)
+				return undefined;
+			throw err;
+		}
 	});
 }
 
@@ -207,11 +210,6 @@ type FinishedRun = {
 	agent_profile_id: number | null;
 	step_result: StepResult | null;
 };
-
-export const hasOpenQuestion = (db: DatabaseSync, ticketId: number) =>
-	db
-		.prepare(`SELECT 1 FROM questions q WHERE q.ticket_id = ? AND ${OPEN_QUESTION}`)
-		.get(ticketId) !== undefined;
 
 const outcomeOf = (step: Step, phase: Column['phase']): StepOutcome => ({
 	next: step,
