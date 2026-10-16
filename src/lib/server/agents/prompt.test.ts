@@ -743,7 +743,7 @@ describe('previous state', () => {
 		expect(state).not.toContain('long finding text');
 	});
 
-	it("reads the human's answer without collecting it, so the human can still retract it until the prompt is sent", () => {
+	it("reads the human's answer without collecting it, so the human can still retract it until the run shows a first sign of life", () => {
 		const w = world();
 		const r = runsOf(w);
 		const { first, question } = answeredRun(w, r);
@@ -756,7 +756,7 @@ describe('previous state', () => {
 		unsubscribe();
 		expect(changes()).toBe(before);
 		expect(events).toEqual([]);
-		expect(prompt.showsHumanAnswer).toBe(true);
+		expect(prompt.user).toContain('Answer: ');
 		expect(() => retractAnswer(w.db, user, question)).not.toThrow();
 	});
 });

@@ -8,7 +8,7 @@ import type { Actor } from './domain/core';
 import type { Phase } from './domain/variants';
 import { latestOpenQuestion, type LatestQuestion } from './domain/questions';
 import { projectRef } from './live';
-import { relationsOf, tasksOf, type RelatedTicket, type ToolContext } from './mcp';
+import { relationsOf, type RelatedTicket, type ToolContext } from './mcp';
 import {
 	awaitsResume,
 	listProfiles,
@@ -44,7 +44,7 @@ export type TicketDetail = {
 	description: string;
 	type: 'ticket' | 'epic';
 	column: { id: number; name: string; position: number };
-	tasks: ReturnType<typeof tasksOf>;
+	tasks: ReturnType<typeof board.tasksOf>;
 	comments: TicketComment[];
 	relations: Record<string, RelatedTicket[]>;
 	moves: TicketMove[];
@@ -108,7 +108,7 @@ function commentsOf(db: DatabaseSync, ticketId: number): TicketComment[] {
 
 /**
  * Everything the Run-Akte shows about one ticket: reuses `board.ticket`/`allowedMoves` for the rules and
- * `relationsOf`/`tasksOf` (mcp.ts) for the same reading an agent gets from `get_ticket` (the AX requirement that
+ * `relationsOf` (mcp.ts) and `tasksOf` (board.ts) for the same reading an agent gets from `get_ticket` (the AX requirement that
  * human and agent see the same truth).
  */
 export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): TicketDetail {
@@ -123,7 +123,7 @@ export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): 
 		description: extra.description,
 		type: t.type,
 		column: { id: t.column_id, name: t.column_name, position: extra.columnPosition },
-		tasks: tasksOf(db, t.id),
+		tasks: board.tasksOf(db, t.id),
 		comments: commentsOf(db, t.id),
 		relations: relationsOf(db, ctx, t.id),
 		moves: ticketMoves(db, actor, t.id, t.project_id),

@@ -16,7 +16,8 @@ import {
 } from '$lib/server/domain/runs';
 import { subscribe } from '$lib/server/events';
 import { builtinExecutor } from '$lib/server/executors/builtin';
-import { startRunner, type Executor } from '$lib/server/runner';
+import type { Executor } from '$lib/server/executors/contract';
+import { startRunner } from '$lib/server/runner';
 import { reloadsTicket } from '$lib/ticket-live';
 import type { RunTrace } from '$lib/trace/trace';
 import { actions, load } from './+page.server';
@@ -146,7 +147,9 @@ describe('stop', () => {
 		const signals = new Map<number, AbortSignal>();
 		const hold: Executor['execute'] = (run, io) => {
 			signals.set(run.id, io.signal);
-			return new Promise((resolve) => io.signal.addEventListener('abort', () => resolve()));
+			return new Promise((resolve) =>
+				io.signal.addEventListener('abort', () => resolve({ ending: 'end_turn' }))
+			);
 		};
 		stops.push(startRunner(db(), { builtin: { execute: hold } }).stop);
 		const { id, number } = newTicket();

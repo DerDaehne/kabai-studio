@@ -339,3 +339,19 @@ export function collectAnswer(
 		return latest;
 	});
 }
+
+/**
+ * Collects the answer for a run that resumes a run with an answered question, once the run has shown a first sign of life:
+ * until then the human can still retract it, and a resume that fails before that leaves it to the next one. Collecting
+ * twice changes nothing.
+ */
+export function collectResumedAnswer(db: DatabaseSync, runId: number) {
+	const run = db
+		.prepare('SELECT ticket_id, resumed_from_run_id AS previous FROM runs WHERE id = ?')
+		.get(runId) as { ticket_id: number; previous: number | null };
+	if (run.previous === null) return;
+	const answered = db
+		.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NOT NULL')
+		.get(run.previous);
+	if (answered) collectAnswer(db, { kind: 'agent', runId }, run.ticket_id);
+}

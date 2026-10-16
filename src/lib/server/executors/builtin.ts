@@ -16,6 +16,7 @@ import {
 import { isLocalProvider } from '../../agents/profile-defaults';
 import {
 	detectStagnation,
+	interventionOf,
 	RECOVERY,
 	recoveryHint,
 	type CallRecord,
@@ -29,20 +30,9 @@ import {
 	type AssembledPrompt
 } from '../agents/prompt';
 import { callTarget, deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
-import * as board from '../domain/board';
-import { DomainError, type Actor } from '../domain/core';
-import { collectAnswer } from '../domain/questions';
-import { freshRunsInChain, type Intervention } from '../domain/runs';
-import { mcpEndpoint, tasksOf } from '../mcp';
+import { mcpEndpoint } from '../mcp';
 import { inactiveProviderFailure, providerFailure } from '../provider-error';
-import type {
-	Executor,
-	ExecutorIo,
-	ExecutorResult,
-	ParkReason,
-	Phase,
-	RunContext
-} from '../runner';
+import type { Executor, ExecutorFacts, ExecutorIo, Phase, RunContext } from './contract';
 import { mask } from '../secrets';
 import { localProviderFetch } from './local-fetch';
 import { modelFor, requestSettings, stepCostFor, type StepCost } from './provider';
@@ -90,13 +80,8 @@ export function builtinExecutor(
 		async execute(run, io) {
 			const cloud = !isLocalProvider(run.profile.provider);
 			const prompt = promptOf(db, run);
-			const collect = () => collectAnswer(db, { kind: 'agent', runId: run.id }, run.ticketId);
 			const providerFetch = fetch ?? (cloud ? globalThis.fetch : localProviderFetch);
-			const model = modelFor(
-				db,
-				run.profile,
-				prompt.showsHumanAnswer ? afterFirstRequest(providerFetch, collect) : providerFetch
-			);
+			const model = modelFor(db, run.profile, providerFetch);
 			const studio = await studioTools(endpoint, run.token, io.signal);
 			try {
 				logPrompt(io, prompt, studio.toolTokens);
@@ -110,7 +95,7 @@ export function builtinExecutor(
 					firstChunkMs,
 					cloud
 				});
-				return endOfRun(db, run, io, log);
+				return factsOf(io, log);
 			} finally {
 				await studio.close();
 			}
@@ -213,34 +198,6 @@ function endedStuck(log: StepLog, io: ExecutorIo): boolean {
 	return log.endedWithToolCalls() || log.records.at(-1)?.finishReason === 'length';
 }
 
-const waitsForAnswer = (db: DatabaseSync, runId: number) =>
-	db.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NULL').get(runId) !==
-	undefined;
-
-const movedByRun = (db: DatabaseSync, run: RunContext) => {
-	const movedBy = board.ticket(db, run.ticketId).moved_by;
-	return movedBy !== null && (JSON.parse(movedBy) as Actor).runId === run.id;
-};
-
-const interventionOf = (stall: Stall, attempt: number, max: number, reason = stall.reason) =>
-	({
-		kind: stall.kind,
-		attempt,
-		max,
-		reason,
-		hint: recoveryHint(stall.cause),
-		stepTokens: stall.stepTokens
-	}) satisfies Intervention;
-
-/** Counts on the chain's fresh runs; beyond their maximum the runner asks the human instead of starting one. */
-const freshRunIntervention = (db: DatabaseSync, run: RunContext, stall: Stall) =>
-	interventionOf(
-		stall,
-		freshRunsInChain(db, run.id) + 1,
-		RECOVERY.freshRunsPerChain,
-		`${stall.reason} The run ends with a handoff.`
-	);
-
 const maxSteps = (run: RunContext) => run.profile.max_steps ?? DEFAULT_MAX_STEPS;
 const isErrorResult = (output: unknown) =>
 	(output as { isError?: unknown } | undefined)?.isError === true;
@@ -252,65 +209,14 @@ const endedTurn: StopCondition<ToolSet> = ({ steps }) =>
 		?.toolResults.some((r) => TURN_ENDING_TOOLS.includes(r.toolName) && !isErrorResult(r.output)) ??
 	false;
 
-/** Calls `sent` once the first request to the model server has gone out. */
-function afterFirstRequest(
-	fetch: typeof globalThis.fetch,
-	sent: () => void
-): typeof globalThis.fetch {
-	let first = true;
-	return (input, init) => {
-		const response = fetch(input, init);
-		if (first) sent();
-		first = false;
-		return response;
-	};
-}
-
-function endOfRun(db: DatabaseSync, run: RunContext, io: ExecutorIo, log: StepLog): ExecutorResult {
-	if (io.signal.aborted) return; // cancelled: the run has already ended and takes no more events
-	if (log.stall)
-		io.emit({ type: 'intervention', payload: freshRunIntervention(db, run, log.stall) });
-	const handoff = log.lastMessage
-		? { text: log.lastMessage }
-		: { text: generatedHandoff(db, run, log), generated: true };
-	const handoffSeq = io.emit({ type: 'message', key: 'handoff', payload: handoff }).seq;
-	if (log.succeeded('request_human') || waitsForAnswer(db, run.id)) return { state: 'paused' };
-	// a park that lands in the final step changes nothing: the work is done and a follow-up run would redo it
-	if (io.park.aborted && log.endedWithToolCalls())
-		return { state: 'paused', resume: { ...(io.park.reason as ParkReason), handoffSeq } };
-	if (log.stall) return { state: 'paused', resume: { reason: 'recovery', handoffSeq } };
-	if (log.endedWithToolCalls() && !movedByRun(db, run))
-		throw new DomainError(
-			'step_limit',
-			`Der Run hat nach ${maxSteps(run)} Schritten aufgehört, ohne das Ticket zu verschieben.`,
-			'Erhöhe max_steps im Agent-Profil oder schneide das Ticket kleiner, dann starte einen neuen Run.'
-		);
-	return { state: 'succeeded' };
-}
-
-/** A handoff from the run's events, so that a model ending without a closing text never leaves an empty trace. */
-function generatedHandoff(db: DatabaseSync, run: RunContext, log: StepLog): string {
-	const column = board.ticket(db, run.ticketId).column_name;
-	const openTasks = tasksOf(db, run.ticketId).filter((task) => !task.done);
-	return [
-		"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
-		`Tools: ${toolUse(log.records) || 'none'}`,
-		`Ticket: ${movedByRun(db, run) ? `moved to ${column}` : `not moved, still in ${column}`}`,
-		`Open tasks:${openTasks.length ? '' : ' none'}`,
-		...openTasks.map((task) => `- ${task.id}: ${task.title}`)
-	].join('\n');
-}
-
-/** Each tool with how often the run called it and how often that failed, in the order of first use. */
-function toolUse(records: StepRecord[]): string {
-	const uses = new Map<string, { calls: number; failed: number }>();
-	for (const call of records.flatMap((record) => record.calls)) {
-		const use = uses.get(call.tool) ?? { calls: 0, failed: 0 };
-		uses.set(call.tool, { calls: use.calls + 1, failed: use.failed + Number(call.isError) });
-	}
-	return [...uses]
-		.map(([tool, { calls, failed }]) => `${tool} ${calls}×${failed ? ` (${failed} failed)` : ''}`)
-		.join(', ');
+/** What the loop found at its end; the domain decides from it how the run ends. */
+function factsOf(io: ExecutorIo, log: StepLog): ExecutorFacts {
+	const lastMessage = log.lastMessage || undefined;
+	if (io.park.aborted && log.endedWithToolCalls()) return { ending: 'parked', lastMessage };
+	if (log.stall) return { ending: 'stalled', stall: log.stall, lastMessage };
+	const endedOnItsOwn = TURN_ENDING_TOOLS.some((tool) => log.succeeded(tool));
+	if (log.endedWithToolCalls() && !endedOnItsOwn) return { ending: 'turn_limit', lastMessage };
+	return { ending: 'end_turn', lastMessage };
 }
 
 /** Turns the stream of the tool loop into run events (one set per step) and live phases, and keeps a record of every step. */

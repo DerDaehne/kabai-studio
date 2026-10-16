@@ -10,7 +10,8 @@ import { DomainError } from '$lib/server/domain/error';
 import * as halt from '$lib/server/domain/halt';
 import { haltedSince } from '$lib/server/domain/halt';
 import * as runs from '$lib/server/domain/runs';
-import { startRunner, type Executor } from '$lib/server/runner';
+import type { Executor } from '$lib/server/executors/contract';
+import { startRunner } from '$lib/server/runner';
 import { POST as pauseAll } from '../pause/+server';
 import { DELETE, POST } from './+server';
 

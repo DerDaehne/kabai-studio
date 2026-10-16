@@ -7,7 +7,8 @@ import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
 import * as runs from '$lib/server/domain/runs';
-import { startRunner, type Executor } from '$lib/server/runner';
+import type { Executor } from '$lib/server/executors/contract';
+import { startRunner } from '$lib/server/runner';
 import { POST } from './+server';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-run-action-'));

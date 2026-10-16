@@ -9,7 +9,8 @@ import { liveState } from './live';
 import { answerQuestion, requestHuman } from './domain/questions';
 import * as runs from './domain/runs';
 import { queueNextStep, queueUnblockedSuccessors } from './domain/steps';
-import { startRunner, type Executor } from './runner';
+import type { Executor } from './executors/contract';
+import { startRunner } from './runner';
 
 const user: Actor = { kind: 'user' };
 const system: Actor = { kind: 'system' };
@@ -313,13 +314,16 @@ async function runParkedForQuota(w: World, ticketId: number) {
 	const hold = new Promise<never>(() => {});
 	let parked = false;
 	const executor: Executor = {
-		execute: async () => {
+		execute: async (run) => {
 			if (parked) return hold;
 			parked = true;
-			return { state: 'paused', resume: { reason: 'quota', handoffSeq: 1 } };
+			await Promise.resolve(); // the runner handle exists once the start has returned
+			runner.park(run.id, 'quota');
+			return { ending: 'parked' };
 		}
 	};
-	stops.push(startRunner(w.db, { builtin: executor }).stop);
+	const runner = startRunner(w.db, { builtin: executor });
+	stops.push(runner.stop);
 	await flush();
 	await flush();
 	return w.db

@@ -24,7 +24,9 @@ import { finishStep } from './domain/steps';
 import { splitLead } from '../markdown';
 import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
-import { limits, startRunner, type Executor, type Resume, type RunContext } from './runner';
+import { recoveryHint, type Stall } from './agents/loop-guard';
+import type { Executor, ExecutorFacts, RunContext } from './executors/contract';
+import { limits, startRunner } from './runner';
 import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
@@ -64,11 +66,10 @@ function setup(db = openDb(':memory:')) {
 	return { db, projectId, ticketId, newTicket, local, cloud, queue, row, state, comments };
 }
 
-type ExecutorResult = Awaited<ReturnType<Executor['execute']>>;
 type ExecutorCall = {
 	run: RunContext;
 	io: Parameters<Executor['execute']>[1];
-	done: (result?: ExecutorResult) => void;
+	done: (facts?: ExecutorFacts) => void;
 	fail: (err: unknown) => void;
 };
 
@@ -79,12 +80,48 @@ function fakeExecutor() {
 		execute: (run, io) =>
 			new Promise((done, fail) => {
 				io.signal.addEventListener('abort', () => fail(new Error('aborted')));
-				calls.push({ run, io, done, fail });
+				calls.push({ run, io, done: (facts = { ending: 'end_turn' }) => done(facts), fail });
 			})
 	};
 	const call = (runId: number) => calls.find((c) => c.run.id === runId)!;
 	return { executor, calls, call };
 }
+
+/** An executor that found its run stuck: the domain decides what follows. */
+const stall: Stall = {
+	kind: 'length_stop',
+	cause: 'length_stop',
+	reason: 'Step 1 hit the output limit before it finished.'
+};
+
+/** Ends the run the way an executor does after the agent asked the human: the question is what pauses the run. */
+function endAskingHuman(
+	db: Parameters<typeof startRunner>[0],
+	fake: ReturnType<typeof fakeExecutor>,
+	runId: number
+) {
+	const { run, done } = fake.call(runId);
+	requestHuman(db, { kind: 'agent', runId }, run.ticketId, {
+		question: 'Which columns?',
+		options: [{ label: 'All' }]
+	});
+	done();
+}
+
+/** Parks the run for `reason` and ends it the way an executor does that stopped at the park request. */
+function endParked(
+	runner: ReturnType<typeof startRunner>,
+	fake: ReturnType<typeof fakeExecutor>,
+	runId: number,
+	reason: Parameters<ReturnType<typeof startRunner>['park']>[1],
+	notBefore?: string
+) {
+	runner.park(runId, reason, notBefore);
+	fake.call(runId).done({ ending: 'parked' });
+}
+
+const lastRunId = (s: ReturnType<typeof setup>) =>
+	s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
 
 /** Lets the runner's microtask wake-ups and settled executor promises run. */
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -269,7 +306,7 @@ describe('startRunner', () => {
 		]);
 		expect(runs.runForToken(s.db, fake.call(local1).run.token)?.runId).toBe(local1);
 
-		fake.call(local1).done({ usage: { tokensIn: 7, tokensOut: 3 } });
+		fake.call(local1).done({ ending: 'end_turn', usage: { tokensIn: 7, tokensOut: 3 } });
 		await flush();
 		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual([
 			'succeeded',
@@ -280,7 +317,7 @@ describe('startRunner', () => {
 		expect(s.row(local1)).toMatchObject({ tokens_in: 7, tokens_out: 3 });
 		expect(runs.runForToken(s.db, fake.call(local1).run.token)).toBeUndefined();
 
-		fake.call(cloud1).done({ state: 'paused' });
+		endAskingHuman(s.db, fake, cloud1);
 		await flush();
 		expect([local1, local2, cloud1, cloud2].map(s.state)).toEqual([
 			'succeeded',
@@ -889,9 +926,6 @@ describe('parking and resuming a run', () => {
 				'SELECT id, state, trigger, resumed_from_run_id, resume_reason, not_before FROM runs ORDER BY id'
 			)
 			.all();
-	const lastRunId = (s: ReturnType<typeof setup>) =>
-		s.db.prepare('SELECT max(id) AS id FROM runs').get()!.id as number;
-
 	it('raises io.park with reason and notBefore; the executor ends paused after its step, the token is revoked and the pool slot freed', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
@@ -907,7 +941,7 @@ describe('parking and resuming a run', () => {
 		expect(io.park.reason).toEqual({ reason: 'quota', notBefore: '2026-10-02T15:00:00.000Z' });
 		expect(io.signal.aborted).toBe(false);
 		expect(s.state(parked)).toBe('running'); // parking lets the executor finish its step
-		fake.call(parked).done({ state: 'paused' });
+		fake.call(parked).done({ ending: 'parked' });
 		await flush();
 		expect(s.row(parked)).toMatchObject({ state: 'paused', token_hash: null });
 		expect(runs.runForToken(s.db, run.token)).toBeUndefined();
@@ -918,7 +952,7 @@ describe('parking and resuming a run', () => {
 	it('queues exactly one follow-up run for a run paused with resume, and none for a run paused without resume', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
-		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
+		const runner = start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
 		const [resumed, waitsForHuman] = [s.queue(s.local, s.ticketId), s.queue(s.local)];
 		await flush();
 		const intervention: runs.Intervention = {
@@ -931,10 +965,8 @@ describe('parking and resuming a run', () => {
 		};
 		fake.call(resumed).io.emit({ type: 'intervention', payload: intervention });
 
-		fake
-			.call(resumed)
-			.done({ state: 'paused', resume: { reason: 'context_budget', handoffSeq: 2 } });
-		fake.call(waitsForHuman).done({ state: 'paused' });
+		endParked(runner, fake, resumed, 'context_budget');
+		endAskingHuman(s.db, fake, waitsForHuman);
 		await flush();
 
 		const followUp = lastRunId(s);
@@ -969,27 +1001,31 @@ describe('parking and resuming a run', () => {
 			projectId: s.projectId,
 			profile: { id: s.local }
 		});
-		expect(
-			s.db.prepare('SELECT type, payload FROM run_events WHERE run_id = ?').all(resumed)
-		).toEqual([{ type: 'intervention', payload: JSON.stringify(intervention) }]);
+		const events = s.db
+			.prepare('SELECT type, payload FROM run_events WHERE run_id = ?')
+			.all(resumed) as { type: string; payload: string }[];
+		expect(events.map((e) => e.type)).toEqual(['intervention', 'message']);
+		expect(JSON.parse(events[0].payload)).toEqual(intervention);
 	});
 
 	it('allows one fresh run per chain and then asks the human with reason and handoff; parking for the quota neither counts nor is refused', async () => {
 		const s = setup();
 		const fake = fakeExecutor();
-		start(s.db, { builtin: fake.executor });
+		const runner = start(s.db, { builtin: fake.executor });
 		s.queue(s.local, s.ticketId);
-		const pauseLatest = async (resume: Resume) => {
-			fake.call(lastRunId(s)).done({ state: 'paused', resume });
+		const pauseLatest = async (reason: 'quota' | 'recovery' | 'context_budget') => {
+			const id = lastRunId(s);
+			if (reason === 'recovery') fake.call(id).done({ ending: 'stalled', stall });
+			else endParked(runner, fake, id, reason);
 			await flush();
 		};
 		await flush();
 
-		await pauseLatest({ reason: 'quota', handoffSeq: 1 });
-		await pauseLatest({ reason: 'recovery', handoffSeq: 4 }); // the fresh run of the chain
-		await pauseLatest({ reason: 'quota', handoffSeq: 2 });
+		await pauseLatest('quota');
+		await pauseLatest('recovery'); // the fresh run of the chain
+		await pauseLatest('quota');
 		const exhausted = lastRunId(s);
-		await pauseLatest({ reason: 'context_budget', handoffSeq: 7 });
+		await pauseLatest('context_budget');
 
 		expect(runsOf(s).map((r) => [r.state, r.resume_reason])).toEqual([
 			['paused', null],
@@ -1042,13 +1078,9 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor });
 		s.queue(s.local);
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
 		const exhausted = lastRunId(s);
 		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
@@ -1065,13 +1097,9 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor });
 		s.queue(s.local, s.ticketId);
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
 		const exhausted = lastRunId(s);
 		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
@@ -1080,7 +1108,7 @@ describe('parking and resuming a run', () => {
 
 		const question =
 			`Run ${exhausted} kommt nicht weiter (Stillstand oder Längenlimit). Wie soll es weitergehen?\n\n` +
-			`Seine Kette hat den frischen Run schon verbraucht (höchstens 1 je Kette). 0 Hinweise in diesem Run. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
+			`Seine Kette hat den frischen Run schon verbraucht (höchstens 1 je Kette). 0 Hinweise in diesem Run, zuletzt: „${recoveryHint('length_stop')}“. Den Stand zeigt die Run-Akte: /p/STU/t/1?run=${exhausted}.`;
 		const askComment = [
 			question,
 			'1. Neuer Versuch mit frischem Kontext und meinem Hinweis',
@@ -1104,13 +1132,9 @@ describe('parking and resuming a run', () => {
 		start(s.db, { builtin: fake.executor });
 		s.queue(s.local);
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
-		fake
-			.call(lastRunId(s))
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 2 } });
+		fake.call(lastRunId(s)).done({ ending: 'stalled', stall });
 		await flush();
 		const exhausted = lastRunId(s);
 		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(exhausted)!
@@ -1125,26 +1149,25 @@ describe('parking and resuming a run', () => {
 	});
 
 	it('starts a new chain with a run the human resumes, so it gets its own fresh run', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
 		const s = setup();
 		const fake = fakeExecutor();
 		start(s.db, { builtin: fake.executor });
 		const first = s.queue(s.local, s.ticketId);
 		await flush();
-		fake.call(first).done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 1 } });
+		fake.call(first).done({ ending: 'stalled', stall });
 		await flush();
 		const fresh = lastRunId(s);
-		fake.call(fresh).done({ state: 'paused' }); // e.g. after request_human
+		endAskingHuman(s.db, fake, fresh);
 		await flush();
 
-		const resumedByHuman = runs.createRun(s.db, user, {
-			ticketId: s.ticketId,
-			profileId: s.local,
-			resumedFromRunId: fresh
-		}).id;
+		const questionId = s.db.prepare('SELECT id FROM questions WHERE run_id = ?').get(fresh)!
+			.id as number;
+		answerQuestion(s.db, user, questionId, { option: 1 });
+		vi.advanceTimersByTime(10_000); // the undo window after the answer
 		await flush();
-		fake
-			.call(resumedByHuman)
-			.done({ state: 'paused', resume: { reason: 'recovery', handoffSeq: 3 } });
+		const resumedByHuman = lastRunId(s);
+		fake.call(resumedByHuman).done({ ending: 'stalled', stall });
 		await flush();
 
 		expect(runsOf(s).at(-1)).toMatchObject({
@@ -1163,10 +1186,7 @@ describe('parking and resuming a run', () => {
 		const runner = start(s.db, { builtin: fake.executor });
 		const first = s.queue(s.local);
 		await flush();
-		fake.call(first).done({
-			state: 'paused',
-			resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-10-02T15:00:00Z' }
-		});
+		endParked(runner, fake, first, 'quota', '2026-10-02T15:00:00Z');
 		await flush();
 		const followUp = lastRunId(s);
 		expect(s.row(followUp)).toMatchObject({
@@ -1200,13 +1220,10 @@ describe('parking and resuming a run', () => {
 		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
 		const s = setup();
 		const fake = fakeExecutor();
-		start(s.db, { builtin: fake.executor });
+		const runner = start(s.db, { builtin: fake.executor });
 		const first = s.queue(s.local);
 		await flush();
-		fake.call(first).done({
-			state: 'paused',
-			resume: { reason: 'quota', handoffSeq: 1, notBefore: '2026-11-01T12:00:00Z' }
-		});
+		endParked(runner, fake, first, 'quota', '2026-11-01T12:00:00Z');
 		await flush();
 		const followUp = lastRunId(s);
 
@@ -1244,8 +1261,7 @@ describe('resuming after the human answers', () => {
 			question: 'Export all columns or only id and title?',
 			options: [{ label: 'All' }, { label: 'Only id and title' }]
 		}).id;
-		io.emit({ type: 'message', key: 'handoff', payload: { text: 'Waiting for the columns.' } });
-		done({ state: 'paused' });
+		done();
 		await flush();
 		expect(s.state(asking)).toBe('paused');
 
@@ -1320,17 +1336,12 @@ describe('stop (kill switch)', () => {
 		const runner = start(s.db, { builtin: fake.executor }, limits);
 		const paused = s.queue(s.local, s.ticketId);
 		await flush();
-		fake.call(paused).done({ state: 'paused' });
+		endParked(runner, fake, paused, 'quota', '2026-10-03T12:00:30Z');
 		await flush();
+		const followUp = lastRunId(s);
 
 		runner.halt();
 		const fresh = s.queue(s.cloud);
-		const followUp = runs.createRun(s.db, system, {
-			ticketId: s.ticketId,
-			profileId: s.local,
-			resumedFromRunId: paused,
-			resumeReason: 'quota'
-		}).id;
 		const heldBack = runs.createRun(s.db, system, {
 			ticketId: s.newTicket(),
 			profileId: s.local,
@@ -1598,7 +1609,7 @@ describe('pause (:anhalten) and resume (:fortsetzen)', () => {
 		start(s.db, { builtin: fake.executor }, { global: 5, pools: { local: 5 } });
 		const [running, asking, done] = [s.queue(s.local), s.queue(s.local), s.queue(s.local)];
 		await flush();
-		fake.call(asking).done({ state: 'paused' });
+		endAskingHuman(s.db, fake, asking);
 		fake.call(done).done();
 		await flush();
 		const before = s.db.prepare('SELECT count(*) AS n FROM runs').get();
@@ -1776,6 +1787,7 @@ describe('the chain of runs', () => {
 				result: 'done',
 				summary: `Run ${run.id}: done.`
 			});
+			return { ending: 'end_turn' };
 		}
 	});
 
@@ -1873,7 +1885,7 @@ describe('the chain of runs', () => {
 
 	it('lets a ticket wait for the human when its run ends without finish_step, instead of leaving it ready', async () => {
 		const s = setup();
-		start(s.db, { builtin: { execute: async () => {} } });
+		start(s.db, { builtin: { execute: async () => ({ ending: 'end_turn' }) } });
 		const silent = s.queue(s.local, s.ticketId);
 		await vi.waitFor(() => expect(s.state(silent)).toBe('succeeded'));
 		await flush();

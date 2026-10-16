@@ -784,20 +784,6 @@ export const linkedNotes = (db: DatabaseSync, ctx: ToolContext, ticketId: number
 		)
 		.all(ticketId, ctx.projectId) as NoteLink[];
 
-export const tasksOf = (db: DatabaseSync, ticketId: number) =>
-	(
-		db
-			.prepare(
-				'SELECT id, title, done_at IS NOT NULL AS done, owner FROM tasks WHERE ticket_id = ? ORDER BY position, id'
-			)
-			.all(ticketId) as { id: number; title: string; done: 0 | 1; owner: board.TaskOwner }[]
-	).map((k) => ({
-		id: k.id,
-		title: k.title,
-		done: k.done === 1,
-		...(k.owner !== 'agent' && { owner: k.owner })
-	}));
-
 type CommentRow = { id: number; by: string; at: string; text: string };
 
 /** Long comments are cut so that one oversized write does not inflate every later read of the ticket. */
@@ -864,7 +850,7 @@ function ticketView(db: DatabaseSync, ctx: ToolContext, ref?: string) {
 		description: t.description,
 		docs_required: t.docs_required === 1,
 		review_approved: t.review_approved_at !== null,
-		tasks: tasksOf(db, id),
+		tasks: board.tasksOf(db, id),
 		comments: recentComments(db, id),
 		...relationsOf(db, ctx, id),
 		...(ticketNotes.length > 0 && { notes: ticketNotes })

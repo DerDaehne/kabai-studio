@@ -11,7 +11,6 @@ import {
 	linkedNotes,
 	recentComments,
 	relationsOf,
-	tasksOf,
 	type NoteLink,
 	type RelatedTicket,
 	type ToolContext
@@ -41,8 +40,6 @@ export type AssembledPrompt = {
 	user: string;
 	blocks: PromptBlock[];
 	estimate: number;
-	/** The prompt shows the human's answer to the previous run's question: collect it once the prompt is sent, so it stays retractable until then. */
-	showsHumanAnswer: boolean;
 };
 
 // ponytail: fixed share and limits; make them configurable once real runs show they are too tight or too loose.
@@ -95,7 +92,7 @@ type Context = {
 	description: string;
 	docsRequired: boolean;
 	contract: string;
-	tasks: ReturnType<typeof tasksOf>;
+	tasks: ReturnType<typeof board.tasksOf>;
 	relations: Record<string, RelatedTicket[]>;
 	comments: Comment[];
 	notes: LinkedNote[];
@@ -123,7 +120,7 @@ export function assemblePrompt(
 	);
 	const budget = promptBudget(run.profile);
 	const fitting = candidates.find((prompt) => prompt.estimate <= budget);
-	if (fitting) return { ...fitting, showsHumanAnswer: context.previous?.answer !== undefined };
+	if (fitting) return fitting;
 	throw new DomainError(
 		'prompt_too_large',
 		`Der Prompt für ${context.ref} braucht auch gekürzt ${candidates[candidates.length - 1].estimate} Tokens; das Budget sind ${budget} (${PROMPT_SHARE_OF_CONTEXT * 100} % des Modellkontexts).`,
@@ -148,7 +145,7 @@ function readContext(db: DatabaseSync, ticketId: number): Context {
 		ref: t.ref,
 		type: t.type,
 		docsRequired: t.docs_required === 1,
-		tasks: tasksOf(db, ticketId),
+		tasks: board.tasksOf(db, ticketId),
 		relations: relationsOf(db, scope, ticketId),
 		comments: recentComments(db, ticketId),
 		notes: notesOf(linkedNotes(db, scope, ticketId))
@@ -167,10 +164,7 @@ function notesOf(links: NoteLink[]): LinkedNote[] {
 }
 
 /** Secrets are masked, and blocks without content are left out of text and list. */
-function joined(
-	systemBlocks: Block[],
-	userBlocks: Block[]
-): Omit<AssembledPrompt, 'showsHumanAnswer'> {
+function joined(systemBlocks: Block[], userBlocks: Block[]): AssembledPrompt {
 	const present = (blocks: Block[]) =>
 		blocks.map((b) => ({ ...b, text: mask(b.text) })).filter((b) => b.text !== '');
 	const textOf = (blocks: Block[]) => blocks.map((b) => b.text).join('\n\n');

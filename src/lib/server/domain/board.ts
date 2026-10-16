@@ -830,3 +830,18 @@ export function unlinkRelation(
 			});
 	});
 }
+
+/** The ticket's tasks in position order, as an agent reads them. */
+export const tasksOf = (db: DatabaseSync, ticketId: number) =>
+	(
+		db
+			.prepare(
+				'SELECT id, title, done_at IS NOT NULL AS done, owner FROM tasks WHERE ticket_id = ? ORDER BY position, id'
+			)
+			.all(ticketId) as { id: number; title: string; done: 0 | 1; owner: TaskOwner }[]
+	).map((k) => ({
+		id: k.id,
+		title: k.title,
+		done: k.done === 1,
+		...(k.owner !== 'agent' && { owner: k.owner })
+	}));

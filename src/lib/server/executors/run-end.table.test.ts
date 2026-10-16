@@ -53,7 +53,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: moved to Umsetzen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: moved to implement\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -71,7 +71,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: request_human 1×\nTicket: not moved, still in Planen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: request_human 1×\nTicket: not moved, still in plan\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -92,7 +92,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: not moved, still in Umsetzen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: not moved, still in implement\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -114,14 +114,14 @@ const SCENARIOS: Scenario[] = [
 			errorCode: 'step_limit',
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 2×\nTicket: not moved, still in Planen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 2×\nTicket: not moved, still in plan\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
 			nextStep: null,
 			question: null,
 			failureComment:
-				'Run <run> ist fehlgeschlagen: [step_limit] Der Run hat nach 2 Schritten aufgehört, ohne das Ticket zu verschieben.\nAusweg: Erhöhe max_steps im Agent-Profil oder schneide das Ticket kleiner, dann starte einen neuen Run.',
+				'Run <run> ist fehlgeschlagen: [step_limit] Der Run hat nach 2 Schritten aufgehört, ohne seinen Schritt mit finish_step abzuschließen.\nAusweg: Prüfe im Run-Log, ob der Agent finish_step erreicht hat, und erhöhe max_steps im Agent-Profil oder schneide das Ticket kleiner, dann starte einen neuen Run.',
 			answerComments: 0
 		}
 	},
@@ -137,7 +137,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 1×, finish_step 1×\nTicket: moved to Umsetzen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 1×, finish_step 1×\nTicket: moved to implement\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -197,7 +197,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: moved to Umsetzen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: finish_step 1×\nTicket: moved to implement\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -215,7 +215,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['intervention::agent', 'message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: none\nTicket: not moved, still in Planen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: none\nTicket: not moved, still in plan\nOpen tasks: none",
 				generated: true
 			},
 			followUp: { reason: 'recovery', held: false },
@@ -234,7 +234,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['intervention::agent', 'message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: none\nTicket: not moved, still in Planen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: none\nTicket: not moved, still in plan\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,
@@ -256,7 +256,7 @@ const SCENARIOS: Scenario[] = [
 			errorCode: null,
 			events: ['message:handoff:agent'],
 			handoff: {
-				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 1×\nTicket: not moved, still in Planen\nOpen tasks: none",
+				text: "Summary: the model ended without a closing text; this handoff is generated from the run's events.\nTools: add_comment 1×\nTicket: not moved, still in plan\nOpen tasks: none",
 				generated: true
 			},
 			followUp: null,

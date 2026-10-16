@@ -1,4 +1,5 @@
 import type { FinishReason } from 'ai';
+import type { Intervention } from '../domain/runs';
 
 /** One tool call of a step; `target` is what it works on (file, command, note, ticket) and empty when the call names none. */
 export type CallRecord = { tool: string; target: string; isError: boolean; progress: boolean };
@@ -41,6 +42,17 @@ const HINTS: Record<StallCause, string> = {
 
 /** The fixed hint a stuck run gets as its next user message. */
 export const recoveryHint = (cause: StallCause): string => HINTS[cause];
+
+/** The `intervention` event for the `attempt` of at most `max` at getting a stalled run going. */
+export const interventionOf = (stall: Stall, attempt: number, max: number, reason = stall.reason) =>
+	({
+		kind: stall.kind,
+		attempt,
+		max,
+		reason,
+		hint: recoveryHint(stall.cause),
+		stepTokens: stall.stepTokens
+	}) satisfies Intervention;
 
 /** The first rule the given steps break, or nothing while the run makes headway; pass only the steps since the last hint. */
 export function detectStagnation(

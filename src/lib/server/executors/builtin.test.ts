@@ -10,7 +10,8 @@ import { answerQuestion } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
-import { startRunner, type Executor, type ExecutorResult, type RunContext } from '../runner';
+import { startRunner } from '../runner';
+import type { Executor, ExecutorFacts, RunContext } from './contract';
 import { setSecret } from '../secrets';
 import { eventStream } from '../sse';
 import { builtinExecutor, type BuiltinOptions } from './builtin';
@@ -86,19 +87,19 @@ function setup(profile: Partial<runs.Profile> = {}) {
 	};
 }
 
-/** Starts a runner with the builtin executor; `executed` collects each run's context and result. */
+/** Starts a runner with the builtin executor; `executed` collects each run's context and facts. */
 function startBuiltin(
 	db: ReturnType<typeof setup>['db'],
 	options: BuiltinOptions,
 	coldStart?: Parameters<typeof startRunner>[3]
 ) {
 	const builtin = builtinExecutor(db, options);
-	const executed: { run: RunContext; result: ExecutorResult }[] = [];
+	const executed: { run: RunContext; facts: ExecutorFacts }[] = [];
 	const executor: Executor = {
 		async execute(run, io) {
-			const result = await builtin.execute(run, io);
-			executed.push({ run, result });
-			return result;
+			const facts = await builtin.execute(run, io);
+			executed.push({ run, facts });
+			return facts;
 		}
 	};
 	const runner = startRunner(db, { builtin: executor }, undefined, coldStart);
@@ -461,10 +462,7 @@ describe('builtin executor', () => {
 		expect(provider.requests).toHaveLength(1);
 		const handoff = events(runId).find((e) => e.key === 'handoff')!;
 		expect(handoff.payload).toEqual({ text: 'Commenting now.' });
-		expect(executed[0].result).toEqual({
-			state: 'paused',
-			resume: { reason: 'quota', notBefore: '2099-01-01T00:00:00Z', handoffSeq: handoff.seq }
-		});
+		expect(executed[0].facts).toEqual({ ending: 'parked', lastMessage: 'Commenting now.' });
 		expect(
 			db.prepare('SELECT state, resume_reason FROM runs WHERE resumed_from_run_id = ?').get(runId)
 		).toEqual({ state: 'queued', resume_reason: 'quota' });
@@ -546,7 +544,7 @@ describe('builtin executor', () => {
 			text: [
 				"Summary: the model ended without a closing text; this handoff is generated from the run's events.",
 				'Tools: finish_step 2× (1 failed), add_comment 1×',
-				'Ticket: moved to Umsetzen',
+				'Ticket: moved to implement',
 				'Open tasks:',
 				`- ${oneLinePerTicket}: Export one line per ticket`
 			].join('\n'),
@@ -1037,12 +1035,8 @@ describe('loop guard of the builtin executor', () => {
 			{ role: 'user', content: hint },
 			{ role: 'user', content: hint }
 		]);
-		const handoff = events(stuck).find((e) => e.key === 'handoff')!;
 		expect(run(stuck).state).toBe('paused');
-		expect(executed[0].result).toEqual({
-			state: 'paused',
-			resume: { reason: 'recovery', handoffSeq: handoff.seq }
-		});
+		expect(executed[0].facts).toMatchObject({ ending: 'stalled', stall: { kind: 'length_stop' } });
 		expect(fresh.resume_reason).toBe('recovery');
 		expect(lastMessage(provider.requests[3])!.content).toContain(
 			`### What got the previous run stuck — do not try it again\n${handedOff}\n${hint}`

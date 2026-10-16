@@ -6,7 +6,8 @@ import type { Actor } from './server/domain/core';
 import { migrate, openDb } from './server/db';
 import { subscribe, type StudioEvent } from './server/events';
 import * as runs from './server/domain/runs';
-import { startRunner, type Executor } from './server/runner';
+import type { Executor } from './server/executors/contract';
+import { startRunner } from './server/runner';
 import { concernsTicket, reloadsBoard, reloadsTicket } from './ticket-live';
 
 const user: Actor = { kind: 'user' };
@@ -65,6 +66,7 @@ it('reloads the ticket for its run starting and ending, but leaves its run event
 	const work: Executor['execute'] = async (_run, io) => {
 		io.phase({ name: 'thinking', elapsedMs: 0 });
 		io.emit({ type: 'message', payload: { step: 1, text: 'Ich lese das Ticket.' } });
+		return { ending: 'end_turn' };
 	};
 	stops.push(startRunner(db, { builtin: { execute: work } }).stop);
 	while (!events.some((e) => e.type === 'run.state_changed' && e.to === 'succeeded'))
@@ -79,7 +81,7 @@ it('reloads the ticket for its run starting and ending, but leaves its run event
 		['run.state_changed', true]
 	]);
 	expect(events.every((e) => !reloadsTicket(e, b))).toBe(true);
-	expect(events.filter((e) => e.type === 'run.phase' || e.type === 'run.event')).toHaveLength(2);
+	expect(events.filter((e) => e.type === 'run.phase' || e.type === 'run.event')).toHaveLength(3); // phase, message and the handoff the domain adds
 });
 
 it('reloads the board for every change it shows: tickets created, renamed, moved and deleted, tasks, comments and relations', () => {
@@ -117,6 +119,7 @@ it('reloads the board when a run starts and ends, but not for each run event and
 	const work: Executor['execute'] = async (_run, io) => {
 		io.phase({ name: 'thinking', elapsedMs: 0 });
 		io.emit({ type: 'message', payload: { step: 1, text: 'Ich lese das Ticket.' } });
+		return { ending: 'end_turn' };
 	};
 	stops.push(startRunner(db, { builtin: { execute: work } }).stop);
 	while (!events.some((e) => e.type === 'run.state_changed' && e.to === 'succeeded'))

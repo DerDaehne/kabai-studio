@@ -1,72 +1,25 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
 import { isLocalProvider } from '../agents/profile-defaults';
-import { RECOVERY } from './agents/loop-guard';
-import { addComment } from './domain/board';
-import { DomainError, tx, type Actor } from './domain/core';
+import { DomainError, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
-import { requestHuman, type QuestionOption } from './domain/questions';
-import { queueNextStep, queueUnblockedSuccessors } from './domain/steps';
+import { collectResumedAnswer } from './domain/questions';
+import { endExecutedRun, failRun } from './domain/run-end';
+import { queueUnblockedSuccessors } from './domain/steps';
 import {
 	appendEvent,
 	claimRun,
-	createRun,
 	finishRun,
-	freshRunsInChain,
-	type Intervention,
 	type Limits,
 	type Profile,
-	type ResumeReason,
-	type Usage
+	type ResumeReason
 } from './domain/runs';
 import { publish, subscribe } from './events';
+import type { Executor, ExecutorIo, Phase, RunContext } from './executors/contract';
 import { mask } from './secrets';
 
-export type RunContext = {
-	id: number;
-	ticketId: number;
-	projectId: number;
-	token: string;
-	profile: Profile & { id: number };
-};
-type EmitRunEvent = (event: Parameters<typeof appendEvent>[3]) => {
-	seq: number;
-	duplicate: boolean;
-};
-/** Live progress of a run, published on the bus as `run.phase` and never stored. */
-export type Phase = {
-	name: 'thinking' | 'writing' | 'tool' | 'compacting' | 'model_loading' | 'model_downloading';
-	elapsedMs: number;
-	tokens?: number;
-	tokensPerSecond?: number;
-	/** The last complete line of output; the runner masks it and cuts it to 120 characters. */
-	lastLine?: string;
-};
 /** `io.park.reason`: why the run should end cleanly and, as ISO 8601 time, when its follow-up run may start at the earliest. */
 export type ParkReason = { reason: Exclude<ResumeReason, 'halt'>; notBefore?: string };
-/** Continues a paused run in a new run; `handoffSeq` is the event holding the handoff of the paused run. */
-export type Resume = ParkReason & { handoffSeq: number };
-export type ExecutorResult =
-	| { state?: 'succeeded'; usage?: Usage }
-	| { state: 'paused'; usage?: Usage; resume?: Resume }
-	| void;
-export type ExecutorIo = {
-	/** Fires when the run is cancelled or paused by the human: it has already ended by then and `emit` throws `run_not_active`. */
-	signal: AbortSignal;
-	/** Fires when the run should end after its current step: resolve `paused` with a `resume` built from `park.reason`. */
-	park: AbortSignal;
-	emit: EmitRunEvent;
-	phase: (phase: Phase) => void;
-};
-export type Executor = {
-	/**
-	 * Resolving ends the run (default `succeeded`); `paused` with `resume` queues the run that continues it. Throwing fails the
-	 * run, and a thrown DomainError supplies code and hint. Until the first event other than `log` or the first phase other than
-	 * model loading the runner treats the model as loading and applies the cold start limits, so an executor's own inactivity
-	 * timeout should only start after the model's first byte.
-	 */
-	execute(run: RunContext, io: ExecutorIo): Promise<ExecutorResult>;
-};
 
 /**
  * The one source of the run limits. The claim and every wait reason call it again each time, so a change takes effect on the
@@ -84,33 +37,10 @@ const MODEL_LOADING_PHASES: Phase['name'][] = ['model_loading', 'model_downloadi
 const MAX_LAST_LINE = 120;
 // setTimeout fires at once beyond this delay; waking early only sets the timer again
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
-const FRESH_RUN_REASON_TEXT = {
-	context_budget: 'Kontext-Budget erreicht',
-	recovery: 'Stillstand oder Längenlimit'
-};
-type FreshRunReason = keyof typeof FRESH_RUN_REASON_TEXT;
-
 const duration = (ms: number) =>
 	ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
 
 type RunControls = { cancel: AbortController; park: AbortController };
-
-function failRun(db: DatabaseSync, runId: number, ticketId: number, err: unknown) {
-	const code = err instanceof DomainError ? err.code : 'executor_error';
-	const hint =
-		err instanceof DomainError
-			? err.hint
-			: 'Run-Log prüfen, Ursache beheben und einen neuen Run starten.';
-	const error = `[${code}] ${err instanceof Error ? err.message : String(err)}`;
-	finishRun(db, SYSTEM, runId, { state: 'failed', error });
-	// ponytail: two transactions — a crash in between loses only the comment, the run is already failed.
-	addComment(
-		db,
-		{ kind: 'system', runId },
-		ticketId,
-		mask(`Run ${runId} ist fehlgeschlagen: ${error}\nAusweg: ${hint}`)
-	);
-}
 
 function failOrphanedRuns(db: DatabaseSync) {
 	const orphaned = db
@@ -211,115 +141,29 @@ function ioFor(
 	controls: RunControls,
 	endColdStart: () => void
 ): ExecutorIo {
+	let answerCollected = false;
+	const showSignOfLife = () => {
+		endColdStart();
+		if (answerCollected) return;
+		answerCollected = true;
+		collectResumedAnswer(db, run.id);
+	};
 	return {
 		signal: controls.cancel.signal,
 		park: controls.park.signal,
 		emit: (event) => {
 			if (event.type !== 'log') endColdStart();
-			return appendEvent(db, { kind: 'agent', runId: run.id }, run.id, event);
+			const appended = appendEvent(db, { kind: 'agent', runId: run.id }, run.id, event);
+			if (event.type !== 'log') showSignOfLife();
+			return appended;
 		},
 		phase: (phase) => {
 			if (controls.cancel.signal.aborted) return; // the run has ended, a late phase must not show it working again
-			if (!MODEL_LOADING_PHASES.includes(phase.name)) endColdStart();
+			if (!MODEL_LOADING_PHASES.includes(phase.name)) showSignOfLife();
 			publishPhase(run, phase);
 		}
 	};
 }
-
-/** Queues the run that continues a paused one, or asks the human once its chain has used up its fresh runs. */
-function continuePausedRun(db: DatabaseSync, run: RunContext, resume: Resume) {
-	const actor: Actor = { kind: 'system', runId: run.id };
-	if (resume.reason === 'quota' || freshRunsInChain(db, run.id) < RECOVERY.freshRunsPerChain) {
-		createRun(db, actor, {
-			ticketId: run.ticketId,
-			profileId: run.profile.id,
-			resumedFromRunId: run.id,
-			resumeReason: resume.reason,
-			notBefore: resume.notBefore
-		});
-		return;
-	}
-	askHumanAfterUsedUpChain(db, actor, run, resume.reason);
-}
-
-// Fixed wording, chosen by the human once for every escalation; option 3 ends the chain instead of starting a run.
-const ESCALATION_OPTIONS: QuestionOption[] = [
-	{ label: 'Neuer Versuch mit frischem Kontext und meinem Hinweis' },
-	{ label: 'Aufgabe verkleinern: nur den nächsten prüfbaren Schritt' },
-	{ label: 'Aufhören: Stand als Kommentar festhalten, Ticket bleibt beim Menschen', stopsRun: true }
-];
-
-function ticketPath(db: DatabaseSync, ticketId: number): string {
-	const row = db
-		.prepare(
-			'SELECT p.key AS key, t.number AS number FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = ?'
-		)
-		.get(ticketId) as { key: string; number: number };
-	return `/p/${row.key}/t/${row.number}`;
-}
-
-function lastIntervention(db: DatabaseSync, runId: number): Intervention | undefined {
-	const row = db
-		.prepare(
-			"SELECT payload FROM run_events WHERE run_id = ? AND type = 'intervention' ORDER BY seq DESC LIMIT 1"
-		)
-		.get(runId) as { payload: string } | undefined;
-	return row && (JSON.parse(row.payload) as Intervention);
-}
-
-/** Stage-1 hints share `max = RECOVERY.hintsPerRun`; the final stage-2 entry that ends the run has a different max. */
-function hintsGiven(db: DatabaseSync, runId: number): number {
-	const { n } = db
-		.prepare(
-			"SELECT count(*) AS n FROM run_events WHERE run_id = ? AND type = 'intervention' AND payload ->> '$.max' = ?"
-		)
-		.get(runId, RECOVERY.hintsPerRun) as { n: number };
-	return n;
-}
-
-function askHumanAfterUsedUpChain(
-	db: DatabaseSync,
-	actor: Actor,
-	run: RunContext,
-	reason: FreshRunReason
-) {
-	const hints = hintsGiven(db, run.id);
-	const lastHint = lastIntervention(db, run.id)?.hint;
-	const short = `Run ${run.id} kommt nicht weiter (${FRESH_RUN_REASON_TEXT[reason]}). Wie soll es weitergehen?`;
-	const details =
-		`Seine Kette hat den frischen Run schon verbraucht (höchstens ${RECOVERY.freshRunsPerChain} je Kette). ${hints} ${hints === 1 ? 'Hinweis' : 'Hinweise'} in diesem Run` +
-		(lastHint ? `, zuletzt: „${lastHint}“` : '') +
-		'.';
-	const link = `${ticketPath(db, run.ticketId)}?run=${run.id}`;
-	requestHuman(db, actor, run.ticketId, {
-		question: `${short}\n\n${details} Den Stand zeigt die Run-Akte: ${link}.`,
-		options: ESCALATION_OPTIONS
-	});
-}
-
-/**
- * One transaction: a paused run never stays without its follow-up run or the question to the human, and a run that
- * finished its step never without the run for the next one. A failed or cancelled run continues nothing.
- */
-function finishExecutedRun(
-	db: DatabaseSync,
-	run: RunContext,
-	result: Exclude<ExecutorResult, void>
-) {
-	tx(db, () => {
-		const resume = result.state === 'paused' ? result.resume : undefined;
-		// a park after finish_step changes nothing: the next step starts in a fresh run, not in the author's resume
-		const parkedAfterStep = resume !== undefined && finishedStep(db, run.id);
-		const state = parkedAfterStep ? 'succeeded' : (result.state ?? 'succeeded');
-		finishRun(db, SYSTEM, run.id, { state, usage: result.usage });
-		if (resume && !parkedAfterStep) continuePausedRun(db, run, resume);
-		if (state === 'succeeded') queueNextStep(db, run.id);
-	});
-}
-
-const finishedStep = (db: DatabaseSync, runId: number) =>
-	db.prepare("SELECT 1 FROM runs WHERE id = ? AND step_result IN ('done', 'back')").get(runId) !==
-	undefined;
 
 function nextNotBefore(db: DatabaseSync, now: Date) {
 	const { next } = db
@@ -459,8 +303,9 @@ class Runner {
 			: () => {}; // a cloud model has no "loading" phase; its own first-chunk timeout covers a silent provider
 		try {
 			const io = ioFor(this.db, run, controls, endColdStart);
-			const result = (await executorFor(this.executors, run.profile).execute(run, io)) ?? {};
-			if (!controls.cancel.signal.aborted) finishExecutedRun(this.db, run, result);
+			const facts = await executorFor(this.executors, run.profile).execute(run, io);
+			if (!controls.cancel.signal.aborted)
+				endExecutedRun(this.db, run, facts, controls.park.signal.reason);
 		} catch (err) {
 			// after cancel() the run has already ended
 			if (!controls.cancel.signal.aborted) failRun(this.db, run.id, run.ticketId, err);
