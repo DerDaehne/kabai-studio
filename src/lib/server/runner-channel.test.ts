@@ -285,6 +285,18 @@ describe('revoking', () => {
 		await ended; // the server terminates the socket after its grace period
 	});
 
+	it('treats a failing pairing lookup at hello as revoked instead of crashing the server', async () => {
+		const result = await attempt({ headers: bearer(pair().credential) });
+		const end = closed(result.socket);
+		vi.spyOn(db, 'prepare').mockImplementation(() => {
+			throw new Error('database is locked');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		result.socket.send(JSON.stringify(HELLO));
+		expect((await end).code).toBe(CLOSE.revoked);
+		expect(channel.connected().size).toBe(0);
+	});
+
 	it('still reaches the socket that replaced an older one, after the older one has closed', async () => {
 		const runner = pair();
 		const first = await join(runner);

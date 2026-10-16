@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import type { Duplex } from 'node:stream';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -296,6 +297,42 @@ describe('two runners with one pairing', () => {
 		stop.abort();
 		expect((await second).exitCode).toBe(0);
 		unsubscribe();
+	}, 15_000);
+});
+
+describe('a refusal whose body stalls', () => {
+	it('schedules exactly one retry after the dead timer ends it', async () => {
+		const realSetTimeout = globalThis.setTimeout;
+		const tick = (ms: number) => new Promise((resolve) => realSetTimeout(resolve, ms));
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const held: Duplex[] = [];
+		const server = createServer().on('upgrade', (_request, socket) => {
+			held.push(socket);
+			socket.write('HTTP/1.1 502 Bad Gateway\r\ncontent-length: 100\r\n\r\n');
+		});
+		const port = await listen(server);
+		writeConfig(`http://127.0.0.1:${port}`);
+		let attempts = 0;
+		let refused = 0;
+		const running = runnerStartCommand(
+			ctx({
+				createSocket: (url, headers) => {
+					attempts++;
+					const socket = new WebSocket(url, { headers });
+					socket.on('unexpected-response', () => refused++);
+					return socket;
+				}
+			})
+		);
+		await vi.waitFor(() => expect(refused).toBe(1));
+		vi.advanceTimersByTime(DEAD_AFTER_MS);
+		await tick(300);
+		vi.advanceTimersByTime(5_000);
+		await tick(300);
+		expect(attempts).toBe(2);
+		stop.abort();
+		await running;
+		held.forEach((socket) => socket.destroy());
 	}, 15_000);
 });
 
