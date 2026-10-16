@@ -93,7 +93,7 @@ export const en = {
 	'cli.runner.start.replaced':
 		'Another runner with this pairing connected to studio and replaced this one.',
 	'cli.runner.start.replaced.hint':
-		'Keep only one “kabai-studio runner start” per pairing. To run this one instead, stop the other and start it again; to run both, pair this machine again under another name.',
+		'Keep only one “kabai-studio runner start” per pairing. To run this one instead, stop the other and start it again; to run both, pair this machine again under another name. If you did not start a second runner, the pairing is in use elsewhere: disconnect this machine in studio and pair again.',
 	'cli.runner.start.protocol': 'Studio and this runner speak different protocol versions.',
 	'cli.runner.start.protocol.hint':
 		'Update studio and the kabai-studio on this machine to the same version, then run “kabai-studio runner start” again.',

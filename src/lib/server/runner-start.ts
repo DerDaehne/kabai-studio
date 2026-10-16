@@ -187,7 +187,7 @@ class Connection {
 		let body = '';
 		let settled = false;
 		const settle = () => {
-			if (settled) return;
+			if (settled || this.socket !== socket) return;
 			settled = true;
 			const error = this.refusal(response.statusCode ?? 0, bodyCode(body));
 			if (error) return this.fail(error);

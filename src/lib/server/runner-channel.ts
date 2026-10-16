@@ -195,8 +195,14 @@ class Channel implements RunnerChannel {
 		socket.on('error', () => socket.terminate());
 	}
 
+	// Runs inside a socket event, where a throw would take the whole server down; an unreadable row counts as not paired.
 	private stillPaired(id: number) {
-		return this.db.prepare('SELECT 1 FROM runners WHERE id = ?').get(id) !== undefined;
+		try {
+			return this.db.prepare('SELECT 1 FROM runners WHERE id = ?').get(id) !== undefined;
+		} catch (err) {
+			console.error('runner channel: could not check the pairing', err);
+			return false;
+		}
 	}
 
 	private register(socket: WebSocket, name: string, hello: Hello) {
