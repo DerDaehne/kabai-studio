@@ -1,7 +1,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { t } from '$lib/i18n/t';
 import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
-import { dismiss, toast, toastMs } from '$lib/ui/toast.svelte';
+import { dismiss, isHeld, toast, toastMs } from '$lib/ui/toast.svelte';
 import * as actions from './board-actions';
 import type { BoardTicket } from './list';
 
@@ -145,34 +145,36 @@ export class Deletion {
 	remove(row: BoardTicket) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let notice: number | undefined;
+		let settled = false;
 		/** How long the ticket can come back with u before it is deleted for good: the toast's window. */
 		const undoMs = toastMs();
 		const deleted = t('board.deleted', { ref: row.ref });
+		const settle = () => {
+			if (!settled) void this.#forGood(row);
+			settled = true;
+			clearTimeout(timer);
+		};
 		const action: Undoable = {
 			label: deleted,
 			perform: () => {
 				this.pending.add(row.id);
+				// a held toast outlives the timer; its expiry settles then
 				timer = setTimeout(() => {
-					timer = undefined;
-					void this.#forGood(row);
+					if (!isHeld()) settle();
 				}, undoMs);
-				const undo = {
-					label: t('board.undo'),
-					run: () => undoStack.revert(action),
-					countdown: true
-				};
+				const run = () => undoStack.revert(action);
+				const undo = { label: t('board.undo'), run, countdown: true, onExpire: settle };
 				notice = toast(deleted, 'success', undoMs, undo);
 				void this.#deps.focusRow(this.#focusAfterDelete());
 			},
 			revert: () => {
 				if (notice !== undefined) dismiss(notice);
-				if (timer === undefined)
+				if (settled)
 					return void toast(
 						t('board.deleteFinal', { ref: row.ref, seconds: undoMs / 1000 }),
 						'error'
 					);
 				clearTimeout(timer);
-				timer = undefined;
 				this.pending.delete(row.id);
 				void this.#deps.focusRow(row.id);
 			}

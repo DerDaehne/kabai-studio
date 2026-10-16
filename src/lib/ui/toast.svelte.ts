@@ -3,7 +3,13 @@ import { tokenMs } from './motion';
 // Toast: toast('Gespeichert', 'success'). Call it in the browser only (module state is process-wide).
 export type ToastTone = 'info' | 'success' | 'error';
 /** A way out as a button. With `countdown` it takes something back, and its window closes in view. */
-export type ToastAction = { label: string; run: () => void; countdown?: boolean };
+export type ToastAction = {
+	label: string;
+	run: () => void;
+	countdown?: boolean;
+	/** Runs when the window closes unused, so what the window guarded can be settled after a held toast too. */
+	onExpire?: () => void;
+};
 export type Toast = {
 	id: number;
 	message: string;
@@ -27,6 +33,9 @@ const holds = new Set<HoldReason>();
 /** How long a toast stays: Rekta's `--rk-duration-toast`, which the product sets. */
 export const toastMs = () => tokenMs('--rk-duration-toast');
 
+/** Whether the open toast stands still because the pointer or focus is on it. */
+export const isHeld = () => holds.size > 0;
+
 function schedule() {
 	clearTimeout(timer);
 	timer = undefined;
@@ -35,8 +44,10 @@ function schedule() {
 	const step = Math.min(STEP_MS, open.left);
 	timer = setTimeout(() => {
 		open.left -= step;
-		if (open.left <= 0) dismiss(open.id);
-		else schedule();
+		if (open.left <= 0) {
+			dismiss(open.id);
+			open.action?.onExpire?.();
+		} else schedule();
 	}, step);
 }
 
