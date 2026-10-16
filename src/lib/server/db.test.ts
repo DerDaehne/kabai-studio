@@ -484,7 +484,7 @@ describe('migrate', () => {
 			const db = dbBefore013();
 			const before = everyRow(db);
 
-			expect(migrate(db)[0]).toBe('013_halt_kind.sql');
+			expect(migrate(db, shippedBefore('/migrations/022'))[0]).toBe('013_halt_kind.sql');
 
 			const after = everyRow(db);
 			expect(after.runs).toEqual(
@@ -505,12 +505,12 @@ describe('migrate', () => {
 				{ name: 'runs_by_state' },
 				{ name: 'runs_by_ticket' }
 			]); // 013 recreates runs_by_ticket; 015's indexes land in the same migrate() call right after
-			expect(migrate(db)).toEqual([]);
+			expect(migrate(db, shippedBefore('/migrations/022'))).toEqual([]);
 		});
 
 		it('turns the halt that was set into a stop and accepts only stop and pause', () => {
 			const db = dbBefore013();
-			migrate(db);
+			migrate(db, shippedBefore('/migrations/022'));
 
 			expect(db.prepare('SELECT id, halted_at, kind FROM runner_halt').all()).toEqual([
 				{ id: 1, halted_at: '2026-10-01 13:00:00', kind: 'stop' }
@@ -521,7 +521,7 @@ describe('migrate', () => {
 
 		it('accepts the resume reason halt and marks only a paused run as halted, with every other rule of runs still enforced', () => {
 			const db = dbBefore013();
-			migrate(db);
+			migrate(db, shippedBefore('/migrations/022'));
 
 			db.exec("UPDATE runs SET resume_reason = 'halt' WHERE id = 4");
 			expect(() => db.exec("UPDATE runs SET resume_reason = 'boredom' WHERE id = 4")).toThrow(
@@ -611,7 +611,7 @@ describe('migrate', () => {
 
 	it('015 adds the four indexes liveState, claimRun and recentFinishedRuns need, leaving runs_by_ticket in place', () => {
 		const db = openDb(':memory:');
-		expect(migrate(db)).toContain('015_live_state_indexes.sql');
+		expect(migrate(db, shippedBefore('/migrations/022'))).toContain('015_live_state_indexes.sql');
 
 		const indexNames = (table: string) =>
 			db
@@ -627,7 +627,7 @@ describe('migrate', () => {
 			'runs_by_ticket'
 		]);
 		expect(indexNames('questions')).toEqual(['questions_by_run', 'questions_by_ticket']);
-		expect(migrate(db)).toEqual([]);
+		expect(migrate(db, shippedBefore('/migrations/022'))).toEqual([]);
 	});
 });
 
@@ -1089,7 +1089,7 @@ describe('019 on a database at 018 with tickets in every step of every variant a
 		const db = dbBefore019();
 		const before = { tickets: schemaOf(db, 'tickets'), runs: schemaOf(db, 'runs') };
 
-		migrate(db);
+		migrate(db, shippedBefore('/migrations/022'));
 
 		for (const table of ['tickets', 'runs'] as const) {
 			const after = schemaOf(db, table);
@@ -1152,20 +1152,20 @@ describe('020 on a database at 019 with rows in every table', () => {
 		const db = dbAt019();
 		const before = everyRow(db);
 
-		expect(migrate(db)).toEqual(['020_runners.sql']);
+		expect(migrate(db, shippedBefore('/migrations/022'))).toEqual(['020_runners.sql']);
 
 		const { runners, ...after } = everyRow(db);
 		expect(runners).toEqual([]);
 		expect(after).toEqual(before);
 		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-		expect(migrate(db)).toEqual([]);
+		expect(migrate(db, shippedBefore('/migrations/022'))).toEqual([]);
 	});
 
 	it('adds only the STRICT table runners with AUTOINCREMENT, and every other schema entry stays as it was', () => {
 		const db = dbAt019();
 		const before = wholeSchema(db);
 
-		migrate(db);
+		migrate(db, shippedBefore('/migrations/022'));
 
 		const after = wholeSchema(db);
 		expect(after.filter((entry) => entry.tbl_name !== 'runners')).toEqual(before);
@@ -1620,6 +1620,151 @@ describe('notes schema', () => {
 		expect(rawHits('FtsTitelWort')).toEqual([]);
 		expect(rawHits('FtsBodyWortGeaendert')).toEqual([]);
 	});
+});
+
+describe('022 one active run per ticket', () => {
+	const ACTIVE = ['queued', 'running', 'waiting_approval'];
+	const insertRun = (db: ReturnType<typeof openDb>, ticketId: number, state: string) =>
+		db
+			.prepare(
+				`INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, state, token_hash, started_at, finished_at)
+				VALUES (?, 12, 1, 'manual', ?, CASE WHEN ? IN ('running', 'waiting_approval') THEN hex(randomblob(32)) END,
+					CASE WHEN ? <> 'queued' THEN CURRENT_TIMESTAMP END,
+					CASE WHEN ? IN ('paused', 'succeeded', 'failed', 'cancelled') THEN CURRENT_TIMESTAMP END) RETURNING id`
+			)
+			.get(ticketId, state, state, state, state)!.id as number;
+	const states = (db: ReturnType<typeof openDb>, ticketId: number) =>
+		db.prepare('SELECT id, state FROM runs WHERE ticket_id = ? ORDER BY id').all(ticketId);
+	const commentsOn = (db: ReturnType<typeof openDb>, ticketId: number) =>
+		db
+			.prepare(
+				'SELECT author_kind, body FROM comments WHERE ticket_id = ? AND author_kind = ? ORDER BY id'
+			)
+			.all(ticketId, 'system');
+
+	it('cancels all but the oldest active run of a ticket and explains each on the ticket', () => {
+		const db = dbBefore019();
+		migrate(db, shippedBefore('/migrations/022'));
+		const [queued, waiting] = [insertRun(db, 122, 'queued'), insertRun(db, 122, 'queued')];
+		const before113 = states(db, 113);
+		const before131 = states(db, 131);
+		const commentsBefore = commentsOn(db, 122).length;
+
+		expect(migrate(db)).toEqual(['022_one_active_run_per_ticket.sql']);
+
+		expect(states(db, 122)).toEqual([
+			{ id: 4, state: 'running' },
+			{ id: queued, state: 'cancelled' },
+			{ id: waiting, state: 'cancelled' }
+		]);
+		expect(db.prepare('SELECT token_hash, finished_at FROM runs WHERE id = ?').get(queued)).toEqual(
+			{
+				token_hash: null,
+				finished_at: expect.any(String)
+			}
+		);
+		const explanations = commentsOn(db, 122).slice(commentsBefore);
+		expect(explanations).toHaveLength(2);
+		expect(explanations[0].body).toContain(`Run ${queued} wurde abgebrochen`);
+		expect(explanations[0].body).toContain('Run 4 ist der älteste und bleibt aktiv');
+		expect(explanations[0].body).toContain('Ausweg');
+		expect(states(db, 113)).toEqual(before113);
+		expect(states(db, 131)).toEqual(before131);
+		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+	});
+
+	it('cancels running and waiting duplicates that hold a token, in a database with every run state', () => {
+		const token = (n: number) => n.toString(16).padStart(64, '0');
+		const db = openDb(':memory:');
+		migrate(db, shippedBefore('/migrations/022'));
+		db.exec(`
+			INSERT INTO projects (id, key, name, variant, ticket_seq) VALUES (1, 'P', 'P', 'software', 9);
+			INSERT INTO columns (id, project_id, step, name, position) VALUES (10, 1, 'implement', 'impl', 0);
+			INSERT INTO tickets (id, project_id, number, column_id, title, position) VALUES
+				(1, 1, 1, 10, 'a', 0), (2, 1, 2, 10, 'b', 1), (3, 1, 3, 10, 'c', 2);
+			INSERT INTO agent_profiles (id, name, executor, provider, model) VALUES (1, 'L', 'builtin', 'openai-compatible', 'm');
+			INSERT INTO runs (id, ticket_id, column_id, agent_profile_id, trigger, state, token_hash, started_at, finished_at, halted, error, resumed_from_run_id) VALUES
+				(1, 1, 10, 1, 'manual', 'succeeded', NULL, '2026-01-01', '2026-01-01', 0, NULL, NULL),
+				(2, 1, 10, 1, 'manual', 'paused', NULL, '2026-01-01', '2026-01-01', 1, NULL, NULL),
+				(3, 1, 10, 1, 'manual', 'running', '${token(3)}', '2026-01-01', NULL, 0, NULL, NULL),
+				(4, 1, 10, 1, 'manual', 'waiting_approval', '${token(4)}', '2026-01-01', NULL, 0, NULL, NULL),
+				(5, 1, 10, 1, 'resume', 'queued', NULL, NULL, NULL, 0, NULL, 2),
+				(6, 1, 10, 1, 'manual', 'failed', NULL, '2026-01-01', '2026-01-01', 0, '[x] y', NULL),
+				(7, 1, 10, 1, 'manual', 'cancelled', NULL, NULL, '2026-01-01', 0, NULL, NULL),
+				(8, 2, 10, 1, 'manual', 'queued', NULL, NULL, NULL, 0, NULL, NULL),
+				(9, 2, 10, 1, 'manual', 'running', '${token(9)}', '2026-01-01', NULL, 0, NULL, NULL),
+				(10, 3, 10, NULL, 'manual', 'running', '${token(10)}', '2026-01-01', NULL, 0, NULL, NULL);
+			INSERT INTO run_events (run_id, seq, type, payload) VALUES (4, 1, 'log', '{}'), (9, 1, 'log', '{}');
+			INSERT INTO comments (ticket_id, author_kind, author, body, run_id) VALUES (1, 'agent', 'a', 'x', 3);
+		`);
+
+		expect(migrate(db)).toEqual(['022_one_active_run_per_ticket.sql']);
+
+		const rows = db
+			.prepare(
+				'SELECT id, state, token_hash IS NOT NULL AS token, finished_at IS NOT NULL AS finished FROM runs ORDER BY id'
+			)
+			.all();
+		const run = (id: number) => rows.find((r) => r.id === id);
+		expect(run(3)).toMatchObject({ state: 'running', token: 1, finished: 0 });
+		expect(run(4)).toMatchObject({ state: 'cancelled', token: 0, finished: 1 });
+		expect(run(5)).toMatchObject({ state: 'cancelled', token: 0, finished: 1 });
+		expect(run(2)).toMatchObject({ state: 'paused' });
+		expect(run(8)).toMatchObject({ state: 'queued' });
+		expect(run(9)).toMatchObject({ state: 'cancelled', token: 0, finished: 1 });
+		expect(run(10)).toMatchObject({ state: 'running', token: 1 });
+		expect(
+			db
+				.prepare("SELECT ticket_id, run_id FROM comments WHERE author_kind = 'system' ORDER BY id")
+				.all()
+		).toEqual([
+			{ ticket_id: 1, run_id: 4 },
+			{ ticket_id: 1, run_id: 5 },
+			{ ticket_id: 2, run_id: 9 }
+		]);
+		expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+		expect(db.prepare('PRAGMA integrity_check').all()).toEqual([{ integrity_check: 'ok' }]);
+		expect(migrate(db)).toEqual([]);
+	});
+
+	it('changes nothing on a database where no ticket has two active runs', () => {
+		const db = dbBefore019();
+		migrate(db, shippedBefore('/migrations/022'));
+		const rows = db.prepare('SELECT * FROM runs ORDER BY id').all();
+		const comments = db.prepare('SELECT * FROM comments ORDER BY id').all();
+
+		migrate(db);
+
+		expect(db.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(rows);
+		expect(db.prepare('SELECT * FROM comments ORDER BY id').all()).toEqual(comments);
+	});
+
+	it.each(ACTIVE)('refuses a second %s run of a ticket that has an active one', (state) => {
+		const db = dbBefore019();
+		migrate(db);
+		insertRun(db, 112, 'queued');
+		expect(() => insertRun(db, 112, state)).toThrow(/UNIQUE constraint failed: runs.ticket_id/);
+	});
+
+	it.each(['paused', 'succeeded', 'failed', 'cancelled'])(
+		'lets a ticket with an active run have any number of %s runs',
+		(state) => {
+			const db = dbBefore019();
+			migrate(db);
+			insertRun(db, 112, 'running');
+			const before = states(db, 112).length;
+			const insert = () =>
+				db
+					.prepare(
+						`INSERT INTO runs (ticket_id, column_id, agent_profile_id, trigger, state, error, started_at, finished_at)
+						VALUES (112, 12, 1, 'manual', ?, 'x', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+					)
+					.run(state);
+			insert();
+			insert();
+			expect(states(db, 112)).toHaveLength(before + 2);
+		}
+	);
 });
 
 describe('latestMigration', () => {
