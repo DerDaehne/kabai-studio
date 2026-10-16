@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { expect, open, sidewaysScrollers, test } from './fixtures.ts';
+import { expect, open, sidewaysScrollers, test, waitForTransitionsEnd } from './fixtures.ts';
 
 const SHOWCASE = '[data-testid="rekta-showcase"]';
 const tones = ['neutral', 'info', 'success', 'warning', 'error'];
@@ -179,6 +179,7 @@ test('the tile showcase passes axe WCAG 2.1 A/AA in light and dark, on a phone a
 		await page.setViewportSize({ width, height: 900 });
 		for (const theme of ['light', 'dark'] as const) {
 			await setTheme(page, theme);
+			await waitForTransitionsEnd(page);
 			const { violations } = await new AxeBuilder({ page })
 				.include(SHOWCASE)
 				.withTags(['wcag2a', 'wcag2aa'])

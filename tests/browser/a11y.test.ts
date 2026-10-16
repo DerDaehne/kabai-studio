@@ -10,7 +10,7 @@ import {
 } from '../../src/lib/server/domain/runners.ts';
 import { createProfile } from '../../src/lib/server/domain/runs.ts';
 import { axeExceptions } from './axe.exceptions.ts';
-import { expect, open, queueRun, test } from './fixtures.ts';
+import { expect, open, queueRun, test, waitForTransitionsEnd } from './fixtures.ts';
 
 // Ratchet: axeExceptions.length today. Lower it whenever an entry below is fixed and removed; never raise it to
 // match a growing list — that defeats the point of the exception list (see axe.exceptions.ts).
@@ -36,10 +36,7 @@ async function setTheme(page: Page, theme: Theme) {
 async function checkView(page: Page, view: string, theme: Theme, width: Width) {
 	await page.setViewportSize(width === 'phone' ? phoneViewport : { width: 1280, height: 720 });
 	await setTheme(page, theme);
-	// Switching in place starts colour transitions; axe has to judge the colours they settle on, not one in between.
-	await page.waitForFunction(() =>
-		document.getAnimations().every((animation) => !(animation instanceof CSSTransition))
-	);
+	await waitForTransitionsEnd(page);
 	const { violations } = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 	const found = violations.flatMap((violation) =>
 		violation.nodes.map((node) => ({ ruleId: violation.id, selector: node.target.join(' ') }))
@@ -201,9 +198,7 @@ test.describe('the shell: app bar, banner, toast and crumb', () => {
 						width === 'phone' ? phoneViewport : { width: 1280, height: 720 }
 					);
 					await setTheme(page, theme);
-					await page.waitForFunction(() =>
-						document.getAnimations().every((animation) => !(animation instanceof CSSTransition))
-					);
+					await waitForTransitionsEnd(page);
 					const { violations } = await new AxeBuilder({ page })
 						.include('.rk-appbar')
 						.include('.rk-banner')

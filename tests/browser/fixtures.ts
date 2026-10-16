@@ -108,3 +108,10 @@ export function intoWorkStep(db: DatabaseSync, ticketId: number): void {
 	const step = board.columns(db, t.project_id).find((c) => c.step === 'implement')!;
 	if (t.column_id !== step.id) board.moveTicket(db, HUMAN, ticketId, step.id);
 }
+
+/** Waits until no colour transition is running; axe has to judge the colours a theme switch settles on, not one in between. */
+export async function waitForTransitionsEnd(page: Page): Promise<void> {
+	await page.waitForFunction(() =>
+		document.getAnimations().every((animation) => !(animation instanceof CSSTransition))
+	);
+}
