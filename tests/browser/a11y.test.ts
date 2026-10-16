@@ -183,3 +183,47 @@ test.describe('WCAG 2.1 A/AA, light/dark × phone/desktop', () => {
 		}
 	});
 });
+
+test.describe('the shell: app bar, banner, toast and crumb', () => {
+	test('a standing pause banner and a toast with a countdown pass axe in both themes and widths', async ({
+		page
+	}) => {
+		await open(page, '/dev/ui');
+		try {
+			expect((await page.request.post('/api/pause')).ok()).toBe(true);
+			await expect(page.locator('.rk-banner[data-status="warning"]')).toBeVisible();
+			await page.getByRole('button', { name: 'Rückgängig-Meldung' }).click();
+			await expect(page.locator('.rk-toast')).toBeVisible();
+			// the showcase page around them has findings of its own; the shell parts are what is under test
+			for (const theme of themes) {
+				for (const width of widths) {
+					await page.setViewportSize(
+						width === 'phone' ? phoneViewport : { width: 1280, height: 720 }
+					);
+					await setTheme(page, theme);
+					await page.waitForFunction(() =>
+						document.getAnimations().every((animation) => !(animation instanceof CSSTransition))
+					);
+					const { violations } = await new AxeBuilder({ page })
+						.include('.rk-appbar')
+						.include('.rk-banner')
+						.include('.rk-toasts')
+						.withTags(['wcag2a', 'wcag2aa'])
+						.analyze();
+					expect(
+						violations.map((violation) => violation.id),
+						`${theme}, ${width}`
+					).toEqual([]);
+				}
+			}
+		} finally {
+			await page.request.delete('/api/halt');
+		}
+	});
+
+	test('the crumb passes axe in both themes and widths', async ({ page, seedTicket }) => {
+		await open(page, seedTicket('Axe gate: a crumb above the title').path);
+		await expect(page.locator('.rk-crumb')).toBeVisible();
+		await checkEveryCombination(page, 'crumb');
+	});
+});

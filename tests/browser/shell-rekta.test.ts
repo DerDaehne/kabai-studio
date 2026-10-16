@@ -242,3 +242,87 @@ test.describe('the crumb', () => {
 		expect(await entries(), 'forward adds an entry').toBe(cold + 1);
 	});
 });
+
+type Rgb = [number, number, number];
+
+/** The colour a focus ring is drawn in and the colour it lies on (translucent layers composited), as sRGB bytes. */
+function ringAndGround(page: Page, selector: string) {
+	return page.evaluate((target) => {
+		const context = Object.assign(document.createElement('canvas'), {
+			width: 1,
+			height: 1
+		}).getContext('2d', { willReadFrequently: true })!;
+		const bytes = (color: string): [number, number, number, number] => {
+			context.clearRect(0, 0, 1, 1);
+			context.fillStyle = '#000';
+			context.fillStyle = color;
+			context.fillRect(0, 0, 1, 1);
+			const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+			return [r, g, b, a / 255];
+		};
+		const element = document.querySelector<HTMLElement>(target)!;
+		const layers: [number, number, number, number][] = [];
+		for (let node: Element | null = element; node; node = node.parentElement)
+			layers.push(bytes(getComputedStyle(node).backgroundColor));
+		let ground: [number, number, number] = [255, 255, 255];
+		for (const [r, g, b, a] of layers.reverse())
+			ground = [r, g, b].map((channel, i) => channel * a + ground[i] * (1 - a)) as typeof ground;
+		const ring = getComputedStyle(element);
+		return {
+			ring: bytes(ring.outlineColor).slice(0, 3) as typeof ground,
+			width: parseFloat(ring.outlineWidth),
+			ground
+		};
+	}, selector);
+}
+
+const luminance = ([r, g, b]: Rgb) => {
+	const linear = (channel: number) => {
+		const value = channel / 255;
+		return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+};
+const contrast = (a: Rgb, b: Rgb) => {
+	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (light + 0.05) / (dark + 0.05);
+};
+
+for (const scheme of ['light', 'dark'] as const) {
+	test(`the focus ring keeps 3:1 against its ground on the bar, the banner, the toast and the crumb (${scheme})`, async ({
+		page,
+		seedTicket
+	}) => {
+		await page.emulateMedia({ colorScheme: scheme });
+		await page.setViewportSize(DESKTOP);
+		await open(page, '/dev/ui');
+		try {
+			expect((await page.request.post('/api/pause')).ok()).toBe(true);
+			await expect(page.locator('.rk-banner[data-status]')).toBeVisible();
+			await page.getByRole('button', { name: 'Rückgängig-Meldung' }).click();
+			await expect(page.locator('.rk-toast-act')).toBeVisible();
+
+			for (const selector of [
+				'.rk-appbar .rk-ab:not([hidden])',
+				'.rk-banner .rk-btn',
+				'.rk-toast-act'
+			]) {
+				await page.locator(selector).first().focus();
+				await page.keyboard.press('Shift+Tab'); // keyboard modality, so :focus-visible applies
+				await page.keyboard.press('Tab');
+				const { ring, width, ground } = await ringAndGround(page, selector);
+				expect(width, selector).toBeGreaterThanOrEqual(2);
+				expect(contrast(ring, ground), `${selector} ring on its ground`).toBeGreaterThanOrEqual(3);
+			}
+		} finally {
+			await page.request.delete('/api/halt');
+		}
+
+		await open(page, seedTicket('Focus on the crumb').path);
+		await page.locator('.rk-crumb').focus();
+		await page.keyboard.press('Shift+Tab');
+		await page.keyboard.press('Tab');
+		const { ring, ground } = await ringAndGround(page, '.rk-crumb');
+		expect(contrast(ring, ground), 'crumb ring on its ground').toBeGreaterThanOrEqual(3);
+	});
+}

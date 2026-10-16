@@ -265,17 +265,23 @@ async function exerciseKillSwitch(page: Page, model: FakeModel) {
 	// the command line resolves to.
 	await open(page, '/');
 	await confirmCommand(page, 'anhalten', 'Alle Agents anhalten?');
-	await expect(page.getByText('Angehalten · 1 pausiert', { exact: true })).toBeVisible();
+	await expect(
+		page.locator('.rk-banner-live', { hasText: /Angehalten\s+1 pausiert/ })
+	).toBeVisible();
 
 	model.reply('hang'); // the run :fortsetzen all wakes
 	await command(page, 'fortsetzen all');
-	await expect(page.getByText(/^Angehalten · \d+ pausiert$/)).toBeHidden();
+	await expect(
+		page.locator('.rk-banner-live', { hasText: /Angehalten\s+\d+ pausiert/ })
+	).toBeHidden();
 
 	await confirmCommand(page, 'stop', 'Alle Agents stoppen?');
-	await expect(page.getByText(/^Gestoppt · \d+ wartend$/)).toBeVisible();
+	await expect(
+		page.locator('.rk-banner-live', { hasText: /Gestoppt\s+\d+ wartend/ })
+	).toBeVisible();
 
 	await command(page, 'fortsetzen all'); // also proves resume works from a stop, not only from a pause
-	await expect(page.getByText(/^Gestoppt · \d+ wartend$/)).toBeHidden();
+	await expect(page.locator('.rk-banner-live', { hasText: /Gestoppt\s+\d+ wartend/ })).toBeHidden();
 }
 
 async function command(page: Page, line: string) {
@@ -391,8 +397,10 @@ async function exerciseKillSwitchByTap(page: Page, model: FakeModel) {
 	await expect(spur).not.toContainText('angehalten');
 
 	await confirmCommand(page, 'stop', 'Alle Agents stoppen?');
-	await expect(page.getByText(/^Gestoppt · \d+ wartend$/)).toBeVisible();
+	await expect(
+		page.locator('.rk-banner-live', { hasText: /Gestoppt\s+\d+ wartend/ })
+	).toBeVisible();
 
 	await tapVisible(page.getByRole('button', { name: 'Fortsetzen' })); // also proves resume works from a stop
-	await expect(page.getByText(/^Gestoppt · \d+ wartend$/)).toBeHidden();
+	await expect(page.locator('.rk-banner-live', { hasText: /Gestoppt\s+\d+ wartend/ })).toBeHidden();
 }

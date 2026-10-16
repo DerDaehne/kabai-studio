@@ -239,7 +239,10 @@
 			overflow: auto hidden;
 			scrollbar-width: thin;
 		}
-		/* also shows the facets the server rendered hidden, until hydration lifts `hidden` */
+		/* also shows the facets the server rendered hidden, until hydration lifts `hidden`; Rekta hides every [hidden] with !important */
+		.facets section[hidden] {
+			display: block !important;
+		}
 		section {
 			display: block;
 			flex: 0 0 var(--facet-width, var(--facet-w));

@@ -170,7 +170,7 @@ test.describe('at 1440 px', () => {
 			const panorama = page.locator('.panorama');
 			const bottom = await panorama.evaluate((el) => el.getBoundingClientRect().bottom);
 			const appBarTop = await page
-				.locator('footer.appbar')
+				.locator('footer.rk-appbar')
 				.evaluate((el) => el.getBoundingClientRect().top);
 			expect(Math.abs(bottom - appBarTop)).toBeLessThanOrEqual(1);
 
