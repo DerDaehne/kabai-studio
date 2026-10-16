@@ -316,14 +316,16 @@ class Runner {
 
 	private claimQueuedRuns() {
 		try {
-			const next = () => (this.stopped ? undefined : claimRun(this.db, SYSTEM, this.readLimits()));
+			const now = new Date(); // the claims and the timer share one instant, so a not_before between two clock reads cannot fall through both
+			const next = () =>
+				this.stopped ? undefined : claimRun(this.db, SYSTEM, this.readLimits(), now);
 			for (let run = next(); run; run = next()) {
 				const runId = run.id;
 				this.execute(run).catch((err) =>
 					console.error(`Runner: Run ${runId} nicht sauber beendet:`, err)
 				);
 			}
-			this.wakeAtNextNotBefore();
+			this.wakeAtNextNotBefore(now);
 		} catch (err) {
 			console.error('Runner: Claim fehlgeschlagen:', err);
 		} finally {
@@ -339,9 +341,9 @@ class Runner {
 	}
 
 	/** Set again after every claim from the database, so a held-back run survives a restart. */
-	private wakeAtNextNotBefore() {
+	private wakeAtNextNotBefore(now: Date) {
 		clearTimeout(this.notBeforeTimer);
-		const next = this.stopped ? null : nextNotBefore(this.db, new Date());
+		const next = this.stopped ? null : nextNotBefore(this.db, now);
 		if (!next) return;
 		const delay = Math.min(Date.parse(next) - Date.now(), MAX_TIMER_DELAY_MS);
 		this.notBeforeTimer = setTimeout(() => this.wake(), delay);

@@ -1216,6 +1216,39 @@ describe('parking and resuming a run', () => {
 		expect(s.state(followUp)).toBe('running');
 	});
 
+	it('still wakes for a notBefore that passes while the claim runs', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+		const s = setup();
+		const fake = fakeExecutor();
+		const held = s.queue(s.local);
+		s.db
+			.prepare('UPDATE runs SET not_before = ? WHERE id = ?')
+			.run('2026-10-02T12:00:00.001Z', held);
+		const prepare = s.db.prepare.bind(s.db);
+		vi.spyOn(s.db, 'prepare').mockImplementation((sql: string) => {
+			const statement = prepare(sql);
+			if (!sql.includes('SELECT r.id, r.ticket_id AS ticketId')) return statement;
+			return new Proxy(statement, {
+				get: (target, key) =>
+					key === 'get'
+						? (...args: never[]) => {
+								const found = target.get(...args);
+								vi.setSystemTime(Date.now() + 1); // a slow claim: the clock moves past not_before before it ends
+								return found;
+							}
+						: Reflect.get(target, key).bind(target)
+			});
+		});
+		start(s.db, { builtin: fake.executor });
+		await flush();
+		expect(s.state(held)).toBe('queued');
+
+		vi.advanceTimersByTime(1);
+		await flush();
+		expect(s.state(held)).toBe('running');
+	});
+
 	it('waits for a notBefore beyond the longest timer delay by waking once per maximum delay, not at once', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
 		vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
