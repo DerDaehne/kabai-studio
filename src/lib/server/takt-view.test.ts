@@ -19,7 +19,10 @@ function setup() {
 		pool: 'local'
 	}).id;
 	const running = () => {
-		const ticket = board.createTicket(db, user, projectId, { title: 'T' }).id;
+		const ticket = board.createTicket(db, user, projectId, {
+			title: 'T',
+			column_id: board.columns(db, projectId).find((c) => c.step === 'implement')!.id
+		}).id;
 		const id = runs.createRun(db, user, { ticketId: ticket, profileId: profile }).id;
 		runs.startRun(db, user, id);
 		return id;

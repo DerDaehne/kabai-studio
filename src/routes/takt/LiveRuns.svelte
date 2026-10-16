@@ -39,7 +39,7 @@
 		const name = phases[runId]?.name;
 		return name && PHASES.has(name)
 			? t(`start.phase.${name}` as MessageKey)
-			: t('start.phase.unknown');
+			: t('start.phase.working');
 	};
 
 	function tickerLine(runId: number): string {
