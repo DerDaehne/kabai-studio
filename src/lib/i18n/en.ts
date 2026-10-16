@@ -108,13 +108,22 @@ export const en = {
 	'cli.runner.start.refused.other': 'Studio at {origin} refused the connection.',
 	'cli.runner.start.refused.other.hint':
 		'Check studio’s address and any proxy in front of it, then run “kabai-studio runner start” again.',
-	'cli.runner.service.unavailable.systemd':
-		'systemd is not available on this host. Use --print to look at the unit file anyway.',
-	'cli.runner.service.unavailable.launchd':
-		'launchd is not available on this host. Use --print to look at the plist file anyway.',
-	'cli.runner.service.noStatus': 'No status available.',
-	'cli.runner.service.fs.write': 'Could not write {path} ({code}). Check the folder permissions.',
-	'cli.runner.service.fs.remove': 'Could not remove {path} ({code}). Check the folder permissions.',
+	'cli.runner.service.unavailable.systemd': 'systemd is not available on this host.',
+	'cli.runner.service.unavailable.systemd.hint': 'Use --print to look at the unit file anyway.',
+	'cli.runner.service.unavailable.launchd': 'launchd is not available on this host.',
+	'cli.runner.service.unavailable.launchd.hint': 'Use --print to look at the plist file anyway.',
+	'cli.runner.service.statusUnavailable.systemd':
+		'systemd is not available on this host, so there is no status.',
+	'cli.runner.service.statusUnavailable.systemd.hint':
+		'Use --print to look at the unit file anyway.',
+	'cli.runner.service.statusUnavailable.launchd':
+		'launchd is not available on this host, so there is no status.',
+	'cli.runner.service.statusUnavailable.launchd.hint':
+		'Use --print to look at the plist file anyway.',
+	'cli.runner.service.fs.write': 'Could not write {path} ({code}).',
+	'cli.runner.service.fs.write.hint': 'Check the folder permissions.',
+	'cli.runner.service.fs.remove': 'Could not remove {path} ({code}).',
+	'cli.runner.service.fs.remove.hint': 'Check the folder permissions.',
 	'cli.runner.service.installed.systemd':
 		'Runner service installed: {path}. Start it now with “systemctl --user start kabai-studio-runner”. To keep it running without an active login: “loginctl enable-linger $(whoami)”.',
 	'cli.runner.service.installed.launchd':
@@ -128,9 +137,9 @@ export const en = {
 	'cli.runner.service.stopped.systemd':
 		'The runner is not running. See the log with “journalctl --user -u kabai-studio-runner”, or run “kabai-studio runner service install” again.',
 	'cli.runner.service.stopped.launchd':
-		'The runner is not running (or not loaded). Run “kabai-studio runner service install” again.',
-	'cli.runner.service.unsupported':
-		'runner service is not supported on {platform}. Supported: Linux (systemd), macOS (launchd).',
+		'The runner is not running (or not loaded). See the log in ~/Library/Logs/studio.kabai.kabai-studio-runner.log, or run “kabai-studio runner service install” again.',
+	'cli.runner.service.unsupported': 'runner service is not supported on {platform}.',
+	'cli.runner.service.unsupported.hint': 'Supported: Linux (systemd), macOS (launchd).',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'No agent is working.',

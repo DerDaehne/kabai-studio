@@ -143,7 +143,7 @@ test('an unknown subcommand exits non-zero with a one-line, plain-text way out',
 
 test('service install --print prints the unit without touching the filesystem or a real service manager', async () => {
 	const home = throwawayHome();
-	const configHome = join(home, 'xdg-config');
+	const configHome = join(home, 'xdg config');
 	const server = startServer(['service', 'install', '--print'], {
 		HOME: home,
 		XDG_CONFIG_HOME: configHome
@@ -166,7 +166,7 @@ test('service status reports exactly one outcome: running, not running, or unava
 	const home = throwawayHome();
 	const server = startServer(['service', 'status'], {
 		HOME: home,
-		XDG_CONFIG_HOME: join(home, 'xdg-config')
+		XDG_CONFIG_HOME: join(home, 'xdg config')
 	});
 	try {
 		const code = await waitUntilExited(server);
@@ -180,9 +180,17 @@ test('service status reports exactly one outcome: running, not running, or unava
 	}
 });
 
+/** Splits a unit value the way systemd does: quoted words with backslash escapes, `%%` for `%` and `$$` for `$`. */
+function systemdWords(value: string): string[] {
+	const words = value.match(/"(?:[^"\\]|\\.)*"|\S+/g) ?? [];
+	return words.map((word) =>
+		word.replace(/^"|"$/g, '').replace(/\\(.)/g, '$1').replaceAll('%%', '%').replaceAll('$$', '$')
+	);
+}
+
 /** What `runner pair` leaves behind, pointing at `origin`. */
 function writePairing(home: string, origin: string, { floor = true } = {}): string {
-	const configHome = join(home, 'xdg-config');
+	const configHome = join(home, 'xdg config');
 	const configDir = join(configHome, 'kabai-studio');
 	mkdirSync(configDir, { recursive: true });
 	writeFileSync(
@@ -200,7 +208,7 @@ function writePairing(home: string, origin: string, { floor = true } = {}): stri
 
 test('runner service install --print shows a unit that runs runner start, and writes nothing', async () => {
 	const home = throwawayHome();
-	const configHome = join(home, 'xdg-config');
+	const configHome = join(home, 'xdg config');
 	const server = startServer(['runner', 'service', 'install', '--print'], {
 		HOME: home,
 		XDG_CONFIG_HOME: configHome
@@ -225,7 +233,7 @@ test.describe('runner service install without a complete pairing', () => {
 			const home = throwawayHome();
 			const configHome = pairFirst
 				? writePairing(home, 'http://127.0.0.1:1', { floor })
-				: join(home, 'xdg-config');
+				: join(home, 'xdg config');
 			const server = startServer(['runner', 'service', 'install'], {
 				HOME: home,
 				XDG_CONFIG_HOME: configHome
@@ -264,8 +272,11 @@ test('the ExecStart line from --print starts a runner that connects to a test se
 	try {
 		expect(await waitUntilExited(printed)).toBe(0);
 		const unit = printed.output();
-		const [execPath, ...args] = unit.match(/^ExecStart=(.*)$/m)![1].split(' ');
-		expect(unit).toContain(`Environment=XDG_CONFIG_HOME=${configHome}`);
+		const [execPath, ...args] = systemdWords(unit.match(/^ExecStart=(.*)$/m)![1]);
+		// systemd reads the quoted assignment as one word, `%%` meaning `%`
+		expect(systemdWords(unit.match(/^Environment=(.*)$/m)![1])).toEqual([
+			`XDG_CONFIG_HOME=${configHome}`
+		]);
 		let output = '';
 		const proc = spawn(execPath, args, {
 			env: { ...process.env, ...env },

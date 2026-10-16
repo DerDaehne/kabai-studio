@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import {
 	chmodSync,
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
@@ -21,7 +22,9 @@ import {
 	launchdPlistPath,
 	parseCliArgs,
 	runServiceCommand,
+	runnerLaunchdPlist,
 	runnerServiceProfile,
+	runnerSystemdUnit,
 	systemdUnit,
 	systemdUnitPath
 } from './cli.ts';
@@ -330,7 +333,7 @@ describe('runner service', () => {
 		const { calls, run } = recorder();
 		const result = runServiceCommand('install', true, 'linux', ctx(), run, profile());
 		expect(result.message).toContain(
-			'ExecStart=/usr/bin/node /opt/kabai-studio/server.ts runner start'
+			'ExecStart="/usr/bin/node" "/opt/kabai-studio/server.ts" runner start'
 		);
 		expect(result.message).toContain('Restart=on-failure');
 		expect(result.message).toContain('RestartSec=30');
@@ -349,7 +352,7 @@ describe('runner service', () => {
 			recorder().run,
 			profile()
 		);
-		expect(result.message).toContain('Environment=XDG_CONFIG_HOME=/custom/xdg');
+		expect(result.message).toContain('Environment="XDG_CONFIG_HOME=/custom/xdg"');
 	});
 
 	it('prints a launchd plist that keeps the runner alive with a 30 s throttle', () => {
@@ -357,7 +360,7 @@ describe('runner service', () => {
 		expect(result.message).toContain('studio.kabai.kabai-studio-runner');
 		expect(result.message).toContain('<string>runner</string>\n\t\t<string>start</string>');
 		expect(result.message).toContain('<key>RunAtLoad</key><true/>');
-		expect(result.message).toContain('<key>KeepAlive</key><true/>');
+		expect(result.message).toContain('<key>KeepAlive</key><dict>');
 		expect(result.message).toContain('<key>ThrottleInterval</key><integer>30</integer>');
 	});
 
@@ -459,18 +462,123 @@ describe('runner service', () => {
 		expect(de.message).toContain('läuft');
 	});
 
-	it('leaves the studio service texts and unit content untouched', () => {
-		const result = runServiceCommand('status', false, 'linux', ctx(), recorder('active\n').run);
-		expect(result.message).toBe('kabai studio läuft (systemd-User-Dienst aktiv).');
+	it('keeps the studio service texts, unit and plist as they were', () => {
+		const status = runServiceCommand('status', false, 'linux', ctx(), recorder('active\n').run);
+		expect(status.message).toBe('kabai studio läuft (systemd-User-Dienst aktiv).');
+		const none = runServiceCommand('uninstall', false, 'darwin', ctx(), recorder().run);
+		expect(none.message).toBe('Kein launchd-Agent installiert — nichts zu tun.');
+		const noStatus = runServiceCommand('status', false, 'linux', ctx(), () => ({
+			status: null,
+			stdout: ''
+		}));
+		expect(noStatus.message).toMatch(/nicht verfügbar\. Mit --print .* Kein Status abrufbar\.$/);
+		const unit = runServiceCommand('install', true, 'linux', ctx(), recorder().run).message;
+		expect(unit).toContain('ExecStart=/usr/bin/node /opt/kabai-studio/server.ts\n');
+		expect(unit).not.toContain('"');
 	});
 
-	it('has every runner service text in both catalogues, with failures as one line', () => {
+	it.each([
+		['win32', 'install', () => ({ status: 0, stdout: '' })],
+		['win32', 'status', () => ({ status: 0, stdout: '' })],
+		['linux', 'install', () => ({ status: 1, stdout: '' })],
+		['darwin', 'install', () => ({ status: 1, stdout: '' })],
+		['linux', 'status', () => ({ status: null, stdout: '' })],
+		['darwin', 'status', () => ({ status: null, stdout: '' })]
+	] as const)(
+		'a runner service failure on %s %s is one coded line with a way out',
+		(platform, action, run) => {
+			for (const locale of ['en', 'de'] as const) {
+				const result = runServiceCommand(action, false, platform, ctx(), run, profile(locale));
+				expect(result.exitCode).toBe(1);
+				expect(result.message).toMatch(/^\[[a-z_]+\] [^\n]+ [^\n]+$/);
+			}
+		}
+	);
+
+	it('reports a write error as one coded line and an unremovable file likewise', () => {
+		writeFileSync(join(dir, '.config'), 'not a directory');
+		const written = runServiceCommand('install', false, 'linux', ctx(), recorder().run, profile());
+		expect(written.exitCode).toBe(1);
+		expect(written.message).toMatch(
+			/^\[unit_file_not_writable\] Could not write .* Check the folder permissions\.$/
+		);
+		rmSync(join(dir, '.config'));
+		runServiceCommand('install', false, 'linux', ctx(), recorder().run, profile());
+		const unitDir = dirname(unitPath());
+		chmodSync(unitDir, 0o500);
+		try {
+			const removed = runServiceCommand(
+				'uninstall',
+				false,
+				'linux',
+				ctx(),
+				recorder().run,
+				profile()
+			);
+			if (process.getuid?.() !== 0)
+				expect(removed.message).toMatch(/^\[unit_file_not_removable\] /);
+		} finally {
+			chmodSync(unitDir, 0o700);
+		}
+	});
+
+	describe('quoting', () => {
+		const awkward = (extra: Record<string, string> = {}) => ({
+			env: { HOME: dir, ...extra },
+			execPath: '/opt/my node/no"de',
+			entryPath: '/srv/k$s/50%/a\\b/server.ts',
+			dataDir: ''
+		});
+
+		it('quotes and escapes systemd values so a path with space, quote, backslash, % and $ stays one word', () => {
+			const unit = runnerSystemdUnit(awkward({ XDG_CONFIG_HOME: '/home/a b/50%/$x' }));
+			expect(unit).toContain(
+				'ExecStart="/opt/my node/no\\"de" "/srv/k$$s/50%%/a\\\\b/server.ts" runner start'
+			);
+			expect(unit).toContain('Environment="XDG_CONFIG_HOME=/home/a b/50%%/$x"');
+		});
+
+		it('is accepted by systemd-analyze verify without a warning about the generated lines', () => {
+			const analyze = spawnSync('systemd-analyze', ['--version']);
+			if (analyze.status !== 0) return;
+			const bin = join(dir, 'my bin');
+			mkdirSync(bin);
+			const node = join(bin, 'node');
+			writeFileSync(node, '#!/bin/sh\n', { mode: 0o755 });
+			const unit = runnerSystemdUnit({
+				env: { XDG_CONFIG_HOME: join(dir, 'conf 100%$USER') },
+				execPath: node,
+				entryPath: join(dir, 'k$s server.ts'),
+				dataDir: ''
+			});
+			const unitFile = join(dir, 'kabai-studio-runner.service');
+			writeFileSync(unitFile, unit);
+			const verified = spawnSync('systemd-analyze', ['--user', 'verify', unitFile], {
+				encoding: 'utf8'
+			});
+			expect(`${verified.stdout}${verified.stderr}`).not.toMatch(
+				/Invalid environment|not executable|ExecStart/
+			);
+		});
+
+		it('escapes XML in the plist so a path with & or < still parses', () => {
+			const plist = runnerLaunchdPlist({ ...awkward(), execPath: '/Apps/A&B <x>/node' });
+			expect(plist).toContain('<string>/Apps/A&amp;B &lt;x&gt;/node</string>');
+			const text = plist.replace(/<\?[^>]*\?>|<![^>]*>/g, '').replace(/<\/?[A-Za-z][^<>]*>/g, '');
+			expect(text).not.toMatch(/<|&(?!(amp|lt|gt|quot|apos);)/);
+		});
+
+		it('restarts the plist only after a failure and logs next to the user logs', () => {
+			const plist = runnerLaunchdPlist(ctx());
+			expect(plist).toContain('<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>');
+			expect(plist).toContain(
+				`<key>StandardOutPath</key><string>${dir}/Library/Logs/studio.kabai.kabai-studio-runner.log</string>`
+			);
+		});
+	});
+
+	it('has every runner service text in both catalogues', () => {
 		const ids = [
-			'unavailable.systemd',
-			'unavailable.launchd',
-			'noStatus',
-			'fs.write',
-			'fs.remove',
 			'installed.systemd',
 			'installed.launchd',
 			'none.systemd',
@@ -480,13 +588,12 @@ describe('runner service', () => {
 			'running.systemd',
 			'running.launchd',
 			'stopped.systemd',
-			'stopped.launchd',
-			'unsupported'
+			'stopped.launchd'
 		] as const;
 		for (const locale of ['en', 'de'] as const) {
 			const { say } = profile(locale);
 			for (const id of ids) {
-				const text = say(id, { path: '/p', code: 'EACCES', platform: 'win32' });
+				const text = say(id, { path: '/p' });
 				expect(text).not.toBe(`cli.runner.service.${id}`);
 				expect(text).not.toContain('\n');
 			}

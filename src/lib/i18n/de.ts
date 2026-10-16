@@ -112,15 +112,24 @@ export const de: Catalogue = {
 	'cli.runner.start.refused.other': 'Studio unter {origin} hat die Verbindung abgewiesen.',
 	'cli.runner.start.refused.other.hint':
 		'Adresse von Studio und einen vorgeschalteten Proxy prüfen, dann „kabai-studio runner start“ erneut ausführen.',
-	'cli.runner.service.unavailable.systemd':
-		'systemd ist auf diesem Rechner nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
-	'cli.runner.service.unavailable.launchd':
-		'launchd ist auf diesem Rechner nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.',
-	'cli.runner.service.noStatus': 'Kein Status abrufbar.',
-	'cli.runner.service.fs.write':
-		'{path} lässt sich nicht schreiben ({code}). Rechte im Ordner prüfen.',
-	'cli.runner.service.fs.remove':
-		'{path} lässt sich nicht entfernen ({code}). Rechte im Ordner prüfen.',
+	'cli.runner.service.unavailable.systemd': 'systemd ist auf diesem Rechner nicht verfügbar.',
+	'cli.runner.service.unavailable.systemd.hint':
+		'Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
+	'cli.runner.service.unavailable.launchd': 'launchd ist auf diesem Rechner nicht verfügbar.',
+	'cli.runner.service.unavailable.launchd.hint':
+		'Mit --print lässt sich die plist-Datei trotzdem ansehen.',
+	'cli.runner.service.statusUnavailable.systemd':
+		'systemd ist auf diesem Rechner nicht verfügbar, darum gibt es keinen Status.',
+	'cli.runner.service.statusUnavailable.systemd.hint':
+		'Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
+	'cli.runner.service.statusUnavailable.launchd':
+		'launchd ist auf diesem Rechner nicht verfügbar, darum gibt es keinen Status.',
+	'cli.runner.service.statusUnavailable.launchd.hint':
+		'Mit --print lässt sich die plist-Datei trotzdem ansehen.',
+	'cli.runner.service.fs.write': '{path} lässt sich nicht schreiben ({code}).',
+	'cli.runner.service.fs.write.hint': 'Rechte im Ordner prüfen.',
+	'cli.runner.service.fs.remove': '{path} lässt sich nicht entfernen ({code}).',
+	'cli.runner.service.fs.remove.hint': 'Rechte im Ordner prüfen.',
 	'cli.runner.service.installed.systemd':
 		'Runner-Dienst installiert: {path}. Jetzt starten mit „systemctl --user start kabai-studio-runner“. Für Betrieb auch ohne aktive Anmeldung: „loginctl enable-linger $(whoami)“.',
 	'cli.runner.service.installed.launchd':
@@ -134,9 +143,9 @@ export const de: Catalogue = {
 	'cli.runner.service.stopped.systemd':
 		'Der Runner läuft nicht. Log ansehen mit „journalctl --user -u kabai-studio-runner“, oder „kabai-studio runner service install“ erneut ausführen.',
 	'cli.runner.service.stopped.launchd':
-		'Der Runner läuft nicht (oder ist nicht geladen). „kabai-studio runner service install“ erneut ausführen.',
-	'cli.runner.service.unsupported':
-		'runner service wird unter {platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).',
+		'Der Runner läuft nicht (oder ist nicht geladen). Log in ~/Library/Logs/studio.kabai.kabai-studio-runner.log ansehen, oder „kabai-studio runner service install“ erneut ausführen.',
+	'cli.runner.service.unsupported': 'runner service wird unter {platform} nicht unterstützt.',
+	'cli.runner.service.unsupported.hint': 'Unterstützt: Linux (systemd), macOS (launchd).',
 
 	'start.heading': 'kabai studio',
 	'start.lage.none': 'Kein Agent arbeitet.',

@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { localeFromEnv, translate, type Locale } from '../i18n/index.ts';
+import { localeFromEnv, translate, type Locale, type MessageKey } from '../i18n/index.ts';
 import { DomainError, formatError } from './domain/error.ts';
 
 export class CliUsageError extends Error {}
@@ -206,7 +206,8 @@ export function launchdPlist(ctx: ServiceContext): string {
 type ServiceTextId =
 	| 'unavailable.systemd'
 	| 'unavailable.launchd'
-	| 'noStatus'
+	| 'statusUnavailable.systemd'
+	| 'statusUnavailable.launchd'
 	| 'fs.write'
 	| 'fs.remove'
 	| 'installed.systemd'
@@ -239,7 +240,10 @@ const STUDIO_TEXTS: Record<ServiceTextId, string> = {
 		'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen.',
 	'unavailable.launchd':
 		'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen.',
-	noStatus: 'Kein Status abrufbar.',
+	'statusUnavailable.systemd':
+		'systemd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die Unit-Datei trotzdem ansehen. Kein Status abrufbar.',
+	'statusUnavailable.launchd':
+		'launchd ist auf diesem Host nicht verfügbar. Mit --print lässt sich die plist-Datei trotzdem ansehen. Kein Status abrufbar.',
 	'fs.write': '{path} lässt sich nicht schreiben ({code}). Rechte im Verzeichnis prüfen.',
 	'fs.remove': '{path} lässt sich nicht entfernen ({code}). Rechte im Verzeichnis prüfen.',
 	'installed.systemd':
@@ -273,17 +277,27 @@ export const STUDIO_PROFILE: ServiceProfile = {
 	say: (id, params) => fill(STUDIO_TEXTS[id], params)
 };
 
+/** systemd splits unquoted values at spaces and expands % (and $ in ExecStart), so every value is quoted and escaped. */
+const systemdQuote = (value: string, { dollar = false } = {}): string => {
+	const escaped = value.replace(/[\\"]/g, '\\$&').replaceAll('%', '%%');
+	return `"${dollar ? escaped.replaceAll('$', '$$$$') : escaped}"`;
+};
+
+const xmlEscape = (value: string): string =>
+	value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
 /** Pure like `systemdUnit`; `XDG_CONFIG_HOME` is passed on only when set, so the service reads the folder `runner pair` wrote to. */
 export function runnerSystemdUnit(ctx: ServiceContext): string {
 	const configHome = ctx.env.XDG_CONFIG_HOME;
+	const exec = [ctx.execPath, ctx.entryPath].map((v) => systemdQuote(v, { dollar: true }));
 	return [
 		'[Unit]',
 		'Description=kabai studio runner',
 		'After=network.target',
 		'',
 		'[Service]',
-		`ExecStart=${ctx.execPath} ${ctx.entryPath} runner start`,
-		...(configHome ? [`Environment=XDG_CONFIG_HOME=${configHome}`] : []),
+		`ExecStart=${exec.join(' ')} runner start`,
+		...(configHome ? [`Environment=${systemdQuote(`XDG_CONFIG_HOME=${configHome}`)}`] : []),
 		'Restart=on-failure',
 		`RestartSec=${RUNNER_RESTART_SECONDS}`,
 		'',
@@ -294,6 +308,9 @@ export function runnerSystemdUnit(ctx: ServiceContext): string {
 }
 
 export function runnerLaunchdPlist(ctx: ServiceContext): string {
+	const logPath = xmlEscape(
+		join(ctx.env.HOME || '', 'Library', 'Logs', `${RUNNER_LAUNCHD_LABEL}.log`)
+	);
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -301,18 +318,30 @@ export function runnerLaunchdPlist(ctx: ServiceContext): string {
 	<key>Label</key><string>${RUNNER_LAUNCHD_LABEL}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>${ctx.execPath}</string>
-		<string>${ctx.entryPath}</string>
+		<string>${xmlEscape(ctx.execPath)}</string>
+		<string>${xmlEscape(ctx.entryPath)}</string>
 		<string>runner</string>
 		<string>start</string>
 	</array>
 	<key>RunAtLoad</key><true/>
-	<key>KeepAlive</key><true/>
+	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 	<key>ThrottleInterval</key><integer>${RUNNER_RESTART_SECONDS}</integer>
+	<key>StandardOutPath</key><string>${logPath}</string>
+	<key>StandardErrorPath</key><string>${logPath}</string>
 </dict>
 </plist>
 `;
 }
+
+const RUNNER_FAILURE_CODES: Partial<Record<ServiceTextId, string>> = {
+	'unavailable.systemd': 'service_manager_missing',
+	'unavailable.launchd': 'service_manager_missing',
+	'statusUnavailable.systemd': 'service_manager_missing',
+	'statusUnavailable.launchd': 'service_manager_missing',
+	'fs.write': 'unit_file_not_writable',
+	'fs.remove': 'unit_file_not_removable',
+	unsupported: 'platform_unsupported'
+};
 
 export function runnerServiceProfile(
 	locale: Locale,
@@ -323,7 +352,13 @@ export function runnerServiceProfile(
 		launchdLabel: RUNNER_LAUNCHD_LABEL,
 		systemdUnit: runnerSystemdUnit,
 		launchdPlist: runnerLaunchdPlist,
-		say: (id, params) => translate(locale, `cli.runner.service.${id}`, params),
+		say: (id, params) => {
+			const text = (key: string) =>
+				translate(locale, `cli.runner.service.${key}` as MessageKey, params);
+			const code = RUNNER_FAILURE_CODES[id];
+			if (!code) return text(id);
+			return formatError(new DomainError(code, text(id), text(`${id}.hint`)));
+		},
 		preflight
 	};
 }
@@ -399,7 +434,7 @@ function statusSystemd(run: CommandRunner, profile: ServiceProfile): ServiceResu
 	if (r.status === null)
 		return {
 			exitCode: 1,
-			message: `${profile.say('unavailable.systemd')} ${profile.say('noStatus')}`
+			message: profile.say('statusUnavailable.systemd')
 		};
 	if (r.stdout.trim() === 'active') return { exitCode: 0, message: profile.say('running.systemd') };
 	return { exitCode: 0, message: profile.say('stopped.systemd') };
@@ -442,7 +477,7 @@ function statusLaunchd(run: CommandRunner, profile: ServiceProfile): ServiceResu
 	if (r.status === null)
 		return {
 			exitCode: 1,
-			message: `${profile.say('unavailable.launchd')} ${profile.say('noStatus')}`
+			message: profile.say('statusUnavailable.launchd')
 		};
 	if (r.status === 0) return { exitCode: 0, message: profile.say('running.launchd') };
 	return { exitCode: 0, message: profile.say('stopped.launchd') };

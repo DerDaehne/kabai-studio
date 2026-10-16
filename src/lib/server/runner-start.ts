@@ -44,7 +44,7 @@ export async function runnerStartCommand(ctx: StartContext): Promise<PairResult>
 	}
 }
 
-function prepare(ctx: StartContext, say: Say) {
+function prepare(ctx: Pick<StartContext, 'env' | 'platform'>, say: Say) {
 	const dir = defaultConfigDir(ctx.platform, ctx.env);
 	const credential = readCredential(join(dir, CREDENTIAL_FILE), say);
 	const url = channelUrl(credential.studioOrigin, say);
@@ -306,7 +306,7 @@ export function checkPairing(
 	ctx: Pick<StartContext, 'env' | 'platform' | 'locale'>
 ): PairResult | undefined {
 	try {
-		prepare(ctx as StartContext, (key, params) => translate(ctx.locale, key, params));
+		prepare(ctx, (key, params) => translate(ctx.locale, key, params));
 		return undefined;
 	} catch (err) {
 		if (!(err instanceof DomainError)) throw err;
