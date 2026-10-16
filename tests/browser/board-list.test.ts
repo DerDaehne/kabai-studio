@@ -743,3 +743,51 @@ test('every move with many columns leaves the focused row fully in view, in Lage
 		}
 	}
 });
+
+test('a draft without a row lines up with the board heading on a wide screen', async ({
+	page,
+	db
+}) => {
+	const suffix = randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase();
+	const name = `Leer ${suffix}`;
+	const project = board.createProject(db, HUMAN, { key: `B${suffix}`, name }, 'software');
+	try {
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await open(page, '/board');
+		await page.getByRole('button', { name: new RegExp(name) }).click();
+		await press(page, 'o');
+		const field = page.getByLabel(`Titel des neuen Tickets in ${name}`);
+		await expect(field).toBeFocused();
+		const contentLeft = (el: Element) =>
+			el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft);
+		const draftLeft = await field.locator('xpath=..').evaluate(contentLeft);
+		const headingLeft = await page.getByRole('heading', { level: 1 }).evaluate(contentLeft);
+		expect(Math.abs(draftLeft - headingLeft)).toBeLessThan(1);
+	} finally {
+		db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(project.id);
+	}
+});
+
+test('u after renaming on the board brings the old title back', async ({ page, db }) => {
+	const title = `Undo rename ${randomUUID()}`;
+	const renamed = `Undo renamed ${randomUUID()}`;
+	const ticket = ticketInColumn(db, title);
+	const storedTitle = () =>
+		db.prepare('SELECT title FROM tickets WHERE id = ?').get(ticket.id)!.title as string;
+	try {
+		await open(page, '/board');
+		await focusSeededProject(page);
+		await select(page, title);
+		await press(page, 'i');
+		await page.getByLabel(`Neuer Titel für ${ticket.ref}`).fill(renamed);
+		await press(page, 'Enter');
+		await expect.poll(storedTitle).toBe(renamed);
+		await expect(selected(page)).toBeFocused();
+		await press(page, 'u');
+		await expect.poll(storedTitle).toBe(title);
+		await expect(selected(page)).toContainText(title);
+	} finally {
+		deleteByTitle(db, renamed);
+		deleteByTitle(db, title);
+	}
+});
