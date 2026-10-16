@@ -490,6 +490,47 @@ test('i renames the selected ticket, yy copies its ID, and dd deletes it with an
 	}
 });
 
+for (const [name, undoKeys] of [
+	['u', ['u']],
+	['Ctrl+z', ['Control+z']]
+] as const) {
+	test(`${name} brings a deleted ticket back while the undo toast is held, and the ticket goes once it is let go`, async ({
+		page,
+		db
+	}) => {
+		await page.clock.install();
+		const title = `Hold the window ${randomUUID()}`;
+		const ticket = ticketInColumn(db, title);
+		const stored = () =>
+			db.prepare('SELECT count(*) AS n FROM tickets WHERE id = ?').get(ticket.id)!.n;
+		try {
+			await open(page, '/board');
+			await focusSeededProject(page);
+			await select(page, title);
+			await press(page, 'd', 'd');
+			await expect(row(page, title)).toBeHidden();
+
+			await page.getByRole('button', { name: 'Rückgängig', exact: true }).hover();
+			await page.clock.fastForward(11_000);
+			await expect(page.getByText(`${ticket.ref} gelöscht`, { exact: true })).toBeVisible();
+			expect(stored()).toBe(1);
+
+			await press(page, ...undoKeys);
+			await expect(row(page, title)).toBeVisible();
+			await page.waitForTimeout(300);
+			expect(stored()).toBe(1);
+
+			await press(page, 'd', 'd');
+			await expect(row(page, title)).toBeHidden();
+			await page.mouse.move(0, 0);
+			await page.clock.fastForward(10_500);
+			await expect.poll(stored).toBe(0);
+		} finally {
+			deleteByTitle(db, title);
+		}
+	});
+}
+
 test('the project focus collapses other projects into one line; * focuses the row, the chips switch', async ({
 	page,
 	db,
