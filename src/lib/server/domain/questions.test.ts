@@ -453,12 +453,12 @@ describe('the answer the next run shows and collects', () => {
 		const { db, ticketId, agent, ask, comments } = setup();
 		const answerComments = () => comments().filter((c) => /^Antwort:/.test(c.body as string));
 		const id = ask(options);
-		questions.collectShownAnswer(db, agent.runId);
+		questions.collectShownAnswer(db, agent.runId!);
 		expect(answerComments()).toEqual([]);
 
 		questions.answerQuestion(db, user, id, { option: 1 });
-		questions.collectShownAnswer(db, agent.runId);
-		questions.collectShownAnswer(db, agent.runId);
+		questions.collectShownAnswer(db, agent.runId!);
+		questions.collectShownAnswer(db, agent.runId!);
 		expect(answerComments()).toHaveLength(1);
 		expect(questions.uncollectedAnswer(db, ticketId)).toBeUndefined();
 	});
