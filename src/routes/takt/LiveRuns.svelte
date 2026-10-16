@@ -96,10 +96,12 @@
 				{#if tracked}
 					<span class="detail">{phaseWord(run.id)}</span>
 					<span class="ticker mono">{tickerLine(run.id)}</span>
-					<Sparkline
-						values={tokensOf(series[run.id] ?? [])}
-						label={t('start.tile.tokensPerMinute')}
-					/>
+					<span class="trend">
+						<Sparkline
+							values={tokensOf(series[run.id] ?? [])}
+							label={t('start.tile.tokensPerMinute')}
+						/>
+					</span>
 				{/if}
 			</li>
 		{/each}
@@ -130,6 +132,10 @@
 	.detail {
 		color: var(--text-muted);
 		font-size: var(--type-meta);
+	}
+	.trend {
+		display: block;
+		padding-bottom: var(--space-1);
 	}
 	.ticker {
 		font-size: var(--type-meta);

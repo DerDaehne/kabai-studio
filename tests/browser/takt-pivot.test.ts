@@ -38,7 +38,8 @@ function asked(db: DatabaseSync, ticket: SeededTicket, question: string, optionL
 	return run;
 }
 
-function failedRun(db: DatabaseSync, ticketId: number) {
+/** Fails a run the way production does: the runner cannot reach the model and writes the code and way out itself. */
+async function failedRun(page: Page, db: DatabaseSync, ticketId: number) {
 	const profile = createProfile(db, HUMAN, {
 		name: `Failing ${randomUUID()}`,
 		executor: 'builtin',
@@ -47,12 +48,19 @@ function failedRun(db: DatabaseSync, ticketId: number) {
 		model: 'fake'
 	}).id;
 	intoWorkStep(db, ticketId);
-	const run = createRun(db, HUMAN, { ticketId, profileId: profile }).id;
-	startRun(db, HUMAN, run);
-	finishRun(db, HUMAN, run, {
-		state: 'failed',
-		error: '[provider_unreachable] the model server is down'
-	});
+	createRun(db, HUMAN, { ticketId, profileId: profile });
+	expect((await page.request.delete('/api/halt')).ok()).toBe(true);
+	await expect
+		.poll(
+			() =>
+				(
+					db.prepare('SELECT state FROM runs WHERE ticket_id = ?').get(ticketId) as {
+						state: string;
+					}
+				).state,
+			{ timeout: 15000 }
+		)
+		.toBe('failed');
 }
 
 const tab = (page: Page, name: string | RegExp) => page.getByRole('tab', { name });
@@ -154,13 +162,14 @@ test.describe('below 1300 px', () => {
 		seedTicket
 	}) => {
 		const ticket = seedTicket('Ended badly');
-		failedRun(db, ticket.id);
+		await failedRun(page, db, ticket.id);
 		await open(page, '/takt');
 
 		await tab(page, /^fertig/).click();
 		const row = page.getByTestId('finished-runs').locator('li', { hasText: ticket.ref });
 		await expect(row).toContainText('fehlgeschlagen');
-		await expect(row).toContainText('the model server is down');
+		await expect(row).toContainText('provider_unavailable');
+		await expect(row).toContainText('Ausweg:');
 	});
 });
 
@@ -317,3 +326,86 @@ async function runWorking(db: DatabaseSync, ticketId: number): Promise<number> {
 	await expect.poll(() => state()?.id).toBeDefined();
 	return state()!.id;
 }
+
+test('a run that holds for an answer stands in läuft with its state', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	const ticket = seedTicket('Holding run');
+	asked(db, ticket, 'Does it hold?', ['Yes']);
+	await open(page, '/takt');
+
+	const row = page.getByTestId('live-column').locator('li', { hasText: ticket.ref });
+	await expect(row).toBeVisible();
+	await expect(row).toContainText('hält');
+});
+
+test('the live column shows the tool of the latest step as the ticker line', async ({
+	page,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	const ticket = seedTicket('Live ticker');
+	fakeModel.reply({ call: { name: 'no_such_tool', args: {} } }, 'hang');
+	await open(page, '/takt');
+	await queueRun(db, page, ticket.id, fakeModel);
+
+	const row = page.getByTestId('live-column').locator('li', { hasText: ticket.ref });
+	await expect(row.locator('.ticker')).toContainText('no_such_tool', { timeout: 15000 });
+});
+
+const cardAnimations = (page: Page) =>
+	decision(page).evaluate((card) =>
+		card.getAnimations().map((animation) => (animation as CSSAnimation).animationName)
+	);
+
+test('the card does not animate on arrival, only after an answer moves the queue on', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	asked(db, seedTicket('Arrival one'), 'Arrival first?', ['A']);
+	asked(db, seedTicket('Arrival two'), 'Arrival second?', ['A']);
+	await open(page, '/takt');
+	await expect(decision(page)).toBeVisible();
+	expect(await cardAnimations(page)).toEqual([]);
+
+	await open(page, '/');
+	await page.getByRole('link', { name: /^Takt/ }).click();
+	await expect(decision(page)).toBeVisible();
+	expect(await cardAnimations(page)).toEqual([]);
+
+	await page.keyboard.press('1');
+	await expect(decision(page)).toContainText('Arrival second?');
+	expect((await cardAnimations(page)).some((name) => name.endsWith('card-in'))).toBe(true);
+});
+
+test('options are rows on the ground, not boxes, and their focus ring holds 3:1', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	asked(db, seedTicket('Plain rows'), 'Rows?', ['A', 'B']);
+	await open(page, '/takt');
+	const option = page.locator('.option').first();
+	await option.focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	await expect(option).toBeFocused();
+
+	const style = await option.evaluate((element) => {
+		const css = getComputedStyle(element);
+		return {
+			background: css.backgroundColor,
+			radius: css.borderTopLeftRadius,
+			ring: css.outlineWidth
+		};
+	});
+	expect(style.background).toBe('rgba(0, 0, 0, 0)');
+	expect(style.radius).toBe('0px');
+	expect(parseFloat(style.ring)).toBeGreaterThanOrEqual(2);
+});

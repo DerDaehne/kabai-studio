@@ -43,6 +43,8 @@
 	const upcoming = $derived(view.visible.slice(1));
 	/** A card that comes back through undo slides in from the side it left to. */
 	let mirrored = $state(false);
+	/** Set by the first real advance, so the card does not animate when the page opens or arrives. */
+	let advanced = $state(false);
 
 	const liveRuns = $derived(
 		(data.live?.runs ?? []).filter((run) => inFocus(shell.focus, run.project.id))
@@ -103,6 +105,7 @@
 
 	/** Moves on to the next card at once; returns the notice that offers to take the answer back. */
 	async function send(question: QueuedQuestion, given: Answer, undo: () => void) {
+		advanced = true;
 		mirrored = false;
 		answered.add(question.id);
 		const result = await post('answer', { question: String(question.id), ...fieldsOf(given) });
@@ -121,6 +124,7 @@
 		const failure = failureOf(await post('retract', { question: String(question.id) }));
 		if (failure) return void toast(failure, 'error');
 		mirrored = true;
+		advanced = true;
 		order = restored(queue, question.id);
 		answered.delete(question.id);
 		await invalidateLive();
@@ -146,6 +150,7 @@
 	}
 
 	function later(question: QueuedQuestion) {
+		advanced = true;
 		mirrored = false;
 		order = deferred(queue, question.id);
 	}
@@ -199,7 +204,7 @@
 <svelte:head><title>{t('takt.title')}</title></svelte:head>
 
 <div class="takt">
-	<h1>{t('takt.heading')} <span class="status">{countLabel}</span></h1>
+	<h1 class="visually-hidden">{t('takt.heading')} <span class="status">{countLabel}</span></h1>
 	{#if hiddenLine}<p class="hidden-line">{hiddenLine}</p>{/if}
 
 	<Pivot {facets} bind:active label={t('takt.facets')}>
@@ -228,6 +233,7 @@
 			{#key card.id}
 				<article
 					class="decision"
+					class:advanced
 					class:back={mirrored}
 					aria-labelledby="question-{card.id}"
 					data-testid="decision"
@@ -366,12 +372,6 @@
 {/snippet}
 
 <style>
-	h1 {
-		display: flex;
-		align-items: baseline;
-		gap: var(--space-2);
-		margin-bottom: var(--space-3);
-	}
 	.status,
 	.hidden-line,
 	.detail {
@@ -394,9 +394,11 @@
 	}
 	.decision {
 		padding: var(--space-4) 0;
+	}
+	.decision.advanced {
 		animation: card-in calc(var(--motion-moderate) * 0.75) var(--ease-out);
 	}
-	.decision.back {
+	.decision.advanced.back {
 		animation-name: card-back;
 	}
 	@keyframes card-in {
@@ -435,7 +437,6 @@
 	}
 	.options {
 		display: grid;
-		gap: var(--space-2);
 		margin-top: var(--space-4);
 	}
 	.option {
@@ -444,17 +445,20 @@
 		align-items: center;
 		column-gap: var(--space-3);
 		min-height: 52px;
-		padding: var(--space-2) var(--space-3);
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-tile);
-		background: var(--surface);
+		padding: var(--space-3) var(--space-2);
+		border: 0;
+		border-top: 1px solid var(--rule);
+		background: none;
 		color: var(--text);
 		font: inherit;
 		text-align: left;
 		cursor: pointer;
 	}
-	.option:hover {
-		background: var(--surface-hover);
+	.options > :last-child {
+		border-bottom: 1px solid var(--rule);
+	}
+	.option:hover .label {
+		text-decoration: underline;
 	}
 	.option :global(kbd) {
 		grid-row: span 2;
@@ -471,6 +475,8 @@
 	.own {
 		display: grid;
 		gap: var(--space-2);
+		padding: var(--space-3) var(--space-2);
+		border-top: 1px solid var(--rule);
 	}
 	.own-row {
 		display: flex;
