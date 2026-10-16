@@ -189,6 +189,7 @@ export const de: Catalogue = {
 		'Computer, auf denen Coding-Agents für Studio arbeiten: koppeln, ansehen und trennen.',
 
 	'runners.title': 'Rechner',
+	'runners.back': 'Einstellungen',
 	'runners.intro':
 		'Coding-Agents laufen auf einem gekoppelten Rechner, nie in Studio selbst. Der Rechner verbindet sich von sich aus mit Studio und entscheidet lokal, was er erlaubt; Studio sieht nur Namen und Zahlen.',
 	'runners.connect': 'Rechner verbinden',

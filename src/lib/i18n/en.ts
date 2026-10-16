@@ -185,6 +185,7 @@ export const en = {
 		'Computers that run coding agents for studio: pair, review and disconnect them.',
 
 	'runners.title': 'Machines',
+	'runners.back': 'Settings',
 	'runners.intro':
 		'Coding agents run on a paired machine, never in studio itself. The machine connects to studio on its own and decides locally what it allows; studio sees only names and numbers.',
 	'runners.connect': 'Connect a machine',

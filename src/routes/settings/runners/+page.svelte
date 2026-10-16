@@ -51,7 +51,7 @@
 	}
 </script>
 
-<Crumb href="/settings" label="Einstellungen" />
+<Crumb href="/settings" label={t('runners.back')} />
 <h1>{t('runners.title')}</h1>
 <p class="intro">{t('runners.intro')}</p>
 
