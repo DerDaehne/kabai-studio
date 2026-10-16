@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { Stall } from '../agents/loop-guard';
 import { migrate, openDb } from '../db';
 import type { ExecutorFacts } from '../executors/contract';
-import type { ParkReason } from '../runner';
 import * as board from './board';
 import type { Actor } from './core';
 import { requestHuman } from './questions';
 import { endExecutedRun } from './run-end';
 import * as runs from './runs';
+import type { ParkReason } from './runs';
 import { finishStep } from './steps';
 
 const user: Actor = { kind: 'user' };
@@ -150,7 +150,7 @@ describe('endExecutedRun', () => {
 			expect(w.nextStepRuns()).toEqual([]);
 		});
 
-		it('points the follow-up run at the handoff of the parked run', () => {
+		it('leaves the handoff the follow-up run reads when the run parks', () => {
 			const w = world();
 			const run = w.first();
 

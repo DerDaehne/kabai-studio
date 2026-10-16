@@ -420,3 +420,46 @@ describe('an answer continues the paused run', () => {
 		}
 	);
 });
+
+describe('the answer the next run shows and collects', () => {
+	const options = [{ label: 'A' }, { label: 'B' }];
+
+	it('is that of the newest question once it is answered and not yet collected', () => {
+		const { db, ticketId, agent, ask } = setup();
+		const id = ask(options);
+		expect(questions.uncollectedAnswer(db, ticketId)).toBeUndefined();
+
+		questions.answerQuestion(db, user, id, { option: 2 });
+		expect(questions.uncollectedAnswer(db, ticketId)).toEqual({
+			question: 'A oder B?',
+			options,
+			answer: { option: 2 }
+		});
+
+		questions.collectAnswer(db, agent, ticketId);
+		expect(questions.uncollectedAnswer(db, ticketId)).toBeUndefined();
+	});
+
+	it('is never the answer of an older question while a newer one is open', () => {
+		const { db, ticketId, agent, ask } = setup();
+		const first = ask(options);
+		questions.answerQuestion(db, user, first, { option: 1 });
+		questions.requestHuman(db, agent, ticketId, { question: 'C oder D?' });
+
+		expect(questions.uncollectedAnswer(db, ticketId)).toBeUndefined();
+	});
+
+	it('collects nothing, and writes no comment, when the answer is already collected or there is none', () => {
+		const { db, ticketId, agent, ask, comments } = setup();
+		const answerComments = () => comments().filter((c) => /^Antwort:/.test(c.body as string));
+		const id = ask(options);
+		questions.collectShownAnswer(db, agent.runId);
+		expect(answerComments()).toEqual([]);
+
+		questions.answerQuestion(db, user, id, { option: 1 });
+		questions.collectShownAnswer(db, agent.runId);
+		questions.collectShownAnswer(db, agent.runId);
+		expect(answerComments()).toHaveLength(1);
+		expect(questions.uncollectedAnswer(db, ticketId)).toBeUndefined();
+	});
+});

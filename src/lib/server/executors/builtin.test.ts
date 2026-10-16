@@ -6,6 +6,7 @@ import { migrate, openDb } from '../db';
 import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
 import { releaseHalt, resumeRun } from '../domain/halt';
+import { startTicket } from '../domain/intents';
 import { answerQuestion } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
@@ -443,7 +444,7 @@ describe('builtin executor', () => {
 		expect(provider.requests[0].signal.aborted).toBe(true);
 	});
 
-	it('ends a parked run after its step, paused with a resume that points at the handoff', async () => {
+	it('ends a parked run after its step, paused with a resume that reads the handoff', async () => {
 		const { db, queue, run, events } = setup();
 		let park = () => {};
 		const provider = fakeProvider({
@@ -1502,4 +1503,95 @@ describe('local provider failures against an openai-compatible endpoint', () => 
 
 		expect(run(runId).error).toMatch(/^\[provider_unavailable\]/);
 	}, 10000);
+});
+
+describe('the human answer reaches the next run of the ticket', () => {
+	const shownAnswer = /Answer: 2\. Only id and title/;
+	const asksWhichColumns = {
+		chunks: [
+			call('c1', 'request_human', {
+				question: 'Which columns?',
+				options: [{ label: 'All' }, { label: 'Only id and title' }]
+			})
+		]
+	};
+
+	/** A run that asked and was answered, with the resume the runner queued for the answer cancelled to skip the undo window. */
+	async function answeredAfterAsking(
+		w: ReturnType<typeof setup>,
+		replies: Reply[],
+		coldStart: Parameters<typeof startRunner>[3]
+	) {
+		const provider = fakeProvider(asksWhichColumns, ...replies);
+		const started = startBuiltin(w.db, { fetch: provider.fetch }, coldStart);
+		const asking = w.queue();
+		await ended(() => w.run(asking).state);
+		const { id } = w.db.prepare('SELECT id FROM questions').get() as { id: number };
+		answerQuestion(w.db, user, id, { option: 2 });
+		const queued = w.db
+			.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?')
+			.get(asking) as { id: number };
+		runs.finishRun(w.db, user, queued.id, { state: 'cancelled' });
+		const resume = () =>
+			runs.createRun(w.db, user, {
+				ticketId: w.ticketId,
+				profileId: w.profileId,
+				resumedFromRunId: asking
+			}).id;
+		const collectedAt = () =>
+			(w.db.prepare('SELECT collected_at FROM questions').get() as { collected_at: string | null })
+				.collected_at;
+		const promptOf = (request: number) => JSON.stringify(provider.requests[request].body.messages);
+		return { ...started, provider, asking, resume, collectedAt, promptOf };
+	}
+
+	it('shows it to the resume of a run the human halted while the model was loading, and collects it', async () => {
+		const w = setup();
+		const a = await answeredAfterAsking(
+			w,
+			[{ chunks: ['hang'] }, { chunks: [{ text: 'Done.' }] }],
+			{ hintAfterMs: 50, failAfterMs: 60_000 }
+		);
+		const halted = a.resume();
+		await vi.waitFor(() => expect(a.provider.requests).toHaveLength(2));
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		a.runner.pause(halted);
+		expect(a.collectedAt()).toBeNull();
+
+		const next = resumeRun(w.db, user, halted).id;
+		await ended(() => w.run(next).state);
+
+		expect(a.promptOf(2)).toMatch(shownAnswer);
+		expect(a.collectedAt()).not.toBeNull();
+	});
+
+	it('shows it to a fresh run once a resume failed before its first sign of life', async () => {
+		const w = setup();
+		const a = await answeredAfterAsking(
+			w,
+			[{ chunks: ['hang'] }, { chunks: [{ text: 'Done.' }] }],
+			{ hintAfterMs: 50, failAfterMs: 150 }
+		);
+		const resumed = a.resume();
+		await ended(() => w.run(resumed).state);
+		expect(w.run(resumed).error).toMatch(/^\[model_loading_timeout\]/);
+		expect(a.collectedAt()).toBeNull();
+
+		const fresh = startTicket(w.db, user, w.ticketId).runId;
+		await ended(() => w.run(fresh).state);
+
+		expect(a.promptOf(2)).toMatch(shownAnswer);
+		expect(a.collectedAt()).not.toBeNull();
+	});
+
+	it('collects it when the resume answers with an empty completion', async () => {
+		const w = setup();
+		const a = await answeredAfterAsking(w, [{ chunks: [] }], { hintAfterMs: 50, failAfterMs: 150 });
+		const resumed = a.resume();
+		await ended(() => w.run(resumed).state);
+
+		expect(w.run(resumed).state).toBe('succeeded');
+		expect(a.promptOf(1)).toMatch(shownAnswer);
+		expect(a.collectedAt()).not.toBeNull();
+	});
 });

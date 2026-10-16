@@ -1,23 +1,22 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { interventionOf, RECOVERY, type Stall } from '../agents/loop-guard';
 import type { ExecutorFacts } from '../executors/contract';
-import type { ParkReason } from '../runner';
 import { mask } from '../secrets';
 import { addComment, ticket, tasksOf } from './board';
 import { DomainError, tx, type Actor } from './core';
-import { requestHuman, type QuestionOption } from './questions';
+import { collectShownAnswer, requestHuman, type QuestionOption } from './questions';
 import {
 	appendEvent,
 	createRun,
 	finishRun,
 	freshRunsInChain,
 	type Intervention,
+	type ParkReason,
 	type Usage
 } from './runs';
 import { queueNextStep } from './steps';
 
 type EndedRun = { id: number; ticketId: number; profile: { id: number } };
-type Resume = ParkReason & { handoffSeq: number };
 
 const SYSTEM: Actor = { kind: 'system' };
 const FRESH_RUN_REASON_TEXT = {
@@ -72,18 +71,16 @@ export function endExecutedRun(
 		const handoff = facts.lastMessage
 			? { text: facts.lastMessage }
 			: { text: generatedHandoff(db, run), generated: true };
-		const handoffSeq = appendEvent(db, actor, run.id, {
-			type: 'message',
-			key: 'handoff',
-			payload: handoff
-		}).seq;
+		appendEvent(db, actor, run.id, { type: 'message', key: 'handoff', payload: handoff });
 		const { usage } = facts;
 		if (askedQuestion(db, run.id)) return finishRun(db, SYSTEM, run.id, { state: 'paused', usage });
+		// the model answered the prompt that showed the answer, even if it showed no other sign of life
+		collectShownAnswer(db, run.id);
 		const continues = !finishedStep(db, run.id);
 		if (continues && facts.ending === 'parked')
-			return pauseAndContinue(db, run, usage, { ...parkReason(park), handoffSeq });
+			return pauseAndContinue(db, run, usage, parkReason(park));
 		if (continues && facts.ending === 'stalled')
-			return pauseAndContinue(db, run, usage, { reason: 'recovery', handoffSeq });
+			return pauseAndContinue(db, run, usage, { reason: 'recovery' });
 		if (continues && facts.ending === 'turn_limit')
 			return failRun(db, run.id, run.ticketId, stepLimit(db, run.id), usage);
 		finishRun(db, SYSTEM, run.id, { state: 'succeeded', usage });
@@ -100,7 +97,7 @@ function pauseAndContinue(
 	db: DatabaseSync,
 	run: EndedRun,
 	usage: Usage | undefined,
-	resume: Resume
+	resume: ParkReason
 ) {
 	finishRun(db, SYSTEM, run.id, { state: 'paused', usage });
 	continuePausedRun(db, run, resume);
@@ -167,7 +164,7 @@ function toolUse(db: DatabaseSync, runId: number): string {
 }
 
 /** Queues the run that continues a paused one, or asks the human once its chain has used up its fresh runs. */
-export function continuePausedRun(db: DatabaseSync, run: EndedRun, resume: Resume) {
+export function continuePausedRun(db: DatabaseSync, run: EndedRun, resume: ParkReason) {
 	const actor: Actor = { kind: 'system', runId: run.id };
 	if (resume.reason === 'quota' || freshRunsInChain(db, run.id) < RECOVERY.freshRunsPerChain) {
 		createRun(db, actor, {

@@ -340,18 +340,32 @@ export function collectAnswer(
 	});
 }
 
+/** The answer a run's prompt shows and its first sign of life collects: that of the ticket's newest question, if answered and not yet collected. */
+export function uncollectedAnswer(db: DatabaseSync, ticketId: number) {
+	const q = db
+		.prepare(
+			`SELECT question, options, answer, collected_at FROM questions WHERE ticket_id = ? ORDER BY id DESC LIMIT 1`
+		)
+		.get(ticketId) as
+		| { question: string; options: string; answer: string | null; collected_at: string | null }
+		| undefined;
+	if (!q || q.answer === null || q.collected_at) return undefined;
+	return {
+		question: q.question,
+		options: JSON.parse(q.options) as QuestionOption[],
+		answer: JSON.parse(q.answer) as Answer
+	};
+}
+
 /**
- * Collects the answer for a run that resumes a run with an answered question, once the run has shown a first sign of life:
- * until then the human can still retract it, and a resume that fails before that leaves it to the next one. Collecting
- * twice changes nothing.
+ * Collects the answer the run's prompt showed (`uncollectedAnswer`), once the run has shown a first sign of life or ended:
+ * until then the human can still retract it, and a run that fails before that leaves it to the next one. Collecting twice
+ * changes nothing.
  */
-export function collectResumedAnswer(db: DatabaseSync, runId: number) {
-	const run = db
-		.prepare('SELECT ticket_id, resumed_from_run_id AS previous FROM runs WHERE id = ?')
-		.get(runId) as { ticket_id: number; previous: number | null };
-	if (run.previous === null) return;
-	const answered = db
-		.prepare('SELECT 1 FROM questions WHERE run_id = ? AND answer IS NOT NULL')
-		.get(run.previous);
-	if (answered) collectAnswer(db, { kind: 'agent', runId }, run.ticket_id);
+export function collectShownAnswer(db: DatabaseSync, runId: number) {
+	const run = db.prepare('SELECT ticket_id FROM runs WHERE id = ?').get(runId) as {
+		ticket_id: number;
+	};
+	if (uncollectedAnswer(db, run.ticket_id))
+		collectAnswer(db, { kind: 'agent', runId }, run.ticket_id);
 }

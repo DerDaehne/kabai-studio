@@ -1383,6 +1383,24 @@ describe('collecting the answer of a run that resumes after a question', () => {
 		}
 	);
 
+	it('leaves the answer to its own new question to the next run, even when the human answers while it keeps streaming', async () => {
+		const w = await resumedAfterAnswer('cloud');
+		const { io } = w.fake.call(w.resumed);
+		io.emit({ type: 'message', payload: { step: 1, text: 'Exporting.' } });
+
+		const second = requestHuman(w.s.db, { kind: 'agent', runId: w.resumed }, w.s.ticketId, {
+			question: 'Also the tags?',
+			options: [{ label: 'Yes' }, { label: 'No' }]
+		}).id;
+		answerQuestion(w.s.db, user, second, { option: 1 });
+		io.emit({ type: 'message', key: 'later', payload: { step: 2, text: 'Asked about the tags.' } });
+
+		const collectedAt = (id: number) =>
+			w.s.db.prepare('SELECT collected_at FROM questions WHERE id = ?').get(id)!.collected_at;
+		expect(w.collected()).not.toBeNull();
+		expect(collectedAt(second)).toBeNull();
+	});
+
 	it('collects nothing for a run that does not resume an answered question', async () => {
 		const s = setup();
 		const fake = fakeExecutor();

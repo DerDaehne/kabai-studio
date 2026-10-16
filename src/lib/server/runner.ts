@@ -3,7 +3,7 @@ import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog
 import { isLocalProvider } from '../agents/profile-defaults';
 import { DomainError, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
-import { collectResumedAnswer } from './domain/questions';
+import { collectShownAnswer } from './domain/questions';
 import { endExecutedRun, failRun } from './domain/run-end';
 import { queueUnblockedSuccessors } from './domain/steps';
 import {
@@ -11,15 +11,13 @@ import {
 	claimRun,
 	finishRun,
 	type Limits,
+	type ParkReason,
 	type Profile,
 	type ResumeReason
 } from './domain/runs';
 import { publish, subscribe } from './events';
 import type { Executor, ExecutorIo, Phase, RunContext } from './executors/contract';
 import { mask } from './secrets';
-
-/** `io.park.reason`: why the run should end cleanly and, as ISO 8601 time, when its follow-up run may start at the earliest. */
-export type ParkReason = { reason: Exclude<ResumeReason, 'halt'>; notBefore?: string };
 
 /**
  * The one source of the run limits. The claim and every wait reason call it again each time, so a change takes effect on the
@@ -146,7 +144,7 @@ function ioFor(
 		endColdStart();
 		if (answerCollected) return;
 		answerCollected = true;
-		collectResumedAnswer(db, run.id);
+		collectShownAnswer(db, run.id);
 	};
 	return {
 		signal: controls.cancel.signal,

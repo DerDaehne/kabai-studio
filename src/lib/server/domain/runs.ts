@@ -34,6 +34,8 @@ export type Intervention = {
  * they paused, the others are fresh runs after getting stuck.
  */
 export type ResumeReason = 'context_budget' | 'recovery' | 'quota' | 'halt';
+/** `io.park.reason`: why the run should end cleanly and, as ISO 8601 time, when its follow-up run may start at the earliest. */
+export type ParkReason = { reason: Exclude<ResumeReason, 'halt'>; notBefore?: string };
 /** Usage adds up: report it per step with the event (visible live, survives crashes) or in total with finishRun. Cost in USD. */
 export type Usage = { tokensIn?: number; tokensOut?: number; cost?: number };
 

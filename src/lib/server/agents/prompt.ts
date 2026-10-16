@@ -5,7 +5,7 @@ import { contextBudget } from '../../agents/model-catalog';
 import * as board from '../domain/board';
 import { DomainError } from '../domain/core';
 import type { Step } from '../domain/variants';
-import type { Answer, QuestionOption } from '../domain/questions';
+import { uncollectedAnswer, type Answer, type QuestionOption } from '../domain/questions';
 import type { Intervention, Profile, ResumeReason } from '../domain/runs';
 import {
 	linkedNotes,
@@ -81,7 +81,6 @@ type PreviousState = {
 	reason: ResumeReason | null;
 	history: boolean;
 	handoff?: Handoff;
-	answer?: HumanAnswer;
 	intervention?: Intervention;
 };
 type Context = {
@@ -97,6 +96,7 @@ type Context = {
 	comments: Comment[];
 	notes: LinkedNote[];
 	previous?: PreviousState;
+	answer?: HumanAnswer;
 };
 
 const block = (name: string, text: string, truncated = false): Block => ({ name, text, truncated });
@@ -112,7 +112,8 @@ export function assemblePrompt(
 ): AssembledPrompt {
 	const context = {
 		...readContext(db, run.ticketId),
-		previous: run.id === undefined ? undefined : previousStateOf(db, run.id, opts.history ?? false)
+		previous: run.id === undefined ? undefined : previousStateOf(db, run.id, opts.history ?? false),
+		answer: run.id === undefined ? undefined : uncollectedAnswer(db, run.ticketId)
 	};
 	const system = systemBlocks(context, run.profile, opts.override);
 	const candidates = CUTS.map((cut) =>
@@ -208,7 +209,7 @@ function userBlocks(context: Context, cut: Cut, publicRepository: boolean): Bloc
 		block('relations', relationsText(context.relations)),
 		commentsBlock(context.comments, cut),
 		notesBlock(context.notes, cut),
-		previousStateBlock(context.previous),
+		previousStateBlock(context.previous, context.answer),
 		block('assignment', assignmentText(context))
 	];
 }
@@ -332,8 +333,7 @@ function previousStateOf(
 		),
 		intervention: payloadOf(
 			`SELECT payload FROM run_events WHERE run_id = ? AND type = 'intervention' ORDER BY seq DESC LIMIT 1`
-		),
-		answer: answerTo(db, run.previous)
+		)
 	};
 }
 
@@ -350,21 +350,12 @@ function continuationOf(db: DatabaseSync, runId: number): number {
 	return runs - 1;
 }
 
-/** Read only: collecting would make the answer final before the prompt is even sent. */
-function answerTo(db: DatabaseSync, runId: number): HumanAnswer | undefined {
-	const q = db
-		.prepare(
-			'SELECT question, options, answer FROM questions WHERE run_id = ? AND answer IS NOT NULL ORDER BY id DESC LIMIT 1'
-		)
-		.get(runId) as { question: string; options: string; answer: string } | undefined;
-	return (
-		q && { question: q.question, options: JSON.parse(q.options), answer: JSON.parse(q.answer) }
-	);
-}
-
 /** The handoff comes last, so that cutting an overlong one keeps the answer and what got the run stuck. */
-function previousStateBlock(previous: PreviousState | undefined): Block {
-	if (!previous) return block('previous_state', '');
+function previousStateBlock(
+	previous: PreviousState | undefined,
+	answer: HumanAnswer | undefined
+): Block {
+	if (!previous) return block('previous_state', mask(answerSection(answer)));
 	const why = previous.reason ? PAUSE_REASONS[previous.reason] : 'it waited for the human';
 	const head = [
 		`## Previous state — continuation ${previous.continuation}`,
@@ -372,7 +363,7 @@ function previousStateBlock(previous: PreviousState | undefined): Block {
 	].join('\n');
 	const sections = [
 		head,
-		answerSection(previous.answer),
+		answerSection(answer),
 		interventionSection(previous.intervention),
 		handoffSection(previous)
 	];
