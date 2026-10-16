@@ -7,7 +7,7 @@ import * as board from '../domain/board';
 import type { Actor } from '../domain/core';
 import { releaseHalt, resumeRun } from '../domain/halt';
 import { startTicket } from '../domain/intents';
-import { answerQuestion } from '../domain/questions';
+import { answerQuestion, retractAnswer } from '../domain/questions';
 import * as runs from '../domain/runs';
 import { subscribe, type StudioEvent } from '../events';
 import { mcpEndpoint } from '../mcp';
@@ -1594,4 +1594,151 @@ describe('the human answer reaches the next run of the ticket', () => {
 		expect(a.promptOf(1)).toMatch(shownAnswer);
 		expect(a.collectedAt()).not.toBeNull();
 	});
+});
+
+describe('the human answer across several runs of one ticket', () => {
+	const shownAnswer = /Answer: 2\. Only id and title/;
+	const asks: Reply = {
+		chunks: [
+			call('c1', 'request_human', {
+				question: 'Which columns?',
+				options: [{ label: 'All' }, { label: 'Only id and title' }]
+			})
+		]
+	};
+	const cutOff = (): Reply => ({
+		chunks: [{ reasoning: 'Let me reconsider.\n' }],
+		finish: 'length'
+	});
+	const undoWindowMs = 12_000;
+
+	function world(
+		replies: Reply[],
+		coldStart = { hintAfterMs: 50, failAfterMs: 60_000 },
+		options: Partial<BuiltinOptions> = {}
+	) {
+		const s = setup();
+		const provider = fakeProvider(...replies);
+		startBuiltin(s.db, { fetch: provider.fetch, ...options }, coldStart);
+		const questions = () =>
+			s.db.prepare('SELECT id, run_id, collected_at FROM questions ORDER BY id').all() as {
+				id: number;
+				run_id: number;
+				collected_at: string | null;
+			}[];
+		const answerComments = () =>
+			(
+				s.db.prepare("SELECT body FROM comments WHERE body LIKE 'Antwort:%'").all() as {
+					body: string;
+				}[]
+			).map((c) => c.body);
+		const prompt = (request: number) => JSON.stringify(provider.requests[request].body.messages);
+		const start = () => startTicket(s.db, user, s.ticketId).runId;
+		const resumeOf = (asking: number) =>
+			(
+				s.db.prepare('SELECT id FROM runs WHERE resumed_from_run_id = ?').get(asking) as {
+					id: number;
+				}
+			).id;
+		const endedRun = (id: number, timeout = 3000) =>
+			vi.waitFor(() => expect(s.run(id).state).not.toMatch(/^(queued|running)$/), { timeout });
+		return { ...s, provider, questions, answerComments, prompt, start, resumeOf, endedRun };
+	}
+
+	it('survives two runs that fail before their first byte and is collected exactly once by the third', async () => {
+		const w = world(
+			[asks, { chunks: ['hang'] }, { chunks: ['hang'] }, { chunks: [{ text: 'Done.' }] }],
+			{ hintAfterMs: 50, failAfterMs: 300 }
+		);
+		const asking = w.start();
+		await w.endedRun(asking);
+		answerQuestion(w.db, user, w.questions()[0].id, { option: 2 });
+		const resumed = w.resumeOf(asking);
+		await w.endedRun(resumed, undoWindowMs);
+		const fresh = w.start();
+		await w.endedRun(fresh);
+		expect(w.questions()[0].collected_at).toBeNull();
+		const last = w.start();
+		await w.endedRun(last);
+
+		for (const request of [1, 2, 3]) expect(w.prompt(request)).toMatch(shownAnswer);
+		expect(w.questions()[0].collected_at).not.toBeNull();
+		expect(w.answerComments()).toEqual(['Antwort: 2. Only id and title']);
+	}, 30_000);
+
+	it('has been collected when a resume fails after its first sign of life, so the next run reads it as a comment', async () => {
+		const w = world(
+			[asks, { chunks: [{ text: 'Exporting id and' }, 'hang'] }, { chunks: [{ text: 'Done.' }] }],
+			{ hintAfterMs: 50, failAfterMs: 60_000 },
+			{ inactivityMs: 200 }
+		);
+		const asking = w.start();
+		await w.endedRun(asking);
+		answerQuestion(w.db, user, w.questions()[0].id, { option: 2 });
+		const resumed = w.resumeOf(asking);
+		await w.endedRun(resumed, undoWindowMs);
+		expect(w.run(resumed).state).toBe('failed');
+		expect(w.questions()[0].collected_at).not.toBeNull();
+
+		const fresh = w.start();
+		await w.endedRun(fresh);
+		expect(w.prompt(2)).not.toMatch(/Human answer/);
+		expect(w.prompt(2)).toMatch(/Antwort: 2\. Only id and title/);
+	}, 30_000);
+
+	it('never reaches a later run when the human chose the option that stops the chain', async () => {
+		const w = world([...Array.from({ length: 6 }, cutOff), { chunks: [{ text: 'Done.' }] }]);
+		const first = w.start();
+		await w.endedRun(first);
+		await w.endedRun(w.resumeOf(first));
+		const escalation = w.questions().at(-1)!;
+		answerQuestion(w.db, user, escalation.id, { option: 3 });
+		expect(w.db.prepare("SELECT count(*) AS n FROM runs WHERE state = 'queued'").get()).toEqual({
+			n: 0
+		});
+
+		const later = w.start();
+		await w.endedRun(later);
+
+		expect(w.prompt(6)).not.toMatch(/Human answer — act on it/);
+		expect(w.questions().at(-1)!.collected_at).toBeNull();
+	}, 30_000);
+
+	describe.each([
+		[
+			'changes',
+			(db: ReturnType<typeof setup>['db'], id: number) =>
+				answerQuestion(db, user, id, { option: 1 })
+		],
+		['retracts', (db: ReturnType<typeof setup>['db'], id: number) => retractAnswer(db, user, id)]
+	])(
+		'when the human %s the answer while a fresh run that shows it still loads the model',
+		(_, act) => {
+			it('is refused with answer_in_use, so the prompt and the history agree', async () => {
+				let openGate = () => {};
+				const gate = new Promise<void>((resolve) => (openGate = resolve));
+				const w = world(
+					[asks, { chunks: ['hang'] }, { chunks: [{ pause: () => gate }, { text: 'Done.' }] }],
+					{ hintAfterMs: 50, failAfterMs: 1500 }
+				);
+				const asking = w.start();
+				await w.endedRun(asking);
+				const questionId = w.questions()[0].id;
+				answerQuestion(w.db, user, questionId, { option: 2 });
+				await w.endedRun(w.resumeOf(asking), undoWindowMs);
+				const fresh = w.start();
+				await vi.waitFor(() => expect(w.provider.requests).toHaveLength(3));
+				await new Promise((resolve) => setTimeout(resolve, 100));
+
+				expect(() => act(w.db, questionId)).toThrow(
+					expect.objectContaining({ code: 'answer_in_use' })
+				);
+
+				openGate();
+				await w.endedRun(fresh);
+				expect(w.prompt(2)).toMatch(shownAnswer);
+				expect(w.answerComments()).toEqual(['Antwort: 2. Only id and title']);
+			}, 30_000);
+		}
+	);
 });

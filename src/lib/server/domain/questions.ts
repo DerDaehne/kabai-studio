@@ -194,8 +194,9 @@ export function answerQuestion(
 	});
 }
 
-/** Throws `answer_in_use` once a follow-up run has started: from then on it works with the answer. */
+/** Throws `answer_in_use` once a run has started that shows the answer: from then on it works with it. */
 function continuationOf(db: DatabaseSync, q: OpenQuestion, answer: Answer): Continuation {
+	throwIfShownByStartedRun(db, q);
 	if ('option' in answer && stopsRun(q, answer.option))
 		return { kind: 'stopped', reason: 'die gewählte Option startet keinen Run' };
 	if (q.run_id === null) return { kind: 'none', reason: 'die Frage stammt aus keinem Run' };
@@ -218,6 +219,25 @@ function continuationOf(db: DatabaseSync, q: OpenQuestion, answer: Answer): Cont
 	if (started) throw answerInUse(q.id, started.id);
 	if (followUps.length) return { kind: 'waiting', followUpIds: followUps.map((f) => f.id) };
 	return { kind: 'resume', run: { id: run.id, profileId: run.profileId } };
+}
+
+/** Any started run of the ticket other than the asking run began after the answer and shows it, if it is the newest question's and not a stop answer. */
+function throwIfShownByStartedRun(db: DatabaseSync, q: OpenQuestion) {
+	if (q.answer === null) return;
+	const current = JSON.parse(q.answer) as Answer;
+	if ('option' in current && stopsRun(q, current.option)) return;
+	const newest = db
+		.prepare('SELECT max(id) AS id FROM questions WHERE ticket_id = ?')
+		.get(q.t.id) as {
+		id: number;
+	};
+	if (newest.id !== q.id) return;
+	const started = db
+		.prepare(
+			"SELECT id FROM runs WHERE ticket_id = ? AND id IS NOT ? AND state IN ('running', 'waiting_approval') ORDER BY id LIMIT 1"
+		)
+		.get(q.t.id, q.run_id) as { id: number } | undefined;
+	if (started) throw answerInUse(q.id, started.id);
 }
 
 function answerInUse(questionId: number, runId: number) {
@@ -342,6 +362,7 @@ export function collectAnswer(
 
 /** The answer a run's prompt shows and its first sign of life collects: that of the ticket's newest question, if answered and not yet collected. */
 export function uncollectedAnswer(db: DatabaseSync, ticketId: number) {
+	// a stop answer has had its effect: handing it to a later run would make that run do the opposite of starting it
 	const q = db
 		.prepare(
 			`SELECT question, options, answer, collected_at FROM questions WHERE ticket_id = ? ORDER BY id DESC LIMIT 1`
@@ -350,11 +371,10 @@ export function uncollectedAnswer(db: DatabaseSync, ticketId: number) {
 		| { question: string; options: string; answer: string | null; collected_at: string | null }
 		| undefined;
 	if (!q || q.answer === null || q.collected_at) return undefined;
-	return {
-		question: q.question,
-		options: JSON.parse(q.options) as QuestionOption[],
-		answer: JSON.parse(q.answer) as Answer
-	};
+	const options = JSON.parse(q.options) as QuestionOption[];
+	const answer = JSON.parse(q.answer) as Answer;
+	if ('option' in answer && options[answer.option - 1]?.stopsRun) return undefined;
+	return { question: q.question, options, answer };
 }
 
 /**

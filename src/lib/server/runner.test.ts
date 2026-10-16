@@ -1292,7 +1292,7 @@ describe('collecting the answer of a run that resumes after a question', () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
 		const s = setup();
 		const fake = fakeExecutor();
-		start(s.db, { builtin: fake.executor });
+		const runner = start(s.db, { builtin: fake.executor });
 		const asking = s.queue(s[profile], s.ticketId);
 		await flush();
 		const { run, done } = fake.call(asking);
@@ -1323,7 +1323,16 @@ describe('collecting the answer of a run that resumes after a question', () => {
 			await flush();
 			return again;
 		};
-		return { s, fake, asking, resumed: lastRunId(s), collected, answerComments, resumeAgain };
+		return {
+			s,
+			fake,
+			runner,
+			asking,
+			resumed: lastRunId(s),
+			collected,
+			answerComments,
+			resumeAgain
+		};
 	}
 
 	it.each(['local', 'cloud'] as const)(
@@ -1399,6 +1408,48 @@ describe('collecting the answer of a run that resumes after a question', () => {
 			w.s.db.prepare('SELECT collected_at FROM questions WHERE id = ?').get(id)!.collected_at;
 		expect(w.collected()).not.toBeNull();
 		expect(collectedAt(second)).toBeNull();
+	});
+
+	it('leaves the answer to the next run when the human halts the resume before its late phase and event', async () => {
+		const w = await resumedAfterAnswer('cloud');
+		const { io, done } = w.fake.call(w.resumed);
+		w.runner.pause(w.resumed);
+		io.phase({ name: 'writing', elapsedMs: 1, tokens: 1, tokensPerSecond: 1 });
+		expect(() => io.emit({ type: 'message', payload: { step: 1, text: 'late' } })).toThrow();
+		done({ ending: 'end_turn', lastMessage: 'late' });
+		await flush();
+		expect(w.collected()).toBeNull();
+
+		const next = resumeRun(w.s.db, user, w.resumed).id;
+		await flush();
+		w.fake.call(next).io.emit({ type: 'message', payload: { step: 1, text: 'on it' } });
+		expect(w.collected()).not.toBeNull();
+	});
+
+	it('leaves the answer to the next run when the resume is cancelled before its executor ends late', async () => {
+		const w = await resumedAfterAnswer('cloud');
+		w.runner.cancel(w.resumed);
+		w.fake.call(w.resumed).done({ ending: 'end_turn' });
+		await flush();
+		expect(w.collected()).toBeNull();
+	});
+
+	it('leaves the answer to its own question to the next run when the run ends after the human answered it', async () => {
+		const w = await resumedAfterAnswer('cloud');
+		const { io, done } = w.fake.call(w.resumed);
+		io.emit({ type: 'message', payload: { step: 1, text: 'Exporting.' } });
+		const second = requestHuman(w.s.db, { kind: 'agent', runId: w.resumed }, w.s.ticketId, {
+			question: 'Also the tags?',
+			options: [{ label: 'Yes' }, { label: 'No' }]
+		}).id;
+		answerQuestion(w.s.db, user, second, { option: 1 });
+		done({ ending: 'end_turn', lastMessage: 'Asked about the tags.' });
+		await flush();
+
+		const collectedAt = w.s.db
+			.prepare('SELECT collected_at FROM questions WHERE id = ?')
+			.get(second)!.collected_at;
+		expect(collectedAt).toBeNull();
 	});
 
 	it('collects nothing for a run that does not resume an answered question', async () => {
