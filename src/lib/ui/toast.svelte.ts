@@ -11,7 +11,10 @@ export type Toast = {
 	action?: ToastAction;
 	/** Milliseconds until it goes. */
 	left: number;
+	/** The whole window, fixed at creation: what a screen reader announces must not tick. */
+	windowMs: number;
 };
+export type HoldReason = 'pointer' | 'focus';
 
 const STEP_MS = 1000;
 
@@ -19,7 +22,7 @@ const STEP_MS = 1000;
 export const toasts: Toast[] = $state([]);
 let nextId = 1;
 let timer: ReturnType<typeof setTimeout> | undefined;
-let held = false;
+const holds = new Set<HoldReason>();
 
 /** How long a toast stays: Rekta's `--rk-duration-toast`, which the product sets. */
 export const toastMs = () => tokenMs('--rk-duration-toast');
@@ -28,7 +31,7 @@ function schedule() {
 	clearTimeout(timer);
 	timer = undefined;
 	const [open] = toasts;
-	if (!open || open.left <= 0 || held) return;
+	if (!open || open.left <= 0 || holds.size) return;
 	const step = Math.min(STEP_MS, open.left);
 	timer = setTimeout(() => {
 		open.left -= step;
@@ -45,8 +48,8 @@ export function toast(
 	action?: ToastAction
 ): number {
 	const id = nextId++;
-	held = false;
-	toasts.splice(0, toasts.length, { id, message, tone, action, left: timeout });
+	holds.clear();
+	toasts.splice(0, toasts.length, { id, message, tone, action, left: timeout, windowMs: timeout });
 	schedule();
 	return id;
 }
@@ -58,9 +61,10 @@ export function dismiss(id: number): void {
 	schedule();
 }
 
-/** The window stands still while the pointer rests on the toast or focus is in it. */
-export function hold(value: boolean): void {
-	held = value;
+/** The window stands still while the pointer rests on the toast or focus is in it; each reason counts on its own. */
+export function hold(reason: HoldReason, value: boolean): void {
+	if (value) holds.add(reason);
+	else holds.delete(reason);
 	schedule();
 }
 

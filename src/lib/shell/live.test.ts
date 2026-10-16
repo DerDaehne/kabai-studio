@@ -243,6 +243,10 @@ it('names the runner in one word: a halt before an agent that holds, before one 
 	expect(runnerState(null, [working, holding])).toEqual({ word: 'hält', tone: 'warning' });
 	expect(runnerState(null, [working])).toEqual({ word: 'arbeitet', tone: 'info' });
 	expect(runnerState(null, [])).toEqual({ word: 'frei', tone: 'neutral' });
+	expect(runnerState(null, [working], 'offline')).toEqual({ word: 'getrennt', tone: 'warning' });
+	expect(runnerState(null, [working], 'expired')).toEqual({ word: 'abgemeldet', tone: 'error' });
+	expect(runnerState('pause', [], 'offline').word).toBe('angehalten');
+	expect(runnerState('stop', [], 'expired').word).toBe('not-aus');
 });
 
 it('names the runs a stop cancels in its confirmation, and how the waiting ones go on', async () => {

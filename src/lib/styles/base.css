@@ -85,6 +85,9 @@ kbd,
 :focus-visible {
 	outline: 2px solid var(--focus);
 	outline-offset: 2px;
+}
+/* Rekta's controls draw their own inner ring in the current colour; a halo would double it */
+:focus-visible:not(:where(.rk-ab, .rk-btn, .rk-toast-act, .rk-crumb, .rk-menu-item)) {
 	box-shadow: 0 0 0 5px var(--bg);
 }
 

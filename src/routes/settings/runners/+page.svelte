@@ -6,6 +6,7 @@
 	import { t } from '$lib/i18n/t';
 	import { invalidateLive, onLiveEvent } from '$lib/shell/live.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Crumb from '$lib/ui/Crumb.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
@@ -50,6 +51,7 @@
 	}
 </script>
 
+<Crumb href="/settings" label="Einstellungen" />
 <h1>{t('runners.title')}</h1>
 <p class="intro">{t('runners.intro')}</p>
 

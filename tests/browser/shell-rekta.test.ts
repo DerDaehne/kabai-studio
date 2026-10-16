@@ -62,17 +62,94 @@ for (const viewport of [PHONE, DESKTOP]) {
 		await more.click();
 		const menu = page.getByRole('menu');
 		await expect(menu.getByRole('menuitem')).toHaveText(['anhalten', 'not-aus', 'tasten']);
-		await page.keyboard.press('ArrowDown');
-		await expect(menu.getByRole('menuitem').first()).toBeFocused();
 		await page.keyboard.press('Escape');
 		await expect(menu).toBeHidden();
-		await expect(more).toBeFocused();
-
 		await more.click();
 		await menu.getByRole('menuitem', { name: 'tasten' }).click();
 		await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeVisible();
 	});
 }
+
+test('the "mehr" menu is a keyboard menu: the first item takes focus on open, arrows move and wrap, Escape returns to "mehr"', async ({
+	page
+}) => {
+	await page.setViewportSize(PHONE);
+	await open(page, '/');
+	const more = barOf(page).getByRole('button', { name: 'mehr' });
+	await more.focus();
+	await page.keyboard.press('Enter');
+	const items = page.getByRole('menu').getByRole('menuitem');
+	await expect(items).toHaveCount(3);
+	await expect(items.nth(0)).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	await expect(items.nth(1)).toBeFocused();
+	await page.keyboard.press('End');
+	await expect(items.nth(2)).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	await expect(items.nth(0), 'wraps down').toBeFocused();
+	await page.keyboard.press('ArrowUp');
+	await expect(items.nth(2), 'wraps up').toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('menu')).toBeHidden();
+	await expect(more).toBeFocused();
+});
+
+test('the least important control moves into "mehr" first: tasten, at the first width where any control moves', async ({
+	page
+}) => {
+	await page.setViewportSize(DESKTOP);
+	await open(page, '/');
+	const moved = barOf(page).locator('[data-rk-overflow]');
+	let width = DESKTOP.width;
+	for (; width > PHONE.width; width -= 4) {
+		await page.setViewportSize({ width, height: 700 });
+		await page.waitForTimeout(60); // the bar re-measures on the resize
+		if ((await moved.count()) > 0) break;
+	}
+	await expect(moved, `one control moves at ${width} px`).toHaveCount(1);
+	await expect(moved).toHaveText('tasten');
+});
+
+test('with single keys off, the hints stand once inside the bar: no stray text, no page scroll', async ({
+	page
+}) => {
+	await page.setViewportSize(DESKTOP);
+	await open(page, '/');
+	await page.keyboard.press(':');
+	await page.keyboard.type('set einzeltasten aus');
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.keyboard.press('Alt+g');
+	const hints = await page.evaluate(() =>
+		[...document.querySelectorAll('div.hints')].map((el) => Boolean(el.closest('.rk-appbar')))
+	);
+	expect(hints, 'the one hints strip is inside the bar').toEqual([true]);
+	await expect(page.getByText('$1')).toHaveCount(0);
+	await expect(barOf(page).getByText('nur mit')).toHaveCount(1);
+	await expect(barOf(page).getByText('abbrechen'), 'the pending prefix shows once').toHaveCount(1);
+	expect(
+		await page.evaluate(() => document.documentElement.scrollHeight - innerHeight)
+	).toBeLessThanOrEqual(0);
+});
+
+test('a lost connection stands in the banner and the bar says so in a word, not by the square alone', async ({
+	page
+}) => {
+	await page.setViewportSize(DESKTOP);
+	await open(page, '/');
+	await page.route('**/api/events**', (route) => route.abort());
+	// the stream closes for the back/forward cache and reconnects on return, now against the blocked route
+	await page.evaluate(() => {
+		window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+		window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+	});
+	await expect(banner(page).locator('[role="status"]')).toContainText('Getrennt', {
+		timeout: 25_000
+	});
+	await expect(banner(page).locator('[role="alert"]')).toBeEmpty();
+	await expect(barOf(page)).toHaveAttribute('data-rk-state', 'paused');
+	await expect(barOf(page).locator('.rk-ab-k')).toHaveText('getrennt');
+});
 
 test('a pause shows in the banner as a polite status, a stop as an alert; the bar follows and --rk-banner-h is published', async ({
 	page
@@ -99,8 +176,9 @@ test('a pause shows in the banner as a polite status, a stop as an alert; the ba
 	await expect(banner(page).locator('[role="status"]')).toBeEmpty();
 	await expect(bar).toHaveAttribute('data-rk-state', 'halted');
 	// the sticky head sits under the banner, not behind it
-	const head = (await page.getByRole('banner').first().boundingBox())!;
-	expect(head.y).toBeGreaterThanOrEqual(await bannerHeight(page));
+	await expect
+		.poll(async () => (await page.getByRole('banner').first().boundingBox())!.y)
+		.toBeGreaterThanOrEqual(await bannerHeight(page));
 
 	await page.keyboard.press(':');
 	await page.keyboard.type('fortsetzen all');
@@ -146,6 +224,34 @@ test.describe('the toast', () => {
 		await expect(toastOf(page)).toHaveCount(1);
 		await page.clock.runFor(1_000);
 		await expect(toastOf(page)).toHaveCount(0);
+	});
+
+	test('the window holds while the undo button has focus, even after the pointer has come and gone', async ({
+		page
+	}) => {
+		await undoDemo(page).click();
+		const button = toastOf(page).getByRole('button');
+		await button.focus();
+		await toastOf(page).hover();
+		await page.mouse.move(0, 0);
+		await page.clock.runFor(3_000);
+		await expect(button).toBeFocused();
+		await expect(count(page)).toHaveText('10');
+
+		await button.blur();
+		await page.clock.runFor(3_000);
+		await expect(count(page)).toHaveText('7');
+	});
+
+	test('the sentence for screen readers is said once and does not tick with the count', async ({
+		page
+	}) => {
+		await undoDemo(page).click();
+		const sentence = toastOf(page).locator('.rk-toast-sr');
+		const first = await sentence.textContent();
+		await page.clock.runFor(2_000);
+		await expect(count(page)).toHaveText('8');
+		expect(await sentence.textContent()).toBe(first);
 	});
 
 	test('Ctrl+Z takes back while the window is open, but not inside a text field', async ({
@@ -204,7 +310,8 @@ test.describe('the crumb', () => {
 		['/p/__KEY__/t/__NUMBER__', '/board', 'Board'],
 		['/settings/profiles', '/settings', 'Einstellungen'],
 		['/settings/profiles/new', '/settings/profiles', 'Agent-Profile'],
-		['/settings/secrets', '/settings', 'Einstellungen']
+		['/settings/secrets', '/settings', 'Einstellungen'],
+		['/settings/runners', '/settings', 'Einstellungen']
 	] as const) {
 		test(`${path} starts with a crumb to ${label}`, async ({ page, seedTicket }) => {
 			const ticket = seedTicket('A ticket with a crumb');
@@ -312,6 +419,13 @@ for (const scheme of ['light', 'dark'] as const) {
 				await page.keyboard.press('Tab');
 				const { ring, width, ground } = await ringAndGround(page, selector);
 				expect(width, selector).toBeGreaterThanOrEqual(2);
+				expect(
+					await page
+						.locator(selector)
+						.first()
+						.evaluate((el) => getComputedStyle(el).boxShadow),
+					`${selector} draws only Rekta's own ring, no halo on top`
+				).toBe('none');
 				expect(contrast(ring, ground), `${selector} ring on its ground`).toBeGreaterThanOrEqual(3);
 			}
 		} finally {
@@ -322,6 +436,9 @@ for (const scheme of ['light', 'dark'] as const) {
 		await page.locator('.rk-crumb').focus();
 		await page.keyboard.press('Shift+Tab');
 		await page.keyboard.press('Tab');
+		expect(await page.locator('.rk-crumb').evaluate((el) => getComputedStyle(el).boxShadow)).toBe(
+			'none'
+		);
 		const { ring, ground } = await ringAndGround(page, '.rk-crumb');
 		expect(contrast(ring, ground), 'crumb ring on its ground').toBeGreaterThanOrEqual(3);
 	});

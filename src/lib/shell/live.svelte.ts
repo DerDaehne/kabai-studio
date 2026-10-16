@@ -120,13 +120,19 @@ export const agentChips = (runs: LiveRun[]): AgentChip[] =>
 export const openQuestionsLabel = (count: number) =>
 	`${count} offene ${count === 1 ? 'Frage' : 'Fragen'}`;
 
-/** The runner in the one word the app bar shows: a halt first, then an agent holding for the human, then one at work. */
+/**
+ * The runner in the one word the app bar shows, in the banner's order of severity: a stop, a lost session, a pause,
+ * a lost connection, then an agent holding for the human, then one at work. The word never leaves the colour alone.
+ */
 export function runnerState(
 	halt: HaltKind | null,
-	agents: AgentChip[]
+	agents: AgentChip[],
+	lost: 'offline' | 'expired' | null = null
 ): { word: string; tone: RektaTone } {
 	if (halt === 'stop') return { word: 'not-aus', tone: 'error' };
+	if (lost === 'expired') return { word: 'abgemeldet', tone: 'error' };
 	if (halt === 'pause') return { word: 'angehalten', tone: 'warning' };
+	if (lost === 'offline') return { word: 'getrennt', tone: 'warning' };
 	if (agents.some((agent) => agent.state === 'waiting')) return { word: 'hält', tone: 'warning' };
 	if (agents.length) return { word: 'arbeitet', tone: 'info' };
 	return { word: 'frei', tone: 'neutral' };

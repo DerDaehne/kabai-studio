@@ -44,17 +44,19 @@
 			class="rk-toast"
 			data-tone={toast.tone}
 			onkeydown={(event) => escapeDismisses(event, toast)}
-			onpointerenter={() => hold(true)}
-			onpointerleave={() => hold(false)}
-			onfocusin={() => hold(true)}
-			onfocusout={() => hold(false)}
+			onpointerenter={() => hold('pointer', true)}
+			onpointerleave={() => hold('pointer', false)}
+			onfocusin={() => hold('focus', true)}
+			onfocusout={() => hold('focus', false)}
 		>
 			<p class="rk-toast-msg">
 				{#if toast.tone === 'error'}<span class="rk-toast-sr">Fehler: </span>{/if}<span
 					>{toast.message}</span
 				>
 				{#if toast.action?.countdown}
-					<span class="rk-toast-sr">, {seconds(toast)} Sekunden zum Rückgängigmachen</span>
+					<span class="rk-toast-sr"
+						>, {Math.ceil(toast.windowMs / 1000)} Sekunden zum Rückgängigmachen</span
+					>
 				{/if}
 			</p>
 			{#if toast.action}

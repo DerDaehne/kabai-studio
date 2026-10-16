@@ -47,13 +47,38 @@ describe('toast', () => {
 		vi.advanceTimersByTime(2_000);
 		expect(toasts[0].left).toBe(3_000);
 
-		hold(true);
+		hold('pointer', true);
 		vi.advanceTimersByTime(60_000);
 		expect(toasts[0].left).toBe(3_000);
 
-		hold(false);
+		hold('pointer', false);
 		vi.advanceTimersByTime(3_000);
 		expect(toasts).toEqual([]);
+	});
+
+	it('holds as long as either the pointer or focus is on the toast', () => {
+		toast('Gesendet', 'success', 5_000, { label: 'Rückgängig', run: vi.fn(), countdown: true });
+		hold('focus', true);
+		hold('pointer', true);
+		hold('pointer', false);
+		vi.advanceTimersByTime(60_000);
+		expect(toasts[0].left).toBe(5_000);
+
+		hold('pointer', true);
+		hold('focus', false);
+		vi.advanceTimersByTime(60_000);
+		expect(toasts[0].left).toBe(5_000);
+
+		hold('pointer', false);
+		vi.advanceTimersByTime(5_000);
+		expect(toasts).toEqual([]);
+	});
+
+	it('keeps the window it announces to a screen reader while the visible count ticks down', () => {
+		toast('Gesendet', 'success', 10_000, { label: 'Rückgängig', run: vi.fn(), countdown: true });
+		vi.advanceTimersByTime(2_000);
+		expect(toasts[0].left).toBe(8_000);
+		expect(render(Toaster).body).toMatch(/rk-toast-sr[^>]*>, 10 Sekunden zum/);
 	});
 
 	it('offers an action as a button that closes the notice and runs it, e.g. taking an answer back', () => {

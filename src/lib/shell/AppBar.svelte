@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
+	import Icon from '$lib/ui/Icon.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
 	import { fitAppBar } from './appbar-overflow';
 	import { standingBanner } from './banner.svelte';
+	import { connection } from './connection.svelte';
 	import HaltControl from './HaltControl.svelte';
 	import { splitPending } from './keys';
 	import { live, runnerState } from './live.svelte';
@@ -15,7 +16,7 @@
 		openKeys
 	}: { openCommandLine: (mode: string) => void; openKeys: () => void } = $props();
 
-	const runner = $derived(runnerState(live.halt, shell.agents));
+	const runner = $derived(runnerState(live.halt, shell.agents, connection.lost));
 	const pending = $derived(splitPending(shell.pendingKeys));
 	const banner = $derived(standingBanner());
 
@@ -58,29 +59,6 @@
 		items.at(next % items.length)?.focus();
 	}
 </script>
-
-<div class="hints">
-	{#if !keyboard.singleKeys}
-		$1
-	{/if}
-	{#if shell.pendingKeys}
-		<p class="keys">
-			{#each [...pending.count, ...pending.prefix] as key, index (index)}<Kbd {key} active />{/each}
-			<Kbd key="Escape" /> abbrechen
-		</p>
-	{/if}
-</div>
-<div class="hints">
-	{#if !keyboard.singleKeys}
-		<p class="keys">nur mit <Kbd key="Alt" /></p>
-	{/if}
-	{#if shell.pendingKeys}
-		<p class="keys">
-			{#each [...pending.count, ...pending.prefix] as key, index (index)}<Kbd {key} active />{/each}
-			<Kbd key="Escape" /> abbrechen
-		</p>
-	{/if}
-</div>
 
 <footer
 	class="rk-appbar"
