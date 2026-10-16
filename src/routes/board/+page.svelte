@@ -474,7 +474,8 @@
 			margin: calc(-1 * var(--space-6)) calc(-1 * var(--gutter));
 			padding-top: var(--space-4);
 		}
-		.board > :not(.panorama) {
+		.board > :not(.panorama),
+		.board > :global(.field-row) {
 			padding-inline: var(--gutter);
 		}
 		.panorama {
