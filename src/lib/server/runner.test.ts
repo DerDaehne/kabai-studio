@@ -2101,3 +2101,100 @@ describe('the review approval of a predecessor', () => {
 		);
 	});
 });
+
+describe('the chain across a blocks predecessor after a restart', () => {
+	/** Successors waiting behind one predecessor that is not done yet; no runner has been started. */
+	function behindPredecessor() {
+		const s = setup();
+		const predecessor = board.createTicket(s.db, user, s.projectId, {
+			title: 'Davor',
+			column_id: board.columns(s.db, s.projectId).find((c) => c.step === 'acceptance')!.id
+		}).id;
+		const behind = (successor: number) =>
+			board.linkRelation(s.db, user, predecessor, successor, 'blocks');
+		const finishPredecessor = () =>
+			board.moveTicket(
+				s.db,
+				user,
+				predecessor,
+				board.columns(s.db, s.projectId).find((c) => c.step === 'done')!.id
+			);
+		const followUps = (ticketId: number) =>
+			(
+				s.db
+					.prepare("SELECT count(*) AS n FROM runs WHERE ticket_id = ? AND trigger = 'on_enter'")
+					.get(ticketId) as { n: number }
+			).n;
+		return { s, behind, finishPredecessor, followUps };
+	}
+
+	it('queues exactly one follow-up run for a successor whose chain stopped at the predecessor, and none at a second start', () => {
+		const g = behindPredecessor();
+		const stopped = backedSuccessor(g.s);
+		g.behind(stopped);
+		g.finishPredecessor();
+		expect(g.followUps(stopped)).toBe(0);
+
+		start(g.s.db, { builtin: fakeExecutor().executor });
+		expect(g.followUps(stopped)).toBe(1);
+
+		stopRunners.splice(0).forEach((stop) => stop());
+		start(g.s.db, { builtin: fakeExecutor().executor });
+		expect(g.followUps(stopped)).toBe(1);
+	});
+
+	it('queues nothing for a successor whose predecessor is still open', () => {
+		const g = behindPredecessor();
+		const waiting = backedSuccessor(g.s);
+		g.behind(waiting);
+
+		start(g.s.db, { builtin: fakeExecutor().executor });
+
+		expect(g.followUps(waiting)).toBe(0);
+	});
+
+	it('queues nothing for a successor whose newest run failed or that never ran', () => {
+		const g = behindPredecessor();
+		const failed = backedSuccessor(g.s);
+		g.s.db
+			.prepare("UPDATE runs SET state = 'failed', error = 'boom' WHERE ticket_id = ?")
+			.run(failed);
+		const neverRan = g.s.newTicket();
+		g.behind(failed);
+		g.behind(neverRan);
+		g.finishPredecessor();
+
+		start(g.s.db, { builtin: fakeExecutor().executor });
+
+		expect([g.followUps(failed), g.followUps(neverRan)]).toEqual([0, 0]);
+		expect(
+			g.s.db.prepare('SELECT count(*) AS n FROM runs WHERE ticket_id = ?').get(neverRan)
+		).toEqual({
+			n: 0
+		});
+	});
+
+	it('goes on with the other predecessors and logs once when continuing one of them fails', () => {
+		const g = behindPredecessor();
+		g.behind(backedSuccessor(g.s));
+		const second = board.createTicket(g.s.db, user, g.s.projectId, {
+			title: 'Auch davor',
+			column_id: board.columns(g.s.db, g.s.projectId).find((c) => c.step === 'acceptance')!.id
+		}).id;
+		acceptTicket(g.s.db, user, second);
+		const good = backedSuccessor(g.s);
+		board.linkRelation(g.s.db, user, second, good, 'blocks');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const prepare = g.s.db.prepare.bind(g.s.db);
+		let failures = 1;
+		g.s.db.prepare = ((sql: string) => {
+			if (sql.includes("r.type = 'blocks'") && failures-- > 0) throw new Error('disk gone');
+			return prepare(sql);
+		}) as typeof g.s.db.prepare;
+
+		start(g.s.db, { builtin: fakeExecutor().executor });
+
+		expect(consoleError).toHaveBeenCalledOnce();
+		expect(g.followUps(good)).toBe(1);
+	});
+});

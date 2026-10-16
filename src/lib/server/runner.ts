@@ -338,9 +338,27 @@ export function runner(): RunnerHandle {
 	return started;
 }
 
+/** A failure of the follow-up must not reach whoever moved the ticket, nor stop the other tickets. */
+function continueSuccessors(db: DatabaseSync, ticketId: number) {
+	try {
+		queueUnblockedSuccessors(db, ticketId);
+	} catch (err) {
+		console.error('continuing the successors of a ticket failed', err);
+	}
+}
+
+/** The hook runs after the move committed; a process that died in between left its successors waiting. */
+function continueInterruptedChains(db: DatabaseSync) {
+	const predecessors = db
+		.prepare("SELECT DISTINCT from_ticket_id AS id FROM ticket_relations WHERE type = 'blocks'")
+		.all() as { id: number }[];
+	for (const { id } of predecessors) continueSuccessors(db, id);
+}
+
 /**
- * Fails runs left active by the previous server process, then claims queued runs whenever a run is created or ends,
- * when the earliest held-back run (`not_before`) becomes claimable and when the kill switch is released.
+ * Fails runs left active by the previous server process and continues chains that stopped at a predecessor, then claims
+ * queued runs whenever a run is created or ends, when the earliest held-back run (`not_before`) becomes claimable and
+ * when the kill switch is released.
  * Start it once per data directory: it treats every active run as orphaned, which the single-instance lock guarantees.
  * The handle stays reachable through {@link runner}.
  */
@@ -352,6 +370,7 @@ export function startRunner(
 ) {
 	const instance = new Runner(db, executors, readLimits, coldStart);
 	failOrphanedRuns(db);
+	continueInterruptedChains(db);
 	instance.start();
 	const handle = {
 		/** Cancels a queued, running or waiting run; throws `invalid_run_transition` once the run has ended. */
@@ -404,18 +423,9 @@ class Runner {
 		this.unsubscribe = subscribe((event) => {
 			if (WAKING_EVENTS.has(event.type)) this.wake();
 			if (PREDECESSOR_EVENTS.has(event.type) && typeof event.ticketId === 'number')
-				queueMicrotask(() => this.continueSuccessors(event.ticketId as number));
+				queueMicrotask(() => continueSuccessors(this.db, event.ticketId as number));
 		});
 		this.claimQueuedRuns();
-	}
-
-	/** Deferred, so the move that caused it is published to every subscriber first and its caller never sees a failure of the follow-up. */
-	private continueSuccessors(ticketId: number) {
-		try {
-			queueUnblockedSuccessors(this.db, ticketId);
-		} catch (err) {
-			console.error('continuing the successors of a ticket failed', err);
-		}
 	}
 
 	cancel(runId: number, actor: Actor) {
