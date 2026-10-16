@@ -552,7 +552,7 @@ describe('builtin executor', () => {
 		});
 	});
 
-	it("collects the human's answer only once the prompt showing it has gone to the model", async () => {
+	it("collects the human's answer only with the run's first sign of life, after the prompt has gone to the model", async () => {
 		const { db, queue, run, ticketId, profileId } = setup();
 		const provider = fakeProvider(
 			{
