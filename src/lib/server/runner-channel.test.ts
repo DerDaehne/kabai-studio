@@ -1,11 +1,18 @@
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
+import { randomBytes } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { migrate, openDb } from './db';
 import { disconnectRunner, issuePairingCode, pairRunner } from './domain/runners';
 import { subscribe, type StudioEvent } from './events';
-import { createRunnerChannel, PING_INTERVAL_MS, type RunnerChannel } from './runner-channel';
+import {
+	createRunnerChannel,
+	HELLO_TIMEOUT_MS,
+	PING_INTERVAL_MS,
+	type RunnerChannel
+} from './runner-channel';
 import { CLOSE, DEAD_AFTER_MS } from './runner-protocol';
 
 let db: ReturnType<typeof openDb>;
@@ -224,6 +231,162 @@ describe('revoking', () => {
 		const end = closed(socket);
 		channel.revoke('workstation');
 		expect((await end).code).toBe(CLOSE.revoked);
+	});
+
+	it('does not let a machine register whose credential was revoked between the upgrade and hello', async () => {
+		const runner = pair();
+		const { socket } = await attempt({ headers: bearer(runner.credential) });
+		const end = closed(socket);
+		disconnectRunner(db, runner.id);
+		channel.revoke(runner.name);
+		socket.send(JSON.stringify(HELLO));
+		expect((await end).code).toBe(CLOSE.revoked);
+		expect(channel.connected().has(runner.name)).toBe(false);
+	});
+
+	it('rejects a hello from a machine that was disconnected even when revoke never reached the socket', async () => {
+		const runner = pair();
+		const { socket } = await attempt({ headers: bearer(runner.credential) });
+		const end = closed(socket);
+		disconnectRunner(db, runner.id);
+		socket.send(JSON.stringify(HELLO));
+		expect((await end).code).toBe(CLOSE.revoked);
+		expect(channel.connected().has(runner.name)).toBe(false);
+	});
+
+	it('drops the machine from the register at once, even if the peer ignores the close frame', async () => {
+		const runner = pair();
+		const raw = connect({ port, host: '127.0.0.1' });
+		await new Promise((resolve) => raw.once('connect', resolve));
+		raw.write(
+			[
+				'GET /runner HTTP/1.1',
+				'Host: x',
+				'Connection: Upgrade',
+				'Upgrade: websocket',
+				'Sec-WebSocket-Version: 13',
+				`Sec-WebSocket-Key: ${handshakeNonce()}`,
+				`Authorization: Bearer ${runner.credential}`,
+				'',
+				''
+			].join('\r\n')
+		);
+		await new Promise((resolve) => raw.once('data', resolve));
+		raw.write(maskedText(JSON.stringify(HELLO)));
+		await vi.waitFor(() => expect(channel.connected().has(runner.name)).toBe(true));
+
+		disconnectRunner(db, runner.id);
+		channel.revoke(runner.name);
+		expect(channel.connected().has(runner.name)).toBe(false);
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: 'machine.disconnected', name: runner.name })
+		);
+		const ended = new Promise((resolve) => raw.once('close', resolve));
+		await ended; // the server terminates the socket after its grace period
+	});
+
+	it('still reaches the socket that replaced an older one, after the older one has closed', async () => {
+		const runner = pair();
+		const first = await join(runner);
+		const replaced = closed(first.socket);
+		const second = await join(runner);
+		expect((await replaced).code).toBe(CLOSE.replaced);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(channel.connected().size).toBe(1);
+
+		const end = closed(second.socket);
+		channel.revoke(runner.name);
+		expect((await end).code).toBe(CLOSE.revoked);
+	});
+});
+
+const handshakeNonce = () => randomBytes(16).toString('base64');
+
+const maskedText = (text: string) => {
+	const payload = Buffer.from(text);
+	const mask = Buffer.from([1, 2, 3, 4]);
+	return Buffer.concat([
+		Buffer.from([0x81, 0x80 | payload.length]),
+		mask,
+		payload.map((byte, i) => byte ^ mask[i % 4])
+	]);
+};
+
+describe('hostile requests', () => {
+	it.each(['//a:99999', 'http://a:99999/runner'])(
+		'answers a malformed request target %s without throwing out of the listener',
+		(url) => {
+			const socket = new PassThrough();
+			const call = () =>
+				channel.handleUpgrade({ url, headers: {} } as never, socket as never, Buffer.alloc(0));
+			expect(call).not.toThrow();
+			expect(socket.read()?.toString()).toContain('404 Not Found');
+		}
+	);
+
+	it('destroys the socket instead of crashing when the lookup throws', () => {
+		vi.spyOn(db, 'prepare').mockImplementation(() => {
+			throw new Error('database is locked');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const socket = new PassThrough();
+		channel.handleUpgrade(
+			{ url: '/runner', headers: { authorization: 'Bearer abc' } } as never,
+			socket as never,
+			Buffer.alloc(0)
+		);
+		expect(socket.destroyed).toBe(true);
+	});
+
+	it('frees the server socket after a refusal even if the client never closes its half', async () => {
+		const raw = connect({ port, host: '127.0.0.1', allowHalfOpen: true });
+		await new Promise((resolve) => raw.once('connect', resolve));
+		raw.write(
+			'GET /runner HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n' +
+				'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ' +
+				handshakeNonce() +
+				'\r\n\r\n'
+		);
+		await new Promise((resolve) => raw.once('data', resolve));
+		await vi.waitFor(async () => {
+			const count = await new Promise<number>((resolve, reject) =>
+				server.getConnections((err, n) => (err ? reject(err) : resolve(n)))
+			);
+			expect(count).toBe(0);
+		});
+		raw.destroy();
+	});
+
+	it('closes a frame above 64 KiB with 1009', async () => {
+		const { socket } = await join();
+		const end = closed(socket);
+		socket.send('x'.repeat(64 * 1024 + 1));
+		expect((await end).code).toBe(1009);
+	});
+
+	it('closes a socket that sends no hello within the timeout', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const { socket } = await attempt({ headers: bearer(pair().credential) });
+		const end = closed(socket);
+		vi.advanceTimersByTime(HELLO_TIMEOUT_MS);
+		expect((await end).code).toBe(CLOSE.badFrame);
+	});
+
+	it.each([
+		['201 workspace keys', { workspaces: Array.from({ length: 201 }, (_, i) => `w${i}`) }],
+		['an agent key of 129 characters', { agents: ['a'.repeat(129)] }]
+	])('closes a hello with %s', async (_label, patch) => {
+		const result = await attempt({ headers: bearer(pair().credential) });
+		const end = closed(result.socket);
+		result.socket.send(JSON.stringify({ ...HELLO, ...patch }));
+		expect((await end).code).toBe(CLOSE.badFrame);
+		expect(channel.connected().size).toBe(0);
+	});
+
+	it('accepts a hello with exactly 200 keys of 128 characters', async () => {
+		const keys = Array.from({ length: 200 }, (_, i) => String(i).padEnd(128, 'k'));
+		await join(pair(), { ...HELLO, workspaces: keys });
+		expect(channel.connected().get('workstation')?.workspaces).toHaveLength(200);
 	});
 });
 

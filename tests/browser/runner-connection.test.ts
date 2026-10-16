@@ -11,6 +11,7 @@ import {
 	rmSync,
 	writeFileSync
 } from 'node:fs';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -160,5 +161,26 @@ test('runner start loads neither the database nor the server bundle and listens 
 		runner.child.kill('SIGKILL');
 		disconnectRunner(db, machine.id);
 		rmSync(machine.home, { recursive: true, force: true });
+	}
+});
+
+test('an unauthenticated upgrade with a malformed request target is refused and the server keeps running', async ({
+	baseURL
+}) => {
+	const { hostname, port } = new URL(baseURL!);
+	for (const target of ['//a:99999', 'http://a:99999/runner']) {
+		const reply = await new Promise<string>((resolve) => {
+			const socket = connect({ host: hostname, port: Number(port) }, () =>
+				socket.write(
+					`GET ${target} HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
+				)
+			);
+			let received = '';
+			socket.on('data', (chunk) => (received += chunk.toString()));
+			socket.on('close', () => resolve(received));
+			socket.on('error', () => resolve(received));
+		});
+		expect(reply).not.toContain('101');
+		expect((await fetch(`${baseURL}/login`)).status).toBe(200);
 	}
 });

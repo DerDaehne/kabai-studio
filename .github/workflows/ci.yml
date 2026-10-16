@@ -108,3 +108,11 @@ jobs:
             [ "$rc" -eq 1 ] || { echo "FAIL: $cmd exited $rc, expected its usage/error exit code 1"; exit 1; }
             echo "ok: $cmd usage path -> exit 1, no ERR_MODULE_NOT_FOUND"
           done
+          # runner start imports ws and the runner files without the bundle; an unpaired image must reach [not_paired].
+          out=$(docker run --rm studio-ci node server.ts runner start 2>&1) && rc=0 || rc=$?
+          if echo "$out" | grep -q ERR_MODULE_NOT_FOUND; then
+            echo "FAIL: runner start hit ERR_MODULE_NOT_FOUND:"; echo "$out"; exit 1
+          fi
+          [ "$rc" -eq 1 ] || { echo "FAIL: runner start exited $rc, expected 1"; exit 1; }
+          echo "$out" | grep -q '\[not_paired\]' || { echo "FAIL: runner start did not report not_paired:"; echo "$out"; exit 1; }
+          echo "ok: runner start without pairing -> exit 1, [not_paired], no ERR_MODULE_NOT_FOUND"

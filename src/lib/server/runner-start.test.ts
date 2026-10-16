@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { migrate, openDb } from './db';
 import { disconnectRunner, issuePairingCode, pairRunner } from './domain/runners';
+import { subscribe } from './events';
 import { createRunnerChannel, type RunnerChannel } from './runner-channel';
 import { CREDENTIAL_FILE, FLOOR_FILE } from './runner-pair';
 import { CLOSE, DEAD_AFTER_MS } from './runner-protocol';
@@ -55,14 +56,14 @@ const ctx = (extra: Partial<StartContext> = {}): StartContext => ({
 });
 
 /** What `runner pair` leaves behind, with a floor that has a private path and a command studio must never learn. */
-function writeConfig(origin: string, credential = 'c'.repeat(43)) {
-	mkdirSync(configDir, { recursive: true });
+function writeConfig(origin: string, credential = 'c'.repeat(43), dir = configDir) {
+	mkdirSync(dir, { recursive: true });
 	writeFileSync(
-		join(configDir, CREDENTIAL_FILE),
+		join(dir, CREDENTIAL_FILE),
 		JSON.stringify({ studioOrigin: origin, name: 'workstation', credential })
 	);
 	writeFileSync(
-		join(configDir, FLOOR_FILE),
+		join(dir, FLOOR_FILE),
 		JSON.stringify({
 			studioOrigin: origin,
 			slots: 3,
@@ -265,6 +266,92 @@ describe('refusals end the runner', () => {
 		const result = await runnerStartCommand(ctx());
 		expect(result.message).toMatch(/^\[protocol_mismatch\] /);
 		expect(result.message).toContain('Update studio');
+		wss.close();
+	});
+});
+
+describe('two runners with one pairing', () => {
+	it('lets the newer connection win and ends the replaced runner with a way out, instead of replacing each other forever', async () => {
+		const { origin, pair, channel } = await studio();
+		const runner = pair();
+		writeConfig(origin, runner.credential);
+		const secondDir = join(home, 'second', 'config', 'kabai-studio');
+		writeConfig(origin, runner.credential, secondDir);
+		let connects = 0;
+		const unsubscribe = subscribe((event) => event.type === 'machine.connected' && connects++);
+
+		const first = runnerStartCommand(ctx());
+		await vi.waitFor(() => expect(channel.connected().size).toBe(1));
+		const second = runnerStartCommand(
+			ctx({ env: { HOME: join(home, 'second'), XDG_CONFIG_HOME: join(home, 'second', 'config') } })
+		);
+
+		const replaced = await first;
+		expect(replaced.exitCode).toBe(1);
+		expect(replaced.message).toMatch(/^\[replaced\] /);
+		expect(replaced.message).toContain('kabai-studio runner start');
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+		expect(connects).toBe(2);
+		expect(channel.connected().size).toBe(1);
+		stop.abort();
+		expect((await second).exitCode).toBe(0);
+		unsubscribe();
+	}, 15_000);
+});
+
+describe('hostile servers', () => {
+	it('closes a frame above 64 KiB', async () => {
+		const server = createServer();
+		const wss = new WebSocketServer({ noServer: true });
+		const closes: number[] = [];
+		server.on('upgrade', (request, socket, head) =>
+			wss.handleUpgrade(request, socket, head, (ws) => {
+				ws.on('close', (code) => closes.push(code));
+				ws.on('message', () => ws.send('x'.repeat(64 * 1024 + 1)));
+			})
+		);
+		const port = await listen(server);
+		writeConfig(`http://127.0.0.1:${port}`);
+		const running = runnerStartCommand(ctx());
+		await vi.waitFor(() => expect(closes).toContain(1009));
+		stop.abort();
+		await running;
+		wss.close();
+	});
+
+	it('stops reading a refusal body that never ends', async () => {
+		const server = createServer().on('upgrade', (_request, socket) => {
+			socket.write('HTTP/1.1 403 X\r\ncontent-length: 1000000000\r\n\r\n');
+			const flood = setInterval(() => socket.write('x'.repeat(8192)), 1);
+			socket.on('close', () => clearInterval(flood));
+			socket.on('error', () => {});
+		});
+		const port = await listen(server);
+		writeConfig(`http://127.0.0.1:${port}`);
+		const result = await runnerStartCommand(ctx());
+		expect(result.message).toMatch(/^\[forbidden\] /);
+	});
+
+	it('prints a close reason without escape sequences or control characters', async () => {
+		const server = createServer();
+		const wss = new WebSocketServer({ noServer: true });
+		server.on('upgrade', (request, socket, head) =>
+			wss.handleUpgrade(request, socket, head, (ws) =>
+				ws.on('message', () => ws.close(1001, '\x1b[31mgoing\x1b]0;title\x07 away\x00\r\n'))
+			)
+		);
+		const port = await listen(server);
+		writeConfig(`http://127.0.0.1:${port}`);
+		const running = runnerStartCommand(ctx());
+		await vi.waitFor(() =>
+			expect(lines.some((line) => line.startsWith('Connection lost'))).toBe(true)
+		);
+		const lost = lines.find((line) => line.startsWith('Connection lost'))!;
+		expect(lost).not.toMatch(/\p{Cc}/u);
+		expect(lost).toContain('going');
+		expect(lost).not.toContain('[31m');
+		stop.abort();
+		await running;
 		wss.close();
 	});
 });
