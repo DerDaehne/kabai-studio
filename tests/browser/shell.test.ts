@@ -178,10 +178,11 @@ test('the focus ring of the active head title is not cut off by its row', async 
 	expect(clip.ringBottom, 'ring bottom inside the row').toBeLessThanOrEqual(clip.rowBottom);
 });
 
-for (const [viewport, commands] of [
-	[PHONE, ['zurück', 'anhalten', 'not-aus', 'befehl', 'tasten']],
-	[DESKTOP, ['anhalten', 'not-aus', 'befehl', 'tasten']],
-	[ULTRAWIDE, ['anhalten', 'not-aus', 'befehl', 'tasten']]
+// what fits on the bar, and what moved into "mehr" with its words
+for (const [viewport, commands, moved] of [
+	[PHONE, ['zurück', 'befehl', 'mehr'], ['anhalten', 'not-aus', 'tasten']],
+	[DESKTOP, ['anhalten', 'not-aus', 'befehl', 'tasten'], []],
+	[ULTRAWIDE, ['anhalten', 'not-aus', 'befehl', 'tasten'], []]
 ] as const) {
 	test(`at ${viewport.width} px the app bar sits on the bottom edge with the runner state as a word and labelled commands that open the keys and the command line`, async ({
 		page
@@ -192,6 +193,7 @@ for (const [viewport, commands] of [
 
 		await expect(runnerOf(page)).toHaveText('frei');
 		await expect(bar.getByRole('button')).toHaveText([...commands]);
+		await expect(bar.locator('[data-rk-overflow]')).toHaveCount(moved.length);
 		const barBox = (await bar.boundingBox())!;
 		expect(Math.round(barBox.y + barBox.height)).toBe(viewport.height);
 		for (const button of await bar.getByRole('button').all()) {
@@ -205,7 +207,11 @@ for (const [viewport, commands] of [
 		}
 		expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
 
-		await bar.getByRole('button', { name: 'tasten' }).click();
+		if (moved.length) {
+			await bar.getByRole('button', { name: 'mehr' }).click();
+			await expect(page.getByRole('menuitem')).toHaveText([...moved]);
+			await page.getByRole('menuitem', { name: 'tasten' }).click();
+		} else await bar.getByRole('button', { name: 'tasten' }).click();
 		await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeHidden();
@@ -287,12 +293,13 @@ test.describe('halting from the app bar', () => {
 		await page.setViewportSize(DESKTOP);
 		await open(page, '/');
 		const bar = appBarOf(page);
-		const banner = page.locator('.halt-banner');
+		const banner = page.locator('.rk-banner');
+		const words = banner.locator('.rk-banner-live');
 
 		await bar.getByRole('button', { name: 'anhalten' }).click();
 		await page.getByRole('button', { name: 'Anhalten (y)' }).click();
-		await expect(banner).toHaveText(/Angehalten · 0 pausiert/);
-		await expect(banner).toHaveAttribute('data-tone', 'warning');
+		await expect(words).toHaveText('Angehalten 0 pausiert');
+		await expect(banner).toHaveAttribute('data-status', 'warning');
 		await expect(runnerOf(page)).toHaveText('angehalten');
 		await banner.getByRole('button', { name: 'Fortsetzen' }).click();
 		await expect(banner).toBeHidden();
@@ -300,8 +307,8 @@ test.describe('halting from the app bar', () => {
 
 		await bar.getByRole('button', { name: 'not-aus' }).click();
 		await page.getByRole('button', { name: 'Stoppen (y)' }).click();
-		await expect(banner).toHaveText(/Gestoppt · 0 wartend/);
-		await expect(banner).toHaveAttribute('data-tone', 'error');
+		await expect(words).toHaveText('Gestoppt 0 wartend');
+		await expect(banner).toHaveAttribute('data-status', 'error');
 		await expect(runnerOf(page)).toHaveText('not-aus');
 
 		await page.keyboard.press(':');

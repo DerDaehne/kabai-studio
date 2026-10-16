@@ -20,11 +20,14 @@ const RELEASED_TEXT: Record<HaltKind, string> = {
 const countOf = (allRuns: LiveRun[], state: LiveRun['state']) =>
 	allRuns.filter((run) => run.state === state).length;
 
-/** The halt banner's text while a halt is set: a stop counts the waiting runs, a pause the runs it paused. */
-export const haltLabel = (halt: HaltKind, allRuns: LiveRun[]) =>
+/** The state word of a halt. */
+export const haltWord = (halt: HaltKind) => (halt === 'stop' ? 'Gestoppt' : 'Angehalten');
+
+/** What a halt holds back: a stop counts the waiting runs, a pause the runs it paused. */
+export const haltDetail = (halt: HaltKind, allRuns: LiveRun[]) =>
 	halt === 'stop'
-		? `Gestoppt · ${countOf(allRuns, 'queued')} wartend`
-		: `Angehalten · ${countOf(allRuns, 'paused')} pausiert`;
+		? `${countOf(allRuns, 'queued')} wartend`
+		: `${countOf(allRuns, 'paused')} pausiert`;
 
 const QUEUE_WAITS = 'Wartende Runs bleiben in der Queue, bis du fortsetzt (:fortsetzen all).';
 
@@ -42,15 +45,20 @@ export const stopQuestion = (activeRuns: number) =>
 export const pauseQuestion = (activeRuns: number) =>
 	`${activeRunsText(activeRuns, 'angehalten')}${activeRuns ? ' Der angefangene Schritt wird verworfen, :fortsetzen all setzt die Arbeit fort.' : ''} ${QUEUE_WAITS}`;
 
-/** Calls a halt route; on a refusal or a broken connection a toast names the way out and nothing comes back. */
-async function call<T>(method: 'POST' | 'DELETE', path: string, failure: string) {
+/** Calls a halt route; on a refusal or a broken connection a toast names the way out and offers to try again. */
+async function call<T>(
+	method: 'POST' | 'DELETE',
+	path: string,
+	failure: string,
+	retry: () => void
+) {
 	const response = await fetch(path, { method }).catch(() => undefined);
 	if (response?.ok) return (await response.json()) as T;
 	const refusal = response?.status === 400 ? ((await response.json()) as Refusal) : undefined;
 	const wayOut = refusal
 		? `${refusal.message} Ausweg: ${refusal.hint}`
 		: `${failure} Verbindung prüfen und erneut versuchen.`;
-	toast(wayOut, 'error');
+	toast(wayOut, 'error', undefined, { label: 'Erneut versuchen', run: retry });
 }
 
 /** Without waiting for the event, which a broken connection would lose. */
@@ -65,12 +73,22 @@ const skippedText = (skipped: SkippedResume[]) =>
 		.join('');
 
 export async function stopAll() {
-	const answer = await call<{ cancelled: number }>('POST', '/api/halt', 'Stoppen ging nicht.');
+	const answer = await call<{ cancelled: number }>(
+		'POST',
+		'/api/halt',
+		'Stoppen ging nicht.',
+		() => void stopAll()
+	);
 	if (answer) await done(`Gestoppt: ${answer.cancelled} ${runs(answer.cancelled)} abgebrochen.`);
 }
 
 export async function pauseAll() {
-	const answer = await call<{ paused: number }>('POST', '/api/pause', 'Anhalten ging nicht.');
+	const answer = await call<{ paused: number }>(
+		'POST',
+		'/api/pause',
+		'Anhalten ging nicht.',
+		() => void pauseAll()
+	);
 	if (answer)
 		await done(
 			`Angehalten: ${answer.paused} ${runs(answer.paused)} pausiert. :fortsetzen all setzt fort.`
@@ -79,13 +97,14 @@ export async function pauseAll() {
 
 export async function pauseRun(runId: number) {
 	const path = `/api/runs/${runId}/pause`;
-	if (await call('POST', path, 'Anhalten ging nicht.'))
+	if (await call('POST', path, 'Anhalten ging nicht.', () => void pauseRun(runId)))
 		await done(`Run ${runId} angehalten. :fortsetzen setzt ihn fort.`);
 }
 
 export async function resumeRun(runId: number) {
 	const path = `/api/runs/${runId}/resume`;
-	if (await call('POST', path, 'Fortsetzen ging nicht.')) await done(resumedText(1));
+	if (await call('POST', path, 'Fortsetzen ging nicht.', () => void resumeRun(runId)))
+		await done(resumedText(1));
 }
 
 /**
@@ -97,7 +116,7 @@ export async function resumeAll() {
 		resumed: number;
 		released: HaltKind | null;
 		skipped: SkippedResume[];
-	}>('DELETE', '/api/halt', 'Fortsetzen ging nicht.');
+	}>('DELETE', '/api/halt', 'Fortsetzen ging nicht.', () => void resumeAll());
 	if (!answer) return;
 	const message =
 		resumedText(answer.resumed) +

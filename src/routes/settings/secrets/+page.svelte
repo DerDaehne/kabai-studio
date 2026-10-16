@@ -1,5 +1,6 @@
 <script lang="ts">
 	import SecretField from '$lib/components/SecretField.svelte';
+	import Crumb from '$lib/ui/Crumb.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -7,6 +8,7 @@
 		form?.code !== undefined && form.field === field ? form : undefined;
 </script>
 
+<Crumb href="/settings" label="Einstellungen" />
 <h1>Secrets</h1>
 <p>
 	API-Keys und Tokens, verschlüsselt gespeichert. Nach dem Speichern zeigt Studio einen Wert nie

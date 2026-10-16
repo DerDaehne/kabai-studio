@@ -1,104 +1,88 @@
 <script lang="ts">
-	import Icon from './Icon.svelte';
-	import { dismiss, runAction, toasts } from './toast.svelte';
+	import { dismiss, hold, runAction, toasts, type Toast } from './toast.svelte';
 
 	let region: HTMLElement;
 
 	// The region is a permanently open manual popover (top layer; the live region exists before the first message).
 	// It is reopened on every change so that it also lies above a modal dialog opened later.
-	// ponytail: while a modal dialog is open the close button may be inert — error toasts are then closed after the dialog.
 	$effect(() => {
 		void toasts.length;
 		if (region.matches(':popover-open')) region.hidePopover();
 		region.showPopover();
 	});
+
+	const seconds = (toast: Toast) => Math.ceil(toast.left / 1000);
+	const isEditable = (target: EventTarget | null) =>
+		target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable]');
+
+	function leaveFocusTo(toast: HTMLElement) {
+		if (toast.contains(document.activeElement)) document.getElementById('main')?.focus();
+	}
+
+	function escapeDismisses(event: KeyboardEvent, toast: Toast) {
+		if (event.key !== 'Escape') return;
+		leaveFocusTo(event.currentTarget as HTMLElement);
+		dismiss(toast.id);
+	}
+
+	// Ctrl/Cmd+Z takes back while the window is open; in a text field it stays the field's own undo
+	function takeBackWithKeys(event: KeyboardEvent) {
+		const [open] = toasts;
+		if (!open?.action?.countdown || event.shiftKey || event.key.toLowerCase() !== 'z') return;
+		if (!(event.ctrlKey || event.metaKey) || isEditable(event.target)) return;
+		event.preventDefault();
+		runAction(open);
+	}
 </script>
 
-<section class="toaster" popover="manual" bind:this={region} aria-label="Benachrichtigungen">
-	<div role="status" aria-live="polite" class="list">
-		{#each toasts as t (t.id)}
-			<div class="toast" data-tone={t.tone}>
-				<span class="bar" aria-hidden="true"></span>
-				<p>
-					{#if t.tone === 'error'}<span class="visually-hidden">Fehler: </span>{/if}{t.message}
-					{#if t.action && 'href' in t.action}<a href={t.action.href}>{t.action.label}</a>{/if}
-				</p>
-				{#if t.action && 'run' in t.action}
-					<button class="btn btn-sm" onclick={() => runAction(t)}>{t.action.label}</button>
-				{/if}
-				<button
-					class="btn btn-ghost btn-icon btn-sm"
-					aria-label="Meldung schließen"
-					onclick={() => dismiss(t.id)}
+<svelte:window onkeydown={takeBackWithKeys} />
+
+<div class="rk-toasts" popover="manual" role="status" aria-atomic="false" bind:this={region}>
+	{#each toasts as toast (toast.id)}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="rk-toast"
+			data-tone={toast.tone}
+			onkeydown={(event) => escapeDismisses(event, toast)}
+			onpointerenter={() => hold(true)}
+			onpointerleave={() => hold(false)}
+			onfocusin={() => hold(true)}
+			onfocusout={() => hold(false)}
+		>
+			<p class="rk-toast-msg">
+				{#if toast.tone === 'error'}<span class="rk-toast-sr">Fehler: </span>{/if}<span
+					>{toast.message}</span
 				>
-					<Icon name="x" size={14} />
+				{#if toast.action?.countdown}
+					<span class="rk-toast-sr">, {seconds(toast)} Sekunden zum Rückgängigmachen</span>
+				{/if}
+			</p>
+			{#if toast.action}
+				<button
+					type="button"
+					class="rk-toast-act"
+					aria-keyshortcuts={toast.action.countdown ? 'Control+Z Meta+Z' : undefined}
+					onclick={() => runAction(toast)}
+				>
+					{toast.action.label}
+					{#if toast.action.countdown}<span class="rk-toast-count" aria-hidden="true"
+							>{seconds(toast)}</span
+						>{/if}
 				</button>
-			</div>
-		{/each}
-	</div>
-</section>
+			{/if}
+		</div>
+	{/each}
+</div>
 
 <style>
-	.toaster {
-		inset: var(--space-4) var(--space-4) auto auto;
+	/* A popover brings margin, size, border, background and clipping of its own; the Rekta region wants none of them */
+	.rk-toasts {
+		width: auto;
+		height: auto;
 		margin: 0;
-		padding: 0;
 		border: 0;
 		background: transparent;
+		color: inherit;
 		overflow: visible;
-		color: var(--text);
-	}
-	.list {
-		display: grid;
-		gap: var(--space-2);
-		width: min(360px, calc(100vw - 2 * var(--space-4)));
-	}
-	.toast {
-		display: grid;
-		grid-template-columns: 3px minmax(0, 1fr);
-		grid-auto-columns: auto;
-		grid-auto-flow: column;
-		align-items: start;
-		gap: var(--space-3);
-		padding: var(--space-2) var(--space-1) var(--space-2) var(--space-2);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--surface);
-		box-shadow: var(--shadow-overlay);
-		transition:
-			opacity var(--dur-fast) var(--ease-out),
-			translate var(--dur-fast) var(--ease-out);
-	}
-	@starting-style {
-		.toast {
-			opacity: 0;
-			translate: 0 -6px;
-		}
-	}
-	.toast p {
-		padding-block: 2px;
-	}
-	.bar {
-		align-self: stretch;
-		border-radius: 2px;
-		background: var(--accent);
-	}
-	.toast[data-tone='info'] .bar {
-		background: var(--status-running);
-	}
-	.toast[data-tone='error'] .bar {
-		background: var(--status-failed);
-	}
-	.toast[data-tone='error'] p {
-		color: var(--status-failed);
-		font-weight: var(--weight-semibold);
-	}
-	@media (max-width: 719px) {
-		.toaster {
-			inset: var(--space-3) var(--space-3) auto;
-		}
-		.list {
-			width: auto;
-		}
 	}
 </style>

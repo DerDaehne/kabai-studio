@@ -9,9 +9,17 @@
 	let {
 		project,
 		title = $bindable(),
+		error,
 		onsubmit,
 		oncancel
-	}: { project: ProjectRef; title: string; onsubmit: () => void; oncancel: () => void } = $props();
+	}: {
+		project: ProjectRef;
+		title: string;
+		/** Why the ticket was not created, with its way out. */
+		error?: string;
+		onsubmit: () => void;
+		oncancel: () => void;
+	} = $props();
 </script>
 
 <form
@@ -27,6 +35,7 @@
 		placeholder={t('board.draft.placeholder')}
 		autocomplete="off"
 		bind:value={title}
+		aria-invalid={error ? 'true' : undefined}
 		onkeydown={escapeTo(oncancel)}
 		{@attach focusField}
 	/>
@@ -36,6 +45,7 @@
 		{t('board.draft.hintCreate')} · <Kbd key="Escape" />
 		{t('board.draft.hintDiscard')}</span
 	>
+	{#if error}<p class="refusal" role="alert">{error}</p>{/if}
 </form>
 
 <style>
@@ -56,6 +66,14 @@
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
+	}
+	.refusal {
+		flex-basis: 100%;
+		margin: 0;
+		padding: var(--space-1) var(--space-2);
+		background: var(--status-failed-tint);
+		color: var(--status-failed);
+		font-size: var(--type-meta);
 	}
 	.hint {
 		color: var(--text-muted);

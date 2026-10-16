@@ -82,7 +82,7 @@
 			return undefined;
 		}
 		const resumesRun = result.type === 'success' && result.data?.resumesRun === true;
-		const action = { label: 'Rückgängig', run: undo };
+		const action = { label: 'Rückgängig', run: undo, countdown: true };
 		return toast(sentNotice(question, resumesRun), 'success', data.undoWindowMs, action);
 	}
 

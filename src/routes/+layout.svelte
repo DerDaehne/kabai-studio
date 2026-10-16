@@ -16,7 +16,9 @@
 		type Suggestion
 	} from '$lib/shell/commands';
 	import { projectForLetter } from '$lib/shell/focus';
-	import { haltLabel, resumeAll, resumeRun } from '$lib/shell/halt';
+	import Banner from '$lib/shell/Banner.svelte';
+	import { standingBanner } from '$lib/shell/banner.svelte';
+	import { resumeRun } from '$lib/shell/halt';
 	import HeadPivot from '$lib/shell/HeadPivot.svelte';
 	import KeyHints from '$lib/shell/KeyHints.svelte';
 	import { keyContextOf, validKeys } from '$lib/shell/keys';
@@ -29,9 +31,9 @@
 		showLive
 	} from '$lib/shell/live.svelte';
 	import { bindKeys, handleKey, restoreSingleKeys, setSingleKeys } from '$lib/shell/router.svelte';
+	import { recordNavigation } from '$lib/shell/trail';
 	import { bindCommands, boundCommands, shell } from '$lib/shell/shell.svelte';
 	import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
-	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import Icon from '$lib/ui/Icon.svelte';
 	import { transitionPage } from '$lib/ui/motion';
@@ -74,6 +76,7 @@
 	let keysOpen = $state(false);
 
 	// a sheet belongs to the page it was opened on; invalidate() is no navigation, so live events leave it open
+	afterNavigate(recordNavigation);
 	afterNavigate(() => {
 		commandOpen = false;
 		keysOpen = false;
@@ -179,57 +182,54 @@
 
 <svelte:window onkeydown={handleKey} />
 
-{#if bare}
-	<div class="bare">
-		<div class="brand"><img src={favicon} alt="" width="20" height="20" />kabai studio</div>
-		<main id="main">{@render children()}</main>
-		<Attribution />
-	</div>
-{:else}
-	<div class="shell">
-		<a class="skip btn" href="#main">Zum Inhalt springen</a>
-		<HeadPivot />
+<div class="rk">
+	{#if bare}
+		<div class="bare">
+			<div class="brand"><img src={favicon} alt="" width="20" height="20" />kabai studio</div>
+			<main id="main">{@render children()}</main>
+			<Attribution />
+		</div>
+	{:else}
+		<div class="shell">
+			<a class="skip btn" href="#main">Zum Inhalt springen</a>
+			<Banner standing={standingBanner()} />
+			<HeadPivot />
 
-		<main id="main" tabindex="-1">
-			{#if live.halt}
-				<div class="halt-banner" data-tone={live.halt === 'stop' ? 'error' : 'warning'}>
-					<Icon name={live.halt === 'stop' ? 'stop' : 'pause'} />
-					<span role="status">{haltLabel(live.halt, live.runs)}</span>
-					<Button size="sm" onclick={resumeAll}>Fortsetzen</Button>
-				</div>
-			{/if}
-			{#if shell.focus}
-				<p class="focus">
-					Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
-					{shell.focus.name}
-					<button
-						class="btn btn-ghost btn-icon"
-						aria-label="Projekt-Fokus aufheben"
-						onclick={() => (shell.focus = null)}><Icon name="x" size={14} /></button
-					>
-				</p>
-			{/if}
-			{@render children()}
-		</main>
+			<main id="main" tabindex="-1">
+				{#if shell.focus}
+					<p class="focus">
+						Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
+						{shell.focus.name}
+						<button
+							class="btn btn-ghost btn-icon"
+							aria-label="Projekt-Fokus aufheben"
+							onclick={() => (shell.focus = null)}><Icon name="x" size={14} /></button
+						>
+					</p>
+				{/if}
+				{@render children()}
+			</main>
 
-		<AppBar {openCommandLine} openKeys={() => (keysOpen = true)} />
-	</div>
+			<AppBar {openCommandLine} openKeys={() => (keysOpen = true)} />
+		</div>
 
-	<Dialog variant="bar-sheet" bind:open={commandOpen} title="Befehlszeile">
-		<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
-		<KeyHints hints={commandLineKeys} label="Tasten der Befehlszeile" />
-	</Dialog>
-	<KeyOverview bind:open={keysOpen} context={keyContextOf(path)} />
-{/if}
+		<Dialog variant="bar-sheet" bind:open={commandOpen} title="Befehlszeile">
+			<CommandLine {sources} autofocus bind:value={commandValue} focused onexecute={execute} />
+			<KeyHints hints={commandLineKeys} label="Tasten der Befehlszeile" />
+		</Dialog>
+		<KeyOverview bind:open={keysOpen} context={keyContextOf(path)} />
+	{/if}
 
-<Toaster />
+	<Toaster />
+</div>
 
 <style>
 	/* The window scrolls under the sticky head and the fixed app bar: what the page scrolls into view (focus, anchors)
 	   keeps clear of both. On the content only — as scroll-padding it would also scroll the page for the head's own
 	   links, which sit in that very strip. */
 	main :global(*) {
-		scroll-margin-block: var(--head-h) calc(var(--appbar-h) + env(safe-area-inset-bottom));
+		scroll-margin-block: calc(var(--rk-banner-h, 0px) + var(--head-h))
+			calc(var(--appbar-h) + env(safe-area-inset-bottom));
 	}
 	.shell {
 		min-height: 100dvh;
@@ -244,26 +244,12 @@
 		outline: none; /* target of the skip link, not a control */
 		box-shadow: none;
 	}
-	.halt-banner,
 	.focus {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2) var(--space-3);
 		margin-bottom: var(--space-4);
-	}
-	.halt-banner {
-		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-		border-radius: var(--radius-tile);
-		background: var(--tile-warning);
-		color: var(--text);
-		font-weight: var(--weight-medium);
-	}
-	.halt-banner[data-tone='error'] {
-		background: var(--tile-error);
-	}
-	.halt-banner [role='status'] {
-		flex: 1;
 	}
 	.focus {
 		color: var(--text-muted);

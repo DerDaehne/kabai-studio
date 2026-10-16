@@ -1,7 +1,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { t } from '$lib/i18n/t';
 import { undoStack, type Undoable } from '$lib/shell/undo.svelte';
-import { dismiss, toast } from '$lib/ui/toast.svelte';
+import { dismiss, toast, toastMs } from '$lib/ui/toast.svelte';
 import * as actions from './board-actions';
 import type { BoardTicket } from './list';
 
@@ -30,7 +30,8 @@ export class RowEditor {
 
 	async retitle(row: BoardTicket, title: string) {
 		const failure = await actions.retitle(row.id, title);
-		if (failure) return void toast(failure, 'error');
+		if (failure) return void (this.refusal = { id: row.id, text: failure });
+		this.refusal = null;
 		await this.#deps.reload();
 		void this.#deps.focusRow(row.id);
 	}
@@ -115,9 +116,6 @@ export class RowEditor {
 	}
 }
 
-/** How long a deleted ticket can come back with u before it is deleted for good. */
-const DELETE_UNDO_MS = 10_000;
-
 /** Deleting with an undo window: the row goes at once, the ticket only after the window. */
 export class Deletion {
 	/** Deleted on the board, but still inside the undo window. */
@@ -147,6 +145,8 @@ export class Deletion {
 	remove(row: BoardTicket) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let notice: number | undefined;
+		/** How long the ticket can come back with u before it is deleted for good: the toast's window. */
+		const undoMs = toastMs();
 		const deleted = t('board.deleted', { ref: row.ref });
 		const action: Undoable = {
 			label: deleted,
@@ -155,16 +155,20 @@ export class Deletion {
 				timer = setTimeout(() => {
 					timer = undefined;
 					void this.#forGood(row);
-				}, DELETE_UNDO_MS);
-				const undo = { label: t('board.undo'), run: () => undoStack.revert(action) };
-				notice = toast(deleted, 'success', DELETE_UNDO_MS, undo);
+				}, undoMs);
+				const undo = {
+					label: t('board.undo'),
+					run: () => undoStack.revert(action),
+					countdown: true
+				};
+				notice = toast(deleted, 'success', undoMs, undo);
 				void this.#deps.focusRow(this.#focusAfterDelete());
 			},
 			revert: () => {
 				if (notice !== undefined) dismiss(notice);
 				if (timer === undefined)
 					return void toast(
-						t('board.deleteFinal', { ref: row.ref, seconds: DELETE_UNDO_MS / 1000 }),
+						t('board.deleteFinal', { ref: row.ref, seconds: undoMs / 1000 }),
 						'error'
 					);
 				clearTimeout(timer);

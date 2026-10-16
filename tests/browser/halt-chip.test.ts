@@ -14,22 +14,20 @@ async function confirmCommand(page: Page, line: string, dialog: string) {
 	await page.keyboard.press('y');
 }
 
-const chipOf = (view: Page) =>
-	view.getByText(/^(Gestoppt · \d+ wartend|Angehalten · \d+ pausiert)$/);
+const chipOf = (view: Page) => view.locator('.rk-banner[data-status] .rk-banner-live');
 // the runner's state word in the app bar
 const runnerOf = (view: Page) =>
 	view.getByRole('contentinfo', { name: 'App-Leiste' }).locator('[data-tone]');
 
 /**
- * Expects exactly one toast with `text`, then closes it, so a later toast with the same text counts on its own.
- * Pass `tone` to also check the toast stays an error until closed (no auto-dismiss) rather than a success toast.
+ * Expects exactly one new toast with `text` and marks it as seen, so a later toast with the same text counts on its
+ * own. Pass `tone` to also check whether it is a success or an error toast.
  */
 async function expectToast(page: Page, text: string, tone?: 'success' | 'error') {
-	const shown = page.locator('.toast', { hasText: text });
+	const shown = page.locator('.rk-toast:not([data-seen])', { hasText: text });
 	await expect(shown).toHaveCount(1);
 	if (tone) await expect(shown).toHaveAttribute('data-tone', tone);
-	await shown.getByRole('button', { name: 'Meldung schließen' }).click();
-	await expect(shown).toHaveCount(0);
+	await shown.evaluate((toast) => toast.setAttribute('data-seen', ''));
 }
 
 const runningRunOf = (db: DatabaseSync, ticketId: number) =>
@@ -63,7 +61,7 @@ test('the stop chip appears after :stop at every width and disappears with a toa
 	await open(phone, '/');
 
 	for (const view of [page, wide, phone]) {
-		await expect(chipOf(view)).toHaveText('Gestoppt · 0 wartend');
+		await expect(chipOf(view)).toHaveText('Gestoppt 0 wartend');
 		await expect(view.getByRole('button', { name: 'Fortsetzen' })).toBeVisible();
 	}
 
@@ -92,7 +90,7 @@ test('the pause chip counts the runs :anhalten paused, and its Fortsetzen resume
 
 	await confirmCommand(page, 'anhalten', 'Alle Agents anhalten?');
 
-	await expect(chipOf(page)).toHaveText('Angehalten · 1 pausiert');
+	await expect(chipOf(page)).toHaveText('Angehalten 1 pausiert');
 	await expect(runnerOf(page)).toHaveText('angehalten');
 	await expectToast(page, 'Angehalten: 1 Run pausiert. :fortsetzen all setzt fort.');
 
@@ -147,7 +145,7 @@ test(':fortsetzen alone names the way out and offers the halted runs; an unknown
 
 	// closing the toast would move the focus out of the command line, and its suggestions with it
 	await expect(
-		page.locator('.toast', {
+		page.locator('.rk-toast', {
 			hasText: 'Welchen Run? :fortsetzen N setzt einen angehaltenen fort, :fortsetzen all alle.'
 		})
 	).toBeVisible();

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectLiveUpdates } from './live-updates';
-import { toasts } from './ui/toast.svelte';
+import { connection } from './shell/connection.svelte';
 
 /** Replaces the browser `EventSource` with a controllable fake for reconnect and backoff tests. */
 class FakeEventSource {
@@ -25,7 +25,7 @@ let probe: () => Promise<Response>;
 beforeEach(() => {
 	vi.useFakeTimers();
 	FakeEventSource.instances = [];
-	toasts.length = 0;
+	connection.lost = null;
 	probe = () => Promise.reject(new TypeError('Failed to fetch'));
 	vi.stubGlobal('EventSource', FakeEventSource);
 	vi.stubGlobal('window', new EventTarget());
@@ -101,37 +101,27 @@ describe('connectLiveUpdates', () => {
 		expect(FakeEventSource.instances).toHaveLength(countBefore + 1);
 	});
 
-	it('shows a notice with a way out only after several failed attempts, and hides it after the reconnect', async () => {
+	it('reports a lost connection only after several failed attempts, and clears it after the reconnect', async () => {
 		connectLiveUpdates(1, { onReload: vi.fn() });
 		await fail(2);
-		expect(toasts).toHaveLength(0); // two failed attempts are not a lasting outage yet
+		expect(connection.lost).toBeNull(); // two failed attempts are not a lasting outage yet
 
 		await fail(1);
-		expect(toasts).toHaveLength(1);
-		expect(toasts[0]).toMatchObject({
-			tone: 'error',
-			message: expect.stringMatching(/Verbindung unterbrochen.*versucht es weiter.*neu laden/)
-		});
+		expect(connection.lost).toBe('offline');
 
-		await fail(2); // further failed attempts stack no second notice
-		expect(toasts).toHaveLength(1);
+		await fail(2);
+		expect(connection.lost).toBe('offline');
 
 		latest().onopen?.();
-		expect(toasts).toHaveLength(0);
+		expect(connection.lost).toBeNull();
 	});
 
-	it('reports "Sitzung abgelaufen" with a link to /login on 401 (logout, reset, expiry) and stops retrying', async () => {
+	it('reports an expired session on 401 (logout, reset, expiry) and stops retrying', async () => {
 		probe = async () => new Response(null, { status: 401 });
 		connectLiveUpdates(1, { onReload: vi.fn() });
 		await fail(3);
 		expect(fetch).toHaveBeenCalledWith('/api/events?project=1', expect.anything());
-		expect(toasts).toEqual([
-			expect.objectContaining({
-				tone: 'error',
-				message: expect.stringContaining('Sitzung abgelaufen'),
-				action: { label: 'Neu anmelden', href: '/login' }
-			})
-		]);
+		expect(connection.lost).toBe('expired');
 
 		const count = FakeEventSource.instances.length;
 		expect(latest().closed).toBe(true);
@@ -139,13 +129,11 @@ describe('connectLiveUpdates', () => {
 		expect(FakeEventSource.instances).toHaveLength(count); // gave up
 	});
 
-	it('keeps retrying with the notice "Verbindung unterbrochen" when the server is reachable but the stream drops (no 401)', async () => {
+	it('keeps retrying with the connection reported lost when the server is reachable but the stream drops (no 401)', async () => {
 		probe = async () => new Response(null, { status: 200 });
 		connectLiveUpdates(1, { onReload: vi.fn() });
 		await fail(3);
-		expect(toasts).toEqual([
-			expect.objectContaining({ message: expect.stringContaining('Verbindung unterbrochen') })
-		]);
+		expect(connection.lost).toBe('offline');
 		expect(FakeEventSource.instances).toHaveLength(4); // every failed attempt reconnected
 		expect(latest().closed).toBe(false);
 		expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true); // the probe keeps no second stream open
@@ -155,7 +143,7 @@ describe('connectLiveUpdates', () => {
 		['reconnected', 200, () => latest().onopen?.()],
 		['closed', 401, (h: { close(): void }) => h.close()]
 	])(
-		'shows no stale notice when the probe answers after the connection was already %s',
+		'reports no stale loss when the probe answers after the connection was already %s',
 		async (_, status, meanwhile) => {
 			let answer!: (res: Response) => void;
 			probe = () => new Promise((resolve) => (answer = resolve));
@@ -164,7 +152,7 @@ describe('connectLiveUpdates', () => {
 			meanwhile(handle);
 			answer(new Response(null, { status }));
 			await vi.advanceTimersByTimeAsync(0);
-			expect(toasts).toHaveLength(0);
+			expect(connection.lost).toBeNull();
 		}
 	);
 
@@ -179,16 +167,16 @@ describe('connectLiveUpdates', () => {
 		expect(FakeEventSource.instances).toHaveLength(1);
 	});
 
-	it('leaves no zombie reconnect and hides the notice when closed during the backoff wait', async () => {
+	it('leaves no zombie reconnect and clears the loss when closed during the backoff wait', async () => {
 		const handle = connectLiveUpdates(1, { onReload: vi.fn() });
 		await fail(2);
 		latest().onerror?.(); // third failed attempt → notice, reconnect scheduled in 4 s
 		await vi.advanceTimersByTimeAsync(0);
-		expect(toasts).toHaveLength(1);
+		expect(connection.lost).toBe('offline');
 		const count = FakeEventSource.instances.length;
 
 		handle.close();
-		expect(toasts).toHaveLength(0);
+		expect(connection.lost).toBeNull();
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(FakeEventSource.instances).toHaveLength(count);
 	});

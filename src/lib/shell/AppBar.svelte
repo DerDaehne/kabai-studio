@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import Icon, { type IconName } from '$lib/ui/Icon.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
-	import Tag from '$lib/ui/rekta/Tag.svelte';
-	import RoundButton from '$lib/ui/RoundButton.svelte';
+	import { fitAppBar } from './appbar-overflow';
+	import { standingBanner } from './banner.svelte';
 	import HaltControl from './HaltControl.svelte';
 	import { splitPending } from './keys';
 	import { live, runnerState } from './live.svelte';
@@ -16,20 +17,85 @@
 
 	const runner = $derived(runnerState(live.halt, shell.agents));
 	const pending = $derived(splitPending(shell.pendingKeys));
+	const banner = $derived(standingBanner());
 
 	/** Back where you came from; a page opened directly goes back to the start. */
 	function back() {
 		if (history.length > 1) history.back();
 		else void goto('/');
 	}
+
+	let bar: HTMLElement;
+	let more: HTMLButtonElement;
+	let menu: HTMLElement;
+	/** The controls that did not fit; the menu repeats their words. */
+	let moved = $state.raw<HTMLElement[]>([]);
+
+	const layout = () => (moved = fitAppBar(bar, more));
+	const wordOf = (control: HTMLElement) => control.textContent?.trim() ?? '';
+
+	// Re-measure when the bar's width changes and when the runner's word does (it is the one text that varies)
+	$effect(() => {
+		void runner.word;
+		layout();
+		const observer = new ResizeObserver(layout);
+		observer.observe(bar);
+		void document.fonts?.ready.then(layout);
+		return () => observer.disconnect();
+	});
+
+	function chosen(control: HTMLElement) {
+		menu.hidePopover();
+		control.click();
+	}
+
+	function arrowsInMenu(event: KeyboardEvent) {
+		const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+		const at = items.indexOf(document.activeElement as HTMLElement);
+		const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+		if (next === undefined) return;
+		event.preventDefault();
+		items.at(next % items.length)?.focus();
+	}
 </script>
 
-<footer class="appbar" aria-label="App-Leiste">
-	<div class="status">
-		<p class="runner">
-			<span class="name">runner</span>
-			<Tag tone={runner.tone}>{runner.word}</Tag>
+<div class="hints">
+	{#if !keyboard.singleKeys}
+		$1
+	{/if}
+	{#if shell.pendingKeys}
+		<p class="keys">
+			{#each [...pending.count, ...pending.prefix] as key, index (index)}<Kbd {key} active />{/each}
+			<Kbd key="Escape" /> abbrechen
 		</p>
+	{/if}
+</div>
+<div class="hints">
+	{#if !keyboard.singleKeys}
+		<p class="keys">nur mit <Kbd key="Alt" /></p>
+	{/if}
+	{#if shell.pendingKeys}
+		<p class="keys">
+			{#each [...pending.count, ...pending.prefix] as key, index (index)}<Kbd {key} active />{/each}
+			<Kbd key="Escape" /> abbrechen
+		</p>
+	{/if}
+</div>
+
+<footer
+	class="rk-appbar"
+	aria-label="App-Leiste"
+	bind:this={bar}
+	data-rk-state={banner?.status === 'error' ? 'halted' : banner ? 'paused' : undefined}
+>
+	<button type="button" class="rk-ab rk-ab-back" onclick={back}>
+		<Icon name="back" size={20} /><span>zurück</span>
+	</button>
+	<span class="rk-ab-status" data-tone={runner.tone}>
+		<i class="rk-pulse" aria-hidden="true"></i>
+		<span class="rk-ab-k">{runner.word}</span>
+	</span>
+	<div class="hints">
 		{#if !keyboard.singleKeys}
 			<p class="keys">nur mit <Kbd key="Alt" /></p>
 		{/if}
@@ -43,47 +109,71 @@
 			</p>
 		{/if}
 	</div>
-	<div class="commands">
-		<span class="phone"><RoundButton icon="back" word="zurück" onclick={back} /></span>
-		<HaltControl openResumePrompt={() => openCommandLine(':fortsetzen ')} />
-		<RoundButton
-			icon="command"
-			word="befehl"
-			title="Befehl oder Suche (: oder /)"
-			onclick={() => openCommandLine('')}
-		/>
-		<RoundButton icon="keys" word="tasten" title="Alle Tasten (?)" onclick={openKeys} />
+	<HaltControl openResumePrompt={() => openCommandLine(':fortsetzen ')} />
+	<button
+		type="button"
+		class="rk-ab"
+		title="Befehl oder Suche (: oder /)"
+		onclick={() => openCommandLine('')}
+	>
+		<Icon name="command" size={20} /><span>befehl</span>
+	</button>
+	<button
+		type="button"
+		class="rk-ab"
+		data-rk-priority="1"
+		title="Alle Tasten (?)"
+		onclick={openKeys}
+	>
+		<Icon name="keys" size={20} /><span>tasten</span>
+	</button>
+	<button
+		type="button"
+		class="rk-ab rk-ab-more"
+		bind:this={more}
+		hidden
+		aria-haspopup="menu"
+		popovertarget="appbar-more"
+	>
+		<Icon name="more" size={20} /><span>mehr</span>
+	</button>
+	<div
+		id="appbar-more"
+		class="rk-float more-menu"
+		popover="auto"
+		role="menu"
+		tabindex="-1"
+		bind:this={menu}
+		onkeydown={arrowsInMenu}
+		ontoggle={(event) => {
+			if (event.newState === 'open') menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+		}}
+	>
+		{#each moved as control (control)}
+			<button type="button" role="menuitem" class="rk-menu-item" onclick={() => chosen(control)}>
+				{wordOf(control)}
+			</button>
+		{/each}
 	</div>
 </footer>
 
 <style>
-	.appbar {
-		position: fixed;
-		inset: auto 0 0;
-		z-index: 10;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-3);
-		height: calc(var(--appbar-h) + env(safe-area-inset-bottom));
-		padding: 0 var(--gutter) env(safe-area-inset-bottom);
-		border-top: 1px solid var(--rule);
-		background: var(--bg);
+	.rk-appbar {
 		view-transition-name: app-bar;
 	}
-	.status {
-		/* contains the hidden key names of Kbd (position: absolute), so they cannot widen the page */
-		position: relative;
+	/* Takes the room the controls leave over, and gives it up first when the bar is full */
+	.rk-ab-status {
+		margin-right: 0;
+	}
+	.hints {
 		display: flex;
+		flex: 1 1 0;
 		align-items: center;
 		gap: var(--space-4);
 		min-width: 0;
+		margin-left: var(--space-4);
 		overflow: hidden;
 		white-space: nowrap;
-	}
-	.name {
-		color: var(--text-muted);
-		font-size: var(--type-label);
 	}
 	.keys {
 		display: flex;
@@ -92,29 +182,10 @@
 		color: var(--text-muted);
 		font-size: var(--type-label);
 	}
-	.commands {
-		display: flex;
-		flex: none;
-	}
-	.phone {
-		display: none;
-	}
-	/* Phones: the back command comes first, in thumb reach; the runner keeps its word, its label goes to screen readers */
-	@media (max-width: 759px) {
-		.appbar {
-			gap: var(--space-2);
-			padding-inline: var(--space-2);
-		}
-		.phone {
-			display: contents;
-		}
-		.name {
-			position: absolute;
-			width: 1px;
-			height: 1px;
-			overflow: hidden;
-			clip-path: inset(50%);
-		}
+	/* Above the bar, at its trailing edge, where "mehr" is */
+	.more-menu {
+		inset: auto var(--space-2)
+			calc(var(--rk-appbar-height) + env(safe-area-inset-bottom) + var(--space-2)) auto;
 	}
 	:global(::view-transition-group(app-bar)) {
 		animation: none;

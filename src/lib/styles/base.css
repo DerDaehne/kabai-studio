@@ -32,12 +32,6 @@
 	src: url('/fonts/barlow/barlow-latin-700-normal.woff2') format('woff2');
 }
 
-*,
-*::before,
-*::after {
-	box-sizing: border-box;
-}
-
 html {
 	-webkit-text-size-adjust: 100%;
 	text-size-adjust: 100%;
@@ -51,12 +45,6 @@ body {
 	-webkit-font-smoothing: antialiased;
 }
 
-h1,
-h2,
-h3,
-p,
-ul,
-ol,
 figure {
 	margin: 0;
 }

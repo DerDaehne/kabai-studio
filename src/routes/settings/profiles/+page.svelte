@@ -3,6 +3,7 @@
 	import { POOL_LABELS, PROVIDERS } from '$lib/agents/profile-defaults';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
+	import Crumb from '$lib/ui/Crumb.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import type { PageProps } from './$types';
 
@@ -13,6 +14,7 @@
 		PROVIDERS.find((provider) => provider.id === id)?.label ?? id ?? '–';
 </script>
 
+<Crumb href="/settings" label="Einstellungen" />
 <h1>Agent-Profile</h1>
 <p class="intro">
 	Ein Profil legt fest, mit welchem Modell ein Agent arbeitet: lokal über einen OpenAI-kompatiblen

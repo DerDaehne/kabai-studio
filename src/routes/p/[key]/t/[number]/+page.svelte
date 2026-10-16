@@ -12,6 +12,7 @@
 	import AgentText from '$lib/ui/AgentText.svelte';
 	import Badge from '$lib/ui/Badge.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Crumb from '$lib/ui/Crumb.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
@@ -114,13 +115,12 @@
 
 <svelte:head><title>{ticket.ref} {ticket.title} – kabai studio</title></svelte:head>
 
-<p class="crumbs">
-	<a href="/">kabai studio</a> /
-	<ProjectTag code={ticket.project.code} palette={ticket.project.palette} />
-	{ticket.project.name} / {ticket.ref}
-</p>
+<Crumb href="/board" label="Board" />
 <header class="ticket-head">
 	<h1>{ticket.title}</h1>
+	<span class="muted"
+		><ProjectTag code={ticket.project.code} palette={ticket.project.palette} /> {ticket.ref}</span
+	>
 	<Badge>{ticket.column.name}</Badge>
 	<Button size="sm" onclick={() => (editOpen = true)}>Bearbeiten (i)</Button>
 </header>
@@ -361,14 +361,6 @@
 </Dialog>
 
 <style>
-	.crumbs {
-		margin: 0 0 var(--space-2);
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-	.crumbs a {
-		color: inherit;
-	}
 	.ticket-head {
 		display: flex;
 		align-items: center;

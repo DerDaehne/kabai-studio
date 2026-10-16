@@ -131,12 +131,11 @@ test('a run starts from the Run-Akte with the preselected profile, waits for its
 	await phoneContext.close();
 });
 
-/** Expects exactly one toast with `text`, then closes it, so a later toast with the same text counts on its own. */
+/** Expects exactly one new toast with `text` and marks it as seen, so a later toast with the same text counts on its own. */
 async function expectToast(page: Page, text: string) {
-	const shown = page.locator('.toast', { hasText: text });
+	const shown = page.locator('.rk-toast:not([data-seen])', { hasText: text });
 	await expect(shown).toHaveCount(1);
-	await shown.getByRole('button', { name: 'Meldung schließen' }).click();
-	await expect(shown).toHaveCount(0);
+	await shown.evaluate((toast) => toast.setAttribute('data-seen', ''));
 }
 
 /** A run of the ticket on the fake model, in a pool of its own so that runs of other tickets work alongside. */

@@ -1,12 +1,9 @@
-import { dismiss, toast } from './ui/toast.svelte';
+import { connection } from './shell/connection.svelte';
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1000;
 /** After this many failed reconnects in a row the connection counts as lost for good. */
 const PERSISTENT_FAILURE_THRESHOLD = 3;
-const DISCONNECTED =
-	'Verbindung unterbrochen — Daten evtl. veraltet. Studio versucht es weiter; Seite neu laden holt den aktuellen Stand.';
-const EXPIRED = 'Sitzung abgelaufen — Live-Updates gestoppt.';
 
 export type LiveUpdatesHandle = { close(): void };
 type LiveUpdatesOptions = {
@@ -25,8 +22,8 @@ type LiveUpdatesOptions = {
  * incoming event raw for granular updates without a full reload.
  *
  * After `PERSISTENT_FAILURE_THRESHOLD` failed attempts in a row a `fetch` asks for the reason (`EventSource`
- * exposes no HTTP status): 401 → session gone, attempts stop, error toast with a link to /login; otherwise an
- * error toast "connection lost" that stays until the reconnect or until closed.
+ * exposes no HTTP status): 401 → session gone, attempts stop, the banner offers a new sign-in; otherwise the banner
+ * says the connection is lost until the reconnect.
  *
  * A page that goes into the back/forward cache closes its connection and reconnects (with `onReload`) when it comes
  * back: the browser would otherwise keep the frozen stream open, and a few cached pages use up the HTTP/1.1
@@ -48,7 +45,6 @@ class LiveConnection {
 	private es: EventSource | null = null;
 	private attempt = 0;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
-	private toastId: number | undefined;
 	private closed = false;
 	private suspended = false;
 
@@ -127,13 +123,11 @@ class LiveConnection {
 		if (reconnectedOrClosed) return;
 		if (status === 401) {
 			this.close();
-			this.toastId = toast(EXPIRED, 'error', 0, { label: 'Neu anmelden', href: '/login' });
-		} else this.toastId ??= toast(DISCONNECTED, 'error');
+			connection.lost = 'expired';
+		} else connection.lost ??= 'offline';
 	}
 
 	private hideNotice() {
-		if (this.toastId === undefined) return;
-		dismiss(this.toastId);
-		this.toastId = undefined;
+		connection.lost = null;
 	}
 }

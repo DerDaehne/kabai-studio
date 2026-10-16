@@ -12,7 +12,7 @@ import * as questions from '$lib/server/domain/questions';
 import * as runs from '$lib/server/domain/runs';
 import { liveState } from '$lib/server/live';
 import { GET as events } from '../../routes/api/events/+server';
-import { haltLabel } from './halt';
+import { haltDetail, haltWord } from './halt';
 import type { AgentChip } from './shell.svelte';
 
 const tmp = mkdtempSync(join(tmpdir(), 'studio-live-'));
@@ -205,7 +205,8 @@ it('shows the stop with the number of waiting runs in every open tab and drops i
 	haltRuns(db(), user); // no run is active, so only the halt event itself can reach the tabs
 	for (const tab of open) {
 		await vi.waitFor(() => expect(tab.live.halt).toBe('stop'));
-		expect(haltLabel('stop', tab.live.runs)).toBe(`Gestoppt · ${queued} wartend`);
+		expect(haltWord('stop')).toBe('Gestoppt');
+		expect(haltDetail('stop', tab.live.runs)).toBe(`${queued} wartend`);
 	}
 
 	releaseHalt(db(), user);
@@ -221,7 +222,8 @@ it('shows a pause with the number of paused runs and no agent at work in every o
 	pauseRuns(db(), user);
 	for (const tab of open) {
 		await vi.waitFor(() => expect(tab.live.halt).toBe('pause'));
-		expect(haltLabel('pause', tab.live.runs)).toBe('Angehalten · 1 pausiert');
+		expect(haltWord('pause')).toBe('Angehalten');
+		expect(haltDetail('pause', tab.live.runs)).toBe('1 pausiert');
 		expect(tab.shell.agents).toEqual([]);
 	}
 

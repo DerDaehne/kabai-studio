@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { t } from '$lib/i18n/t';
 	import Button from '$lib/ui/Button.svelte';
+	import Crumb from '$lib/ui/Crumb.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import StepBar from '$lib/ui/StepBar.svelte';
@@ -15,7 +16,7 @@
 	};
 </script>
 
-<p class="back"><a href="/projects">{t('projects.back')}</a></p>
+<Crumb href="/projects" label={t('projects.back')} />
 <h1><ProjectTag code={data.project.code} palette={data.project.palette} /> {data.project.name}</h1>
 
 <section aria-labelledby="first-ticket">
@@ -56,9 +57,6 @@
 </section>
 
 <style>
-	.back {
-		font-size: var(--text-sm);
-	}
 	h1 {
 		display: flex;
 		flex-wrap: wrap;

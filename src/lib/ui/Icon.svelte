@@ -10,6 +10,7 @@
 		stop: 'M6.5 6.5h11v11h-11z',
 		back: 'M19 12H5M11 6l-6 6 6 6',
 		command: 'M6 8l4 4-4 4M12 16h6',
+		more: 'M5 12h.01M12 12h.01M19 12h.01',
 		keys: 'M3.5 6.5h17v11h-17zM7.5 10.5h.01M10.5 10.5h.01M13.5 10.5h.01M16.5 10.5h.01M8 14h8',
 		// comment author kinds (Run-Akte): a head-and-shoulders mark for the human, a chip for the agent
 		user: 'M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM5 20c0-4 3-6.5 7-6.5s7 2.5 7 6.5',

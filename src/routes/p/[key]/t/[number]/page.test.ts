@@ -66,10 +66,10 @@ const noRuns = { runs: [], start: { profiles: [] } };
 const page = (ticket: TicketDetail, form: unknown = null) =>
 	render(Page, { props: { data: { ticket, ...noRuns }, form } as any }).body;
 
-it('shows the breadcrumb (project + ref), title and current column', () => {
+it('shows the crumb to the board, the project and ref, title and current column', () => {
 	const body = page(base);
 	expect(body).toContain('STU');
-	expect(body).toContain('Studio');
+	expect(body).toContain('Board');
 	expect(body).toContain('STU-1');
 	expect(body).toContain('Beispiel-Ticket');
 	expect(body).toContain('In Arbeit');

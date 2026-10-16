@@ -552,6 +552,15 @@
 				onclick={() => toast('Run STU-37 fehlgeschlagen: Migration bricht ab', 'error')}
 				>Fehler</Button
 			>
+			<Button
+				variant="ghost"
+				onclick={() =>
+					toast('Ticket STU-12 gelöscht', 'success', undefined, {
+						label: 'Rückgängig',
+						run: () => toast('STU-12 zurückgeholt'),
+						countdown: true
+					})}>Rückgängig-Meldung</Button
+			>
 		</div>
 	</section>
 

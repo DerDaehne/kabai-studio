@@ -7,7 +7,7 @@
 	import { bindCommands } from './shell.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
-	import RoundButton from '$lib/ui/RoundButton.svelte';
+	import Icon from '$lib/ui/Icon.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 
 	/** Focuses the command line on `:fortsetzen `, so it offers the halted runs to pick from; owned by the layout. */
@@ -74,19 +74,24 @@
 
 <svelte:window onkeydown={confirmWithY} />
 
-<RoundButton
-	icon="pause"
-	word="anhalten"
+<button
+	type="button"
+	class="rk-ab"
+	data-rk-priority="2"
 	title="Alle Runs anhalten (:anhalten)"
 	onclick={() => (confirming = 'pause')}
-/>
-<RoundButton
-	icon="stop"
-	word="not-aus"
+>
+	<Icon name="pause" size={20} /><span>anhalten</span>
+</button>
+<button
+	type="button"
+	class="rk-ab"
+	data-rk-priority="3"
 	title="Alle Runs sofort stoppen (:stop)"
-	danger
 	onclick={() => (confirming = 'stop')}
-/>
+>
+	<Icon name="stop" size={20} /><span>not-aus</span>
+</button>
 
 <Dialog
 	variant="sheet"

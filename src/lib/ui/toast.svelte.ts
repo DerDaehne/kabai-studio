@@ -1,32 +1,71 @@
-// Toast queue: toast('Gespeichert', 'success'). Call it in the browser only (module state is process-wide).
-export type ToastTone = 'info' | 'success' | 'error';
-/** A way out as a link (`{ label: 'Neu anmelden', href: '/login' }`) or a button that runs something (`Rückgängig`). */
-export type ToastAction = { label: string; href: string } | { label: string; run: () => void };
-export type Toast = { id: number; message: string; tone: ToastTone; action?: ToastAction };
+import { tokenMs } from './motion';
 
+// Toast: toast('Gespeichert', 'success'). Call it in the browser only (module state is process-wide).
+export type ToastTone = 'info' | 'success' | 'error';
+/** A way out as a button. With `countdown` it takes something back, and its window closes in view. */
+export type ToastAction = { label: string; run: () => void; countdown?: boolean };
+export type Toast = {
+	id: number;
+	message: string;
+	tone: ToastTone;
+	action?: ToastAction;
+	/** Milliseconds until it goes. */
+	left: number;
+};
+
+const STEP_MS = 1000;
+
+/** At most one: a new toast replaces the open one. */
 export const toasts: Toast[] = $state([]);
 let nextId = 1;
+let timer: ReturnType<typeof setTimeout> | undefined;
+let held = false;
 
-/** Errors stay until closed (default timeout 0); everything else disappears after 5 s. */
+/** How long a toast stays: Rekta's `--rk-duration-toast`, which the product sets. */
+export const toastMs = () => tokenMs('--rk-duration-toast');
+
+function schedule() {
+	clearTimeout(timer);
+	timer = undefined;
+	const [open] = toasts;
+	if (!open || open.left <= 0 || held) return;
+	const step = Math.min(STEP_MS, open.left);
+	timer = setTimeout(() => {
+		open.left -= step;
+		if (open.left <= 0) dismiss(open.id);
+		else schedule();
+	}, step);
+}
+
+/** Every toast goes after `timeout`, errors too: what has to stay belongs in the banner or at the field. */
 export function toast(
 	message: string,
 	tone: ToastTone = 'info',
-	timeout = tone === 'error' ? 0 : 5000,
+	timeout = toastMs(),
 	action?: ToastAction
 ): number {
 	const id = nextId++;
-	toasts.push({ id, message, tone, action });
-	if (timeout > 0) setTimeout(() => dismiss(id), timeout);
+	held = false;
+	toasts.splice(0, toasts.length, { id, message, tone, action, left: timeout });
+	schedule();
 	return id;
 }
 
 export function dismiss(id: number): void {
 	const i = toasts.findIndex((t) => t.id === id);
-	if (i !== -1) toasts.splice(i, 1);
+	if (i === -1) return;
+	toasts.splice(i, 1);
+	schedule();
+}
+
+/** The window stands still while the pointer rests on the toast or focus is in it. */
+export function hold(value: boolean): void {
+	held = value;
+	schedule();
 }
 
 /** The notice has done its job once its action runs. */
 export function runAction({ id, action }: Toast): void {
 	dismiss(id);
-	if (action && 'run' in action) action.run();
+	action?.run();
 }

@@ -107,6 +107,8 @@
 	type Draft = { anchor?: number; below: boolean; project: ProjectRef; columnId?: number };
 	let draft = $state<Draft | null>(null);
 	let draftTitle = $state('');
+	/** Why creating the ticket failed; it shows at the field and goes with the next try or the draft. */
+	let draftError = $state<string>();
 
 	const glide = () => (motionMode() === 'reduced' ? 0 : duration.glide);
 	const [send, receive] = crossfade({ duration: glide, easing: easing.inOut });
@@ -193,17 +195,20 @@
 		const sameColumn = flow && row && row.project.id === project.id && row.column.phase !== 'done';
 		draft = { anchor: row?.id, below, project, columnId: sameColumn ? row.column.id : undefined };
 		draftTitle = '';
+		draftError = undefined;
 	}
 
 	function closeDraft() {
 		draft = null;
+		draftError = undefined;
 		void focusRow(current?.id);
 	}
 
 	async function create(target: Draft) {
 		if (!draftTitle.trim()) return closeDraft();
+		draftError = undefined;
 		const created = await actions.create(target.project.id, draftTitle, target.columnId);
-		if ('failure' in created) return void toast(created.failure, 'error');
+		if ('failure' in created) return void (draftError = created.failure);
 		const { ref } = created;
 		draft = null;
 		toast(t('board.created', { ref }), 'success');
@@ -279,6 +284,7 @@
 	<DraftForm
 		project={target.project}
 		bind:title={draftTitle}
+		error={draftError}
 		onsubmit={() => void create(target)}
 		oncancel={closeDraft}
 	/>

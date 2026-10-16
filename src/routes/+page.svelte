@@ -207,7 +207,11 @@
 			ref: question.ticket.ref,
 			seconds: data.undoWindowMs / 1000
 		});
-		return toast(sent, 'success', data.undoWindowMs, { label: t('start.answer.undo'), run: undo });
+		return toast(sent, 'success', data.undoWindowMs, {
+			label: t('start.answer.undo'),
+			run: undo,
+			countdown: true
+		});
 	}
 
 	async function takeBack(question: QueuedQuestion) {
