@@ -1,9 +1,12 @@
+import { HEARTBEAT_GRACE_MS, HEARTBEAT_MS } from './live';
 import { connection } from './shell/connection.svelte';
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1000;
 /** After this many failed reconnects in a row the connection counts as lost for good. */
 const PERSISTENT_FAILURE_THRESHOLD = 3;
+/** A silent network loss leaves the stream hanging without an error; no data for this long means it is gone. */
+const STALL_MS = HEARTBEAT_MS + HEARTBEAT_GRACE_MS;
 
 export type LiveUpdatesHandle = { close(): void };
 type LiveUpdatesOptions = {
@@ -47,6 +50,9 @@ class LiveConnection {
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private closed = false;
 	private suspended = false;
+	/** Hidden in the back/forward cache: nothing to watch until the page comes back. */
+	private frozen = false;
+	private stallTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(url: string, options: LiveUpdatesOptions) {
 		this.url = url;
@@ -56,6 +62,8 @@ class LiveConnection {
 	open() {
 		window.addEventListener('pagehide', this.suspend);
 		window.addEventListener('pageshow', this.resume);
+		window.addEventListener('offline', this.lost);
+		window.addEventListener('online', this.backOnline);
 		this.connect();
 	}
 
@@ -63,37 +71,69 @@ class LiveConnection {
 		this.es = new EventSource(this.url);
 		this.es.onopen = () => this.opened();
 		this.es.onmessage = (ev) => this.received(ev);
+		this.es.addEventListener('heartbeat', () => this.watch());
 		this.es.onerror = () => this.failed();
+		this.watch();
+	}
+
+	/** Starts the countdown to "nothing came" anew; every sign of life calls it. */
+	private watch() {
+		clearTimeout(this.stallTimer);
+		this.stallTimer = setTimeout(this.lost, STALL_MS);
 	}
 
 	close() {
 		this.closed = true;
 		window.removeEventListener('pagehide', this.suspend);
 		window.removeEventListener('pageshow', this.resume);
+		window.removeEventListener('offline', this.lost);
+		window.removeEventListener('online', this.backOnline);
 		clearTimeout(this.retryTimer);
+		clearTimeout(this.stallTimer);
 		this.es?.close();
 		this.hideNotice();
 	}
 
 	private readonly suspend = () => {
 		this.suspended = true;
+		this.frozen = true;
 		clearTimeout(this.retryTimer);
+		clearTimeout(this.stallTimer);
 		this.es?.close();
 	};
 
+	/** The network is gone or the stream went quiet: say so at once and keep trying in the background. */
+	private readonly lost = () => {
+		if (this.closed || this.frozen) return;
+		connection.lost ??= 'offline';
+		clearTimeout(this.retryTimer);
+		this.failed();
+	};
+
+	private readonly backOnline = () => {
+		if (this.closed || this.frozen) return;
+		clearTimeout(this.retryTimer);
+		this.es?.close();
+		this.connect();
+	};
+
 	private readonly resume = (event: PageTransitionEvent) => {
-		if (event.persisted) this.connect();
+		if (!event.persisted) return;
+		this.frozen = false;
+		this.connect();
 	};
 
 	private opened() {
 		const missedEvents = this.attempt > 0 || this.suspended;
 		this.attempt = 0;
 		this.suspended = false;
+		this.watch();
 		this.hideNotice();
 		if (missedEvents) this.options.onReload();
 	}
 
 	private received(ev: MessageEvent) {
+		this.watch();
 		if (!this.options.onEvent) return;
 		try {
 			this.options.onEvent(JSON.parse(ev.data));
@@ -105,6 +145,7 @@ class LiveConnection {
 	private failed() {
 		this.es?.close();
 		this.es = null;
+		clearTimeout(this.stallTimer);
 		if (this.closed) return;
 		this.attempt++;
 		const backoff = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (this.attempt - 1));

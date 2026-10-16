@@ -71,9 +71,9 @@ describe('eventStream', () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it('sends a heartbeat comment at the interval', async () => {
+	it('sends a heartbeat event at the interval', async () => {
 		const reader = await open(() => false, { heartbeatMs: 5 });
-		expect(await readChunk(reader)).toBe(': heartbeat\n\n');
+		expect(await readChunk(reader)).toBe('event: heartbeat\ndata: {}\n\n');
 		await reader.cancel();
 	});
 

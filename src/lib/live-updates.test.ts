@@ -10,9 +10,16 @@ class FakeEventSource {
 	onmessage: ((ev: MessageEvent) => void) | null = null;
 	onerror: (() => void) | null = null;
 	closed = false;
+	private readonly listeners = new Map<string, () => void>();
 	constructor(url: string) {
 		this.url = url;
 		FakeEventSource.instances.push(this);
+	}
+	addEventListener(type: string, listener: () => void) {
+		this.listeners.set(type, listener);
+	}
+	emit(type: string) {
+		this.listeners.get(type)?.();
 	}
 	close() {
 		this.closed = true;
@@ -234,6 +241,61 @@ describe('connectLiveUpdates', () => {
 			pageTransition('pagehide', true);
 			pageTransition('pageshow', true);
 			expect(FakeEventSource.instances).toHaveLength(1);
+		});
+	});
+	describe('a lost network', () => {
+		const STALL_MS = 35_000;
+		const networkEvent = (type: 'offline' | 'online') => window.dispatchEvent(new Event(type));
+
+		it('shows the connection as lost at once on the offline event, before any error', () => {
+			connectLiveUpdates(null, { onReload: vi.fn() });
+			latest().onopen?.();
+			networkEvent('offline');
+			expect(connection.lost).toBe('offline');
+			expect(FakeEventSource.instances[0].closed).toBe(true);
+		});
+
+		it('on the online event clears the state at the first message and opens the stream again with a reload', () => {
+			const onReload = vi.fn();
+			connectLiveUpdates(null, { onReload });
+			latest().onopen?.();
+			networkEvent('offline');
+			networkEvent('online');
+			expect(FakeEventSource.instances).toHaveLength(2);
+			latest().onopen?.();
+			expect(connection.lost).toBeNull();
+			expect(onReload).toHaveBeenCalledTimes(1);
+		});
+
+		it('takes a stream with no data for longer than a heartbeat and its grace as lost', () => {
+			connectLiveUpdates(null, { onReload: vi.fn() });
+			latest().onopen?.();
+			vi.advanceTimersByTime(STALL_MS - 1);
+			expect(connection.lost).toBeNull();
+			vi.advanceTimersByTime(1);
+			expect(connection.lost).toBe('offline');
+			expect(FakeEventSource.instances[0].closed).toBe(true);
+		});
+
+		it('does not take a stream as lost while heartbeats or messages keep coming', () => {
+			connectLiveUpdates(null, { onReload: vi.fn(), onEvent: vi.fn() });
+			latest().onopen?.();
+			for (let beat = 0; beat < 4; beat++) {
+				vi.advanceTimersByTime(25_000);
+				latest().emit('heartbeat');
+			}
+			latest().onmessage?.({ data: '{}' } as MessageEvent);
+			vi.advanceTimersByTime(25_000);
+			expect(connection.lost).toBeNull();
+		});
+
+		it('stops watching after close()', () => {
+			const handle = connectLiveUpdates(null, { onReload: vi.fn() });
+			handle.close();
+			vi.advanceTimersByTime(STALL_MS * 2);
+			expect(connection.lost).toBeNull();
+			networkEvent('offline');
+			expect(connection.lost).toBeNull();
 		});
 	});
 });

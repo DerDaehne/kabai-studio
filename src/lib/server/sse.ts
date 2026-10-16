@@ -1,12 +1,13 @@
+import { HEARTBEAT_MS } from '$lib/live';
 import { subscribe, type StudioEvent } from './events';
 import { mask } from './secrets';
 
 const encoder = new TextEncoder();
 // Events leave for the browser here, so this masks even what a producer forgot to mask.
 const frame = (event: StudioEvent) => encoder.encode(`data: ${JSON.stringify(mask(event))}\n\n`);
-const HEARTBEAT = encoder.encode(': heartbeat\n\n');
+// a named event, because the browser shows a script no comment lines, and the client's watchdog needs to see it
+const HEARTBEAT = encoder.encode('event: heartbeat\ndata: {}\n\n');
 const CONNECTED = encoder.encode(': connected\n\n');
-const HEARTBEAT_MS = 25_000;
 
 export const SSE_HEADERS = {
 	'Content-Type': 'text/event-stream',

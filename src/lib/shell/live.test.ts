@@ -57,6 +57,9 @@ class RouteEventSource {
 		}
 	}
 
+	/** The heartbeat is the only named event; the tests never wait for one. */
+	addEventListener() {}
+
 	close() {
 		void this.reader?.cancel();
 	}

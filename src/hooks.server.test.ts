@@ -409,7 +409,9 @@ describe('auth flow', () => {
 			).body!.getReader();
 			await reader.read(); // ': connected'
 			vi.advanceTimersByTime(25_000); // heartbeat → alive() checks the session
-			expect(new TextDecoder().decode((await reader.read()).value)).toBe(': heartbeat\n\n');
+			expect(new TextDecoder().decode((await reader.read()).value)).toBe(
+				'event: heartbeat\ndata: {}\n\n'
+			);
 			expect(expiresAt(sessionToken)).toBe(before);
 
 			expect(await guard('/', cookies)).toBeInstanceOf(Response); // the next request extends it and sets the cookie again

@@ -1,5 +1,12 @@
 import type { ProjectPalette } from '$lib/ui/ProjectTag.svelte';
 
+/**
+ * How often the event stream sends a heartbeat. The client takes a stream as lost when nothing, not even a
+ * heartbeat, arrives for longer than this plus `HEARTBEAT_GRACE_MS`.
+ */
+export const HEARTBEAT_MS = 25_000;
+export const HEARTBEAT_GRACE_MS = 10_000;
+
 /** A project as every live view names it: code for compact display, palette for its colour slot. */
 export type ProjectRef = { id: number; code: string; palette: ProjectPalette; name: string };
 
