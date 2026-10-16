@@ -90,6 +90,10 @@ export const en = {
 		'[frame_not_supported] Studio sent a frame this version does not accept; the connection is closed.',
 	'cli.runner.start.rejected': 'Studio refused the credential: it is unknown or was revoked.',
 	'cli.runner.start.revoked': 'Studio disconnected this machine; its credential no longer works.',
+	'cli.runner.start.replaced':
+		'Another runner with this pairing connected to studio and replaced this one.',
+	'cli.runner.start.replaced.hint':
+		'Keep only one “kabai-studio runner start” per pairing. To run this one instead, stop the other and start it again; to run both, pair this machine again under another name.',
 	'cli.runner.start.protocol': 'Studio and this runner speak different protocol versions.',
 	'cli.runner.start.protocol.hint':
 		'Update studio and the kabai-studio on this machine to the same version, then run “kabai-studio runner start” again.',

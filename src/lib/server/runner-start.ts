@@ -13,6 +13,7 @@ import { CREDENTIAL_FILE, FLOOR_FILE, readFloor, type PairResult } from './runne
 import { floorSummary } from './runner-floor.ts';
 import { CLOSE, DEAD_AFTER_MS, PROTOCOL_VERSION, RUNNER_PATH } from './runner-protocol.ts';
 
+const MAX_REFUSAL_BODY = 4096;
 export const MIN_BACKOFF_MS = 1_000;
 export const MAX_BACKOFF_MS = 30_000;
 
@@ -184,14 +185,23 @@ class Connection {
 
 	private refused(socket: WebSocket, response: IncomingMessage) {
 		let body = '';
-		response.on('data', (chunk: Buffer) => (body += chunk.toString()));
-		response.on('end', () => {
+		let settled = false;
+		const settle = () => {
+			if (settled) return;
+			settled = true;
 			const error = this.refusal(response.statusCode ?? 0, bodyCode(body));
 			if (error) return this.fail(error);
 			this.socket = null;
 			socket.terminate();
 			this.scheduleRetry(`HTTP ${response.statusCode}`);
+		};
+		response.on('data', (chunk: Buffer) => {
+			body += chunk.toString();
+			if (body.length < MAX_REFUSAL_BODY) return;
+			response.destroy();
+			settle();
 		});
+		for (const event of ['end', 'close', 'error']) response.on(event, settle);
 	}
 
 	/** Fatal for 401 and 403; anything else (a proxy's 502, a deploy in progress) is worth another try. */
@@ -217,6 +227,14 @@ class Connection {
 			return this.fail(
 				fatal('credential_revoked', this.say('cli.runner.start.revoked'), this.rePair)
 			);
+		if (code === CLOSE.replaced)
+			return this.fail(
+				fatal(
+					'replaced',
+					this.say('cli.runner.start.replaced'),
+					this.say('cli.runner.start.replaced.hint')
+				)
+			);
 		if (code === CLOSE.badProtocol)
 			return this.fail(
 				fatal(
@@ -225,7 +243,7 @@ class Connection {
 					this.say('cli.runner.start.protocol.hint')
 				)
 			);
-		this.scheduleRetry(reason || String(code));
+		this.scheduleRetry(printable(reason) || String(code));
 	}
 
 	private scheduleRetry(reason: string) {
@@ -258,6 +276,13 @@ class Connection {
 		this.resolve(result);
 	}
 }
+
+/** The server's close reason goes to a terminal: no escape sequences, no control characters. */
+const printable = (text: string) =>
+	text
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+		.replace(/\p{Cc}/gu, '')
+		.slice(0, 100);
 
 const isWelcome = (text: string) => {
 	try {

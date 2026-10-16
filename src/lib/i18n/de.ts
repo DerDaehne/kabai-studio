@@ -94,6 +94,10 @@ export const de: Catalogue = {
 		'Studio hat das Credential abgewiesen: Es ist unbekannt oder wurde widerrufen.',
 	'cli.runner.start.revoked':
 		'Studio hat diesen Rechner getrennt; sein Credential gilt nicht mehr.',
+	'cli.runner.start.replaced':
+		'Ein anderer Runner mit dieser Kopplung hat sich mit Studio verbunden und diesen ersetzt.',
+	'cli.runner.start.replaced.hint':
+		'Pro Kopplung nur ein „kabai-studio runner start“ laufen lassen. Soll dieser laufen, den anderen beenden und diesen neu starten; sollen beide laufen, diesen Rechner unter anderem Namen neu koppeln.',
 	'cli.runner.start.protocol': 'Studio und dieser Runner sprechen verschiedene Protokollversionen.',
 	'cli.runner.start.protocol.hint':
 		'Studio und kabai-studio auf diesem Rechner auf dieselbe Version bringen, dann „kabai-studio runner start“ erneut ausführen.',

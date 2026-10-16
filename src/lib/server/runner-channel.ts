@@ -13,6 +13,7 @@ import { CLOSE, DEAD_AFTER_MS, PROTOCOL_VERSION, RUNNER_PATH } from './runner-pr
 export const PING_INTERVAL_MS = 10_000;
 export const HELLO_TIMEOUT_MS = 10_000;
 const MAX_FRAME_BYTES = 64 * 1024;
+export const REVOKE_GRACE_MS = 1_000;
 const MAX_KEYS = 200;
 const MAX_KEY_LENGTH = 128;
 
@@ -36,6 +37,8 @@ type Hello = Omit<ConnectedRunner, 'connectedAt'> & { protocol: number };
 
 const refuse = (socket: Duplex, status: 401 | 403 | 404, code: string) => {
 	const body = JSON.stringify({ code });
+	// A client that never closes its half would otherwise hold the descriptor for good (as ws's own abortHandshake does).
+	socket.once('finish', socket.destroy);
 	socket.end(
 		`HTTP/1.1 ${status} ${status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Not Found'}\r\n` +
 			`content-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n` +
@@ -90,6 +93,8 @@ class Channel implements RunnerChannel {
 	private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
 	private readonly runners = new Map<string, ConnectedRunner>();
 	private readonly sockets = new Map<string, WebSocket>();
+	/** Every socket past the upgrade, registered or not, with the machine it belongs to. */
+	private readonly open = new Map<WebSocket, string>();
 	private readonly db: DatabaseSync;
 	private readonly origin: () => string | undefined;
 
@@ -103,7 +108,17 @@ class Channel implements RunnerChannel {
 	// An arrow property, because it is handed to server.on('upgrade') detached from this object.
 	handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
 		socket.on('error', () => socket.destroy());
-		if (new URL(request.url ?? '/', 'http://studio').pathname !== RUNNER_PATH)
+		try {
+			this.authorize(request, socket, head);
+		} catch (err) {
+			console.error('runner channel: upgrade failed', err);
+			socket.destroy();
+		}
+	};
+
+	private authorize(request: IncomingMessage, socket: Duplex, head: Buffer) {
+		// URL.parse answers null for targets like "//a:99999" where new URL would throw out of the listener.
+		if (URL.parse(request.url ?? '/', 'http://studio')?.pathname !== RUNNER_PATH)
 			return refuse(socket, 404, 'not_found');
 		// A browser always sends Origin on a WebSocket; the runner is no browser, so any Origin is a page after the credential.
 		if ('origin' in request.headers) return refuse(socket, 403, 'browser_origin_forbidden');
@@ -111,15 +126,22 @@ class Channel implements RunnerChannel {
 		const credential = bearer(request);
 		const runner = credential === null ? null : runnerByCredential(this.db, credential);
 		if (runner === null) return refuse(socket, 401, 'credential_rejected');
-		this.wss.handleUpgrade(request, socket, head, (ws) => this.admit(ws, runner.name));
-	};
+		this.wss.handleUpgrade(request, socket, head, (ws) => this.admit(ws, runner));
+	}
 
+	// Does not wait for the peer's close handshake: the machine leaves the register now, the socket a moment later.
 	revoke(name: string) {
-		this.sockets.get(name)?.close(CLOSE.revoked, 'credential_revoked');
+		for (const [socket, owner] of this.open) {
+			if (owner !== name) continue;
+			this.open.delete(socket);
+			this.unregister(socket, name);
+			socket.close(CLOSE.revoked, 'credential_revoked');
+			setTimeout(() => socket.terminate(), REVOKE_GRACE_MS).unref();
+		}
 	}
 
 	close() {
-		for (const socket of this.sockets.values()) socket.terminate();
+		for (const socket of this.open.keys()) socket.terminate();
 		this.wss.close();
 	}
 
@@ -138,7 +160,8 @@ class Channel implements RunnerChannel {
 		}
 	}
 
-	private admit(socket: WebSocket, name: string) {
+	private admit(socket: WebSocket, { id, name }: { id: number; name: string }) {
+		this.open.set(socket, name);
 		let lastHeard = Date.now();
 		const heard = () => (lastHeard = Date.now());
 		const helloTimer = setTimeout(
@@ -158,6 +181,7 @@ class Channel implements RunnerChannel {
 			if (hello === null) return socket.close(CLOSE.badFrame, 'frame_not_supported');
 			if (hello.protocol !== PROTOCOL_VERSION)
 				return socket.close(CLOSE.badProtocol, `protocol_${PROTOCOL_VERSION}_required`);
+			if (!this.stillPaired(id)) return socket.close(CLOSE.revoked, 'credential_revoked');
 			greeted = true;
 			clearTimeout(helloTimer);
 			this.register(socket, name, hello);
@@ -165,9 +189,14 @@ class Channel implements RunnerChannel {
 		socket.on('close', () => {
 			clearTimeout(helloTimer);
 			clearInterval(pinger);
+			this.open.delete(socket);
 			this.unregister(socket, name);
 		});
 		socket.on('error', () => socket.terminate());
+	}
+
+	private stillPaired(id: number) {
+		return this.db.prepare('SELECT 1 FROM runners WHERE id = ?').get(id) !== undefined;
 	}
 
 	private register(socket: WebSocket, name: string, hello: Hello) {
