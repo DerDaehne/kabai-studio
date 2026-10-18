@@ -14,7 +14,7 @@ import { answerQuestion, requestHuman } from './domain/questions';
 import { issuePairingCode, pairRunner } from './domain/runners';
 import * as runs from './domain/runs';
 import type { Executor, ExecutorFacts, RunContext } from './executors/contract';
-import { startRunner, type ApprovalPolicy } from './runner';
+import { limits, startRunner, type ApprovalPolicy } from './runner';
 import { installRunnerChannel, type RunnerChannel } from './runner-channel';
 import { subscribe } from './events';
 import { DEAD_MAN_GRACE_MS, DEAD_MAN_MS } from './runner-protocol';
@@ -142,13 +142,7 @@ async function lose(socket: WebSocket) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const causeCodes = (runId: number) =>
-	runs.waitReason(db, runId, currentLimits())!.causes.map((cause) => cause.code);
-// The limits the runner claims with; read here the same way.
-const currentLimits = () => {
-	const pools: Record<string, number> = { cloud: 3, local: 1 };
-	for (const [name, { slots }] of channel.connected()) pools[`runner:${name}`] = slots;
-	return { global: 4, pools };
-};
+	runs.waitReason(db, runId, limits())!.causes.map((cause) => cause.code);
 
 describe("a machine's pool", () => {
 	it('keeps a run queued while its machine is not connected and starts it on the machine’s hello alone', async () => {
@@ -175,7 +169,7 @@ describe("a machine's pool", () => {
 		await connect(credential, 2);
 
 		await vi.waitFor(() => expect(queued.map(s.state)).toEqual(['running', 'running', 'queued']));
-		expect(runs.waitReason(db, queued[2], currentLimits())!.causes[0]).toEqual({
+		expect(runs.waitReason(db, queued[2], limits())!.causes[0]).toEqual({
 			code: 'pool_full',
 			pool: `runner:${MACHINE}`,
 			active: 2,
@@ -248,7 +242,7 @@ describe('why a run of a machine waits', () => {
 			pool: 'runner:ghost'
 		}).id;
 		const [mine, other] = [s.queue(s.machinePool), s.queue(ghost)];
-		const reason = (run: number) => runs.waitReason(db, run, currentLimits())!;
+		const reason = (run: number) => runs.waitReason(db, run, limits())!;
 
 		expect(reason(mine).causes).toEqual([{ code: 'machine_never_connected', machine: MACHINE }]);
 		expect(reason(mine).text).toBe(
