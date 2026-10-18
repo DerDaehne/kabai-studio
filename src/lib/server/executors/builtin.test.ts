@@ -946,6 +946,34 @@ describe('trace of the builtin executor', () => {
 			{ name: 'writing', tokens: 1 }
 		]);
 	});
+
+	it('counts the tokens of each step anew', async () => {
+		const { db, queue, run, busEvents } = setup();
+		vi.useFakeTimers({ toFake: ['Date'] });
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+		const oneSecondLater = {
+			pause: () => sleep(20).then(() => vi.setSystemTime(Date.now() + 1100))
+		};
+		const provider = fakeProvider(
+			{
+				chunks: [
+					{ reasoning: 'Look for the export note\n' },
+					{ reasoning: 'and read it\n' },
+					call('call-1', 'notes_search', { query: 'export' })
+				]
+			},
+			{ chunks: [oneSecondLater, { reasoning: 'Found it\n' }, { text: 'Done.' }] }
+		);
+		startBuiltin(db, { fetch: provider.fetch });
+		const runId = queue();
+		await ended(() => run(runId).state);
+
+		const phases = busEvents.filter((e) => e.type === 'run.phase');
+		expect(phases.map((p) => [p.name, p.tokens, p.lastLine])).toEqual([
+			['thinking', 1, 'Look for the export note'],
+			['thinking', 1, 'Found it']
+		]);
+	});
 });
 
 describe('loop guard of the builtin executor', () => {
