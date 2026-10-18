@@ -2,52 +2,22 @@
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/t';
 	import type { MessageKey } from '$lib/i18n';
-	import type { Lage } from '$lib/lage';
+	import { LAGE_TONES, lageText, reasonText, stepText } from '$lib/lage-text';
+	import { ticketHref } from '$lib/links';
 	import Button from '$lib/ui/Button.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
+	import StepTrack from '$lib/ui/StepTrack.svelte';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Tag from '$lib/ui/rekta/Tag.svelte';
-	import type { Tone } from '$lib/ui/rekta/tone';
 	import { escapeTo, focusField } from './field';
 	import type { RowEditor } from './row-flows.svelte';
-	import { canAccept, canGiveBack, canStart, ticketHref, type BoardTicket } from './list';
+	import { canAccept, canGiveBack, canStart, type BoardTicket } from './list';
 
 	let { row, flow, editor }: { row: BoardTicket; flow: boolean; editor: RowEditor } = $props();
 
 	const renaming = $derived(editor.renaming === row.id);
 	const givingBack = $derived(editor.givingBack === row.id);
 	const refusal = $derived(editor.refusal?.id === row.id ? editor.refusal.text : undefined);
-
-	const LAGE_TONES: Record<Lage, Tone> = {
-		waiting: 'warning',
-		working: 'info',
-		open: 'neutral',
-		acceptance: 'neutral',
-		done: 'success'
-	};
-
-	/** The waiting reason of an open ticket, or what a waiting one needs from the human; empty for the other Lagen. */
-	function reasonText({ lage, reason }: BoardTicket) {
-		if (reason.kind === 'capacity')
-			return reason.causes
-				.map(({ code, ...params }) => t(`lage.wait.${code}` as MessageKey, params))
-				.join(', ');
-		if (lage !== 'waiting' && lage !== 'open') return '';
-		const refs = reason.kind === 'predecessors' ? reason.refs.join(', ') : '';
-		return t(`lage.reason.${reason.kind}` as MessageKey, { refs });
-	}
-
-	/** The Lage as a word with its reason, so colour never carries the state alone. */
-	function lageText(row: BoardTicket) {
-		const reason = reasonText(row);
-		return reason ? `${t(`lage.${row.lage}`)} · ${reason}` : t(`lage.${row.lage}`);
-	}
-
-	/** Where the ticket stands, in everyday words; a step with a working agent says so. */
-	const stepText = (row: BoardTicket) =>
-		row.lage === 'working' && row.column.phase === 'work'
-			? t(`board.step.${row.step}.working` as MessageKey)
-			: t(`board.step.${row.step}` as MessageKey);
 
 	const RUN_WORDS: Record<NonNullable<BoardTicket['run']>['state'], MessageKey> = {
 		queued: 'start.state.queued',
@@ -59,7 +29,7 @@
 		cancelled: 'start.state.cancelled'
 	};
 
-	const href = $derived(ticketHref(row));
+	const href = $derived(ticketHref(row.project.code, row.number));
 </script>
 
 {#snippet renameForm()}
@@ -131,13 +101,8 @@
 {/snippet}
 
 {#snippet lageMeta()}
-	<span class="track" role="img" aria-label={t('board.progress', row.progress)}>
-		{#each { length: row.progress.total }, step}<span
-				class="dot"
-				class:filled={step < row.progress.index}
-			></span>{/each}
-	</span>
-	<span class="step">{stepText(row)}</span>
+	<StepTrack progress={row.progress} />
+	<span class="step">{stepText({ lage: row.lage, phase: row.column.phase, step: row.step })}</span>
 	{#if reasonText(row)}
 		<Tag tone={row.reason.kind === 'failure' ? 'error' : LAGE_TONES[row.lage]}
 			><span class="reason">{reasonText(row)}</span></Tag
@@ -239,19 +204,6 @@
 		background: var(--status-failed-tint);
 		color: var(--status-failed);
 		font-size: var(--type-meta);
-	}
-	.track {
-		display: inline-flex;
-		gap: 3px;
-	}
-	.dot {
-		width: 8px;
-		height: 8px;
-		border: 1px solid currentColor;
-		border-radius: 50%;
-	}
-	.dot.filled {
-		background: currentColor;
 	}
 	.tasks {
 		font-variant-numeric: tabular-nums;

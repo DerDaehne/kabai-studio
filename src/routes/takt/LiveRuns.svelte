@@ -17,7 +17,7 @@
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Sparkline from '$lib/ui/rekta/Sparkline.svelte';
 	import Tag from '$lib/ui/rekta/Tag.svelte';
-	import { runHref } from '../start';
+	import { ticketHref } from '$lib/links';
 
 	let { runs, tracks }: { runs: LiveRun[]; tracks: RunTrack[] } = $props();
 
@@ -83,7 +83,8 @@
 			<li class="row" data-run={run.id}>
 				<span class="head">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a href={runHref(run.project.code, run.ticket.split('-').at(-1) ?? '', run.id)}
+					<a
+						href={ticketHref(run.project.code, run.ticket.split('-').at(-1) ?? '', { run: run.id })}
 						>{run.ticket}</a
 					>
 					<Tag tone={run.state === 'waiting' ? 'warning' : 'info'}

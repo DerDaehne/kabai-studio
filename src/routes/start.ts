@@ -1,3 +1,4 @@
+import { ticketHref } from '$lib/links';
 import type { LiveRun, ProjectRef, QueuedQuestion } from '$lib/live';
 import type { FinishedRunWithWayOut } from '$lib/server/start-view';
 import type { Tone } from '$lib/ui/rekta/tone';
@@ -30,10 +31,6 @@ const RUN_TONE: Record<LiveRun['state'], Tone> = {
 	paused: 'warning'
 };
 
-/** `?run=` pins the Run-Akte to this run, not the ticket's newest one. */
-export const runHref = (code: string, number: number | string, runId: number | null) =>
-	`/p/${code}/t/${number}${runId ? `?run=${runId}` : ''}`;
-
 // LiveRun.ticket is "KEY-N"; a project key never contains a hyphen, so the part after the last one is the number.
 const ticketNumber = (ref: string) => ref.split('-').at(-1) ?? '';
 
@@ -45,7 +42,7 @@ function questionTile(question: QueuedQuestion): NowTile {
 		tone: 'warning',
 		project: question.project,
 		ticket: question.ticket.ref,
-		href: runHref(question.project.code, question.ticket.number, question.runId),
+		href: ticketHref(question.project.code, question.ticket.number, { run: question.runId }),
 		runId: question.runId ?? undefined,
 		question
 	};
@@ -60,7 +57,7 @@ function runTile(run: LiveRun): NowTile {
 		tone: RUN_TONE[run.state],
 		project: run.project,
 		ticket: run.ticket,
-		href: runHref(run.project.code, ticketNumber(run.ticket), run.id),
+		href: ticketHref(run.project.code, ticketNumber(run.ticket), { run: run.id }),
 		runId: run.id,
 		run
 	};
@@ -74,7 +71,7 @@ function failedTile(run: FinishedRunWithWayOut): NowTile {
 		tone: 'error',
 		project: run.project,
 		ticket: run.ticket,
-		href: runHref(run.project.code, run.number, run.id),
+		href: ticketHref(run.project.code, run.number, { run: run.id }),
 		failed: run
 	};
 }

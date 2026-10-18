@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import { isTicketPath } from '$lib/links';
 	import { revealActiveTitle } from '$lib/ui/motion';
 	import { live, openQuestionsLabel } from './live.svelte';
 	import { shell } from './shell.svelte';
 
 	type Place = { href: string; title: string; covers: (path: string) => boolean };
-	const ticketPage = /^\/p\/[^/]+\/t\//;
 	/** The places of the app in their fixed order; a deep link counts as the place it lies in. Titles show lower case. */
 	const places: Place[] = [
 		{ href: '/', title: 'kabai studio', covers: (path) => path === '/' },
@@ -14,7 +14,7 @@
 		{
 			href: '/board',
 			title: 'Board',
-			covers: (path) => path.startsWith('/board') || ticketPage.test(path)
+			covers: (path) => path.startsWith('/board') || isTicketPath(path)
 		},
 		{
 			href: '/projects',

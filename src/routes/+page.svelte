@@ -41,7 +41,8 @@
 	import { SIDEWAYS_MIN_WIDTH, sideways } from '$lib/ui/sideways';
 	import { dismiss, toast } from '$lib/ui/toast.svelte';
 	import type { PageProps } from './$types';
-	import { nowTiles, runHref, type NowTile } from './start';
+	import { ticketHref } from '$lib/links';
+	import { nowTiles, type NowTile } from './start';
 
 	let { data }: PageProps = $props();
 	/** Marks the node `data-clamped` while its text is cut off by the line clamp. */
@@ -411,7 +412,9 @@
 							>
 								<span class="row-head">
 									<ProjectTag code={run.project.code} palette={run.project.palette} />
-									<a href={runHref(run.project.code, run.number, run.id)}>{run.ticket}</a>
+									<a href={ticketHref(run.project.code, run.number, { run: run.id })}
+										>{run.ticket}</a
+									>
 									<span class="muted">{run.profile}</span>
 								</span>
 								<span class="detail">{run.waitText}</span>
@@ -438,7 +441,9 @@
 							>
 								<span class="row-head">
 									<ProjectTag code={run.project.code} palette={run.project.palette} />
-									<a href={runHref(run.project.code, run.number, run.id)}>{run.ticket}</a>
+									<a href={ticketHref(run.project.code, run.number, { run: run.id })}
+										>{run.ticket}</a
+									>
 									<Tag
 										tone={run.state === 'failed'
 											? 'error'

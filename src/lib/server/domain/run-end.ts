@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { ticketHref } from '$lib/links';
 import { interventionOf, RECOVERY, type Stall } from '../agents/loop-guard';
 import type { ExecutorFacts } from '../executors/contract';
 import { mask } from '../secrets';
@@ -192,7 +193,7 @@ function ticketPath(db: DatabaseSync, ticketId: number): string {
 			'SELECT p.key AS key, t.number AS number FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = ?'
 		)
 		.get(ticketId) as { key: string; number: number };
-	return `/p/${row.key}/t/${row.number}`;
+	return ticketHref(row.key, row.number);
 }
 
 function lastIntervention(db: DatabaseSync, runId: number): Intervention | undefined {

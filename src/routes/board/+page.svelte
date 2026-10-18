@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { t } from '$lib/i18n/t';
+	import { ticketHref } from '$lib/links';
 	import { tick } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { crossfade } from 'svelte/transition';
@@ -37,7 +38,6 @@
 		groupJump,
 		sideJump,
 		stepped,
-		ticketHref,
 		type BoardTicket
 	} from './list';
 
@@ -235,7 +235,7 @@
 			side: (count, key) => goSide(count, key === 'l'),
 			edge: (count, key) => select(edgeIndex(key, count, rows.length)),
 			group: (count, key) => select(groupJump(groupStarts, currentIndex, key === '}', count)),
-			open: () => void goto(ticketHref(row)),
+			open: () => void goto(ticketHref(row.project.code, row.number)),
 			shiftColumn: flow ? (_count, key) => void shift(row, key === '>') : undefined,
 			start: canStart(row) ? () => void editor.start(row) : undefined,
 			accept: canAccept(row) ? () => void editor.accept(row) : undefined,

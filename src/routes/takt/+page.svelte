@@ -25,7 +25,7 @@
 	import FinishedRuns from './FinishedRuns.svelte';
 	import LiveRuns from './LiveRuns.svelte';
 	import { arranged, deferred, restored, type QueuedQuestion } from './queue';
-	import { runHref } from '../start';
+	import { ticketHref } from '$lib/links';
 
 	type Answer = { option: number } | { text: string };
 
@@ -201,7 +201,8 @@
 			answer: current.options.length ? (_count, key) => choose(current, Number(key)) : undefined,
 			answerOwn: () => void openOwnAnswer(),
 			later: () => later(current),
-			open: () => void goto(runHref(current.project.code, current.ticket.number, current.runId)),
+			open: () =>
+				void goto(ticketHref(current.project.code, current.ticket.number, { run: current.runId })),
 			focusHere: () => (shell.focus = current.project)
 		});
 	});
@@ -318,7 +319,7 @@
 						>
 						<a
 							class="rk-btn rk-btn--quiet"
-							href={runHref(card.project.code, card.ticket.number, card.runId)}
+							href={ticketHref(card.project.code, card.ticket.number, { run: card.runId })}
 							>{t('takt.runRecord')} <Kbd key="Enter" /></a
 						>
 					</p>
@@ -359,7 +360,8 @@
 			{#each paused as run (run.id)}
 				<li class="row">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a href={runHref(run.project.code, run.ticket.split('-').at(-1) ?? '', run.id)}
+					<a
+						href={ticketHref(run.project.code, run.ticket.split('-').at(-1) ?? '', { run: run.id })}
 						>{run.ticket}</a
 					>
 					<Tag tone="warning">{t('start.state.paused')}</Tag>

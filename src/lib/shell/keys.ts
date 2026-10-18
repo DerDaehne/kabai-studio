@@ -1,3 +1,5 @@
+import { isTicketPath } from '$lib/links';
+
 /**
  * Alternative key sequences sharing one meaning (`j`/`k`, `gs`), each in `KeyboardEvent.key` names plus `Ctrl+…` for
  * chords; `counted` keys accept a leading count such as `3j`.
@@ -136,5 +138,5 @@ export function keyContextOf(path: string): KeyContext {
 	if (path === '/') return 'stellwerk';
 	if (path.startsWith('/takt')) return 'takt';
 	if (path.startsWith('/board')) return 'board';
-	return /^\/p\/[^/]+\/t\/\d+/.test(path) ? 'ticket' : 'page';
+	return isTicketPath(path) ? 'ticket' : 'page';
 }

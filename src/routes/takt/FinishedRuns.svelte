@@ -5,7 +5,7 @@
 	import { clock, firstLine } from '$lib/trace/trace';
 	import ProjectTag from '$lib/ui/ProjectTag.svelte';
 	import Tag from '$lib/ui/rekta/Tag.svelte';
-	import { runHref } from '../start';
+	import { ticketHref } from '$lib/links';
 
 	let { runs }: { runs: FinishedRunWithWayOut[] } = $props();
 
@@ -23,7 +23,7 @@
 			<li class="row">
 				<span class="head">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a href={runHref(run.project.code, run.number, run.id)}>{run.ticket}</a>
+					<a href={ticketHref(run.project.code, run.number, { run: run.id })}>{run.ticket}</a>
 					<Tag tone={toneOf(run.state)}>{t(`start.state.${run.state}` as MessageKey)}</Tag>
 				</span>
 				<span class="detail">{duration(run)}</span>

@@ -1,5 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { ProjectRef } from '$lib/live';
+import { ticketHref } from '$lib/links';
 import { db } from '$lib/server/db';
 import { domainFail } from '$lib/server/domain-failure';
 import { createTicket } from '$lib/server/domain/board';
@@ -39,6 +40,6 @@ export const actions: Actions = {
 		} catch (err) {
 			return domainFail(err, (e) => ({ title, message: `${e.message} Ausweg: ${e.hint}` }));
 		}
-		redirect(303, `/p/${project.key}/t/${number}`);
+		redirect(303, ticketHref(project.key, number));
 	}
 };
