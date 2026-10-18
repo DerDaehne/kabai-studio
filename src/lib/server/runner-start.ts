@@ -34,7 +34,10 @@ export type StartContext = {
 	signal?: AbortSignal;
 	random?: () => number;
 	createSocket?: (url: string, headers: Record<string, string>) => WebSocket;
-	/** The PIDs of the agents this runner started; it ends their trees when it loses studio for good or for too long. */
+	/**
+	 * The PIDs of the agents this runner started; it ends their trees when it loses studio for good or for too long. An agent
+	 * leaves the set in its exit handler: until then its PID cannot belong to another process, as it is not reaped yet.
+	 */
 	agents?: Set<number>;
 };
 
