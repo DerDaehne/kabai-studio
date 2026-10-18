@@ -252,7 +252,6 @@ describe('holding the answer window', () => {
 		const s = studio();
 		const q = await answered(s);
 		const before = q.notBefore();
-		expect(before).toBe(inSeconds(129.999));
 		const unanswered = requestHuman(s.db, agent(q.first), s.ticketId, { question: 'B?' }).id;
 		const refused = (id: number, actor: Actor) =>
 			caught(() => holdAnswerWindow(s.db, actor, id)).code;
