@@ -642,6 +642,7 @@ describe('the agents of this machine', () => {
 			expect(deadManLines()).toEqual([]);
 
 			vi.advanceTimersByTime(1);
+			expect(deadManLines()).toHaveLength(1);
 
 			await vi.waitFor(async () => expect(await aliveOf(tree)).toEqual([]), {
 				timeout: 10_000,

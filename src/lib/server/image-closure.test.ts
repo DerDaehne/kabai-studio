@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const fixedEntryPoints = ['server.ts', 'src/lib/server/cli.ts'];
 
-// server.ts loads the legacy CLI scripts through a dynamic import, so they are entry points of their own.
-function legacyScripts(server: string): string[] {
-	return [...server.matchAll(/runLegacyScript\('\.\/([^']+)'/g)].map(([, path]) => path);
+// server.ts loads the legacy CLI scripts and the runner mode through dynamic imports, so they are entry points of their own.
+function dynamicEntryPoints(server: string): string[] {
+	return [...server.matchAll(/(?:runLegacyScript|import)\('\.\/([^']+)'/g)].map(([, path]) => path);
 }
 
 type ReadSource = (file: string) => string;
@@ -37,7 +37,7 @@ function runtimeImports(file: string, source: string): string[] {
 /** Files the image needs at runtime but does not copy, each with the file that imports it. */
 function missingFromImage(dockerfile: string, readSource: ReadSource): string[] {
 	const copied = copiedPaths(dockerfile);
-	const entryPoints = [...fixedEntryPoints, ...legacyScripts(readSource('server.ts'))];
+	const entryPoints = [...fixedEntryPoints, ...dynamicEntryPoints(readSource('server.ts'))];
 	const uncopiedEntries = entryPoints.filter((entry) => !isCopied(entry, copied));
 	const importers = new Map<string, string>();
 	const queue = [...entryPoints];
@@ -118,6 +118,16 @@ describe('runtime image closure', () => {
 				expect(
 					missingFromImage(`${dockerfile}\nCOPY --from=build ${source} ./src/lib/`, read)
 				).toEqual([]);
+		});
+
+		it('names a module that server.ts imports dynamically but the image does not copy', () => {
+			const read = reading({
+				'server.ts': "const { run } = await import('./src/lib/server/runner-start.ts');"
+			});
+
+			expect(missingFromImage(dockerfile, read)).toEqual([
+				expect.stringContaining('src/lib/server/runner-start.ts is a runtime entry point')
+			]);
 		});
 
 		it('names a legacy CLI script that server.ts loads dynamically but the image does not copy', () => {
