@@ -28,6 +28,8 @@ test.describe('buttons', () => {
 			(el) => getComputedStyle(el).backgroundColor
 		);
 		await expect(running).toHaveCSS('background-color', accent);
+		// the pending line is the one indicator: no spinner next to it
+		await expect(running.locator('svg')).toHaveCount(0);
 	});
 });
 
@@ -47,11 +49,21 @@ test.describe('a form with errors', () => {
 		await page.getByRole('button', { name: 'Fehlersumme umschalten' }).click();
 		const summary = page.getByRole('group', { name: 'Ein Feld braucht Aufmerksamkeit' });
 		await expect(summary).toBeFocused();
-		await expect(summary).toHaveCSS('box-shadow', 'none');
 		await summary.getByRole('link', { name: `Endpoint: ${refusal}` }).click();
 		await expect(endpoint).toBeFocused();
 		// Rekta draws its own ring; the shell's halo stays off them
 		await expect(endpoint).toHaveCSS('box-shadow', 'none');
+	});
+
+	test('the summary reached by keyboard draws Rekta ring and no halo', async ({ page }) => {
+		await open(page, '/dev/ui');
+		await page.getByRole('button', { name: 'Fehlersumme umschalten' }).focus();
+		await page.keyboard.press('Enter');
+		const summary = page.getByRole('group', { name: 'Ein Feld braucht Aufmerksamkeit' });
+		await expect(summary).toBeFocused();
+		await expect(summary).toHaveCSS('outline-style', 'solid');
+		await expect(summary).toHaveCSS('outline-width', '2px');
+		await expect(summary).toHaveCSS('box-shadow', 'none');
 	});
 
 	test('a hint turns into the error and back; an optional field says so', async ({ page }) => {
@@ -81,26 +93,51 @@ test.describe('the sheet', () => {
 		await open(page, '/dev/ui?open=sheet');
 		const note = page.getByLabel('Notiz (optional)');
 		await note.fill('half a thought');
+		// a sheet that closes and reopens itself would slide in again and fire close
+		await page.evaluate(() => {
+			const closes: Event[] = [];
+			Object.assign(window, { closes });
+			document.querySelector('dialog.rk-sheet')!.addEventListener('close', (e) => closes.push(e));
+		});
+		const closeCount = () =>
+			page.evaluate(() => (window as unknown as { closes: Event[] }).closes.length);
 
 		await page.keyboard.press('Escape');
 		await expect(discardQuestion(page)).toBeVisible();
+		expect(await closeCount()).toBe(0);
 		const keep = discardQuestion(page).getByRole('button', { name: 'Weiter bearbeiten' });
 		await expect(keep).toBeFocused();
 		await expect(keep).toHaveClass(/\brk-btn--primary\b/);
 
 		await page.keyboard.press('Escape');
+		await expect(note).toBeFocused();
 		await expect(discardQuestion(page)).toHaveCount(0);
+		expect(await closeCount()).toBe(0);
 		await expect(note).toHaveValue('half a thought');
 
 		await page.mouse.click(5, 650);
 		await expect(discardQuestion(page)).toBeVisible();
 		await keep.click();
 		await expect(sheet(page)).toBeVisible();
+		await expect(note).toBeFocused();
 		await expect(note).toHaveValue('half a thought');
 
 		await page.keyboard.press('Escape');
 		await discardQuestion(page).getByRole('button', { name: 'Änderungen verwerfen' }).click();
 		await expect(sheet(page)).toHaveCount(0);
+	});
+
+	test('discarding in the showcase puts the form back as it was', async ({ page }) => {
+		await open(page, '/dev/ui?open=sheet');
+		const note = page.getByLabel('Notiz (optional)');
+		await note.fill('half a thought');
+		await page.keyboard.press('Escape');
+		await discardQuestion(page).getByRole('button', { name: 'Änderungen verwerfen' }).click();
+		await expect(sheet(page)).toHaveCount(0);
+
+		await page.getByRole('button', { name: 'Sheet öffnen' }).click();
+		await expect(note).toHaveValue('');
+		await expect(sheet(page)).not.toHaveAttribute('closedby', /.*/);
 	});
 
 	test('a confirming sheet puts the safe answer first, primary and focused, and the danger repeats the verb', async ({
@@ -149,3 +186,18 @@ for (const [reason, reduce] of Object.entries(reducedMotion)) {
 		expect(seconds).toBeLessThan(0.001);
 	});
 }
+
+test.describe('the key overview on touch', () => {
+	test.use({ hasTouch: true, viewport: { width: 375, height: 700 } });
+
+	test('has a visible close action, 44 px high', async ({ page }) => {
+		await open(page, '/');
+		await page.keyboard.press('?');
+		await expect(sheet(page)).toBeVisible();
+		const close = sheet(page).getByRole('button', { name: 'Schließen' });
+		await expect(close).toBeVisible();
+		expect((await close.boundingBox())!.height).toBe(44);
+		await close.tap();
+		await expect(sheet(page)).toHaveCount(0);
+	});
+});

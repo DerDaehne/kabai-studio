@@ -29,7 +29,8 @@ export const en = {
 
 	'form.optional': '(optional)',
 	'form.errors.one': '1 field needs attention',
-	'form.errors.many': '{count} fields need attention',
+	'form.errors.other': '{count} fields need attention',
+	'dialog.close': 'Close',
 	'dialog.discard.title': 'Discard changes?',
 	'dialog.discard.keep': 'Keep editing',
 	'dialog.discard.confirm': 'Discard changes',

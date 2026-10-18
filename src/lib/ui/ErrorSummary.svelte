@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+	import { page } from '$app/state';
 	import { t } from '$lib/i18n/t';
 
 	/**
@@ -16,7 +17,12 @@
 	let summary: HTMLDivElement | undefined = $state();
 	const heading = $derived(
 		message ??
-			(errors.length === 1 ? t('form.errors.one') : t('form.errors.many', { count: errors.length }))
+			t(
+				new Intl.PluralRules(page.data.locale).select(errors.length) === 'one'
+					? 'form.errors.one'
+					: 'form.errors.other',
+				{ count: errors.length }
+			)
 	);
 
 	$effect(() => {

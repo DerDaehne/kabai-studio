@@ -609,18 +609,23 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={sheetOpen} variant="sheet" dirty={sheetNote !== ''} title="Notiz zum Run">
+<Dialog
+	bind:open={
+		() => sheetOpen,
+		(open) => {
+			sheetOpen = open;
+			if (!open) sheetNote = '';
+		}
+	}
+	variant="sheet"
+	dirty={sheetNote !== ''}
+	title="Notiz zum Run"
+>
 	<FormField label="Notiz" optional hint="Erscheint als Kommentar am Ticket.">
 		{#snippet children(a)}<textarea {...a} rows="3" bind:value={sheetNote}></textarea>{/snippet}
 	</FormField>
 	{#snippet footer()}
-		<Button
-			variant="primary"
-			onclick={() => {
-				sheetNote = '';
-				sheetOpen = false;
-			}}>Speichern</Button
-		>
+		<Button variant="primary" onclick={() => (sheetOpen = false)}>Speichern</Button>
 	{/snippet}
 </Dialog>
 

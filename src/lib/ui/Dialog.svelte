@@ -10,8 +10,7 @@
 	 * top, "bar-sheet" a sheet rising above the app bar. Initial focus: the first focusable element — `autofocus` on
 	 * a field or on the safe answer sets it explicitly; a sheet that asks to confirm puts the safe answer first.
 	 *
-	 * The centred variant "dialog" stays for the callers that have not moved to a sheet yet: RunControl, the ticket
-	 * page (edit, rename, delete), the profile list and the runner pairing, besides the dev showcase.
+	 * A sheet without a `footer` ends in a close action, so touch has a visible way out.
 	 *
 	 * `dirty` marks unsaved input: Escape, a tap on the shading and the close button then ask to discard first
 	 * instead of closing.
@@ -37,7 +36,7 @@
 	let downOnBackdrop = false;
 	let discarding = $state(false);
 	let leavingForSure = false;
-	let focusBeforeAsking: Element | null = null;
+	let lastFocusedControl: HTMLElement | undefined;
 	const id = $props.id();
 	const isSheet = $derived(variant === 'sheet');
 
@@ -51,7 +50,6 @@
 	});
 
 	async function askToDiscard() {
-		focusBeforeAsking = document.activeElement;
 		discarding = true;
 		await tick();
 		keepEditing?.focus();
@@ -59,8 +57,7 @@
 
 	function keepOn() {
 		discarding = false;
-		if (focusBeforeAsking instanceof HTMLElement && el.contains(focusBeforeAsking))
-			focusBeforeAsking.focus();
+		lastFocusedControl?.focus();
 	}
 
 	function requestClose() {
@@ -81,7 +78,8 @@
 	}
 
 	function onClose() {
-		// Some browsers close on a second Escape although cancel was prevented: ask again instead of losing input
+		// Chromium lets a cancel be prevented only while a user activation is unconsumed; the next Escape closes
+		// regardless: reopen and ask again instead of losing the input
 		if (dirty && !leavingForSure) {
 			el.showModal();
 			void askToDiscard();
@@ -103,6 +101,10 @@
 	aria-modal="true"
 	oncancel={onCancel}
 	onclose={onClose}
+	onfocusin={(e) => {
+		if (e.target !== el && !discarding && e.target instanceof HTMLElement)
+			lastFocusedControl = e.target;
+	}}
 	onpointerdown={(e) => (downOnBackdrop = e.target === el)}
 	onclick={(e) => {
 		if (downOnBackdrop && e.target === el) requestClose();
@@ -115,6 +117,10 @@
 			{@render discardQuestion()}
 		{:else if footer}
 			<div class="rk-actions">{@render footer()}</div>
+		{:else}
+			<div class="rk-actions">
+				<Button variant="primary" onclick={requestClose}>{t('dialog.close')}</Button>
+			</div>
 		{/if}
 	{:else}
 		<div class="frame">

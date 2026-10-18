@@ -30,7 +30,8 @@ export const de: Catalogue = {
 
 	'form.optional': '(optional)',
 	'form.errors.one': 'Ein Feld braucht Aufmerksamkeit',
-	'form.errors.many': '{count} Felder brauchen Aufmerksamkeit',
+	'form.errors.other': '{count} Felder brauchen Aufmerksamkeit',
+	'dialog.close': 'Schließen',
 	'dialog.discard.title': 'Änderungen verwerfen?',
 	'dialog.discard.keep': 'Weiter bearbeiten',
 	'dialog.discard.confirm': 'Änderungen verwerfen',

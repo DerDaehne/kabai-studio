@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { HTMLButtonAttributes } from 'svelte/elements';
-	import Spinner from './Spinner.svelte';
 
 	type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 	type Props = HTMLButtonAttributes & {
@@ -42,6 +41,5 @@
 		else onclick?.(e);
 	}}
 >
-	{#if loading}<Spinner size={size === 'sm' ? 12 : 14} label="" />{/if}
 	{@render children?.()}
 </button>
