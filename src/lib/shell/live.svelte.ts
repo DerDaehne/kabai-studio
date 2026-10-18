@@ -90,7 +90,10 @@ const STATE_CHANGES = new Set([
 	'project.created',
 	'project.updated',
 	'runner.halted',
-	'runner.released'
+	'runner.released',
+	// a queued run of a machine's pool waits for another reason once the machine comes or goes
+	'machine.connected',
+	'machine.disconnected'
 ]);
 
 /** Live state of all projects in this tab; `showLive` replaces it. */

@@ -426,6 +426,12 @@ export const en = {
 	'lage.wait.halt_pause': 'All runs paused',
 	'lage.wait.claim': 'Waiting for the next claim',
 	'lage.wait.pool_full': 'Pool "{pool}" is full ({active} of {limit} active)',
+	'lage.wait.machine_offline':
+		'Waiting for machine "{machine}", not connected since {since}. Run kabai-studio runner start there, or cancel the run and start it with another profile',
+	'lage.wait.machine_never_connected':
+		'Waiting for machine "{machine}", never connected. Run kabai-studio runner start there, or cancel the run and start it with another profile',
+	'lage.wait.machine_unpaired':
+		'Machine "{machine}" is not paired. Pair it under Settings → Machines, or cancel the run and start it with another profile',
 	'lage.wait.global_full': 'Global limit reached ({active} of {limit} active)',
 	'lage.wait.ahead': '{count} ahead in the queue'
 };

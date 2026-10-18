@@ -7,7 +7,9 @@ export type WaitCause =
 	| { code: 'halt_stop' | 'halt_pause' | 'claim' }
 	| { code: 'pool_full'; pool: string; active: number; limit: number }
 	| { code: 'global_full'; active: number; limit: number }
-	| { code: 'ahead'; count: number };
+	| { code: 'ahead'; count: number }
+	| { code: 'machine_offline'; machine: string; since: string }
+	| { code: 'machine_never_connected' | 'machine_unpaired'; machine: string };
 
 export type LageInput = {
 	phase: LagePhase;

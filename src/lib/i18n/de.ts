@@ -435,6 +435,12 @@ export const de: Catalogue = {
 	'lage.wait.halt_pause': 'Alle Runs angehalten',
 	'lage.wait.claim': 'Wartet auf den nächsten Claim',
 	'lage.wait.pool_full': 'Pool „{pool}“ ist voll ({active} von {limit} aktiv)',
+	'lage.wait.machine_offline':
+		'Wartet auf Rechner „{machine}“ – nicht verbunden seit {since}. Dort kabai-studio runner start ausführen oder den Run abbrechen und mit einem anderen Profil starten',
+	'lage.wait.machine_never_connected':
+		'Wartet auf Rechner „{machine}“ – noch nie verbunden. Dort kabai-studio runner start ausführen oder den Run abbrechen und mit einem anderen Profil starten',
+	'lage.wait.machine_unpaired':
+		'Rechner „{machine}“ ist nicht gekoppelt. Unter Einstellungen → Rechner koppeln oder den Run abbrechen und mit einem anderen Profil starten',
 	'lage.wait.global_full': 'Globales Limit erreicht ({active} von {limit} aktiv)',
 	'lage.wait.ahead': '{count} vor ihm in der Queue'
 };

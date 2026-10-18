@@ -10,6 +10,7 @@ import {
 	appendEvent,
 	claimRun,
 	finishRun,
+	RUNNER_POOL_PREFIX,
 	setRunState,
 	type Limits,
 	type ParkReason,
@@ -26,20 +27,31 @@ import type {
 	PhaseReport,
 	RunContext
 } from './executors/contract';
+import { runnerChannel } from './runner-channel';
+import { DEAD_MAN_GRACE_MS, DEAD_MAN_MS } from './runner-protocol';
 import { mask } from './secrets';
 
 /**
  * The one source of the run limits. The claim and every wait reason call it again each time, so a change takes effect on the
- * next claim. A pool without an entry gets `DEFAULT_POOL_SLOTS`.
+ * next claim. A pool without an entry gets `DEFAULT_POOL_SLOTS`; a connected machine's pool gets the slots it reported,
+ * the pool of any other machine none.
  */
 // ponytail: fixed values until there is a settings table and per-column overrides; 3 cloud runs plus 1 local GPU run.
 export function limits(): Limits {
-	return { global: 4, pools: { cloud: 3, local: 1 } };
+	const pools: Record<string, number> = { cloud: 3, local: 1 };
+	for (const [name, { slots }] of runnerChannel().connected())
+		pools[`${RUNNER_POOL_PREFIX}${name}`] = slots;
+	return { global: 4, pools };
 }
 
 const SYSTEM: Actor = { kind: 'system' };
 const PREDECESSOR_EVENTS = new Set(['ticket.moved', 'ticket.review_approved']);
-const WAKING_EVENTS = new Set(['run.created', 'run.state_changed', 'runner.released']);
+const WAKING_EVENTS = new Set([
+	'run.created',
+	'run.state_changed',
+	'runner.released',
+	'machine.connected'
+]);
 const MODEL_LOADING_PHASES: PhaseName[] = ['model_loading', 'model_downloading'];
 const MAX_LAST_LINE = 120;
 const PHASE_INTERVAL_MS = 1000;
@@ -89,6 +101,38 @@ function failOrphanedRuns(db: DatabaseSync) {
 				'Starte einen neuen Run für das Ticket.'
 			)
 		);
+}
+
+/**
+ * Fails the active runs of a machine that stayed away past the deadline: its runner has ended their agents by now. Returns
+ * the runs it failed, whose tokens no longer work; a run that ended meanwhile is left alone.
+ */
+function failRunsOfLostMachine(db: DatabaseSync, name: string): number[] {
+	const active = db
+		.prepare(
+			`SELECT r.id, r.ticket_id FROM runs r JOIN agent_profiles p ON p.id = r.agent_profile_id
+			WHERE r.state IN ('running', 'waiting_approval') AND p.pool = ? ORDER BY r.id`
+		)
+		.all(`${RUNNER_POOL_PREFIX}${name}`) as { id: number; ticket_id: number }[];
+	const deadline = duration(DEAD_MAN_MS + DEAD_MAN_GRACE_MS);
+	return active.flatMap((run) => {
+		try {
+			failRun(
+				db,
+				run.id,
+				run.ticket_id,
+				new DomainError(
+					'runner_disconnected',
+					`Rechner „${name}“ war länger als ${deadline} nicht verbunden; seine Agents wurden dort beendet.`,
+					'Rechner wieder verbinden (dort `kabai-studio runner start`) und den Run neu starten.'
+				)
+			);
+			return [run.id];
+		} catch (err) {
+			console.error(`Runner: Run ${run.id} des getrennten Rechners nicht beendet:`, err);
+			return [];
+		}
+	});
 }
 
 function executorFor(
@@ -370,6 +414,8 @@ class Runner {
 	private stopped = false;
 	private wakeScheduled = false;
 	private notBeforeTimer: NodeJS.Timeout | undefined;
+	/** One per machine that disconnected and has not come back yet. */
+	private readonly deadMen = new Map<string, NodeJS.Timeout>();
 	private unsubscribe = () => {};
 
 	constructor(
@@ -389,6 +435,8 @@ class Runner {
 	start() {
 		this.unsubscribe = subscribe((event) => {
 			if (WAKING_EVENTS.has(event.type)) this.wake();
+			if (event.type === 'machine.disconnected') this.armDeadMan(String(event.name));
+			if (event.type === 'machine.connected') this.disarmDeadMan(String(event.name));
 			if (PREDECESSOR_EVENTS.has(event.type) && typeof event.ticketId === 'number')
 				queueMicrotask(() => continueSuccessors(this.db, event.ticketId as number));
 		});
@@ -415,7 +463,27 @@ class Runner {
 	stop() {
 		this.stopped = true;
 		clearTimeout(this.notBeforeTimer);
+		this.deadMen.forEach(clearTimeout);
 		this.unsubscribe();
+	}
+
+	/**
+	 * The deadline counts from the moment the server notices the loss, never earlier than the runner does, so the runs end
+	 * only after the runner has ended their agents. A second loss before a reconnect never lengthens it.
+	 */
+	private armDeadMan(name: string) {
+		if (this.deadMen.has(name)) return;
+		const timer = setTimeout(() => {
+			this.deadMen.delete(name);
+			this.abortAfter(failRunsOfLostMachine(this.db, name));
+		}, DEAD_MAN_MS + DEAD_MAN_GRACE_MS);
+		timer.unref(); // a server that stops ends these runs anyway (failOrphanedRuns on the next start)
+		this.deadMen.set(name, timer);
+	}
+
+	private disarmDeadMan(name: string) {
+		clearTimeout(this.deadMen.get(name));
+		this.deadMen.delete(name);
 	}
 
 	private async execute(run: RunContext) {

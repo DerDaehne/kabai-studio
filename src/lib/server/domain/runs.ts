@@ -59,8 +59,15 @@ export type Profile = {
 };
 /** Slots of a pool without an entry in {@link Limits}: 1, because a local GPU is scarce. */
 export const DEFAULT_POOL_SLOTS = 1;
-/** Maximum active (running or waiting_approval) runs, overall and per pool; a pool without an entry gets {@link DEFAULT_POOL_SLOTS}. */
+/** The pool of a paired machine is `runner:<name>`; its entry in {@link Limits} exists only while the machine is connected. */
+export const RUNNER_POOL_PREFIX = 'runner:';
+/**
+ * Maximum active (running or waiting_approval) runs, overall and per pool. A pool without an entry gets
+ * {@link DEFAULT_POOL_SLOTS}, a machine's pool none: its runs never start without the machine (fail-closed).
+ */
 export type Limits = { global: number; pools: Record<string, number> };
+const slotsWithoutEntry = (pool: string) =>
+	pool.startsWith(RUNNER_POOL_PREFIX) ? 0 : DEFAULT_POOL_SLOTS;
 
 /** Claim order of queued runs, most urgent first; equal priorities are claimed oldest first. Running runs are never preempted. */
 export const PRIORITIES = ['human', 'blocker', 'review', 'normal'] as const;
@@ -397,9 +404,15 @@ export type WaitReason = {
 };
 type WaitRow = Omit<WaitReason, 'poolLimit' | 'globalLimit' | 'text' | 'causes'> & {
 	halt: 'stop' | 'pause' | null;
+	/** Whether the machine of a `runner:` pool is paired, and when it was last connected. */
+	paired: 0 | 1;
+	lastSeen: string | null;
 };
+type Machine = { name: string; paired: boolean; lastSeen: string | null };
 
 const WAIT_ROWS = `SELECT r.id AS runId, r.priority, p.pool, (SELECT kind FROM runner_halt) AS halt,
+		EXISTS (SELECT 1 FROM runners m WHERE ?2 || m.name = p.pool) AS paired,
+		(SELECT m.last_seen_at FROM runners m WHERE ?2 || m.name = p.pool) AS lastSeen,
 		(SELECT count(*) FROM runs a WHERE a.state IN ('running', 'waiting_approval')) AS active,
 		(SELECT count(*) FROM runs a JOIN agent_profiles ap ON ap.id = a.agent_profile_id
 			WHERE a.state IN ('running', 'waiting_approval') AND ap.pool = p.pool) AS activeInPool,
@@ -415,15 +428,19 @@ export function waitReasons(
 ): Map<number, WaitReason> {
 	const rows = db
 		.prepare(`${WAIT_ROWS} AND (?1 IS NULL OR r.id = ?1)`)
-		.all(runId ?? null) as (WaitRow & { runId: number })[];
+		.all(runId ?? null, RUNNER_POOL_PREFIX) as (WaitRow & { runId: number })[];
 	return new Map(
-		rows.map(({ runId: id, halt, ...counts }) => {
+		rows.map(({ runId: id, halt, paired, lastSeen, ...counts }) => {
 			const reason = {
 				...counts,
-				poolLimit: limits.pools[counts.pool] ?? DEFAULT_POOL_SLOTS,
+				poolLimit: limits.pools[counts.pool] ?? slotsWithoutEntry(counts.pool),
 				globalLimit: limits.global
 			};
-			const causes: WaitCause[] = halt ? [{ code: `halt_${halt}` }] : waitCauses(reason);
+			const offline =
+				counts.pool.startsWith(RUNNER_POOL_PREFIX) && !(counts.pool in limits.pools)
+					? { name: counts.pool.slice(RUNNER_POOL_PREFIX.length), paired: !!paired, lastSeen }
+					: undefined;
+			const causes: WaitCause[] = halt ? [{ code: `halt_${halt}` }] : waitCauses(reason, offline);
 			return [id, { ...reason, causes, text: causesText(causes) }];
 		})
 	);
@@ -433,9 +450,11 @@ export function waitReasons(
 export const waitReason = (db: DatabaseSync, runId: number, limits: Limits) =>
 	waitReasons(db, limits, runId).get(runId);
 
-function waitCauses(r: Omit<WaitReason, 'text' | 'causes'>): WaitCause[] {
+/** `offline` is the machine of a `runner:` pool that is not connected: that, not a full pool of 0, is why the run waits. */
+function waitCauses(r: Omit<WaitReason, 'text' | 'causes'>, offline?: Machine): WaitCause[] {
 	const causes: WaitCause[] = [];
-	if (r.activeInPool >= r.poolLimit)
+	if (offline) causes.push(machineCause(offline));
+	else if (r.activeInPool >= r.poolLimit)
 		causes.push({ code: 'pool_full', pool: r.pool, active: r.activeInPool, limit: r.poolLimit });
 	if (r.active >= r.globalLimit)
 		causes.push({ code: 'global_full', active: r.active, limit: r.globalLimit });
@@ -443,8 +462,24 @@ function waitCauses(r: Omit<WaitReason, 'text' | 'causes'>): WaitCause[] {
 	return causes.length ? causes : [{ code: 'claim' }];
 }
 
+function machineCause({ name, paired, lastSeen }: Machine): WaitCause {
+	if (!paired) return { code: 'machine_unpaired', machine: name };
+	if (!lastSeen) return { code: 'machine_never_connected', machine: name };
+	return { code: 'machine_offline', machine: name, since: `${lastSeen.slice(0, 16)} UTC` };
+}
+
+const MACHINE_CAUSES = new Set(['machine_offline', 'machine_never_connected', 'machine_unpaired']);
+const MACHINE_WAY_OUT =
+	'Ausweg: Dort `kabai-studio runner start` ausführen (bzw. unter Einstellungen → Rechner koppeln) oder den Run abbrechen und mit einem anderen Profil starten.';
+
 function causeText(c: WaitCause): string {
 	switch (c.code) {
+		case 'machine_offline':
+			return `Wartet auf Rechner „${c.machine}“ – nicht verbunden seit ${c.since}`;
+		case 'machine_never_connected':
+			return `Wartet auf Rechner „${c.machine}“ – noch nie verbunden`;
+		case 'machine_unpaired':
+			return `Rechner „${c.machine}“ ist nicht gekoppelt`;
 		case 'halt_stop':
 			return 'Not-Aus aktiv — Fortsetzen mit :fortsetzen all';
 		case 'halt_pause':
@@ -461,10 +496,13 @@ function causeText(c: WaitCause): string {
 }
 
 /** The German sentence for the agent's context and the run panel; the board translates the codes instead. */
-const causesText = (causes: WaitCause[]) =>
-	causes[0].code === 'claim'
-		? 'wartet auf den nächsten Claim des Runners.'
-		: `wartet: ${causes.map(causeText).join(', ')}.`;
+function causesText(causes: WaitCause[]) {
+	const [first, ...rest] = causes;
+	if (first.code === 'claim') return 'wartet auf den nächsten Claim des Runners.';
+	if (!MACHINE_CAUSES.has(first.code)) return `wartet: ${causes.map(causeText).join(', ')}.`;
+	const also = rest.length ? ` Außerdem: ${rest.map(causeText).join(', ')}.` : '';
+	return `${causeText(first)}.${also} ${MACHINE_WAY_OUT}`;
+}
 
 /**
  * queued → running. Creates the run token and returns it in plain text exactly once, here; only its hash is stored.
@@ -515,7 +553,8 @@ WHERE r.state = 'queued'
 	AND NOT EXISTS (SELECT 1 FROM runner_halt)
 	AND (r.not_before IS NULL OR r.not_before <= ?3)
 	AND (SELECT count(*) FROM active) < ?1
-	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool), ?4)
+	AND (SELECT count(*) FROM active a WHERE a.pool = p.pool) < coalesce((SELECT value FROM json_each(?2) WHERE key = p.pool),
+		iif(substr(p.pool, 1, length(?5)) = ?5, 0, ?4))
 ORDER BY ${rank('r.priority')}, r.id LIMIT 1`;
 
 /**
@@ -526,8 +565,13 @@ export function claimRun(db: DatabaseSync, actor: Actor, limits: Limits, now = n
 	return tx(db, (emit) => {
 		const next = db
 			.prepare(CLAIM)
-			.get(limits.global, JSON.stringify(limits.pools), now.toISOString(), DEFAULT_POOL_SLOTS) as
-			{ id: number; ticketId: number; projectId: number; profileId: number } | undefined;
+			.get(
+				limits.global,
+				JSON.stringify(limits.pools),
+				now.toISOString(),
+				DEFAULT_POOL_SLOTS,
+				RUNNER_POOL_PREFIX
+			) as { id: number; ticketId: number; projectId: number; profileId: number } | undefined;
 		if (!next) return undefined;
 		const { profileId, ...claimed } = next;
 		return {

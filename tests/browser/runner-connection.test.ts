@@ -11,6 +11,7 @@ import {
 	rmSync,
 	writeFileSync
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,8 @@ import {
 	issuePairingCode,
 	pairRunner
 } from '../../src/lib/server/domain/runners.ts';
-import { expect, open, test } from './fixtures.ts';
+import { createProfile, createRun } from '../../src/lib/server/domain/runs.ts';
+import { expect, intoWorkStep, open, test } from './fixtures.ts';
 
 const ROOT = new URL('../..', import.meta.url);
 const MACHINE = 'browser-suite-connected-machine';
@@ -182,5 +184,63 @@ test('an unauthenticated upgrade with a malformed request target is refused and 
 		});
 		expect(reply).not.toContain('101');
 		expect((await fetch(`${baseURL}/login`)).status).toBe(200);
+	}
+});
+
+test('a queued run of a machine says live on the board and in the Run-Akte why it waits as the machine comes and goes', async ({
+	page,
+	browser,
+	db,
+	baseURL,
+	seedTicket
+}) => {
+	const machine = pairedMachine(db, baseURL!);
+	const ticket = seedTicket('Runs on the paired machine');
+	intoWorkStep(db, ticket.id);
+	const profile = createProfile(
+		db,
+		{ kind: 'user' },
+		{
+			name: `On the machine ${randomUUID()}`,
+			executor: 'builtin',
+			provider: 'anthropic',
+			model: 'm',
+			pool: `runner:${MACHINE}`
+		}
+	);
+	const run = createRun(db, { kind: 'user' }, { ticketId: ticket.id, profileId: profile.id }).id;
+	// held back, so the machine's hello does not start it: the wait reason is what changes
+	db.prepare("UPDATE runs SET not_before = '2999-01-01T00:00:00.000Z' WHERE id = ?").run(run);
+	const runAkte = await (await browser.newContext()).newPage();
+	let runner: Runner | undefined;
+	try {
+		await open(page, '/board');
+		await open(runAkte, ticket.path);
+		const row = page.locator('[data-ticket]:not([inert])', {
+			hasText: 'Runs on the paired machine'
+		});
+		const tab = runAkte
+			.getByRole('navigation', { name: 'Runs dieses Tickets' })
+			.getByRole('listitem')
+			.first();
+		await expect(row).toContainText(`Wartet auf Rechner „${MACHINE}“ – noch nie verbunden.`);
+		await expect(row).toContainText('den Run abbrechen und mit einem anderen Profil starten');
+		await expect(tab).toContainText(`Wartet auf Rechner „${MACHINE}“ – noch nie verbunden.`);
+
+		runner = machine.start();
+		await expect(row).toContainText('Wartet auf den nächsten Claim');
+		await expect(row).not.toContainText('Rechner');
+		await expect(tab).toContainText('wartet auf den nächsten Claim des Runners.');
+
+		runner.child.kill('SIGTERM');
+		expect(await runner.exit).toBe(0);
+		await expect(row).toContainText(`Wartet auf Rechner „${MACHINE}“ – nicht verbunden seit`);
+		await expect(tab).toContainText(`Wartet auf Rechner „${MACHINE}“ – nicht verbunden seit`);
+		await expect(tab).toContainText('kabai-studio runner start');
+	} finally {
+		runner?.child.kill('SIGKILL');
+		await runAkte.context().close();
+		disconnectRunner(db, machine.id);
+		rmSync(machine.home, { recursive: true, force: true });
 	}
 });
