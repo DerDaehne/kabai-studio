@@ -19,7 +19,7 @@ import { disconnectRunner, issuePairingCode, pairRunner } from './domain/runners
 import { subscribe } from './events';
 import { createRunnerChannel, type RunnerChannel } from './runner-channel';
 import { CREDENTIAL_FILE, FLOOR_FILE } from './runner-pair';
-import { CLOSE, DEAD_AFTER_MS, DEAD_MAN_MS } from './runner-protocol';
+import { CLOSE, DEAD_AFTER_MS, DEAD_MAN_GRACE_MS, DEAD_MAN_MS } from './runner-protocol';
 import {
 	MAX_BACKOFF_MS,
 	MIN_BACKOFF_MS,
@@ -635,8 +635,9 @@ describe('the agents of this machine', () => {
 			await running;
 		});
 
-		it('ends every agent tree when no welcome comes within 30 s', async () => {
-			vi.advanceTimersByTime(DEAD_MAN_MS - 1);
+		it('ends every agent tree when no welcome comes within 30 s, a deadline the server relies on', async () => {
+			expect([DEAD_MAN_MS, DEAD_MAN_GRACE_MS]).toEqual([30_000, 10_000]);
+			vi.advanceTimersByTime(29_999);
 			await realPause(300);
 			expect(await aliveOf(tree)).toHaveLength(4);
 			expect(deadManLines()).toEqual([]);

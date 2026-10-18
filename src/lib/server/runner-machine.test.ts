@@ -16,7 +16,7 @@ import * as runs from './domain/runs';
 import type { Executor, ExecutorFacts, RunContext } from './executors/contract';
 import { limits, startRunner, type ApprovalPolicy } from './runner';
 import { installRunnerChannel, type RunnerChannel } from './runner-channel';
-import { subscribe } from './events';
+import { publish, subscribe } from './events';
 import { DEAD_MAN_GRACE_MS, DEAD_MAN_MS } from './runner-protocol';
 
 const user: Actor = { kind: 'user' };
@@ -362,6 +362,42 @@ describe('the server dead-man for a lost machine', () => {
 		expect(causeCodes(m.queued)).toEqual(['machine_offline']);
 		expect(m.s.state(m.cloud)).toBe('running');
 		expect(m.fake.call(m.cloud).io.signal.aborted).toBe(false);
+	});
+
+	it('leaves the runs of another machine alone when one machine is lost', async () => {
+		const s = setup();
+		const fake = hangingExecutor();
+		start(fake.executor);
+		const otherPool = runs.createProfile(db, user, {
+			name: 'runner:other',
+			executor: 'builtin',
+			provider: 'anthropic',
+			model: 'm',
+			pool: 'runner:other'
+		}).id;
+		const lostRun = s.queue(s.machinePool);
+		const otherRun = s.queue(otherPool);
+		const lostSocket = await connect(pair().credential, 1);
+		await connect(pair('other').credential, 1);
+		await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
+
+		await lose(lostSocket);
+		vi.advanceTimersByTime(DEADLINE_MS);
+		await flush();
+
+		expect([lostRun, otherRun].map(s.state)).toEqual(['failed', 'running']);
+		expect(fake.call(otherRun).io.signal.aborted).toBe(false);
+	});
+
+	it('keeps the runs when a second disconnect arrives before the machine is back', async () => {
+		const m = await busyMachine();
+		await lose(m.socket);
+		vi.advanceTimersByTime(5000);
+		publish({ type: 'machine.disconnected', actor: system, name: MACHINE });
+		await connect(m.credential, 2);
+		vi.advanceTimersByTime(10 * DEADLINE_MS);
+		await flush();
+		expect([m.running, m.waiting].map(m.s.state)).toEqual(['running', 'waiting_approval']);
 	});
 
 	it('lets the runs go on when the machine is back after 39 s', async () => {

@@ -108,6 +108,53 @@ describe('killTree against a given process table', () => {
 		});
 	});
 
+	it('neither signals nor searches below a captured PID that another process reuses, and spares its child', async () => {
+		const { signals, kill } = recorder();
+		const ps = psSequence(
+			[
+				[1, 0, BOOT],
+				[500, 1, 'Sun Oct 18 17:00:00 2026'],
+				[501, 500, 'Sun Oct 18 17:00:01 2026'],
+				[502, 501, 'Sun Oct 18 17:00:02 2026']
+			],
+			[
+				[1, 0, BOOT],
+				[502, 1, 'Sun Oct 18 17:00:02 2026'],
+				[501, 1, 'Sun Oct 18 17:00:09 2026'], // 501 died, its PID is reused
+				[777, 501, 'Sun Oct 18 17:00:10 2026']
+			]
+		);
+
+		await killTree(500, { ps, kill, graceMs: 0 });
+
+		expect(signals).toEqual([
+			[500, 'SIGTERM'],
+			[502, 'SIGKILL']
+		]);
+	});
+
+	it('counts a zombie as ended, in the Linux and the BSD stat notation', async () => {
+		const { signals, kill } = recorder();
+		const row = (pid: number, ppid: number, stat: string) =>
+			`  ${pid}  ${ppid} ${stat.padEnd(4)} Sun Oct  4 09:06:4${pid % 10} 2026`;
+		const table = [
+			row(1, 0, 'Ss'),
+			row(500, 1, 'S+'),
+			row(501, 500, 'Z'),
+			row(502, 500, 'Z+'),
+			row(503, 500, 'S')
+		].join('\n');
+
+		const result = await killTree(500, { ps: async () => table, kill, graceMs: 0 });
+
+		expect(result.tree).toEqual([500, 503]);
+		expect(signals).toEqual([
+			[500, 'SIGTERM'],
+			[500, 'SIGKILL'],
+			[503, 'SIGKILL']
+		]);
+	});
+
 	it('never signals init or this process, even when a corrupt table puts them below the agent', async () => {
 		const { signals, kill } = recorder();
 		const table: [number, number, string][] = [
