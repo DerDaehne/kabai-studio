@@ -217,7 +217,7 @@ test.describe('the facet in the address', () => {
 		await expect(selectedTab(page)).toContainText('spur');
 
 		await page.goBack();
-		await expect(page).toHaveURL('/board');
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Board'); // a forward during the turn back is lost
 		await page.goForward();
 		await expect(page).toHaveURL(`${ticket.path}?facet=spur`);
 		await expect(selectedTab(page)).toContainText('spur');
@@ -263,6 +263,22 @@ test.describe('the facet in the address', () => {
 		await open(page, `${asking.path}?facet=akte`);
 		await expect(selectedTab(page)).toContainText('akte');
 	});
+});
+
+test('a live change leaves the facet in front where it is, even when the default would now be another', async ({
+	page,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	const ticket = seedTicket('Stays where it is');
+	await open(page, ticket.path);
+	await expect(selectedTab(page)).toContainText('akte');
+
+	await askingTicket(page, db, fakeModel, ticket);
+	await expect(tab(page, /^frage/)).toBeVisible();
+	await expect(selectedTab(page)).toContainText('akte');
+	await expect(page).toHaveURL(ticket.path);
 });
 
 test.describe('the file facet', () => {

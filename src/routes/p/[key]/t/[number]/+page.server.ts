@@ -1,6 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
-import { LIVE_DEPENDENCY, ticketDependency } from '$lib/live';
 import { ticketHref } from '$lib/links';
+import { LIVE_DEPENDENCY, ticketDependency } from '$lib/live';
 import { domainFail } from '$lib/server/domain-failure';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -120,7 +120,8 @@ export const actions: Actions = {
 		const profileId = Number(field(await request.formData(), 'profileId'));
 		const refused = mutate('start', () => startTicket(db(), HUMAN, id, profileId));
 		if (refused) return refused;
-		redirect(303, ticketHref(params.key, params.number, { facet: 'spur' })); // without ?run= the trace shows the newest run, the one just started
+		// without ?run= the trace shows the newest run, the one just started
+		redirect(303, ticketHref(params.key, params.number, { facet: 'spur' }));
 	},
 	stop: async ({ request, params }) => {
 		const id = requireTicketId(params);

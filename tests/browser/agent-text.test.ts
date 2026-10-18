@@ -46,7 +46,9 @@ test('the Run-Akte shows comment, step message and final report as markdown, hea
 	await page.setViewportSize({ width: 375, height: 800 });
 	await open(page, ticket.path);
 
-	for (const scope of ['.comments', '.message', '.report']) {
+	const facetOf = { '.comments': /^akte/, '.message': /^spur/, '.report': /^spur/ };
+	for (const [scope, facet] of Object.entries(facetOf)) {
+		await page.getByRole('tab', { name: facet }).click();
 		await expectRendered(page.locator(scope));
 		await expect(
 			page.locator(scope).getByRole('heading', { name: 'Findings', level: 4 })

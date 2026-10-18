@@ -39,7 +39,7 @@ const QUESTION = 'Ship now or wait for review?';
 // Measured 0.2–1.1 s for the live updates this walk waits for; well above that to stay clear of a loaded machine.
 const LIVE = { timeout: 15_000 };
 
-const spurOf = (page: Page) => page.getByRole('region', { name: 'Spur' });
+const spurOf = (page: Page) => page.getByRole('tabpanel', { name: /^spur/ });
 const tabsOf = (page: Page) =>
 	page.getByRole('navigation', { name: 'Runs dieses Tickets' }).getByRole('listitem');
 
@@ -143,7 +143,7 @@ test('the whole product works keyboard-only end to end: a new project and ticket
 	const askingRunId = await askAndAnswerQuestion(page, db, ticket, fakeModel);
 
 	await page.goBack();
-	await expect(page).toHaveURL(ticket.path);
+	await expect(page).toHaveURL(`${ticket.path}?facet=spur`);
 	await expect(tabsOf(page).first()).toContainText('Fortsetzung nach deiner Antwort', LIVE);
 	await resumeAnsweredRun(page, db, askingRunId);
 	await expect(tabsOf(page).first()).toContainText('läuft', LIVE);
@@ -339,7 +339,7 @@ test.describe('on a phone', () => {
 		expect(await pageOverflowPx(page)).toBeLessThanOrEqual(0);
 
 		await page.goBack();
-		await expect(page).toHaveURL(ticket.path);
+		await expect(page).toHaveURL(`${ticket.path}?facet=spur`);
 		await expect(tabsOf(page).first()).toContainText('Fortsetzung nach deiner Antwort', LIVE);
 		await resumeAnsweredRun(page, db, askingRunId);
 		await expect(tabsOf(page).first()).toContainText('läuft', LIVE);

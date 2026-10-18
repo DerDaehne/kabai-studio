@@ -14,6 +14,6 @@ test('a task added in one browser appears in a second browser on the same ticket
 	await page.getByLabel('Neuer Task').fill('Tag the build');
 	await page.getByRole('button', { name: 'Anlegen (o)' }).click();
 
-	await expect(other.getByRole('button', { name: '[ ] Tag the build' })).toBeVisible();
+	await expect(other.getByRole('checkbox', { name: 'Tag the build' })).toBeVisible();
 	await otherContext.close();
 });

@@ -36,7 +36,10 @@
 
 	let { data, form }: PageProps = $props();
 	const ticket = $derived(data.ticket);
-	const { searchParams } = $derived(page.url);
+	const ticketId = $derived(ticket.id);
+	// a string, so a reload that leaves the address as it is does not count as a change of address
+	const search = $derived(page.url.search);
+	const searchParams = $derived(new URLSearchParams(search));
 	const address = $derived(page.params as { key: string; number: string });
 
 	const locale = $derived(page.data.locale);
@@ -112,7 +115,7 @@
 
 	// Another ticket, run or facet in the address (a link, back, forward) brings its own facet in front.
 	$effect.pre(() => {
-		void [ticket.id, searchParams];
+		void [ticketId, search];
 		active = untrack(opening);
 	});
 	// An answered question takes its facet away; the one that took its place moves to the front.
@@ -319,9 +322,8 @@
 		<ul class="rk-rows relations">
 			{#each items as rel (rel.ref)}
 				<li>
-					<span
-						><b>{rel.ref}</b>{#if rel.title}
-							{rel.title}{/if}</span
+					<span class="relation"
+						><b>{rel.ref}</b>{#if rel.title}<span>{rel.title}</span>{/if}</span
 					>
 					<span class="rk-actions">
 						{#if rel.column}<Tag>{rel.column}</Tag>{/if}
@@ -579,6 +581,14 @@
 		display: grid;
 		justify-content: stretch;
 		gap: var(--space-1);
+	}
+	.relation {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 0 var(--space-2);
+	}
+	h3 {
+		margin: var(--space-4) 0 var(--space-2);
 	}
 	.relation-group {
 		margin: var(--space-3) 0 var(--space-1);
