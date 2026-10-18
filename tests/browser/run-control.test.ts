@@ -183,6 +183,7 @@ test('a run halts in its Run-Akte while the run of another ticket keeps working,
 
 	await expectToast(page, `${halted} angehalten. :fortsetzen setzt ihn fort.`);
 	await expect(tabs.first()).toContainText(`${halted} angehalten`);
+	await page.getByRole('tab', { name: /^spur/ }).click();
 	await expect(page.getByText('angehalten — :fortsetzen setzt ihn fort')).toBeVisible();
 	// the run of the other ticket is the one agent still at work
 	await expect(appBarOf(page).getByText('arbeitet', { exact: true })).toBeVisible();

@@ -23,11 +23,14 @@ export const isTicketPath = (path: string): boolean => /^\/p\/[^/]+\/t\/\d+/.tes
 
 /**
  * The facet in front when a Run-Akte opens: the one `?facet=` names when the ticket has it, else the open question,
- * else the trace of the run `?run=` names, else the file itself.
+ * else the trace (of the run `?run=` names, else of the newest) once the ticket has a run, else the file itself.
  */
-export function openingFacet(search: URLSearchParams, hasQuestion: boolean): TicketFacet {
+export function openingFacet(
+	search: URLSearchParams,
+	ticket: { hasQuestion: boolean; hasRuns: boolean }
+): TicketFacet {
 	const named = search.get('facet');
-	if (isTicketFacet(named) && (named !== 'frage' || hasQuestion)) return named;
-	if (hasQuestion) return 'frage';
-	return search.has('run') ? 'spur' : 'akte';
+	if (isTicketFacet(named) && (named !== 'frage' || ticket.hasQuestion)) return named;
+	if (ticket.hasQuestion) return 'frage';
+	return ticket.hasRuns || search.has('run') ? 'spur' : 'akte';
 }

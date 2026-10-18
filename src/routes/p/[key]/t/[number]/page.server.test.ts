@@ -20,6 +20,7 @@ const user: Actor = { kind: 'user' };
 const projectId = board.createProject(db(), user, { key: 'STU', name: 'Studio' }).id;
 const params = (number: number) => ({ key: 'STU', number: String(number) });
 const noop = () => {};
+const cookies = { get: (): string | undefined => undefined };
 
 function thrown(fn: () => unknown): unknown {
 	try {
@@ -48,12 +49,12 @@ async function loadTicket(
 	depends: (...deps: string[]) => void = noop
 ): Promise<{ ticket: TicketDetail; trace?: RunTrace }> {
 	const url = new URL(`http://localhost/p/STU/t/${number}${search}`);
-	return load({ params: params(number), url, depends } as never) as never;
+	return load({ params: params(number), url, depends, cookies } as never) as never;
 }
 
 describe('load', () => {
 	it('404s with a message naming the missing ticket, so +error.svelte has something to show', () => {
-		const err = thrown(() => load({ params: params(999), depends: noop } as never));
+		const err = thrown(() => load({ params: params(999), depends: noop, cookies } as never));
 		expect(err).toMatchObject({
 			status: 404,
 			body: { message: expect.stringContaining('STU-999') }
@@ -221,3 +222,29 @@ function findColumn(ticketId: number, name: string): number {
 		.prepare('SELECT id FROM columns WHERE project_id = ? AND name = ?')
 		.get(t.project_id, name)!.id as number;
 }
+
+describe('load for the file frame', () => {
+	const flowCookie = { get: (name: string) => (name === 'studio-board-view' ? 'flow' : undefined) };
+	const flowOf = (number: number, jar: { get: (name: string) => string | undefined }) =>
+		(
+			load({
+				params: params(number),
+				url: new URL(`http://localhost/p/STU/t/${number}`),
+				depends: noop,
+				cookies: jar
+			} as never) as unknown as { flow: boolean }
+		).flow;
+
+	it('carries the expert view of the board, so the column name shows only when the human asked for it', () => {
+		const { number } = board.createTicket(db(), user, projectId, { title: 'Flow' });
+		expect(flowOf(number, flowCookie)).toBe(true);
+		expect(flowOf(number, cookies)).toBe(false);
+	});
+
+	it('reads the Lage and the phase of the ticket, so the facts line names where it stands', async () => {
+		const { number } = board.createTicket(db(), user, projectId, { title: 'Lage' });
+		const { ticket } = await loadTicket(number);
+		expect(ticket.lage).toMatchObject({ lage: 'open', reason: { kind: 'not_prioritized' } });
+		expect(ticket.column.phase).toBe('open');
+	});
+});

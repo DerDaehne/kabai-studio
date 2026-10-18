@@ -24,7 +24,6 @@ const NOT_YET_MIGRATED = new Set([
 	'src/routes/dev/ui/+page.svelte',
 	'src/routes/dev/ui/PivotShowcase.svelte',
 	'src/routes/dev/ui/RektaShowcase.svelte',
-	'src/routes/p/[key]/t/[number]/+page.svelte',
 	'src/routes/settings/+page.svelte',
 	'src/routes/settings/profiles/+page.svelte',
 	'src/routes/settings/profiles/[id]/+page.svelte',

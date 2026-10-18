@@ -1,9 +1,17 @@
 // Renders the page server-side: $effect does not run here, so key bindings and live updates are not reachable
 // from this test (a known Vitest/Svelte-server-runtime gap) — those are covered by a headless-browser check instead.
 import { render } from 'svelte/server';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { TicketDetail } from '$lib/server/ticket-view';
 import Page from './+page.svelte';
+
+vi.mock('$app/state', () => ({
+	page: {
+		data: { locale: 'en' },
+		url: new URL('http://studio.test/p/STU/t/1'),
+		params: { key: 'STU', number: '1' }
+	}
+}));
 
 const base: TicketDetail = {
 	id: 1,
@@ -12,7 +20,16 @@ const base: TicketDetail = {
 	title: 'Beispiel-Ticket',
 	description: '**fett** <script>alert(1)</script> [klick](javascript:alert(1))',
 	type: 'ticket',
-	column: { id: 10, name: 'In Arbeit', position: 3 },
+	column: { id: 10, name: 'In Arbeit', phase: 'work', position: 3 },
+	lage: {
+		ticketId: 1,
+		projectId: 1,
+		step: 'implement',
+		variant: 'software',
+		lage: 'waiting',
+		reason: { kind: 'failure' },
+		progress: { index: 2, total: 4 }
+	},
 	tasks: [
 		{ id: 1, title: 'Erledigt', done: true },
 		{ id: 2, title: 'Offen', done: false }
@@ -62,17 +79,36 @@ const base: TicketDetail = {
 };
 
 // the run control (tabs, start) has its own tests; here it renders with no run and no profile
-const noRuns = { runs: [], start: { profiles: [] } };
-const page = (ticket: TicketDetail, form: unknown = null) =>
-	render(Page, { props: { data: { ticket, ...noRuns }, form } as any }).body;
+const noRuns = { runs: [], start: { profiles: [] }, flow: false };
+const page = (ticket: TicketDetail, form: unknown = null, flow = false) =>
+	render(Page, { props: { data: { ticket, ...noRuns, flow }, form } as any }).body;
 
-it('shows the crumb to the board, the project and ref, title and current column', () => {
+it('shows the crumb to the board, the kicker with project and ref, and one bold title', () => {
 	const body = page(base);
-	expect(body).toContain('STU');
 	expect(body).toContain('Board');
-	expect(body).toContain('STU-1');
-	expect(body).toContain('Beispiel-Ticket');
-	expect(body).toContain('In Arbeit');
+	expect(body).toMatch(/class="rk-kicker[^"]*"[\s\S]*STU[\s\S]*STU-1/);
+	expect(body.match(/<h1[^>]*>/g)).toHaveLength(1);
+	expect(body).toMatch(/<h1 class="rk-title[^"]*">Beispiel-Ticket<\/h1>/);
+});
+
+it('puts the Lage with its reason and the step under the title, and the column only in the expert view', () => {
+	const facts = (body: string) => body.match(/<p class="rk-facts[^"]*"[\s\S]*?<\/p>/)![0];
+	expect(facts(page(base))).toMatch(/Waiting for you · Run failed/);
+	expect(facts(page(base))).toContain('Step 2 of 4');
+	expect(facts(page(base))).toContain('implementation');
+	expect(facts(page(base))).not.toContain('In Arbeit');
+	expect(facts(page(base, null, true))).toContain('Column In Arbeit');
+});
+
+it('offers the facets trace, file and runs, and question only while one is open', () => {
+	const names = (body: string) =>
+		[...body.matchAll(/role="tab"[^>]*>\s*([a-z]+)/g)].map((match) => match[1]);
+	expect(names(page(base))).toEqual(['trace', 'file', 'runs']);
+	const asked = page({
+		...base,
+		openQuestion: { id: 1, question: 'Weiter so?', options: [], answer: null }
+	});
+	expect(names(asked)).toEqual(['question', 'trace', 'file', 'runs']);
 });
 
 it('renders the description as markdown and never as executable HTML or a javascript: link', () => {
@@ -83,18 +119,20 @@ it('renders the description as markdown and never as executable HTML or a javasc
 	expect(body).not.toMatch(/href="\s*javascript:/i);
 });
 
-it('lists tasks with their done state and offers rename/delete', () => {
+it('shows each task as a switch that is on when done, and offers rename and delete', () => {
 	const body = page(base);
-	expect(body).toMatch(/\[x\][^<]*Erledigt/);
-	expect(body).toMatch(/\[ \][^<]*Offen/);
-	expect(body).toContain('>Umbenennen<');
-	expect(body).toContain('>Löschen<');
+	expect(body).toMatch(/<label class="rk-switch"><input type="checkbox" checked[^>]*>\s*Erledigt/);
+	expect(body).toMatch(
+		/<label class="rk-switch"><input type="checkbox"(?![^>]*checked)[^>]*>\s*Offen/
+	);
+	expect(body).toContain('>Rename<');
+	expect(body).toContain('>Delete<');
 });
 
 it('tells user, agent and system comments apart with a distinct icon plus text, and names the run on an agent comment', () => {
 	const body = page(base);
-	expect(body).toContain('Mensch');
-	expect(body).toMatch(/Agent[^<]*Run 5/);
+	expect(body).toContain('Human');
+	expect(body).toMatch(/Agent · Run 5/);
 	expect(body).toContain('System');
 	expect(body).toContain('Bitte prüfen.');
 
@@ -108,11 +146,11 @@ it('tells user, agent and system comments apart with a distinct icon plus text, 
 	expect(new Set(icons).size).toBe(3); // user, agent, system each get a different glyph
 });
 
-it('groups relations under a German label and marks a still-blocking predecessor', () => {
+it('groups relations under a label and marks a still-blocking predecessor', () => {
 	const body = page(base);
-	expect(body).toMatch(/Wartet auf[\s\S]*STU-2[\s\S]*Vorgänger/);
-	expect(body).toContain('blockiert noch');
-	expect(body).toMatch(/Kinder[\s\S]*STU-3/);
+	expect(body).toMatch(/Waits for[\s\S]*STU-2[\s\S]*Vorgänger/);
+	expect(body).toContain('still blocking');
+	expect(body).toMatch(/Children[\s\S]*STU-3/);
 });
 
 it('offers every allowedMoves target, a button for the open one, the reason for the blocked one', () => {
@@ -130,7 +168,7 @@ it('highlights an open question above the fold with a link to the Takt', () => {
 	});
 	expect(withQuestion).toContain('Weiter so?');
 	expect(withQuestion).toContain('href="/takt"');
-	expect(page(base)).not.toContain('Offene Frage');
+	expect(page(base)).not.toContain('Open question');
 });
 
 // Errors offer a way out: every refused action shows message AND hint, not just one of the two. All five forms
@@ -150,12 +188,12 @@ it.each(['addTask', 'addComment', 'move', 'update'])(
 
 it('offers a delete confirmation dialog naming the ticket, not a silent delete', () => {
 	const body = page(base);
-	expect(body).toContain('Ticket löschen');
-	expect(body).toMatch(/STU-1[\s\S]*Beispiel-Ticket[\s\S]*unwiderruflich/);
+	expect(body).toContain('Delete ticket');
+	expect(body).toMatch(/STU-1[\s\S]*Beispiel-Ticket[\s\S]*cannot be undone/);
 	expect(body).toContain('action="?/delete"');
 });
 
-it('shows the loaded run in the Spur area, and an empty state before the first run', () => {
+it('shows the loaded run in the trace facet, and an empty state before the first run', () => {
 	const events = [
 		{ seq: 1, type: 'message', key: 'step:1:message', payload: { step: 1, text: 'Ich lese.' } }
 	];
@@ -169,7 +207,7 @@ it('shows the loaded run in the Spur area, and an empty state before the first r
 			form: null
 		} as any
 	}).body;
-	expect(withRun).toMatch(/id="h-spur"[\s\S]*Run 3[\s\S]*Ich lese\./);
-	expect(withRun).not.toContain('Noch kein Run');
-	expect(page(base)).toContain('Noch kein Run');
+	expect(withRun).toMatch(/Run 3[\s\S]*Ich lese\./);
+	expect(withRun).not.toContain('No run yet');
+	expect(page(base)).toContain('No run yet');
 });

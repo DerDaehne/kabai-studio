@@ -1,3 +1,4 @@
+import { globSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isTicketFacet, isTicketPath, openingFacet, ticketHref } from './links';
 
@@ -35,24 +36,36 @@ describe('isTicketFacet', () => {
 
 describe('openingFacet', () => {
 	const search = (query: string) => new URLSearchParams(query);
+	const bare = { hasQuestion: false, hasRuns: false };
 
-	it('opens on the file without an address hint and without a question', () => {
-		expect(openingFacet(search(''), false)).toBe('akte');
+	it('opens on the file while the ticket has no run and no question', () => {
+		expect(openingFacet(search(''), bare)).toBe('akte');
 	});
 
-	it('opens on the open question, even when a run is named', () => {
-		expect(openingFacet(search(''), true)).toBe('frage');
-		expect(openingFacet(search('run=4'), true)).toBe('frage');
+	it('opens on the open question, even when a run is named or exists', () => {
+		const asking = { hasQuestion: true, hasRuns: true };
+		expect(openingFacet(search(''), asking)).toBe('frage');
+		expect(openingFacet(search('run=4'), asking)).toBe('frage');
 	});
 
-	it('opens on the trace when a run is named', () => {
-		expect(openingFacet(search('run=4'), false)).toBe('spur');
+	it('opens on the trace once the ticket has a run, or a run is named', () => {
+		expect(openingFacet(search(''), { ...bare, hasRuns: true })).toBe('spur');
+		expect(openingFacet(search('run=4'), bare)).toBe('spur');
 	});
 
 	it('follows ?facet= over every default, but not to a question that is not there', () => {
-		expect(openingFacet(search('facet=runs'), true)).toBe('runs');
-		expect(openingFacet(search('run=4&facet=akte'), false)).toBe('akte');
-		expect(openingFacet(search('facet=frage'), false)).toBe('akte');
-		expect(openingFacet(search('facet=nonsense'), false)).toBe('akte');
+		expect(openingFacet(search('facet=runs'), { hasQuestion: true, hasRuns: true })).toBe('runs');
+		expect(openingFacet(search('run=4&facet=akte'), bare)).toBe('akte');
+		expect(openingFacet(search('facet=frage'), bare)).toBe('akte');
+		expect(openingFacet(search('facet=nonsense'), bare)).toBe('akte');
+	});
+});
+
+describe('the address of a ticket', () => {
+	it('is built in links.ts only, so a change of the address touches one file', () => {
+		const builders = globSync('src/**/*.{ts,svelte}')
+			.filter((file) => !file.endsWith('src/lib/links.ts') && !file.endsWith('.test.ts'))
+			.filter((file) => /\/p\/[^`'"\s]*\/t\//.test(readFileSync(file, 'utf8')));
+		expect(builders).toEqual([]);
 	});
 });

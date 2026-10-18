@@ -1,5 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import { LIVE_DEPENDENCY, ticketDependency } from '$lib/live';
+import { ticketHref } from '$lib/links';
 import { domainFail } from '$lib/server/domain-failure';
 import * as board from '$lib/server/domain/board';
 import type { Actor } from '$lib/server/domain/core';
@@ -14,6 +15,7 @@ import {
 	runTrace,
 	ticketDetail
 } from '$lib/server/ticket-view';
+import { FLOW_COOKIE } from '../../../../board/list';
 import type { Actions, PageServerLoad } from './$types';
 
 // Studio has one owner account; every action in the Run-Akte acts for the human (see CLAUDE.md "Architecture guardrails").
@@ -26,7 +28,7 @@ function requireTicketId(params: { key: string; number: string }): number {
 	return id;
 }
 
-export const load: PageServerLoad = ({ params, url, depends }) => {
+export const load: PageServerLoad = ({ params, url, cookies, depends }) => {
 	const id = requireTicketId(params);
 	// a reconnect reloads the live state; the trace has no replay of the run events it missed, so it reloads with it
 	depends(ticketDependency(id), LIVE_DEPENDENCY);
@@ -34,6 +36,7 @@ export const load: PageServerLoad = ({ params, url, depends }) => {
 	return {
 		ticket,
 		trace: selectedTrace(id, url),
+		flow: cookies.get(FLOW_COOKIE) === 'flow',
 		runs: runTabs(db(), id),
 		start: runStart(db(), ticket.project.id)
 	};
@@ -112,12 +115,12 @@ export const actions: Actions = {
 		const columnId = Number(field(await request.formData(), 'columnId'));
 		return mutate('move', () => board.moveTicket(db(), HUMAN, id, columnId));
 	},
-	start: async ({ request, params, url }) => {
+	start: async ({ request, params }) => {
 		const id = requireTicketId(params);
 		const profileId = Number(field(await request.formData(), 'profileId'));
 		const refused = mutate('start', () => startTicket(db(), HUMAN, id, profileId));
 		if (refused) return refused;
-		redirect(303, url.pathname); // without ?run= the trace shows the newest run, the one just started
+		redirect(303, ticketHref(params.key, params.number, { facet: 'spur' })); // without ?run= the trace shows the newest run, the one just started
 	},
 	stop: async ({ request, params }) => {
 		const id = requireTicketId(params);

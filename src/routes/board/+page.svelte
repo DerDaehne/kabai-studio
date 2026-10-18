@@ -151,7 +151,9 @@
 
 	function toggleFlow() {
 		flowChoice = !flow;
-		document.cookie = `${FLOW_COOKIE}=${flowChoice ? 'flow' : 'lage'}; path=/board; max-age=31536000; samesite=lax`;
+		// the choice used to be kept for /board only, and that older cookie would outrank this one there
+		document.cookie = `${FLOW_COOKIE}=; path=/board; max-age=0`;
+		document.cookie = `${FLOW_COOKIE}=${flowChoice ? 'flow' : 'lage'}; path=/; max-age=31536000; samesite=lax`;
 		void focusRow(current?.id);
 	}
 

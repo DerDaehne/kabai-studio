@@ -17,6 +17,7 @@ import {
 	type WaitReason
 } from './domain/runs';
 import { limits } from './runner';
+import { ticketLage, type TicketLage } from './lagen';
 
 export type TicketComment = {
 	id: number;
@@ -43,7 +44,9 @@ export type TicketDetail = {
 	title: string;
 	description: string;
 	type: 'ticket' | 'epic';
-	column: { id: number; name: string; position: number };
+	column: { id: number; name: string; phase: Phase; position: number };
+	/** Where the ticket stands for the human; absent only when its project is archived. */
+	lage?: TicketLage;
 	tasks: ReturnType<typeof board.tasksOf>;
 	comments: TicketComment[];
 	relations: Record<string, RelatedTicket[]>;
@@ -57,13 +60,14 @@ type TicketExtra = {
 	projectKey: string;
 	projectName: string;
 	columnPosition: number;
+	columnPhase: Phase;
 };
 
 /** Fields `board.ticket` leaves out (it exists for rule checks, not display): editable content and the project/column names. */
 function ticketExtra(db: DatabaseSync, t: board.Ticket): TicketExtra {
 	return db
 		.prepare(
-			`SELECT t.title, t.description, p.key AS projectKey, p.name AS projectName, c.position AS columnPosition
+			`SELECT t.title, t.description, p.key AS projectKey, p.name AS projectName, c.position AS columnPosition, c.phase AS columnPhase
 			FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id
 			WHERE t.id = ?`
 		)
@@ -122,7 +126,13 @@ export function ticketDetail(db: DatabaseSync, actor: Actor, ticketId: number): 
 		title: extra.title,
 		description: extra.description,
 		type: t.type,
-		column: { id: t.column_id, name: t.column_name, position: extra.columnPosition },
+		column: {
+			id: t.column_id,
+			name: t.column_name,
+			phase: extra.columnPhase,
+			position: extra.columnPosition
+		},
+		lage: ticketLage(db, t.id),
 		tasks: board.tasksOf(db, t.id),
 		comments: commentsOf(db, t.id),
 		relations: relationsOf(db, ctx, t.id),

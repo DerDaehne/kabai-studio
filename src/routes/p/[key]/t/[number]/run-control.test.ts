@@ -64,7 +64,12 @@ async function post(action: 'start' | 'stop', number: number, fields: Record<str
 type Shown = { runs: RunTab[]; start: RunStart; trace?: RunTrace };
 /** What a tab of the Run-Akte loads, on its first visit and on every live reload. */
 const shown = (number: number): Shown =>
-	load({ params: params(number), url: urlOf(number), depends: () => {} } as never) as never;
+	load({
+		params: params(number),
+		url: urlOf(number),
+		depends: () => {},
+		cookies: { get: () => undefined }
+	} as never) as never;
 
 const priorityOf = (runId: number) =>
 	db().prepare('SELECT priority FROM runs WHERE id = ?').get(runId)!.priority;
@@ -97,7 +102,7 @@ describe('start', () => {
 
 		await expect(
 			post('start', number, { profileId: String(start.preselected) })
-		).rejects.toMatchObject({ status: 303, location: `/p/RUN/t/${number}` });
+		).rejects.toMatchObject({ status: 303, location: `/p/RUN/t/${number}?facet=spur` });
 
 		const [started] = shown(number).runs;
 		expect(started).toMatchObject({ state: 'queued', profile: `Profil ${profileCount}` });
