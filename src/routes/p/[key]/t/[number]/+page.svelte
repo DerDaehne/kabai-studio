@@ -134,7 +134,7 @@
 			<p>{question.lead}</p>
 		</div>
 		{#if question.rest}<AgentText text={question.rest} />{/if}
-		<a class="btn btn-sm" href="/takt">In Takt beantworten (gt)</a>
+		<a class="rk-btn" href="/takt">In Takt beantworten (gt)</a>
 	</div>
 {/if}
 

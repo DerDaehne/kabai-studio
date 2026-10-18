@@ -1,50 +1,47 @@
 <script lang="ts" module>
 	/** Attributes the input element must take over: `{#snippet children(a)}<input {...a} />{/snippet}` */
-	export type FieldAttrs = { id: string; 'aria-describedby'?: string; 'aria-invalid'?: 'true' };
+	export type FieldAttrs = {
+		id: string;
+		class: 'rk-input';
+		'aria-describedby'?: string;
+		'aria-invalid'?: 'true';
+	};
 </script>
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { t } from '$lib/i18n/t';
 
 	let {
 		label,
 		hint,
 		error,
+		optional = false,
 		children
-	}: { label: string; hint?: string; error?: string; children: Snippet<[FieldAttrs]> } = $props();
+	}: {
+		label: string;
+		hint?: string;
+		error?: string;
+		/** Required fields carry no mark; an optional one says so in its label. */
+		optional?: boolean;
+		children: Snippet<[FieldAttrs]>;
+	} = $props();
 	const id = $props.id();
-	const describedby = $derived(
-		[hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(' ') || undefined
-	);
+	// the hint turns into the error, in the same place and the same element
+	const note = $derived(error ?? hint);
+	const noteId = $derived(`${id}-${error ? 'error' : 'hint'}`);
 </script>
 
-<div class="field">
-	<label for={id}>{label}</label>
+<div class="rk-field" data-status={error ? 'error' : undefined}>
+	<label class="rk-label" for={id}
+		>{label}{#if optional}{' '}
+			<span class="rk-optional">{t('form.optional')}</span>{/if}</label
+	>
 	{@render children({
 		id,
-		'aria-describedby': describedby,
+		class: 'rk-input',
+		'aria-describedby': note ? noteId : undefined,
 		'aria-invalid': error ? 'true' : undefined
 	})}
-	{#if hint}<p id="{id}-hint" class="hint">{hint}</p>{/if}
-	{#if error}<p id="{id}-error" class="error">{error}</p>{/if}
+	{#if note}<p id={noteId} class="rk-hint">{note}</p>{/if}
 </div>
-
-<style>
-	.field {
-		display: grid;
-		gap: var(--space-1);
-	}
-	label {
-		font-size: var(--text-sm);
-		font-weight: var(--weight-semibold);
-	}
-	.hint,
-	.error {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-	}
-	.error {
-		color: var(--status-failed);
-		font-weight: var(--weight-semibold);
-	}
-</style>

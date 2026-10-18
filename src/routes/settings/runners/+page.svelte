@@ -109,7 +109,7 @@
 				<!-- svelte-ignore a11y_autofocus -->
 				<textarea
 					{...attrs}
-					class="mono command"
+					class={[attrs.class, 'mono command']}
 					rows="2"
 					readonly
 					spellcheck="false"

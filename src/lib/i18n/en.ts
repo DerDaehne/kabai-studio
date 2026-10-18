@@ -27,6 +27,13 @@ export const en = {
 
 	'layout.attribution': 'by {author} · Free software, {licence}',
 
+	'form.optional': '(optional)',
+	'form.errors.one': '1 field needs attention',
+	'form.errors.many': '{count} fields need attention',
+	'dialog.discard.title': 'Discard changes?',
+	'dialog.discard.keep': 'Keep editing',
+	'dialog.discard.confirm': 'Discard changes',
+
 	'cli.usage':
 		'Usage: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|runner service <install|uninstall|status>|reset-password|restore <file>|--version]',
 	'cli.unknownCommand': 'Unknown subcommand “{command}”. {usage}',

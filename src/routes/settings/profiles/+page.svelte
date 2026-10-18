@@ -20,7 +20,7 @@
 	Ein Profil legt fest, mit welchem Modell ein Agent arbeitet: lokal über einen OpenAI-kompatiblen
 	Server oder online bei einem Anbieter.
 </p>
-<a class="btn btn-primary" href="/settings/profiles/new">Neues Profil</a>
+<a class="rk-btn rk-btn--primary" href="/settings/profiles/new">Neues Profil</a>
 
 {#if data.profiles.length}
 	<ul class="profiles">

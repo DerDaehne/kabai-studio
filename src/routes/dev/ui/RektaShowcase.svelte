@@ -48,8 +48,8 @@
 			<p class="question">Shell-Freigabe für npm install?</p>
 			<p class="muted">Developer · STU-41 · seit 2 min</p>
 			<div class="options">
-				<button class="btn btn-sm" type="button">1 ja</button>
-				<button class="btn btn-sm" type="button">2 nein</button>
+				<button class="rk-btn" type="button">1 ja</button>
+				<button class="rk-btn" type="button">2 nein</button>
 			</div>
 		</Tile>
 	</div>

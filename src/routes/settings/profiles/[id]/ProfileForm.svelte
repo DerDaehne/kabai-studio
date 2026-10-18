@@ -354,7 +354,7 @@
 	{#if form?.message && form.field === ''}<p class="error" role="alert">{form.message}</p>{/if}
 	<div class="actions">
 		<Button type="submit" variant="primary" form={formId}>Speichern</Button>
-		<a class="btn" href="/settings/profiles">Abbrechen</a>
+		<a class="rk-btn" href="/settings/profiles">Abbrechen</a>
 	</div>
 </div>
 

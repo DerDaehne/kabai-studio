@@ -114,7 +114,7 @@
 	{:else}
 		<EmptyState title="Noch kein Agent-Profil">
 			Ein Run braucht ein Agent-Profil, lokal oder in der Cloud.
-			{#snippet action()}<a class="btn btn-primary" href="/settings/profiles"
+			{#snippet action()}<a class="rk-btn rk-btn--primary" href="/settings/profiles"
 					>Agent-Profil anlegen</a
 				>{/snippet}
 		</EmptyState>

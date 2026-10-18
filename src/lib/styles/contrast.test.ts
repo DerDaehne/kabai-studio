@@ -299,7 +299,7 @@ describe('focus ring', () => {
 		expect(focusRule).toContain('outline: 2px solid var(--focus);');
 		expect(focusRule).toContain('outline-offset: 2px;');
 		// Rekta's controls draw their own ring and carry no halo; every other element does
-		const haloRule = base.match(/\n:focus-visible:not\([^)]*\)\)? \{([^}]*)\}/)?.[1] ?? '';
+		const haloRule = base.match(/\n:focus-visible:not\([^{]*\) \{([^}]*)\}/)?.[1] ?? '';
 		expect(haloRule).toContain('box-shadow: 0 0 0 5px var(--bg);');
 	});
 });

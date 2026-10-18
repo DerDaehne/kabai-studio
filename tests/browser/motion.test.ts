@@ -137,21 +137,15 @@ test.describe('tiles build in', () => {
 });
 
 test.describe('controls', () => {
-	const controlHeights = (page: Page) =>
-		page.evaluate(() => {
-			const probe = (className: string) => {
-				const button = document.body.appendChild(document.createElement('button'));
-				button.className = className;
-				const { height } = button.getBoundingClientRect();
-				button.remove();
-				return height;
-			};
-			return { normal: probe('btn'), small: probe('btn btn-sm') };
-		});
+	const controlHeights = async (page: Page) => {
+		const heightOf = async (name: string) =>
+			(await page.getByRole('button', { name, exact: true }).boundingBox())!.height;
+		return { normal: await heightOf('Freigeben'), small: await heightOf('Klein') };
+	};
 
 	test.describe('with a fine pointer', () => {
 		test('are 32 px high', async ({ page }) => {
-			await open(page, '/settings');
+			await open(page, '/dev/ui');
 			expect(await controlHeights(page)).toEqual({ normal: 32, small: 32 });
 		});
 	});
@@ -160,7 +154,7 @@ test.describe('controls', () => {
 		test.use({ hasTouch: true });
 
 		test('are 44 px high', async ({ page }) => {
-			await open(page, '/settings');
+			await open(page, '/dev/ui');
 			expect(await controlHeights(page)).toEqual({ normal: 44, small: 44 });
 		});
 	});

@@ -191,7 +191,7 @@
 		</div>
 	{:else}
 		<div class="shell">
-			<a class="skip btn" href="#main">Zum Inhalt springen</a>
+			<a class="skip rk-btn" href="#main">Zum Inhalt springen</a>
 			<Banner standing={standingBanner()} />
 			<HeadPivot />
 
@@ -201,7 +201,7 @@
 						Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
 						{shell.focus.name}
 						<button
-							class="btn btn-ghost btn-icon"
+							class="rk-btn rk-btn--quiet btn-icon"
 							aria-label="Projekt-Fokus aufheben"
 							onclick={() => (shell.focus = null)}><Icon name="x" size={14} /></button
 						>

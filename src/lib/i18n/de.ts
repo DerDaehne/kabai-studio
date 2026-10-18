@@ -28,6 +28,13 @@ export const de: Catalogue = {
 
 	'layout.attribution': 'von {author} · Freie Software, {licence}',
 
+	'form.optional': '(optional)',
+	'form.errors.one': 'Ein Feld braucht Aufmerksamkeit',
+	'form.errors.many': '{count} Felder brauchen Aufmerksamkeit',
+	'dialog.discard.title': 'Änderungen verwerfen?',
+	'dialog.discard.keep': 'Weiter bearbeiten',
+	'dialog.discard.confirm': 'Änderungen verwerfen',
+
 	'cli.usage':
 		'Verwendung: kabai-studio [start|service <install|uninstall|status>|runner pair <url> <code> [--name <name>]|runner start|runner service <install|uninstall|status>|reset-password|restore <datei>|--version]',
 	'cli.unknownCommand': 'Unbekanntes Unterkommando „{command}“. {usage}',

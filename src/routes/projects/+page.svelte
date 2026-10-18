@@ -73,7 +73,7 @@
 			{#snippet children(attrs)}
 				<input
 					{...attrs}
-					class="key"
+					class={[attrs.class, 'key']}
 					name="key"
 					required
 					autocomplete="off"
@@ -155,7 +155,7 @@
 		max-width: 40ch;
 		margin-top: var(--space-2);
 	}
-	form :global(.field),
+	form :global(.rk-field),
 	input {
 		width: 100%;
 	}

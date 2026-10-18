@@ -588,7 +588,7 @@
 >
 	<p>{t('start.stop.body')}</p>
 	<form
-		class="confirm"
+		class="rk-actions"
 		method="POST"
 		action="?/stop"
 		bind:this={stopForm}
@@ -599,7 +599,8 @@
 			}}
 	>
 		<input type="hidden" name="runId" value={stopping} />
-		<Button type="button" variant="ghost" onclick={() => (stopping = undefined)}
+		<!-- svelte-ignore a11y_autofocus -->
+		<Button type="button" variant="primary" autofocus onclick={() => (stopping = undefined)}
 			>{t('start.stop.keep')}</Button
 		>
 		<Button type="submit" variant="danger">{t('start.stop.confirm')}</Button>

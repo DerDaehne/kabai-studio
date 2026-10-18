@@ -87,7 +87,9 @@ kbd,
 	outline-offset: 2px;
 }
 /* Rekta's controls draw their own inner ring in the current colour; a halo would double it */
-:focus-visible:not(:where(.rk-ab, .rk-btn, .rk-toast-act, .rk-crumb, .rk-menu-item)) {
+:focus-visible:not(
+	:where(.rk-ab, .rk-btn, .rk-input, .rk-errors, .rk-toast-act, .rk-crumb, .rk-menu-item)
+) {
 	box-shadow: 0 0 0 5px var(--bg);
 }
 
@@ -132,9 +134,8 @@ input[type='radio'] {
 	accent-color: var(--accent);
 }
 
-/* Buttons: .btn-Varianten (Button.svelte); unklassige <button> bekommen die Sekundäroptik */
-:where(button:not([class])),
-.btn {
+/* Buttons are Rekta's (Button.svelte: .rk-btn); a button without a class keeps the plain secondary look */
+:where(button:not([class])) {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -148,51 +149,41 @@ input[type='radio'] {
 	font: inherit;
 	font-weight: var(--weight-semibold);
 	white-space: nowrap;
-	text-decoration: none;
 	cursor: pointer;
-	transition:
-		background-color var(--dur-fast) var(--ease-out),
-		border-color var(--dur-fast) var(--ease-out);
 }
-:where(button:not([class])):hover,
-.btn:hover {
+:where(button:not([class])):hover {
 	background: var(--surface-hover);
 }
-.btn-sm {
-	height: var(--control-h-sm);
-	padding: 0 var(--space-2);
-	font-size: var(--text-sm);
-}
-.btn-primary {
-	border-color: var(--accent);
-	background: var(--accent);
-	color: var(--on-accent);
-}
-.btn-primary:hover {
-	border-color: var(--accent-hover);
-	background: var(--accent-hover);
-}
-.btn-ghost {
-	border-color: transparent;
-	background: transparent;
-}
-.btn-danger {
-	color: var(--status-failed);
-}
-.btn-danger:hover {
-	background: var(--status-failed-tint);
-}
-.btn:disabled,
-.btn[aria-disabled='true'],
 :where(button:not([class])):disabled {
 	opacity: 0.55;
 	cursor: not-allowed;
 }
-.btn[aria-busy='true'] {
-	opacity: 1; /* läuft gerade: nicht ausgegraut, der Spinner zeigt den Zustand */
-	cursor: progress;
+/* Rekta's frame, plus what links and the studio's own variants need */
+a.rk-btn {
+	text-decoration: none;
+	white-space: nowrap;
 }
-/* Quadratischer Icon-Button (Schließen, Werkzeugleisten) — immer mit aria-label */
+.rk-btn[data-status='error'] {
+	border-color: var(--rk-status-error-full);
+}
+/* A running action is not greyed out like a disabled one: the spinner and the line show the state */
+.rk-btn[aria-busy='true'] {
+	border-color: currentColor;
+	background-color: transparent;
+	color: inherit;
+}
+.rk-btn--primary[aria-busy='true'] {
+	border-color: var(--rk-accent);
+	background-color: var(--rk-accent);
+	color: var(--rk-on-accent);
+}
+.rk-btn--quiet[aria-busy='true'] {
+	border-color: transparent;
+}
+.rk-btn[data-status='error'][aria-busy='true'] {
+	border-color: var(--rk-status-error-full);
+}
+/* A square icon button (close, toolbar): always with an aria-label */
 .btn-icon {
 	width: var(--control-h);
 	padding: 0;

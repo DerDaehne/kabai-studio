@@ -1,35 +1,95 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
+	import { t } from '$lib/i18n/t';
+	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 
 	/**
 	 * A modal dialog on a native <dialog> with showModal(): top layer, inert background (focus stays in the dialog),
-	 * Escape closes, and focus returns to the trigger on close. variant="panel" = a side panel docked on the right,
-	 * "sheet" = a sheet coming down from the top, "bar-sheet" = a sheet rising above the app bar.
-	 * Initial focus: the first focusable element — `autofocus` on a field sets it explicitly.
+	 * Escape closes, and focus returns to the trigger on close. variant="sheet" is Rekta's sheet coming down from the
+	 * top, "bar-sheet" a sheet rising above the app bar. Initial focus: the first focusable element — `autofocus` on
+	 * a field or on the safe answer sets it explicitly; a sheet that asks to confirm puts the safe answer first.
+	 *
+	 * The centred variant "dialog" stays for the callers that have not moved to a sheet yet: RunControl, the ticket
+	 * page (edit, rename, delete), the profile list and the runner pairing, besides the dev showcase.
+	 *
+	 * `dirty` marks unsaved input: Escape, a tap on the shading and the close button then ask to discard first
+	 * instead of closing.
 	 */
 	let {
 		open = $bindable(false),
 		title,
 		variant = 'dialog',
+		dirty = false,
 		children,
 		footer
 	}: {
 		open?: boolean;
 		title: string;
-		variant?: 'dialog' | 'panel' | 'sheet' | 'bar-sheet';
+		variant?: 'dialog' | 'sheet' | 'bar-sheet';
+		dirty?: boolean;
 		children: Snippet;
 		footer?: Snippet;
 	} = $props();
 
 	let el: HTMLDialogElement;
+	let keepEditing: HTMLButtonElement | undefined = $state();
 	let downOnBackdrop = false;
+	let discarding = $state(false);
+	let leavingForSure = false;
+	let focusBeforeAsking: Element | null = null;
 	const id = $props.id();
+	const isSheet = $derived(variant === 'sheet');
 
 	$effect(() => {
 		if (open && !el.open) el.showModal();
-		else if (!open && el.open) el.close();
+		else if (!open && el.open) {
+			leavingForSure = true;
+			el.close();
+		}
+		if (!open) discarding = false;
 	});
+
+	async function askToDiscard() {
+		focusBeforeAsking = document.activeElement;
+		discarding = true;
+		await tick();
+		keepEditing?.focus();
+	}
+
+	function keepOn() {
+		discarding = false;
+		if (focusBeforeAsking instanceof HTMLElement && el.contains(focusBeforeAsking))
+			focusBeforeAsking.focus();
+	}
+
+	function requestClose() {
+		if (!dirty) open = false;
+		else if (!discarding) void askToDiscard();
+	}
+
+	function discard() {
+		discarding = false;
+		open = false;
+	}
+
+	function onCancel(event: Event) {
+		if (!dirty) return;
+		event.preventDefault();
+		if (discarding) keepOn();
+		else void askToDiscard();
+	}
+
+	function onClose() {
+		// Some browsers close on a second Escape although cancel was prevented: ask again instead of losing input
+		if (dirty && !leavingForSure) {
+			el.showModal();
+			void askToDiscard();
+			return;
+		}
+		leavingForSure = false;
+		open = el.open;
+	}
 </script>
 
 <!-- A click on the backdrop closes; the keyboard closes with Escape (native cancel) or the close button -->
@@ -37,29 +97,55 @@
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
 	bind:this={el}
-	class={variant}
+	class={isSheet ? 'rk-sheet' : variant}
+	closedby={dirty ? 'closerequest' : undefined}
 	aria-labelledby="{id}-title"
 	aria-modal="true"
-	onclose={() => (open = el.open)}
+	oncancel={onCancel}
+	onclose={onClose}
 	onpointerdown={(e) => (downOnBackdrop = e.target === el)}
 	onclick={(e) => {
-		if (downOnBackdrop && e.target === el) open = false;
+		if (downOnBackdrop && e.target === el) requestClose();
 	}}
 >
-	<div class="frame">
-		<header>
-			<h2 id="{id}-title">{title}</h2>
-			<button class="btn btn-ghost btn-icon" aria-label="Schließen" onclick={() => (open = false)}
-				><Icon name="x" /></button
-			>
-		</header>
-		<div class="body">{@render children()}</div>
-		{#if footer}<footer>{@render footer()}</footer>{/if}
-	</div>
+	{#if isSheet}
+		<h2 class="rk-group" id="{id}-title">{title}</h2>
+		<div>{@render children()}</div>
+		{#if discarding}
+			{@render discardQuestion()}
+		{:else if footer}
+			<div class="rk-actions">{@render footer()}</div>
+		{/if}
+	{:else}
+		<div class="frame">
+			<header>
+				<h2 id="{id}-title">{title}</h2>
+				<button class="rk-btn rk-btn--quiet btn-icon" aria-label="Schließen" onclick={requestClose}
+					><Icon name="x" /></button
+				>
+			</header>
+			<div class="body">{@render children()}</div>
+			{#if discarding}
+				<footer>{@render discardQuestion()}</footer>
+			{:else if footer}
+				<footer>{@render footer()}</footer>
+			{/if}
+		</div>
+	{/if}
 </dialog>
 
+{#snippet discardQuestion()}
+	<div class="rk-actions" role="group" aria-label={t('dialog.discard.title')}>
+		<strong>{t('dialog.discard.title')}</strong>
+		<button bind:this={keepEditing} type="button" class="rk-btn rk-btn--primary" onclick={keepOn}
+			>{t('dialog.discard.keep')}</button
+		>
+		<Button variant="danger" onclick={discard}>{t('dialog.discard.confirm')}</Button>
+	</div>
+{/snippet}
+
 <style>
-	dialog {
+	dialog:not(.rk-sheet) {
 		width: min(520px, calc(100vw - 2 * var(--space-4)));
 		max-height: min(80dvh, 720px);
 		padding: 0;
@@ -76,63 +162,33 @@
 			overlay var(--dur-fast) allow-discrete,
 			display var(--dur-fast) allow-discrete;
 	}
-	dialog[open] {
+	dialog:not(.rk-sheet)[open] {
 		opacity: 1;
 		translate: 0 0;
 	}
-	dialog.panel {
-		inset: 0 0 0 auto;
-		width: min(560px, 100vw);
-		max-width: 100vw;
-		height: 100dvh;
-		max-height: none;
-		margin: 0;
-		border-width: 0 0 0 1px;
-		border-radius: 0;
-		translate: 16px 0;
-	}
-	dialog.panel[open] {
-		translate: 0 0;
-	}
-	/* Sheets span the screen up to a reading width and stay clear of the head or rest on the app bar */
-	dialog.sheet,
+	/* The bar-sheet spans the screen up to a reading width and rests on the app bar */
 	dialog.bar-sheet {
 		width: min(var(--sheet-max-w), 100vw);
 		max-width: 100vw;
 		margin: 0 auto;
-	}
-	dialog.sheet {
-		inset: 0 0 auto;
-		border-width: 0 0 1px;
-		border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-		translate: 0 -16px;
-	}
-	dialog.bar-sheet {
 		inset: auto 0 calc(var(--appbar-h) + env(safe-area-inset-bottom));
 		border-width: 1px 0 0;
 		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 		translate: 0 16px;
 	}
-	dialog.sheet[open],
 	dialog.bar-sheet[open] {
 		translate: 0 0;
 	}
 	@starting-style {
-		dialog[open] {
+		dialog:not(.rk-sheet)[open] {
 			opacity: 0;
 			translate: 0 8px;
-		}
-		dialog.panel[open] {
-			translate: 16px 0;
-		}
-		dialog.sheet[open] {
-			translate: 0 -16px;
 		}
 		dialog.bar-sheet[open] {
 			translate: 0 16px;
 		}
 	}
-	dialog::backdrop {
+	dialog:not(.rk-sheet)::backdrop {
 		background: var(--scrim);
 		backdrop-filter: blur(4px);
 		-webkit-backdrop-filter: blur(4px);
@@ -142,11 +198,11 @@
 			overlay var(--dur-fast) allow-discrete,
 			display var(--dur-fast) allow-discrete;
 	}
-	dialog[open]::backdrop {
+	dialog:not(.rk-sheet)[open]::backdrop {
 		opacity: 1;
 	}
 	@starting-style {
-		dialog[open]::backdrop {
+		dialog:not(.rk-sheet)[open]::backdrop {
 			opacity: 0;
 		}
 	}
@@ -164,7 +220,7 @@
 		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
 		border-bottom: 1px solid var(--border);
 	}
-	h2 {
+	header h2 {
 		flex: 1;
 		font-size: var(--text-base);
 		overflow-wrap: anywhere; /* lange Titel umbrechen statt abschneiden */
@@ -180,5 +236,8 @@
 		gap: var(--space-2);
 		padding: var(--space-3) var(--space-4);
 		border-top: 1px solid var(--border);
+	}
+	.rk-sheet h2 {
+		overflow-wrap: anywhere;
 	}
 </style>

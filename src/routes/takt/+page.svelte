@@ -291,10 +291,10 @@
 										{t('takt.keySend')} · <Kbd key="Escape" />
 										{t('takt.keyDiscard')}
 									</span>
-									<button type="button" class="btn" onclick={closeOwnAnswer}
+									<button type="button" class="rk-btn" onclick={closeOwnAnswer}
 										>{t('takt.discard')}</button
 									>
-									<button class="btn btn-primary" disabled={!ownText.trim()}
+									<button class="rk-btn rk-btn--primary" disabled={!ownText.trim()}
 										>{t('takt.send')}</button
 									>
 								</div>
@@ -313,11 +313,11 @@
 						{/if}
 					</div>
 					<p class="actions">
-						<button type="button" class="btn btn-ghost" onclick={() => later(card)}
+						<button type="button" class="rk-btn rk-btn--quiet" onclick={() => later(card)}
 							>{t('takt.later')} <Kbd key="s" /></button
 						>
 						<a
-							class="btn btn-ghost"
+							class="rk-btn rk-btn--quiet"
 							href={runHref(card.project.code, card.ticket.number, card.runId)}
 							>{t('takt.runRecord')} <Kbd key="Enter" /></a
 						>
@@ -340,7 +340,7 @@
 			<EmptyState title={t('takt.nothing')}>
 				{t('takt.nothingHint')}
 				{#snippet action()}
-					<a class="btn" href="/">{t('takt.toStart')} <Kbd key="g" /><Kbd key="s" /></a>
+					<a class="rk-btn" href="/">{t('takt.toStart')} <Kbd key="g" /><Kbd key="s" /></a>
 				{/snippet}
 			</EmptyState>
 		{/if}
@@ -351,7 +351,7 @@
 	{#if paused.length}
 		<p class="detail">{t('takt.paused.hint')}</p>
 		<p>
-			<button type="button" class="btn" onclick={() => void resumeAll()}
+			<button type="button" class="rk-btn" onclick={() => void resumeAll()}
 				>{t('takt.resumeAll')}</button
 			>
 		</p>
@@ -365,7 +365,7 @@
 					<Tag tone="warning">{t('start.state.paused')}</Tag>
 					<button
 						type="button"
-						class="btn"
+						class="rk-btn"
 						aria-label={t('takt.resumeRun', { ticket: run.ticket })}
 						onclick={() => void resumeRun(run.id)}>{t('takt.resume')}</button
 					>

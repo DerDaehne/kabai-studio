@@ -6,6 +6,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Dialog from '$lib/ui/Dialog.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import ErrorSummary from '$lib/ui/ErrorSummary.svelte';
 	import FormField from '$lib/ui/FormField.svelte';
 	import Kbd from '$lib/ui/Kbd.svelte';
 	import { travel } from '$lib/ui/motion';
@@ -20,9 +21,11 @@
 	import PivotShowcase from './PivotShowcase.svelte';
 	import RektaShowcase from './RektaShowcase.svelte';
 
-	// An overview of all building blocks for checking them (not linked). ?open=dialog|panel opens an overlay directly.
+	// An overview of all building blocks for checking them (not linked). ?open=dialog|sheet opens an overlay directly.
 	let dialogOpen = $state(page.url.searchParams.get('open') === 'dialog');
-	let panelOpen = $state(page.url.searchParams.get('open') === 'panel');
+	let sheetOpen = $state(page.url.searchParams.get('open') === 'sheet');
+	let sheetNote = $state('');
+	let summaryShown = $state(false);
 	let saving = $state(false);
 	let columnName = $state('Review');
 
@@ -518,7 +521,19 @@
 
 	<section aria-labelledby="h-form">
 		<h2 id="h-form">Formular</h2>
+		<Button onclick={() => (summaryShown = !summaryShown)}>Fehlersumme umschalten</Button>
 		<div class="form">
+			{#if summaryShown}
+				<ErrorSummary
+					errors={[
+						{
+							name: 'endpoint',
+							label: 'Endpoint',
+							message: 'Keine Verbindung. Adresse prüfen oder den Server starten.'
+						}
+					]}
+				/>
+			{/if}
 			<FormField label="Titel" hint="Kurz und als Ergebnis formuliert.">
 				{#snippet children(a)}<input
 						{...a}
@@ -533,7 +548,11 @@
 				{/snippet}
 			</FormField>
 			<FormField label="Endpoint" error="Keine Verbindung. Adresse prüfen oder den Server starten.">
-				{#snippet children(a)}<input {...a} value="http://localhost:8080/v1" />{/snippet}
+				{#snippet children(a)}<input
+						{...a}
+						name="endpoint"
+						value="http://localhost:8080/v1"
+					/>{/snippet}
 			</FormField>
 			<FormField label="Rollen-Prompt" hint="Wird jedem Run in dieser Spalte vorangestellt.">
 				{#snippet children(a)}<textarea {...a} rows="3" placeholder="Du bist Developer …"
@@ -546,7 +565,7 @@
 		<h2 id="h-overlays">Überlagerungen und Meldungen</h2>
 		<div class="row">
 			<Button onclick={() => (dialogOpen = true)}>Dialog öffnen</Button>
-			<Button onclick={() => (panelOpen = true)}>Seitenpanel öffnen</Button>
+			<Button onclick={() => (sheetOpen = true)}>Sheet öffnen</Button>
 			<Button variant="ghost" onclick={() => toast('Run STU-41 gestartet')}>Info-Meldung</Button>
 			<Button variant="ghost" onclick={() => toast('Ticket nach Review verschoben', 'success')}
 				>Erfolg</Button
@@ -590,19 +609,19 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={panelOpen} variant="panel" title="STU-41 Anmeldeseite an Design-System anpassen">
-	<div class="detail">
-		<div class="row">
-			<Badge tone="running">läuft</Badge><span class="muted">Developer seit 2 min</span>
-		</div>
-		<p>Formular auf FormField umstellen, Fehlermeldungen mit Ausweg, Tastaturbedienung prüfen.</p>
-		<h3>Tasks</h3>
-		<ul>
-			<li><label><input type="checkbox" checked /> Felder nutzen FormField</label></li>
-			<li><label><input type="checkbox" /> Fehlermeldung nennt den Ausweg</label></li>
-			<li><label><input type="checkbox" /> Bei 375 px ohne horizontales Scrollen</label></li>
-		</ul>
-	</div>
+<Dialog bind:open={sheetOpen} variant="sheet" dirty={sheetNote !== ''} title="Notiz zum Run">
+	<FormField label="Notiz" optional hint="Erscheint als Kommentar am Ticket.">
+		{#snippet children(a)}<textarea {...a} rows="3" bind:value={sheetNote}></textarea>{/snippet}
+	</FormField>
+	{#snippet footer()}
+		<Button
+			variant="primary"
+			onclick={() => {
+				sheetNote = '';
+				sheetOpen = false;
+			}}>Speichern</Button
+		>
+	{/snippet}
 </Dialog>
 
 <style>
@@ -789,20 +808,5 @@
 		display: grid;
 		gap: var(--space-3);
 		max-width: 420px;
-	}
-	.detail {
-		display: grid;
-		gap: var(--space-3);
-	}
-	.detail ul {
-		display: grid;
-		gap: var(--space-1);
-		padding: 0;
-		list-style: none;
-	}
-	.detail label {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
 	}
 </style>
