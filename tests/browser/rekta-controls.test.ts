@@ -47,8 +47,11 @@ test.describe('a form with errors', () => {
 		await page.getByRole('button', { name: 'Fehlersumme umschalten' }).click();
 		const summary = page.getByRole('group', { name: 'Ein Feld braucht Aufmerksamkeit' });
 		await expect(summary).toBeFocused();
+		await expect(summary).toHaveCSS('box-shadow', 'none');
 		await summary.getByRole('link', { name: `Endpoint: ${refusal}` }).click();
 		await expect(endpoint).toBeFocused();
+		// Rekta draws its own ring; the shell's halo stays off them
+		await expect(endpoint).toHaveCSS('box-shadow', 'none');
 	});
 
 	test('a hint turns into the error and back; an optional field says so', async ({ page }) => {
