@@ -177,6 +177,7 @@ export const en = {
 	'start.answer.label': 'Answer to {ref}',
 	'start.answer.sent': 'Answer sent · {ref} continues in {seconds} s',
 	'start.answer.undo': 'Undo',
+	'start.answer.holdCapped': 'Holding no longer extends it. {seconds} s left to undo.',
 	'start.projects.questions': 'questions',
 	'start.projects.agents': 'agents at work',
 	'start.ops.runner': 'runner',

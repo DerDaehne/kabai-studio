@@ -1,7 +1,7 @@
 import { LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import { attempt } from '$lib/server/domain-failure';
-import { ANSWER_UNDO_WINDOW_MS } from '$lib/server/domain/questions';
+import { ANSWER_HOLD_BEAT_MS, ANSWER_UNDO_WINDOW_MS } from '$lib/server/domain/questions';
 import { openQuestions } from '$lib/server/live';
 import { runner } from '$lib/server/runner';
 import { startView } from '$lib/server/start-view';
@@ -14,6 +14,7 @@ export const load: PageServerLoad = ({ depends }) => {
 	return {
 		questions: openQuestions(db()),
 		undoWindowMs: ANSWER_UNDO_WINDOW_MS,
+		holdBeatMs: ANSWER_HOLD_BEAT_MS,
 		...startView(db())
 	};
 };

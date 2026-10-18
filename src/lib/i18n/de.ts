@@ -183,6 +183,7 @@ export const de: Catalogue = {
 	'start.answer.label': 'Antwort auf {ref}',
 	'start.answer.sent': 'Antwort gesendet · {ref} setzt in {seconds} s fort',
 	'start.answer.undo': 'Rückgängig',
+	'start.answer.holdCapped': 'Halten verlängert nicht mehr. Noch {seconds} s zum Rückgängigmachen.',
 	'start.projects.questions': 'Fragen',
 	'start.projects.agents': 'Agents aktiv',
 	'start.ops.runner': 'Runner',

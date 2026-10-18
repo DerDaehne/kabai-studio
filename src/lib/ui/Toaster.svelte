@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { dismiss, hold, runAction, toasts, type Toast } from './toast.svelte';
+	import { connection } from '$lib/shell/connection.svelte';
+	import { connectionLost, dismiss, hold, runAction, toasts, type Toast } from './toast.svelte';
 
 	let region: HTMLElement;
 
@@ -9,6 +10,10 @@
 		void toasts.length;
 		if (region.matches(':popover-open')) region.hidePopover();
 		region.showPopover();
+	});
+
+	$effect(() => {
+		if (connection.lost) connectionLost();
 	});
 
 	const seconds = (toast: Toast) => Math.ceil(toast.left / 1000);

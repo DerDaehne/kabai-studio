@@ -6,6 +6,7 @@
 	import { flip } from 'svelte/animate';
 	import { SvelteSet } from 'svelte/reactivity';
 	import NoProject from '$lib/components/NoProject.svelte';
+	import { answerHold } from '$lib/answer-hold';
 	import { failureOf, postAction } from '$lib/form-action';
 	import type { MessageKey } from '$lib/i18n';
 	import { t } from '$lib/i18n/t';
@@ -210,7 +211,8 @@
 		return toast(sent, 'success', data.undoWindowMs, {
 			label: t('start.answer.undo'),
 			run: undo,
-			countdown: true
+			countdown: true,
+			hold: answerHold(question.id, data.holdBeatMs)
 		});
 	}
 

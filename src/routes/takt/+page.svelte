@@ -4,6 +4,7 @@
 	import { tick } from 'svelte';
 	import { MediaQuery, SvelteSet } from 'svelte/reactivity';
 	import { leadText, plainText, splitLead } from '$lib/markdown';
+	import { answerHold } from '$lib/answer-hold';
 	import { failureOf, postAction } from '$lib/form-action';
 	import type { MessageKey } from '$lib/i18n';
 	import { t } from '$lib/i18n/t';
@@ -116,7 +117,12 @@
 			return undefined;
 		}
 		const resumesRun = result.type === 'success' && result.data?.resumesRun === true;
-		const action = { label: t('takt.undo'), run: undo, countdown: true };
+		const action = {
+			label: t('takt.undo'),
+			run: undo,
+			countdown: true,
+			hold: resumesRun ? answerHold(question.id, data.holdBeatMs) : undefined
+		};
 		return toast(sentNotice(question, resumesRun), 'success', data.undoWindowMs, action);
 	}
 

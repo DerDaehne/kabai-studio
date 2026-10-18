@@ -17,6 +17,9 @@ export type LatestQuestion = {
 
 // ponytail: a fixed 10 s to take an answer back before the run it resumes starts; make it a setting once practice asks for it.
 export const ANSWER_UNDO_WINDOW_MS = 10_000;
+/** How long after the answer a held notice can still extend the window; the last extension ends one window later. */
+export const ANSWER_HOLD_CAP_MS = 120_000;
+export const ANSWER_HOLD_BEAT_MS = 5_000;
 
 const MAX_OPTIONS = 3;
 const HUMAN: Actor = { kind: 'user' };
@@ -29,6 +32,7 @@ type QuestionRow = {
 	question: string;
 	options: string;
 	answer: string | null;
+	answered_at: string | null;
 	collected_at: string | null;
 };
 type OpenQuestion = QuestionRow & { t: Ticket };
@@ -43,7 +47,8 @@ type Continuation =
 	| { kind: 'stopped'; reason: string }
 	| { kind: 'none'; reason: string; wayOut?: string };
 
-const QUESTION_COLUMNS = 'id, ticket_id, run_id, question, options, answer, collected_at';
+const QUESTION_COLUMNS =
+	'id, ticket_id, run_id, question, options, answer, answered_at, collected_at';
 
 function question(db: DatabaseSync, id: number): QuestionRow {
 	const q = db.prepare(`SELECT ${QUESTION_COLUMNS} FROM questions WHERE id = ?`).get(id) as
@@ -178,8 +183,10 @@ export function answerQuestion(
 		const q = questionOpenForHuman(db, actor, questionId);
 		const stored = validAnswer(q, answer);
 		const continuation = continuationOf(db, q, stored);
-		db.prepare('UPDATE questions SET answer = ?, answered_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+		// the app clock, not the database's, so the hold cap and the undo window share one clock
+		db.prepare('UPDATE questions SET answer = ?, answered_at = ? WHERE id = ?').run(
 			JSON.stringify(stored),
+			new Date().toISOString(),
 			q.id
 		);
 		emit({
@@ -294,6 +301,52 @@ function resumeOrNone(
 			return { kind: 'none', reason: err.message.replace(/\.$/, ''), wayOut: err.hint };
 		throw err;
 	}
+}
+
+export type AnswerHold = {
+	/** The window was extended. */
+	held: boolean;
+	/** Milliseconds until the follow-up run may start. */
+	closesInMs: number;
+	/** The cap is reached: the window only runs out from here. */
+	capped: boolean;
+};
+
+/**
+ * Keeps the undo window of an answer open for another window length while the human holds the notice that offers
+ * the undo. The waiting follow-up runs' `not_before` only ever moves later, so a lost beat leaves the window to run out.
+ */
+export function holdAnswerWindow(
+	db: DatabaseSync,
+	actor: Actor,
+	questionId: number,
+	now: Date = new Date()
+): AnswerHold {
+	return tx(db, () => {
+		const q = questionOpenForHuman(db, actor, questionId);
+		if (q.answer === null)
+			throw new DomainError(
+				'not_answered',
+				`Frage ${q.id} ist noch nicht beantwortet.`,
+				'Halten lässt sich nur das Fenster einer gegebenen Antwort.'
+			);
+		const continuation = continuationOf(db, q, JSON.parse(q.answer) as Answer);
+		if (continuation.kind !== 'waiting') return { held: false, closesInMs: 0, capped: false };
+		// a missing or unparsable answer time counts as capped
+		const capped = !(now.getTime() < Date.parse(q.answered_at ?? '') + ANSWER_HOLD_CAP_MS);
+		const extendedTo = now.getTime() + ANSWER_UNDO_WINDOW_MS;
+		const select = db.prepare('SELECT not_before FROM runs WHERE id = ?');
+		const update = db.prepare('UPDATE runs SET not_before = ? WHERE id = ?');
+		let closesAt = now.getTime();
+		for (const id of continuation.followUpIds) {
+			const { not_before } = select.get(id) as { not_before: string | null };
+			const current = not_before ? Date.parse(not_before) : 0;
+			const next = capped ? current : Math.max(current, extendedTo);
+			if (next !== current) update.run(new Date(next).toISOString(), id);
+			closesAt = Math.max(closesAt, next);
+		}
+		return { held: !capped, closesInMs: closesAt - now.getTime(), capped };
+	});
 }
 
 /** Takes the answer back while the run it would resume still waits: that run is cancelled and the question is open again. */
