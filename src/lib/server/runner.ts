@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { COLD_START_LIMITS, type ColdStartLimits } from '../agents/model-catalog';
 import { isLocalProvider } from '../agents/profile-defaults';
-import { DomainError, type Actor } from './domain/core';
+import { DomainError, tx, type Actor } from './domain/core';
 import { haltRuns, pauseRun, pauseRuns } from './domain/halt';
 import { collectShownAnswer } from './domain/questions';
 import { endExecutedRun, failRun } from './domain/run-end';
@@ -10,13 +10,22 @@ import {
 	appendEvent,
 	claimRun,
 	finishRun,
+	setRunState,
 	type Limits,
 	type ParkReason,
 	type Profile,
 	type ResumeReason
 } from './domain/runs';
 import { publish, subscribe } from './events';
-import type { Executor, ExecutorIo, Phase, RunContext } from './executors/contract';
+import type {
+	ApprovalDecision,
+	ApprovalRequest,
+	Executor,
+	ExecutorIo,
+	PhaseName,
+	PhaseReport,
+	RunContext
+} from './executors/contract';
 import { mask } from './secrets';
 
 /**
@@ -31,14 +40,37 @@ export function limits(): Limits {
 const SYSTEM: Actor = { kind: 'system' };
 const PREDECESSOR_EVENTS = new Set(['ticket.moved', 'ticket.review_approved']);
 const WAKING_EVENTS = new Set(['run.created', 'run.state_changed', 'runner.released']);
-const MODEL_LOADING_PHASES: Phase['name'][] = ['model_loading', 'model_downloading'];
+const MODEL_LOADING_PHASES: PhaseName[] = ['model_loading', 'model_downloading'];
 const MAX_LAST_LINE = 120;
+const PHASE_INTERVAL_MS = 1000;
 // setTimeout fires at once beyond this delay; waking early only sets the timer again
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const duration = (ms: number) =>
 	ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
 
 type RunControls = { cancel: AbortController; park: AbortController };
+/** A decision on an approval request and who made it; the run's trace shows both. */
+export type Approval = { decision: Exclude<ApprovalDecision, 'cancelled'>; by: string };
+/** Decides an approval request of a run. The runner records request and decision and stops waiting once the run ends. */
+export type ApprovalPolicy = (run: RunContext, request: ApprovalRequest) => Promise<Approval>;
+/** Until the human answers approval requests, every tool call that asks is refused. */
+const rejectByDefault: ApprovalPolicy = async () => ({ decision: 'reject', by: 'policy_default' });
+type RunnerOptions = { approve?: ApprovalPolicy };
+/** Live progress of a run as the bus carries it in `run.phase`. */
+type Phase = {
+	name: PhaseName;
+	elapsedMs: number;
+	tokens?: number;
+	tokensPerSecond?: number;
+	lastLine?: string;
+};
+/** Tokens of one phase within a step, counted from its first report. */
+type TokenMeter = { tokens: number; since: number };
+type StepMeters = {
+	number: number;
+	startedAt: number;
+	meters: Partial<Record<PhaseName, TokenMeter>>;
+};
 
 function failOrphanedRuns(db: DatabaseSync) {
 	const orphaned = db
@@ -133,11 +165,97 @@ function publishPhase(run: RunContext, phase: Phase) {
 	});
 }
 
+const tokensPerSecond = ({ tokens, since }: TokenMeter, now: number) =>
+	tokens > 0 && now > since ? Math.round((tokens * 1000) / (now - since)) : undefined;
+
+function lastCompleteLine(text: string) {
+	const completeLines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n');
+	return completeLines
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.at(-1);
+}
+
+/**
+ * Counts the phase reports of a run per step and phase and publishes at most one a second, the first at once: an
+ * executor may report every streamed chunk, about 30 a second.
+ */
+function phasePacer(run: RunContext) {
+	let step: StepMeters | undefined;
+	let publishedAt = -Infinity;
+	return (report: PhaseReport) => {
+		const now = Date.now();
+		if (step?.number !== report.step) step = { number: report.step, startedAt: now, meters: {} };
+		const meter = (step.meters[report.name] ??= { tokens: 0, since: now });
+		meter.tokens += report.tokens ?? 1;
+		if (now - publishedAt < PHASE_INTERVAL_MS) return;
+		publishedAt = now;
+		publishPhase(run, {
+			name: report.name,
+			elapsedMs: now - step.startedAt,
+			tokens: meter.tokens || undefined,
+			tokensPerSecond: tokensPerSecond(meter, now),
+			lastLine: lastCompleteLine(report.text ?? '')
+		});
+	};
+}
+
+/** Settles with the promise, or with undefined once the signal fires: an ended run stops waiting even if it never settles. */
+function unlessAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+	const aborted = Promise.withResolvers<undefined>();
+	const onAbort = () => aborted.resolve(undefined);
+	signal.addEventListener('abort', onAbort, { once: true });
+	return Promise.race([promise, aborted.promise]).finally(() =>
+		signal.removeEventListener('abort', onAbort)
+	);
+}
+
+/**
+ * Records each request and its decision as run events and holds the run in `waiting_approval` while any request is
+ * open. Cancel and pause end the run themselves, so a request that waits then resolves `cancelled` and writes nothing.
+ */
+function approvalFor(
+	db: DatabaseSync,
+	run: RunContext,
+	signal: AbortSignal,
+	approve: ApprovalPolicy,
+	showSignOfLife: () => void
+): ExecutorIo['approval'] {
+	const agent: Actor = { kind: 'agent', runId: run.id };
+	const decider: Actor = { kind: 'system', runId: run.id };
+	let open = 0;
+	return async (request) => {
+		if (signal.aborted) return 'cancelled';
+		const { key, kind, title, input } = request;
+		tx(db, () => {
+			if (open === 0) setRunState(db, agent, run.id, 'waiting_approval');
+			const payload = { kind, title, input };
+			appendEvent(db, agent, run.id, {
+				type: 'permission_request',
+				key: `${key}:permission`,
+				payload
+			});
+		});
+		open += 1;
+		showSignOfLife();
+		const approval = await unlessAborted(approve(run, request), signal);
+		if (!approval || signal.aborted) return 'cancelled';
+		open -= 1;
+		tx(db, () => {
+			const decision = { type: 'permission_decision' as const, key: `${key}:decision` };
+			appendEvent(db, decider, run.id, { ...decision, payload: approval });
+			if (open === 0) setRunState(db, decider, run.id, 'running');
+		});
+		return approval.decision;
+	};
+}
+
 function ioFor(
 	db: DatabaseSync,
 	run: RunContext,
 	controls: RunControls,
-	endColdStart: () => void
+	endColdStart: () => void,
+	approve: ApprovalPolicy
 ): ExecutorIo {
 	let answerCollected = false;
 	const showSignOfLife = () => {
@@ -146,6 +264,7 @@ function ioFor(
 		answerCollected = true;
 		collectShownAnswer(db, run.id);
 	};
+	const pacePhase = phasePacer(run);
 	return {
 		signal: controls.cancel.signal,
 		park: controls.park.signal,
@@ -155,11 +274,13 @@ function ioFor(
 			if (event.type !== 'log') showSignOfLife();
 			return appended;
 		},
-		phase: (phase) => {
+		phase: (report) => {
 			if (controls.cancel.signal.aborted) return; // the run has ended, a late phase must not show it working again
-			if (!MODEL_LOADING_PHASES.includes(phase.name)) showSignOfLife();
-			publishPhase(run, phase);
-		}
+			// before pacing: a report the pacer holds back is still the model's first answer
+			if (!MODEL_LOADING_PHASES.includes(report.name)) showSignOfLife();
+			pacePhase(report);
+		},
+		approval: approvalFor(db, run, controls.cancel.signal, approve, showSignOfLife)
 	};
 }
 
@@ -208,9 +329,10 @@ export function startRunner(
 	db: DatabaseSync,
 	executors: Partial<Record<Profile['executor'], Executor>>,
 	readLimits: () => Limits = limits,
-	coldStart: ColdStartLimits = COLD_START_LIMITS
+	coldStart: ColdStartLimits = COLD_START_LIMITS,
+	{ approve = rejectByDefault }: RunnerOptions = {}
 ) {
-	const instance = new Runner(db, executors, readLimits, coldStart);
+	const instance = new Runner(db, executors, readLimits, coldStart, approve);
 	failOrphanedRuns(db);
 	continueInterruptedChains(db);
 	instance.start();
@@ -243,6 +365,7 @@ class Runner {
 	private readonly executors: Partial<Record<Profile['executor'], Executor>>;
 	private readonly readLimits: () => Limits;
 	private readonly coldStart: ColdStartLimits;
+	private readonly approve: ApprovalPolicy;
 	private readonly active = new Map<number, RunControls>();
 	private stopped = false;
 	private wakeScheduled = false;
@@ -253,12 +376,14 @@ class Runner {
 		db: DatabaseSync,
 		executors: Partial<Record<Profile['executor'], Executor>>,
 		readLimits: () => Limits,
-		coldStart: ColdStartLimits
+		coldStart: ColdStartLimits,
+		approve: ApprovalPolicy
 	) {
 		this.db = db;
 		this.executors = executors;
 		this.readLimits = readLimits;
 		this.coldStart = coldStart;
+		this.approve = approve;
 	}
 
 	start() {
@@ -300,7 +425,7 @@ class Runner {
 			? watchColdStart(this.db, run, controls.cancel, this.coldStart)
 			: () => {}; // a cloud model has no "loading" phase; its own first-chunk timeout covers a silent provider
 		try {
-			const io = ioFor(this.db, run, controls, endColdStart);
+			const io = ioFor(this.db, run, controls, endColdStart, this.approve);
 			const facts = await executorFor(this.executors, run.profile).execute(run, io);
 			if (!controls.cancel.signal.aborted)
 				endExecutedRun(this.db, run, facts, controls.park.signal.reason);

@@ -32,7 +32,7 @@ import {
 import { callTarget, deriveTrace, summarizeResult, type ToolCall } from '../agents/trace';
 import { mcpEndpoint } from '../mcp';
 import { inactiveProviderFailure, providerFailure } from '../provider-error';
-import type { Executor, ExecutorFacts, ExecutorIo, Phase, RunContext } from './contract';
+import type { Executor, ExecutorFacts, ExecutorIo, PhaseName, RunContext } from './contract';
 import { mask } from '../secrets';
 import { localProviderFetch } from './local-fetch';
 import { modelFor, requestSettings, stepCostFor, type StepCost } from './provider';
@@ -53,16 +53,12 @@ type OpenStep = {
 	textsRecorded: boolean;
 	/** Whether the step has produced any output yet, to tell a cloud model that never started from one that stalled. */
 	started: boolean;
-	meters: Partial<Record<Phase['name'], TokenMeter>>;
 };
-/** Tokens of one phase within a step, counted from its first delta. */
-type TokenMeter = { tokens: number; since: number };
 
 // ponytail: fixed limits; make them configurable once practice asks for it.
 export const DEFAULT_MAX_STEPS = 24;
 const REASONING_LIMIT = 20_000;
 const RESULT_LIMIT = 8_000;
-const PHASE_INTERVAL_MS = 1000;
 // ponytail: the studio tools that only read; a read tool missing here counts as progress and only makes the guard more lenient
 const READING_TOOLS = new Set(['get_ticket', 'list_workable', 'notes_search', 'notes_get']);
 
@@ -234,7 +230,6 @@ class StepLog {
 	#step: OpenStep = openStep(1);
 	#stepsStarted = 0;
 	#reasoningDeltas = 0;
-	#lastPhaseAt = -Infinity;
 
 	constructor(
 		io: ExecutorIo,
@@ -286,12 +281,12 @@ class StepLog {
 				return;
 			case 'reasoning-delta':
 				this.#step.reasoning += part.text;
-				return this.#showPhase('thinking', this.#step.reasoning);
+				return this.#reportPhase('thinking', this.#step.reasoning);
 			case 'text-delta':
 				this.#step.text += part.text;
-				return this.#showPhase('writing', this.#step.text);
+				return this.#reportPhase('writing', this.#step.text);
 			case 'tool-input-delta':
-				return this.#showPhase('writing', '');
+				return this.#reportPhase('writing');
 			case 'tool-call':
 				return this.#recordToolCall(part);
 			case 'tool-result':
@@ -326,23 +321,11 @@ class StepLog {
 		});
 	}
 
-	/** Throttled to one update a second; the first one comes at once, because it ends the runner's cold start watch. */
-	#showPhase(name: Phase['name'], text: string) {
+	#reportPhase(name: PhaseName, text?: string) {
 		this.#step.started = true;
-		const now = Date.now();
 		// ponytail: one delta counts as one token, as llama.cpp, Ollama and LM Studio stream them; a server that
 		// sends several tokens per delta shows too few (then count with the step's usage or a tokenizer)
-		const meter = (this.#step.meters[name] ??= { tokens: 0, since: now });
-		meter.tokens += 1;
-		if (now - this.#lastPhaseAt < PHASE_INTERVAL_MS) return;
-		this.#lastPhaseAt = now;
-		this.#io.phase({
-			name,
-			elapsedMs: now - this.#step.startedAt,
-			tokens: meter.tokens,
-			tokensPerSecond: tokensPerSecond(meter, now),
-			lastLine: lastCompleteLine(text)
-		});
+		this.#io.phase({ name, step: this.#step.number, text });
 	}
 
 	/** Reasoning and text of a step come before its first tool call; they are recorded once, with the step's first call or its end. */
@@ -449,20 +432,8 @@ const openStep = (number: number): OpenStep => ({
 	reasoning: '',
 	text: '',
 	textsRecorded: false,
-	started: false,
-	meters: {}
+	started: false
 });
-
-const tokensPerSecond = ({ tokens, since }: TokenMeter, now: number) =>
-	now > since ? Math.round((tokens * 1000) / (now - since)) : undefined;
-
-function lastCompleteLine(text: string) {
-	const completeLines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n');
-	return completeLines
-		.map((line) => line.trim())
-		.filter(Boolean)
-		.at(-1);
-}
 
 /** The text an MCP tool answered with; other results as JSON. */
 function textOf(output: unknown): string {

@@ -26,8 +26,14 @@ import { ticketLagen } from './lagen';
 import type { Step } from './domain/variants';
 import { assemblePrompt } from './agents/prompt';
 import { recoveryHint, type Stall } from './agents/loop-guard';
-import type { Executor, ExecutorFacts, RunContext } from './executors/contract';
-import { limits, startRunner } from './runner';
+import type { ApprovalRequest, Executor, ExecutorFacts, RunContext } from './executors/contract';
+import {
+	limits,
+	startRunner,
+	type Approval,
+	type ApprovalPolicy,
+	type RunnerHandle
+} from './runner';
 import { setSecret } from './secrets';
 
 const user: Actor = { kind: 'user' };
@@ -137,10 +143,11 @@ function start(
 	db: Parameters<typeof startRunner>[0],
 	executors: Parameters<typeof startRunner>[1],
 	limitsOrSource?: runs.Limits | (() => runs.Limits),
-	coldStart?: Parameters<typeof startRunner>[3]
+	coldStart?: Parameters<typeof startRunner>[3],
+	options?: Parameters<typeof startRunner>[4]
 ) {
 	const source = typeof limitsOrSource === 'object' ? () => limitsOrSource : limitsOrSource;
-	const runner = startRunner(db, executors, source, coldStart);
+	const runner = startRunner(db, executors, source, coldStart, options);
 	stopRunners.push(runner.stop);
 	return runner;
 }
@@ -201,6 +208,29 @@ const runningIds = (db: ReturnType<typeof openDb>) =>
 		.prepare("SELECT id FROM runs WHERE state = 'running' ORDER BY id")
 		.all()
 		.map((r) => r.id as number);
+
+const toolCallRequest: ApprovalRequest = {
+	key: 'call-1',
+	kind: 'execute',
+	title: 'rm -rf build',
+	input: { command: 'rm -rf build' }
+};
+
+/** A policy that decides only when the test says so. */
+function heldPolicy() {
+	const asked: { run: RunContext; request: ApprovalRequest; decide: (a: Approval) => void }[] = [];
+	const approve: ApprovalPolicy = (run, request) =>
+		new Promise((decide) => asked.push({ run, request, decide }));
+	return { approve, asked };
+}
+
+const approvalEvents = (db: ReturnType<typeof openDb>, runId: number) =>
+	db
+		.prepare(
+			"SELECT type, idempotency_key AS key, payload FROM run_events WHERE run_id = ? AND type LIKE 'permission_%' ORDER BY seq"
+		)
+		.all(runId)
+		.map(({ type, key, payload }) => ({ type, key, payload: JSON.parse(payload as string) }));
 
 describe('claimRun', () => {
 	it('gives a queued run to exactly one of two connections, and a waiting run keeps its pool slot', () => {
@@ -736,7 +766,7 @@ describe('cold start of a model', () => {
 		'Das Modell hat nach 30 s noch nicht geantwortet — es wird geladen oder heruntergeladen. Warten oder den Run abbrechen; nach 30 min schlägt der Run mit model_loading_timeout fehl.';
 
 	function startCold(...args: Parameters<typeof start>) {
-		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
 		const events: StudioEvent[] = [];
 		stopRunners.push(subscribe((event) => events.push(event)));
 		const runner = start(...args);
@@ -866,19 +896,14 @@ describe('cold start of a model', () => {
 				.all(id)
 				.map((e) => [e.type, JSON.parse(e.payload as string).phase]);
 
-		io.phase({ name: 'model_downloading', elapsedMs: 5_000 });
-		io.phase({ name: 'model_loading', elapsedMs: 10_000 });
+		io.phase({ name: 'model_downloading', step: 1, tokens: 0 });
+		vi.advanceTimersByTime(10_000);
+		io.phase({ name: 'model_loading', step: 1, tokens: 0 });
 		vi.advanceTimersByTime(coldStart.hintAfterMs); // still loading: the soft threshold reports the loading phase
 		expect(storedEventTypes()).toEqual([['log', 'model_loading']]);
 
 		const longLine = `checking ${secret} ${'x'.repeat(200)}`;
-		io.phase({
-			name: 'thinking',
-			elapsedMs: 192_000,
-			tokens: 4100,
-			tokensPerSecond: 34,
-			lastLine: longLine
-		});
+		io.phase({ name: 'thinking', step: 1, text: `${longLine}\nunfinished`, tokens: 4100 });
 		vi.advanceTimersByTime(coldStart.failAfterMs);
 		await flush();
 
@@ -892,14 +917,13 @@ describe('cold start of a model', () => {
 			runId: id
 		};
 		expect(events.filter((e) => e.type === 'run.phase')).toEqual([
-			{ ...phase, name: 'model_downloading', elapsedMs: 5_000 },
+			{ ...phase, name: 'model_downloading', elapsedMs: 0 },
 			{ ...phase, name: 'model_loading', elapsedMs: 10_000 },
 			{
 				...phase,
 				name: 'thinking',
-				elapsedMs: 192_000,
+				elapsedMs: 10_000 + coldStart.hintAfterMs,
 				tokens: 4100,
-				tokensPerSecond: 34,
 				lastLine: `checking [secret:phase-secret] ${'x'.repeat(200)}`.slice(0, 120)
 			}
 		]);
@@ -914,9 +938,218 @@ describe('cold start of a model', () => {
 		await flush();
 		runner.cancel(id);
 
-		fake.call(id).io.phase({ name: 'writing', elapsedMs: 1_000 });
+		fake.call(id).io.phase({ name: 'writing', step: 1 });
 
 		expect(events.filter((e) => e.type === 'run.phase')).toEqual([]);
+	});
+
+	it('ends the cold start with a permission request, so a run that waits for its approval outlives the hard limit', async () => {
+		const s = setup();
+		const fake = fakeExecutor();
+		const policy = heldPolicy();
+		startCold(s.db, { builtin: fake.executor }, limits, coldStart, { approve: policy.approve });
+		const id = s.queue(s.local);
+		await flush();
+
+		void fake.call(id).io.approval(toolCallRequest);
+		vi.advanceTimersByTime(coldStart.failAfterMs);
+		await flush();
+
+		expect(s.state(id)).toBe('waiting_approval');
+		expect(s.db.prepare("SELECT count(*) AS n FROM run_events WHERE type = 'log'").get()).toEqual({
+			n: 0
+		});
+	});
+});
+
+describe('approval through the runner', () => {
+	async function runningRun(options?: Parameters<typeof startRunner>[4]) {
+		const s = setup();
+		const fake = fakeExecutor();
+		const runner = start(s.db, { builtin: fake.executor }, undefined, undefined, options);
+		const id = s.queue(s.cloud);
+		await flush();
+		const states: string[] = [];
+		stopRunners.push(
+			subscribe((e) => {
+				if (e.type === 'run.state_changed' && e.runId === id) states.push(e.to as string);
+			})
+		);
+		const { io, fail } = fake.call(id);
+		return { s, runner, id, io, fail, states };
+	}
+
+	it('holds the run in waiting_approval with a permission_request until the policy decides, then records the decision, runs on and resolves with it', async () => {
+		const policy = heldPolicy();
+		const { s, id, io, states } = await runningRun({ approve: policy.approve });
+
+		const decision = io.approval(toolCallRequest);
+		expect(s.state(id)).toBe('waiting_approval');
+		expect(approvalEvents(s.db, id)).toEqual([
+			{
+				type: 'permission_request',
+				key: 'call-1:permission',
+				payload: { kind: 'execute', title: 'rm -rf build', input: { command: 'rm -rf build' } }
+			}
+		]);
+		expect(policy.asked).toMatchObject([{ run: { id }, request: toolCallRequest }]);
+
+		policy.asked[0].decide({ decision: 'allow_once', by: 'test_policy' });
+		expect(await decision).toBe('allow_once');
+		expect(s.state(id)).toBe('running');
+		expect(approvalEvents(s.db, id).at(-1)).toEqual({
+			type: 'permission_decision',
+			key: 'call-1:decision',
+			payload: { decision: 'allow_once', by: 'test_policy' }
+		});
+		expect(states).toEqual(['waiting_approval', 'running']);
+	});
+
+	it('rejects with by policy_default in the decision when no policy is injected', async () => {
+		const { s, id, io } = await runningRun();
+
+		expect(await io.approval(toolCallRequest)).toBe('reject');
+
+		expect(approvalEvents(s.db, id).at(-1)).toEqual({
+			type: 'permission_decision',
+			key: 'call-1:decision',
+			payload: { decision: 'reject', by: 'policy_default' }
+		});
+		expect(s.state(id)).toBe('running');
+	});
+
+	it.each([
+		{ how: 'cancel', end: (r: RunnerHandle, id: number) => r.cancel(id), state: 'cancelled' },
+		{ how: 'pause', end: (r: RunnerHandle, id: number) => r.pause(id), state: 'paused' },
+		{ how: 'halt', end: (r: RunnerHandle) => r.halt(), state: 'cancelled' },
+		{ how: 'pauseAll', end: (r: RunnerHandle) => r.pauseAll(), state: 'paused' }
+	])(
+		'resolves a waiting request cancelled on $how and leaves the run $state without a further event, even when the policy decides late',
+		async ({ end, state }) => {
+			const policy = heldPolicy();
+			const { s, runner, id, io, states } = await runningRun({ approve: policy.approve });
+			const consoleError = vi.spyOn(console, 'error');
+
+			const decision = io.approval(toolCallRequest);
+			end(runner, id);
+			expect(await decision).toBe('cancelled');
+			policy.asked[0].decide({ decision: 'allow_once', by: 'test_policy' });
+			await flush();
+			expect(await io.approval({ ...toolCallRequest, key: 'call-2' })).toBe('cancelled');
+
+			expect(s.state(id)).toBe(state);
+			expect(states).toEqual(['waiting_approval', state]);
+			const stored = s.db.prepare('SELECT type FROM run_events WHERE run_id = ?').all(id);
+			expect(stored).toEqual([{ type: 'permission_request' }]);
+			expect(policy.asked).toHaveLength(1);
+			expect(consoleError).not.toHaveBeenCalled();
+		}
+	);
+
+	it('fails the run without a decision when the policy fails, so the tool call never runs', async () => {
+		const broken: ApprovalPolicy = async () => {
+			throw new Error('policy store unreachable');
+		};
+		const { s, id, io, fail } = await runningRun({ approve: broken });
+
+		const failure = await io.approval(toolCallRequest).catch((err: Error) => err);
+		expect(failure).toEqual(new Error('policy store unreachable'));
+		fail(failure);
+		await flush();
+
+		expect(s.row(id)).toMatchObject({
+			state: 'failed',
+			error: '[executor_error] policy store unreachable'
+		});
+		expect(approvalEvents(s.db, id).map((e) => e.type)).toEqual(['permission_request']);
+	});
+
+	it('stays waiting_approval until the last of two concurrent requests is decided', async () => {
+		const policy = heldPolicy();
+		const { s, id, io, states } = await runningRun({ approve: policy.approve });
+
+		const first = io.approval(toolCallRequest);
+		const second = io.approval({ ...toolCallRequest, key: 'call-2' });
+		policy.asked[0].decide({ decision: 'allow_once', by: 'test_policy' });
+		expect(await first).toBe('allow_once');
+		expect(s.state(id)).toBe('waiting_approval');
+		policy.asked[1].decide({ decision: 'reject', by: 'test_policy' });
+		expect(await second).toBe('reject');
+
+		expect(s.state(id)).toBe('running');
+		expect(states).toEqual(['waiting_approval', 'running']);
+	});
+
+	it('records a repeated request of the same tool call and its decision once', async () => {
+		const { s, id, io } = await runningRun();
+		const busEvents: StudioEvent[] = [];
+		stopRunners.push(subscribe((e) => busEvents.push(e)));
+
+		expect(await io.approval(toolCallRequest)).toBe('reject');
+		expect(await io.approval(toolCallRequest)).toBe('reject');
+
+		expect(approvalEvents(s.db, id).map((e) => e.key)).toEqual([
+			'call-1:permission',
+			'call-1:decision'
+		]);
+		expect(busEvents.filter((e) => e.type === 'run.event')).toHaveLength(2);
+		expect(s.state(id)).toBe('running');
+	});
+
+	it('masks secrets in the request on the stored event and on the bus', async () => {
+		const { s, id, io } = await runningRun();
+		const secret = 'sk-command-line-secret-4242';
+		setSecret(s.db, 'approval-secret', secret, false, randomBytes(32));
+		const busEvents: StudioEvent[] = [];
+		stopRunners.push(subscribe((e) => busEvents.push(e)));
+
+		const command = `curl -H "Authorization: Bearer ${secret}" https://api.test`;
+		await io.approval({ key: 'call-3', kind: 'execute', title: command, input: { command } });
+
+		const masked = command.replace(secret, '[secret:approval-secret]');
+		const payload = { kind: 'execute', title: masked, input: { command: masked } };
+		expect(approvalEvents(s.db, id)[0].payload).toEqual(payload);
+		expect(busEvents.find((e) => e.type === 'run.event')).toMatchObject({
+			eventType: 'permission_request',
+			payload
+		});
+		expect(JSON.stringify(busEvents)).not.toContain(secret);
+	});
+});
+
+describe('pacing of phases', () => {
+	it('publishes at most one phase a second per run of 30 raw reports a second, the first at once, with counts and tokens per second from every report', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		const s = setup();
+		const fake = fakeExecutor();
+		const events: StudioEvent[] = [];
+		stopRunners.push(subscribe((e) => events.push(e)));
+		start(s.db, { builtin: fake.executor });
+		const [busy, other] = [s.queue(s.cloud), s.queue(s.cloud)];
+		await flush();
+		const phases = (runId: number) =>
+			events
+				.filter((e) => e.type === 'run.phase' && e.runId === runId)
+				.map((p) => [p.name, p.elapsedMs, p.tokens, p.tokensPerSecond, p.lastLine]);
+		const { io } = fake.call(busy);
+
+		io.phase({ name: 'thinking', step: 1, text: 'line 1\n' });
+		expect(phases(busy)).toHaveLength(1);
+		fake.call(other).io.phase({ name: 'writing', step: 1 });
+		expect(phases(other)).toHaveLength(1);
+		for (let report = 2; report <= 90; report++) {
+			vi.setSystemTime(Date.now() + 33);
+			io.phase({ name: 'thinking', step: 1, text: `line ${report}\nunfinished` });
+		}
+		vi.setSystemTime(Date.now() + 1000);
+		io.phase({ name: 'thinking', step: 2 });
+
+		expect(phases(busy)).toEqual([
+			['thinking', 0, 1, undefined, 'line 1'],
+			['thinking', 1023, 32, 31, 'line 32'],
+			['thinking', 2046, 63, 31, 'line 63'],
+			['thinking', 0, 1, undefined, undefined]
+		]);
 	});
 });
 
@@ -1404,8 +1637,20 @@ describe('collecting the answer of a run that resumes after a question', () => {
 			io.emit({ type: 'message', payload: { step: 1, text: 'Exporting.' } });
 			expect(w.collected()).not.toBeNull();
 			io.emit({ type: 'message', key: 'second', payload: { step: 2, text: 'Still exporting.' } });
-			io.phase({ name: 'writing', elapsedMs: 5 });
+			io.phase({ name: 'writing', step: 2 });
 
+			expect(w.answerComments()).toBe(1);
+		}
+	);
+
+	it.each(['local', 'cloud'] as const)(
+		'collects the answer with the first approval request of a %s resume',
+		async (profile) => {
+			const w = await resumedAfterAnswer(profile);
+
+			void w.fake.call(w.resumed).io.approval(toolCallRequest);
+
+			expect(w.collected()).not.toBeNull();
 			expect(w.answerComments()).toBe(1);
 		}
 	);
@@ -1416,9 +1661,9 @@ describe('collecting the answer of a run that resumes after a question', () => {
 			const w = await resumedAfterAnswer(profile);
 			const { io } = w.fake.call(w.resumed);
 
-			io.phase({ name: 'model_loading', elapsedMs: 5 });
+			io.phase({ name: 'model_loading', step: 1, tokens: 0 });
 			expect(w.collected()).toBeNull();
-			io.phase({ name: 'thinking', elapsedMs: 9 });
+			io.phase({ name: 'thinking', step: 1 }); // at the same instant, so the pacer holds it back
 
 			expect(w.collected()).not.toBeNull();
 			expect(w.answerComments()).toBe(1);
@@ -1447,7 +1692,7 @@ describe('collecting the answer of a run that resumes after a question', () => {
 		const w = await resumedAfterAnswer('cloud');
 		const { io, done } = w.fake.call(w.resumed);
 		w.runner.pause(w.resumed);
-		io.phase({ name: 'writing', elapsedMs: 1, tokens: 1, tokensPerSecond: 1 });
+		io.phase({ name: 'writing', step: 1 });
 		expect(() => io.emit({ type: 'message', payload: { step: 1, text: 'late' } })).toThrow();
 		done({ ending: 'end_turn', lastMessage: 'late' });
 		await flush();

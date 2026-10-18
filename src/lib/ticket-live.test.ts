@@ -64,7 +64,7 @@ it('reloads the ticket for its run starting and ending, but leaves its run event
 	const events: StudioEvent[] = [];
 	const off = subscribe((e) => events.push(e));
 	const work: Executor['execute'] = async (_run, io) => {
-		io.phase({ name: 'thinking', elapsedMs: 0 });
+		io.phase({ name: 'thinking', step: 1 });
 		io.emit({ type: 'message', payload: { step: 1, text: 'Ich lese das Ticket.' } });
 		return { ending: 'end_turn' };
 	};
@@ -117,7 +117,7 @@ it('reloads the board when a run starts and ends, but not for each run event and
 	const events: StudioEvent[] = [];
 	const off = subscribe((e) => events.push(e));
 	const work: Executor['execute'] = async (_run, io) => {
-		io.phase({ name: 'thinking', elapsedMs: 0 });
+		io.phase({ name: 'thinking', step: 1 });
 		io.emit({ type: 'message', payload: { step: 1, text: 'Ich lese das Ticket.' } });
 		return { ending: 'end_turn' };
 	};
