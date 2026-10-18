@@ -5,14 +5,21 @@ import type { AddressInfo } from 'node:net';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+import {
+	aliveOf,
+	endTestProcesses,
+	removeAgentScripts,
+	startAgentTree,
+	type AgentTree
+} from './agent-tree.fixture';
 import { migrate, openDb } from './db';
 import { disconnectRunner, issuePairingCode, pairRunner } from './domain/runners';
 import { subscribe } from './events';
 import { createRunnerChannel, type RunnerChannel } from './runner-channel';
 import { CREDENTIAL_FILE, FLOOR_FILE } from './runner-pair';
-import { CLOSE, DEAD_AFTER_MS } from './runner-protocol';
+import { CLOSE, DEAD_AFTER_MS, DEAD_MAN_MS } from './runner-protocol';
 import {
 	MAX_BACKOFF_MS,
 	MIN_BACKOFF_MS,
@@ -590,6 +597,102 @@ describe('timers', () => {
 			await running;
 			stop = new AbortController();
 		}
+	});
+});
+
+describe('the agents of this machine', () => {
+	// captured before any test fakes the clock: a real pause gives a wrongly started tree kill time to show
+	const realTimeout = globalThis.setTimeout;
+	const realPause = (ms: number) => new Promise((resolve) => realTimeout(resolve, ms));
+	const welcome = Buffer.from(JSON.stringify({ type: 'welcome', name: 'workstation' }));
+	const deadManLines = () => lines.filter((line) => line.startsWith('[dead_man]'));
+
+	afterEach(endTestProcesses);
+	afterAll(removeAgentScripts);
+
+	describe('after the connection is lost', () => {
+		let tree: AgentTree;
+		let agents: Set<number>;
+		let network: ReturnType<typeof fakeNetwork>;
+		let running: ReturnType<typeof runnerStartCommand>;
+
+		beforeEach(async () => {
+			writeConfig('http://127.0.0.1:3000');
+			tree = await startAgentTree();
+			agents = new Set([tree.agent]);
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			network = fakeNetwork();
+			running = runnerStartCommand(ctx({ createSocket: network.createSocket, agents }));
+			const socket = network.sockets[0];
+			socket.emit('open');
+			socket.emit('message', welcome);
+			socket.emit('close', 1006, Buffer.alloc(0));
+		});
+
+		afterEach(async () => {
+			agents.clear(); // endTestProcesses cleans up; stopping must not wait for a tree kill on the fake clock
+			stop.abort();
+			await running;
+		});
+
+		it('ends every agent tree when no welcome comes within 30 s', async () => {
+			vi.advanceTimersByTime(DEAD_MAN_MS - 1);
+			await realPause(300);
+			expect(await aliveOf(tree)).toHaveLength(4);
+			expect(deadManLines()).toEqual([]);
+
+			vi.advanceTimersByTime(1);
+
+			await vi.waitFor(async () => expect(await aliveOf(tree)).toEqual([]), {
+				timeout: 10_000,
+				interval: 100
+			});
+			expect(deadManLines()).toHaveLength(1);
+			await vi.waitFor(() => expect(agents.size).toBe(0)); // the kill settles a moment after the processes go
+		});
+
+		it('keeps the agent trees when a welcome comes after 29 s', async () => {
+			vi.advanceTimersByTime(29_000);
+			const again = network.sockets.at(-1)!;
+			again.emit('open');
+			again.emit('message', welcome);
+			vi.advanceTimersByTime(DEAD_MAN_MS);
+			await realPause(500);
+
+			expect(await aliveOf(tree)).toHaveLength(4);
+			expect(deadManLines()).toEqual([]);
+		});
+	});
+
+	it.each([
+		['the runner is stopped (SIGINT/SIGTERM)', 0],
+		['studio disconnects the machine (4401)', 1],
+		['a second runner with the same pairing replaces it (4403)', 1]
+	])('ends every agent tree before it resolves when %s', async (situation, exitCode) => {
+		const { origin, pair, db, channel } = await studio();
+		const runner = pair();
+		writeConfig(origin, runner.credential);
+		const tree = await startAgentTree();
+		const running = runnerStartCommand(ctx({ agents: new Set([tree.agent]) }));
+		await vi.waitFor(() => expect(channel.connected().size).toBe(1));
+
+		if (situation.includes('stopped')) stop.abort();
+		else if (situation.includes('4401')) {
+			disconnectRunner(db, runner.id);
+			channel.revoke('workstation');
+		} else {
+			const second = join(home, 'second', 'config', 'kabai-studio');
+			writeConfig(origin, runner.credential, second);
+			void runnerStartCommand(
+				ctx({
+					env: { HOME: join(home, 'second'), XDG_CONFIG_HOME: join(home, 'second', 'config') }
+				})
+			);
+		}
+		const result = await running;
+
+		expect(await aliveOf(tree)).toEqual([]);
+		expect(result.exitCode).toBe(exitCode);
 	});
 });
 

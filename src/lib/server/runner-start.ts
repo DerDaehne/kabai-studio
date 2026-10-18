@@ -11,7 +11,14 @@ import { defaultConfigDir } from './data-dir.ts';
 import { DomainError, formatError } from './domain/error.ts';
 import { CREDENTIAL_FILE, FLOOR_FILE, readFloor, type PairResult } from './runner-pair.ts';
 import { floorSummary } from './runner-floor.ts';
-import { CLOSE, DEAD_AFTER_MS, PROTOCOL_VERSION, RUNNER_PATH } from './runner-protocol.ts';
+import {
+	CLOSE,
+	DEAD_AFTER_MS,
+	DEAD_MAN_MS,
+	PROTOCOL_VERSION,
+	RUNNER_PATH
+} from './runner-protocol.ts';
+import { killTree } from './tree-kill.ts';
 
 const MAX_REFUSAL_BODY = 4096;
 export const MIN_BACKOFF_MS = 1_000;
@@ -27,6 +34,8 @@ export type StartContext = {
 	signal?: AbortSignal;
 	random?: () => number;
 	createSocket?: (url: string, headers: Record<string, string>) => WebSocket;
+	/** The PIDs of the agents this runner started; it ends their trees when it loses studio for good or for too long. */
+	agents?: Set<number>;
 };
 
 type Say = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -124,6 +133,8 @@ class Connection {
 	private socket: WebSocket | null = null;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private deadTimer: ReturnType<typeof setTimeout> | undefined;
+	private deadMan: ReturnType<typeof setTimeout> | undefined;
+	private readonly agents: Set<number>;
 	private finished = false;
 
 	constructor(setup: Setup, ctx: StartContext, say: Say, resolve: (result: PairResult) => void) {
@@ -131,6 +142,7 @@ class Connection {
 		this.ctx = ctx;
 		this.say = say;
 		this.resolve = resolve;
+		this.agents = ctx.agents ?? new Set();
 		this.rePair = say('cli.runner.start.rePair.hint', { origin: setup.credential.studioOrigin });
 		ctx.signal?.addEventListener('abort', () =>
 			this.finish({ exitCode: 0, message: say('cli.runner.start.stopped') })
@@ -155,6 +167,8 @@ class Connection {
 			if (!welcomed && isWelcome(data.toString())) {
 				welcomed = true;
 				this.attempt = 0;
+				clearTimeout(this.deadMan);
+				this.deadMan = undefined;
 				this.ctx.log(
 					this.say('cli.runner.start.connected', {
 						origin: credential.studioOrigin,
@@ -248,6 +262,7 @@ class Connection {
 
 	private scheduleRetry(reason: string) {
 		if (this.finished) return;
+		this.armDeadMan();
 		this.attempt++;
 		const ceiling = Math.min(MAX_BACKOFF_MS, MIN_BACKOFF_MS * 2 ** (this.attempt - 1));
 		const random = this.ctx.random ?? Math.random;
@@ -256,6 +271,31 @@ class Connection {
 			this.say('cli.runner.start.lost', { reason, seconds: Math.max(1, Math.round(wait / 1000)) })
 		);
 		this.retryTimer = setTimeout(() => this.connect(), wait);
+	}
+
+	/** Studio fails the runs of a machine that stays away for long, so their agents end here before that. */
+	private armDeadMan() {
+		this.deadMan ??= setTimeout(() => {
+			this.deadMan = undefined;
+			if (this.agents.size === 0) return;
+			this.ctx.log(
+				this.say('cli.runner.start.deadMan', {
+					seconds: DEAD_MAN_MS / 1000,
+					count: this.agents.size
+				})
+			);
+			void this.endAgents();
+		}, DEAD_MAN_MS);
+	}
+
+	private async endAgents() {
+		const agents = [...this.agents];
+		const ends = await Promise.allSettled(agents.map((pid) => killTree(pid)));
+		ends.forEach((end, index) => {
+			this.agents.delete(agents[index]);
+			if (end.status === 'fulfilled' && !end.value.degraded) return;
+			this.ctx.log(this.say('cli.runner.start.treeKillDegraded', { pid: agents[index] }));
+		});
 	}
 
 	private rearmDeadline() {
@@ -272,8 +312,10 @@ class Connection {
 		this.finished = true;
 		clearTimeout(this.retryTimer);
 		clearTimeout(this.deadTimer);
+		clearTimeout(this.deadMan);
 		this.socket?.terminate();
-		this.resolve(result);
+		// the local emergency stop: whatever ends the runner, no agent outlives it
+		void this.endAgents().finally(() => this.resolve(result));
 	}
 }
 

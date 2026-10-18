@@ -87,6 +87,10 @@ export const de: Catalogue = {
 		'Mit der https://-Adresse von Studio neu koppeln: kabai-studio runner pair <https-Adresse> <Code>.',
 	'cli.runner.start.connected': 'Verbunden mit {origin} als „{name}“.',
 	'cli.runner.start.lost': 'Verbindung verloren ({reason}); neuer Versuch in {seconds} s.',
+	'cli.runner.start.deadMan':
+		'[dead_man] Seit {seconds} s keine Verbindung zu Studio: {count} Agent(s) hier beendet; Studio lässt ihre Runs scheitern.',
+	'cli.runner.start.treeKillDegraded':
+		'[tree_kill_degraded] ps fehlt oder scheiterte: nur Agent {pid} selbst bekam SIGKILL, von ihm gestartete Prozesse laufen womöglich weiter.',
 	'cli.runner.start.stopped': 'Runner beendet.',
 	'cli.runner.start.frameNotSupported':
 		'[frame_not_supported] Studio hat einen Frame gesendet, den diese Version nicht annimmt; die Verbindung wird geschlossen.',

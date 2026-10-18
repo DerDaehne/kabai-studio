@@ -85,6 +85,10 @@ export const en = {
 		'Pair again with studio’s https:// address: kabai-studio runner pair <https-address> <code>.',
 	'cli.runner.start.connected': 'Connected to {origin} as “{name}”.',
 	'cli.runner.start.lost': 'Connection lost ({reason}); trying again in {seconds} s.',
+	'cli.runner.start.deadMan':
+		'[dead_man] No connection to studio for {seconds} s: ended {count} agent(s) here; studio fails their runs.',
+	'cli.runner.start.treeKillDegraded':
+		'[tree_kill_degraded] ps is missing or failed: only agent {pid} itself got SIGKILL, processes it started may still run.',
 	'cli.runner.start.stopped': 'Runner stopped.',
 	'cli.runner.start.frameNotSupported':
 		'[frame_not_supported] Studio sent a frame this version does not accept; the connection is closed.',
