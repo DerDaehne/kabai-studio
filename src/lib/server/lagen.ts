@@ -62,7 +62,7 @@ const LAGE_ROWS = `
 			WHERE rel.to_ticket_id = t.id AND rel.type = 'blocks' AND ${PREDECESSOR_OPEN}) AS predecessors
 	FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id
 	LEFT JOIN runs r ON r.id = (SELECT max(id) FROM runs WHERE ticket_id = t.id)
-	WHERE p.archived = 0 AND (?1 IS NULL OR t.project_id = ?1)
+	WHERE p.archived = 0 AND (?1 IS NULL OR t.project_id = ?1) AND (?2 IS NULL OR t.id = ?2)
 	ORDER BY t.id`;
 
 /**
@@ -77,9 +77,12 @@ function runInput(row: Row): LageRun | null {
 	return state === 'queued' || state === 'paused' ? state : null;
 }
 
-/** The Lage of every ticket in one project, or in every non-archived project, in a constant number of queries. */
-export function ticketLagen(db: DatabaseSync, options: { projectId?: number } = {}): TicketLage[] {
-	const rows = db.prepare(LAGE_ROWS).all(options.projectId ?? null) as Row[];
+function lagenOf(
+	db: DatabaseSync,
+	projectId: number | null,
+	ticketId: number | null
+): TicketLage[] {
+	const rows = db.prepare(LAGE_ROWS).all(projectId, ticketId) as Row[];
 	const capacity = rows.some((row) => runInput(row) === 'queued')
 		? waitReasons(db, limits())
 		: new Map();
@@ -105,3 +108,11 @@ export function ticketLagen(db: DatabaseSync, options: { projectId?: number } = 
 		};
 	});
 }
+
+/** The Lage of every ticket in one project, or in every non-archived project, in a constant number of queries. */
+export const ticketLagen = (db: DatabaseSync, options: { projectId?: number } = {}): TicketLage[] =>
+	lagenOf(db, options.projectId ?? null, null);
+
+/** The Lage of one ticket; `undefined` when it does not exist or its project is archived. */
+export const ticketLage = (db: DatabaseSync, ticketId: number): TicketLage | undefined =>
+	lagenOf(db, null, ticketId)[0];

@@ -7,7 +7,7 @@ import * as runs from './domain/runs';
 import { finishStep } from './domain/steps';
 import type { Variant } from './domain/variants';
 import { migrate, openDb } from './db';
-import { ticketLagen } from './lagen';
+import { ticketLage, ticketLagen } from './lagen';
 
 const user: Actor = { kind: 'user' };
 
@@ -295,23 +295,23 @@ describe('ticketLagen', () => {
 	});
 });
 
-describe('ticketLagen at board size', () => {
-	function crowdedBoard() {
-		const s = setup();
-		const stu = s.project('STU');
-		const shop = s.project('SHO');
-		const ids: number[] = [];
-		for (let i = 0; i < 500; i++)
-			ids.push(s.ticket(i % 2 ? stu : shop, i % 7 ? 'implement' : 'backlog'));
-		ids.forEach((id, i) => {
-			if (i % 5 === 0) runs.startRun(s.db, user, s.run(id));
-			if (i % 5 === 1) s.run(id);
-			if (i % 10 === 2) requestHuman(s.db, user, id, { question: 'Which one?' });
-			if (i > 0 && i % 4 === 0) board.linkRelation(s.db, user, ids[i - 1], id, 'blocks');
-		});
-		return s;
-	}
+function crowdedBoard() {
+	const s = setup();
+	const stu = s.project('STU');
+	const shop = s.project('SHO');
+	const ids: number[] = [];
+	for (let i = 0; i < 500; i++)
+		ids.push(s.ticket(i % 2 ? stu : shop, i % 7 ? 'implement' : 'backlog'));
+	ids.forEach((id, i) => {
+		if (i % 5 === 0) runs.startRun(s.db, user, s.run(id));
+		if (i % 5 === 1) s.run(id);
+		if (i % 10 === 2) requestHuman(s.db, user, id, { question: 'Which one?' });
+		if (i > 0 && i % 4 === 0) board.linkRelation(s.db, user, ids[i - 1], id, 'blocks');
+	});
+	return { ...s, ids };
+}
 
+describe('ticketLagen at board size', () => {
 	it('reads 500 tickets with runs and questions in under 50 ms', () => {
 		const s = crowdedBoard();
 		ticketLagen(s.db);
@@ -335,5 +335,44 @@ describe('ticketLagen at board size', () => {
 		const few = count(1);
 		expect(many).toBe(few);
 		expect(many).toBeLessThanOrEqual(2);
+	});
+});
+
+describe('ticketLage', () => {
+	it('reads the same Lage for one ticket as the board reads for all', () => {
+		const s = setup();
+		const project = s.project('STU');
+		const open = s.ticket(project);
+		const asking = s.ticket(project);
+		requestHuman(s.db, user, asking, { question: 'Which one?' });
+		for (const id of [open, asking]) expect(ticketLage(s.db, id)).toEqual(s.lageOfTicket(id));
+		expect(ticketLage(s.db, asking)).toMatchObject({
+			lage: 'waiting',
+			reason: { kind: 'question' }
+		});
+	});
+
+	it('finds nothing for a ticket that does not exist', () => {
+		expect(ticketLage(setup().db, 999)).toBeUndefined();
+	});
+
+	it('uses the same few queries in a crowded board as in an empty one', () => {
+		const crowded = crowdedBoard();
+		const statementsFor = (s: ReturnType<typeof setup>, ticketId: number) => {
+			let statements = 0;
+			const prepare = s.db.prepare.bind(s.db);
+			s.db.prepare = ((sql: string) => (statements++, prepare(sql))) as typeof s.db.prepare;
+			ticketLage(s.db, ticketId);
+			s.db.prepare = prepare;
+			return statements;
+		};
+		const alone = setup();
+		const aloneId = alone.ticket(alone.project('STU'));
+		alone.run(aloneId);
+		const queuedInCrowd = crowded.ids.find(
+			(id) => ticketLage(crowded.db, id)?.reason.kind === 'capacity'
+		)!;
+		expect(statementsFor(crowded, queuedInCrowd)).toBe(statementsFor(alone, aloneId));
+		expect(statementsFor(crowded, queuedInCrowd)).toBeLessThanOrEqual(2);
 	});
 });
