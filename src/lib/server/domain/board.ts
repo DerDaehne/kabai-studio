@@ -500,10 +500,11 @@ function retractOpenQuestions(db: DatabaseSync, emit: Emit, t: Ticket) {
 	const system: Actor = { kind: 'system' };
 	const note = 'Das Ticket wurde nach „fertig“ verschoben; die Frage wurde zurückgezogen.';
 	const close = db.prepare(
-		"UPDATE questions SET answer = json_object('text', ?), answered_at = CURRENT_TIMESTAMP, collected_at = CURRENT_TIMESTAMP WHERE id = ?"
+		"UPDATE questions SET answer = json_object('text', ?), answered_at = ?, collected_at = CURRENT_TIMESTAMP WHERE id = ?"
 	);
+	const answeredAt = new Date().toISOString();
 	for (const { id } of open) {
-		close.run(note, id);
+		close.run(note, answeredAt, id);
 		emit({
 			type: 'question.retracted',
 			projectId: t.project_id,

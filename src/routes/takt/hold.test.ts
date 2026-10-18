@@ -15,10 +15,11 @@ import { actions, load } from './+page.server';
 const dir = mkdtempSync(join(tmpdir(), 'studio-hold-route-'));
 process.env.STUDIO_DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+let tests = 0;
 beforeEach(() => {
 	db().exec('DELETE FROM projects; DELETE FROM agent_profiles; DELETE FROM users');
 	vi.useFakeTimers({ toFake: ['Date'] });
-	vi.setSystemTime(new Date('2026-10-18T12:00:00.000Z'));
+	vi.setSystemTime(new Date(Date.UTC(2026, 9, 18, 12) + tests++ * 10 * 60_000)); // the limiter is shared by the module; ten minutes apart no test counts the beats of another
 });
 afterEach(() => vi.useRealTimers());
 
@@ -94,13 +95,14 @@ function signedIn() {
 describe('the hold beat in Takt', () => {
 	it('extends the window for the signed-in human and answers with what the toast needs', async () => {
 		const q = answeredQuestion();
+		const answeredAt = Date.now();
 		await post(q.id);
 		vi.setSystemTime(Date.now() + 9000);
 
 		const { result } = await beat(q.id, signedIn());
 
 		expect(result).toEqual({ held: true, closesInMs: 10_000, capped: false });
-		expect(notBefore(q.runId)).toBe('2026-10-18T12:00:19.000Z');
+		expect(notBefore(q.runId)).toBe(new Date(answeredAt + 19_000).toISOString());
 	});
 
 	it('offers the beat interval together with the window length', async () => {
@@ -142,7 +144,8 @@ describe('the hold beat in Takt', () => {
 		const q = answeredQuestion();
 		await post(q.id);
 		const session = signedIn();
-		for (let n = 0; n < 30; n++) await beat(q.id, session);
+		for (let n = 0; n < 30; n++)
+			expect((await beat(q.id, session)).result, `beat ${n + 1}`).toMatchObject({ held: true });
 		const accepted = notBefore(q.runId);
 		vi.setSystemTime(Date.now() + 5000);
 

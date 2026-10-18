@@ -47,7 +47,6 @@ let nextId = 1;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const holds = new Set<HoldReason>();
 let beatTimer: ReturnType<typeof setInterval> | undefined;
-let beating = false;
 /** Once a lease toast's hold has ended (unconfirmed beat, cap, nothing to hold) it counts down again for good. */
 let holdEnded = false;
 let confirmed = { left: 0, at: 0 };
@@ -130,8 +129,18 @@ function leaseFollowsHolds(open: Toast, wasHeld: boolean) {
 function startBeating(open: Toast, lease: HoldLease) {
 	confirmed = { left: open.left, at: Date.now() };
 	if (connection.lost) return endHold(open);
-	void beat(open, lease);
-	beatTimer = setInterval(() => void beat(open, lease), lease.beatMs);
+	let inFlight = false;
+	const send = async () => {
+		if (inFlight) return;
+		inFlight = true;
+		try {
+			await beat(open, lease);
+		} finally {
+			inFlight = false;
+		}
+	};
+	void send();
+	beatTimer = setInterval(() => void send(), lease.beatMs);
 }
 
 function stopBeating() {
@@ -140,14 +149,14 @@ function stopBeating() {
 }
 
 async function beat(open: Toast, lease: HoldLease) {
-	if (beating) return;
-	beating = true;
-	const silence = new Promise<undefined>((resolve) => setTimeout(resolve, BEAT_TIMEOUT_MS));
+	const sentAt = Date.now();
+	const confirmedLeft = confirmed.left - (sentAt - confirmed.at);
+	const patience = Math.min(BEAT_TIMEOUT_MS, Math.max(0, confirmedLeft));
+	const silence = new Promise<undefined>((resolve) => setTimeout(resolve, patience));
 	const answer = await Promise.race([lease.beat().catch(() => undefined), silence]);
-	beating = false;
 	if (toasts[0] !== open || holdEnded) return;
 	if (!answer || connection.lost || (!answer.held && !answer.capped)) return endHold(open);
-	confirmed = { left: answer.closesInMs, at: Date.now() };
+	confirmed = { left: answer.closesInMs, at: sentAt };
 	if (answer.capped) return endHold(open, lease.cappedMessage(Math.ceil(answer.closesInMs / 1000)));
 	open.left = answer.closesInMs;
 }

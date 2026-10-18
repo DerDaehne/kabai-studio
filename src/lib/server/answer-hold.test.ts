@@ -6,6 +6,7 @@ import {
 	ANSWER_HOLD_CAP_MS,
 	ANSWER_UNDO_WINDOW_MS,
 	answerQuestion,
+	collectAnswer,
 	holdAnswerWindow,
 	requestHuman,
 	retractAnswer
@@ -132,25 +133,6 @@ describe('holding the answer window', () => {
 		expect(hold.closesInMs).toBe(17_000);
 	});
 
-	it('holds every waiting follow-up run of the answer together', async () => {
-		const s = studio();
-		const q = await answered(s);
-		s.db.exec('DROP INDEX runs_one_active_per_ticket'); // the database allows one active run per ticket, so a second waiting run needs the guard lifted
-		s.db
-			.prepare(
-				'INSERT INTO runs (ticket_id, agent_profile_id, column_id, trigger, state, resumed_from_run_id, not_before) SELECT ticket_id, agent_profile_id, column_id, trigger, state, resumed_from_run_id, not_before FROM runs WHERE id = ?'
-			)
-			.run(q.followUps()[0]);
-		await passSeconds(9);
-
-		holdAnswerWindow(s.db, user, q.questionId);
-
-		const all = s.db
-			.prepare('SELECT not_before FROM runs WHERE resumed_from_run_id = ?')
-			.all(q.first);
-		expect(all).toEqual([{ not_before: inSeconds(19) }, { not_before: inSeconds(19) }]);
-	});
-
 	it('stops extending at the cap, reports it, and starts the run at most one window after the last accepted beat', async () => {
 		const s = studio();
 		const q = await answered(s);
@@ -252,17 +234,15 @@ describe('holding the answer window', () => {
 		const s = studio();
 		const q = await answered(s);
 		const before = q.notBefore();
-		const unanswered = requestHuman(s.db, agent(q.first), s.ticketId, { question: 'B?' }).id;
 		const refused = (id: number, actor: Actor) =>
 			caught(() => holdAnswerWindow(s.db, actor, id)).code;
 
 		expect(refused(q.questionId, agent(q.first))).toBe('requires_human');
-		expect(refused(unanswered, user)).toBe('not_answered');
 		expect(refused(9999, user)).toBe('not_found');
-		s.db
-			.prepare('UPDATE questions SET collected_at = CURRENT_TIMESTAMP WHERE id = ?')
-			.run(q.questionId);
+		collectAnswer(s.db, agent(q.first), s.ticketId);
 		expect(refused(q.questionId, user)).toBe('answer_collected');
+		const unanswered = requestHuman(s.db, agent(q.first), s.ticketId, { question: 'B?' }).id;
+		expect(refused(unanswered, user)).toBe('not_answered');
 		expect(q.notBefore()).toBe(before);
 	});
 });

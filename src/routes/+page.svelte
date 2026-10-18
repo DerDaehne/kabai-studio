@@ -198,7 +198,8 @@
 	async function send(question: QueuedQuestion, option: number, undo: () => void) {
 		answered.add(question.id);
 		const fields = { question: String(question.id), option: String(option) };
-		const failure = failureOf(await postAction('/takt?/answer', fields));
+		const result = await postAction('/takt?/answer', fields);
+		const failure = failureOf(result);
 		if (failure) {
 			answered.delete(question.id);
 			toast(failure, 'error');
@@ -212,7 +213,10 @@
 			label: t('start.answer.undo'),
 			run: undo,
 			countdown: true,
-			hold: answerHold(question.id, data.holdBeatMs)
+			hold:
+				result.type === 'success' && result.data?.resumesRun === true
+					? answerHold(question.id, data.holdBeatMs)
+					: undefined
 		});
 	}
 

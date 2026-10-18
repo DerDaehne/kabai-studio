@@ -312,6 +312,12 @@ export type AnswerHold = {
 	capped: boolean;
 };
 
+/** Rows written before the app clock took over hold SQLite's UTC form without a zone. */
+function answeredAtMs(answeredAt: string | null): number {
+	if (!answeredAt) return NaN;
+	return Date.parse(answeredAt.includes('T') ? answeredAt : `${answeredAt.replace(' ', 'T')}Z`);
+}
+
 /**
  * Keeps the undo window of an answer open for another window length while the human holds the notice that offers
  * the undo. The waiting follow-up runs' `not_before` only ever moves later, so a lost beat leaves the window to run out.
@@ -333,7 +339,7 @@ export function holdAnswerWindow(
 		const continuation = continuationOf(db, q, JSON.parse(q.answer) as Answer);
 		if (continuation.kind !== 'waiting') return { held: false, closesInMs: 0, capped: false };
 		// a missing or unparsable answer time counts as capped
-		const capped = !(now.getTime() < Date.parse(q.answered_at ?? '') + ANSWER_HOLD_CAP_MS);
+		const capped = !(now.getTime() < answeredAtMs(q.answered_at) + ANSWER_HOLD_CAP_MS);
 		const extendedTo = now.getTime() + ANSWER_UNDO_WINDOW_MS;
 		const select = db.prepare('SELECT not_before FROM runs WHERE id = ?');
 		const update = db.prepare('UPDATE runs SET not_before = ? WHERE id = ?');

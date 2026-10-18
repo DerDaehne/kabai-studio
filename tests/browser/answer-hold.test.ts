@@ -71,8 +71,6 @@ async function holdForTwelveSeconds(page: Page, beats: ReturnType<typeof beatsOf
 	await expect.poll(() => beats.answered).toBe(3);
 }
 
-const inRealSeconds = (iso: string | null) => (Date.parse(iso!) - Date.now()) / 1000;
-
 test.describe('holding the notice of an answer', () => {
 	test('beats at once and every five seconds, outlives the first ten seconds, then runs down on the server rest and the window closes', async ({
 		page,
@@ -83,6 +81,7 @@ test.describe('holding the notice of an answer', () => {
 		const ticket = seedTicket('Hold the notice');
 		const beats = beatsOf(page);
 		await answered(page, db, fakeModel, ticket, '/takt');
+		const closesWithoutHold = Date.parse(followUp(db, ticket.id).not_before!);
 
 		await notice(page).hover();
 		await expect.poll(() => beats.answered).toBe(1);
@@ -92,12 +91,12 @@ test.describe('holding the notice of an answer', () => {
 		await expect.poll(() => beats.answered).toBe(3);
 		await expect(notice(page)).toBeVisible();
 		await expect(count(page)).toHaveText('10');
-		expect(inRealSeconds(followUp(db, ticket.id).not_before)).toBeGreaterThan(8);
+		expect(Date.parse(followUp(db, ticket.id).not_before!)).toBeGreaterThan(closesWithoutHold); // the server's clock is real, so only a server that extends moves it later
 
-		await page.mouse.move(0, 0);
+		await page.mouse.move(0, 0); // the last beat went out two seconds ago, so the server rest is eight
 		await page.clock.runFor(4000);
-		await expect(count(page)).toHaveText('6');
-		await page.clock.runFor(6000);
+		await expect(count(page)).toHaveText('4');
+		await page.clock.runFor(4000);
 		await expect(notice(page)).toBeHidden();
 		await expect.poll(() => followUp(db, ticket.id).state, { timeout: 15_000 }).not.toBe('queued');
 	});
@@ -241,6 +240,26 @@ test.describe('holding the notice of an answer', () => {
 		await page.clock.runFor(1000);
 		await expect(count(page)).toHaveText('5');
 		await page.clock.runFor(5000);
+		await expect(notice(page)).toBeHidden();
+	});
+
+	test('a hold that starts in the last second offers Undo no longer than the server confirmed', async ({
+		page,
+		db,
+		seedTicket,
+		fakeModel
+	}) => {
+		const ticket = seedTicket('Late hold');
+		await answered(page, db, fakeModel, ticket, '/takt');
+		await page.route('**/takt?/hold', () => {
+			// the beat never reaches the server
+		});
+		await page.clock.runFor(9500);
+		await expect(notice(page)).toBeVisible();
+
+		await notice(page).hover();
+		await page.clock.runFor(1000);
+
 		await expect(notice(page)).toBeHidden();
 	});
 
