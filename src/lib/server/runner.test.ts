@@ -1046,6 +1046,21 @@ describe('approval through the runner', () => {
 		}
 	);
 
+	it('resolves cancelled without a decision when the run is cancelled while the decision is on its way', async () => {
+		let cancelRun = () => {};
+		const decidesAsTheRunEnds: ApprovalPolicy = async () => {
+			queueMicrotask(() => cancelRun()); // after the decision, before the runner records it
+			return { decision: 'allow_once', by: 'test_policy' };
+		};
+		const { s, runner, id, io, states } = await runningRun({ approve: decidesAsTheRunEnds });
+		cancelRun = () => runner.cancel(id);
+
+		expect(await io.approval(toolCallRequest)).toBe('cancelled');
+
+		expect(states).toEqual(['waiting_approval', 'cancelled']);
+		expect(approvalEvents(s.db, id).map((e) => e.type)).toEqual(['permission_request']);
+	});
+
 	it('fails the run without a decision when the policy fails, so the tool call never runs', async () => {
 		const broken: ApprovalPolicy = async () => {
 			throw new Error('policy store unreachable');
