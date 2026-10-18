@@ -135,8 +135,8 @@ describe('service unit content', () => {
 
 	it('systemd unit sets ExecStart, the data dir and Restart=on-failure', () => {
 		const unit = systemdUnit(ctx);
-		expect(unit).toContain('ExecStart=/usr/bin/node /opt/kabai-studio/server.ts');
-		expect(unit).toContain('Environment=STUDIO_DATA_DIR=/home/x/.local/share/kabai-studio');
+		expect(unit).toContain('ExecStart="/usr/bin/node" "/opt/kabai-studio/server.ts"');
+		expect(unit).toContain('Environment="STUDIO_DATA_DIR=/home/x/.local/share/kabai-studio"');
 		expect(unit).toContain('Restart=on-failure');
 		expect(unit).toContain('WantedBy=default.target');
 	});
@@ -473,8 +473,8 @@ describe('runner service', () => {
 		}));
 		expect(noStatus.message).toMatch(/nicht verfügbar\. Mit --print .* Kein Status abrufbar\.$/);
 		const unit = runServiceCommand('install', true, 'linux', ctx(), recorder().run).message;
-		expect(unit).toContain('ExecStart=/usr/bin/node /opt/kabai-studio/server.ts\n');
-		expect(unit).not.toContain('"');
+		// quoted since the studio unit shares the runner's quoting; only the quotes are new
+		expect(unit).toContain('ExecStart="/usr/bin/node" "/opt/kabai-studio/server.ts"\n');
 	});
 
 	it.each([
@@ -599,4 +599,73 @@ describe('runner service', () => {
 			}
 		}
 	});
+});
+
+describe('studio service quoting, plist and macOS status', () => {
+	const awkward = {
+		env: { HOME: '/Users/a b' },
+		execPath: '/opt/my node/node',
+		entryPath: '/srv/k$s/50%/server.ts',
+		dataDir: '/data/50% & <x>/$d'
+	};
+
+	it('quotes the unit so a path with space, % and $ stays one word', () => {
+		const unit = systemdUnit(awkward);
+		expect(unit).toContain('ExecStart="/opt/my node/node" "/srv/k$$s/50%%/server.ts"');
+		expect(unit).toContain('Environment="STUDIO_DATA_DIR=/data/50%% & <x>/$d"');
+	});
+
+	it('passes systemd-analyze verify where it exists', (t) => {
+		if (spawnSync('systemd-analyze', ['--version']).error) return t.skip();
+		const root = mkdtempSync(join(tmpdir(), 'kabai-studio-verify-'));
+		try {
+			const bin = join(root, 'my bin');
+			mkdirSync(bin);
+			const exe = join(bin, 'node%x');
+			writeFileSync(exe, '#!/bin/sh\n', { mode: 0o755 });
+			const file = join(root, 'kabai-studio.service');
+			writeFileSync(
+				file,
+				systemdUnit({ ...awkward, execPath: exe, entryPath: join(bin, 's$e%r.ts') })
+			);
+			const r = spawnSync('systemd-analyze', ['--user', 'verify', file], { encoding: 'utf8' });
+			expect(r.stderr).not.toMatch(/Invalid|not executable|Unknown/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it('escapes XML in the plist and logs to ~/Library/Logs', () => {
+		const plist = launchdPlist(awkward);
+		expect(plist).toContain('<string>/data/50% &amp; &lt;x&gt;/$d</string>');
+		expect(plist).toContain(
+			'<key>StandardOutPath</key><string>/Users/a b/Library/Logs/studio.kabai.kabai-studio.log</string>'
+		);
+		expect(plist).toContain('<key>StandardErrorPath</key>');
+		const text = plist.replace(/<\?[^>]*\?>|<![^>]*>/g, '').replace(/<\/?[A-Za-z][^<>]*>/g, '');
+		expect(text).not.toMatch(/[<>]/);
+		const stopped = runServiceCommand('status', false, 'darwin', awkward, () => ({
+			status: 113,
+			stdout: ''
+		}));
+		expect(stopped.message).toContain('~/Library/Logs/studio.kabai.kabai-studio.log');
+	});
+
+	const profiles = {
+		studio: undefined,
+		runner: runnerServiceProfile('en', () => undefined)
+	};
+	const running = '{\n\t"Label" = "x";\n\t"LastExitStatus" = 0;\n\t"PID" = 4242;\n};\n';
+	const crashed = '{\n\t"Label" = "x";\n\t"LastExitStatus" = 256;\n};\n';
+	it.each(Object.entries(profiles))(
+		'%s: macOS status follows the PID, not the exit code of launchctl',
+		(_, profile) => {
+			const status = (r: { status: number | null; stdout: string }) =>
+				runServiceCommand('status', false, 'darwin', awkward, () => r, profile).message;
+			const upMessage = status({ status: 0, stdout: running });
+			expect(status({ status: 0, stdout: crashed })).not.toBe(upMessage);
+			expect(status({ status: 113, stdout: '' })).not.toBe(upMessage);
+			expect(status({ status: 0, stdout: crashed })).toBe(status({ status: 113, stdout: '' }));
+		}
+	);
 });

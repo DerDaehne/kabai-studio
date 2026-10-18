@@ -72,6 +72,8 @@ node server.ts service uninstall
 node server.ts reset-password       # same as npm run reset-password
 node server.ts restore <backup-file>   # same as npm run restore --
 node server.ts runner pair <url> <code> [--name <name>]   # pair this machine as a runner; copy the command from Settings → Machines
+node server.ts runner start         # run the paired runner in the foreground
+node server.ts runner service install|status|uninstall   # keep the runner running as a user service (systemd/launchd); add --print to preview
 node server.ts --version
 ```
 

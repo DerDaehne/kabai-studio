@@ -164,6 +164,15 @@ export const launchdPlistPath = (
 	label = LAUNCHD_LABEL
 ): string => join(env.HOME || '', 'Library', 'LaunchAgents', `${label}.plist`);
 
+/** systemd splits unquoted values at spaces and expands % (and $ in ExecStart), so every value is quoted and escaped. */
+const systemdQuote = (value: string, { dollar = false } = {}): string => {
+	const escaped = value.replace(/[\\"]/g, '\\$&').replaceAll('%', '%%');
+	return `"${dollar ? escaped.replaceAll('$', '$$$$') : escaped}"`;
+};
+
+const xmlEscape = (value: string): string =>
+	value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
 export function systemdUnit(ctx: ServiceContext): string {
 	return [
 		'[Unit]',
@@ -171,8 +180,8 @@ export function systemdUnit(ctx: ServiceContext): string {
 		'After=network.target',
 		'',
 		'[Service]',
-		`ExecStart=${ctx.execPath} ${ctx.entryPath}`,
-		`Environment=STUDIO_DATA_DIR=${ctx.dataDir}`,
+		`ExecStart=${[ctx.execPath, ctx.entryPath].map((v) => systemdQuote(v, { dollar: true })).join(' ')}`,
+		`Environment=${systemdQuote(`STUDIO_DATA_DIR=${ctx.dataDir}`)}`,
 		'Restart=on-failure',
 		'',
 		'[Install]',
@@ -182,6 +191,7 @@ export function systemdUnit(ctx: ServiceContext): string {
 }
 
 export function launchdPlist(ctx: ServiceContext): string {
+	const logPath = xmlEscape(join(ctx.env.HOME || '', 'Library', 'Logs', `${LAUNCHD_LABEL}.log`));
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -189,15 +199,17 @@ export function launchdPlist(ctx: ServiceContext): string {
 	<key>Label</key><string>${LAUNCHD_LABEL}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>${ctx.execPath}</string>
-		<string>${ctx.entryPath}</string>
+		<string>${xmlEscape(ctx.execPath)}</string>
+		<string>${xmlEscape(ctx.entryPath)}</string>
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>STUDIO_DATA_DIR</key><string>${ctx.dataDir}</string>
+		<key>STUDIO_DATA_DIR</key><string>${xmlEscape(ctx.dataDir)}</string>
 	</dict>
 	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
+	<key>StandardOutPath</key><string>${logPath}</string>
+	<key>StandardErrorPath</key><string>${logPath}</string>
 </dict>
 </plist>
 `;
@@ -260,7 +272,7 @@ const STUDIO_TEXTS: Record<ServiceTextId, string> = {
 		'kabai studio läuft nicht. Logs ansehen: „journalctl --user -u kabai-studio“ — ' +
 		'oder „kabai-studio service install“ erneut ausführen.',
 	'stopped.launchd':
-		'kabai studio läuft nicht (oder nicht geladen). Logs: siehe StandardOutPath in der plist — ' +
+		'kabai studio läuft nicht (oder nicht geladen). Log: ~/Library/Logs/studio.kabai.kabai-studio.log — ' +
 		'oder „kabai-studio service install“ erneut ausführen.',
 	unsupported:
 		'service wird unter {platform} nicht unterstützt. Unterstützt: Linux (systemd), macOS (launchd).'
@@ -276,15 +288,6 @@ export const STUDIO_PROFILE: ServiceProfile = {
 	launchdPlist,
 	say: (id, params) => fill(STUDIO_TEXTS[id], params)
 };
-
-/** systemd splits unquoted values at spaces and expands % (and $ in ExecStart), so every value is quoted and escaped. */
-const systemdQuote = (value: string, { dollar = false } = {}): string => {
-	const escaped = value.replace(/[\\"]/g, '\\$&').replaceAll('%', '%%');
-	return `"${dollar ? escaped.replaceAll('$', '$$$$') : escaped}"`;
-};
-
-const xmlEscape = (value: string): string =>
-	value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 /** Pure like `systemdUnit`; `XDG_CONFIG_HOME` is passed on only when set, so the service reads the folder `runner pair` wrote to. */
 export function runnerSystemdUnit(ctx: ServiceContext): string {
@@ -479,7 +482,9 @@ function statusLaunchd(run: CommandRunner, profile: ServiceProfile): ServiceResu
 			exitCode: 1,
 			message: profile.say('statusUnavailable.launchd')
 		};
-	if (r.status === 0) return { exitCode: 0, message: profile.say('running.launchd') };
+	// launchd keeps a crashed KeepAlive job loaded; only a PID means a process runs right now
+	if (r.status === 0 && /"PID"\s*=\s*\d+/.test(r.stdout))
+		return { exitCode: 0, message: profile.say('running.launchd') };
 	return { exitCode: 0, message: profile.say('stopped.launchd') };
 }
 
