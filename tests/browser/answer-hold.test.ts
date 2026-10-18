@@ -207,7 +207,7 @@ test.describe('holding the notice of an answer', () => {
 		const ticket = seedTicket('Hold, then offline');
 		const beats = beatsOf(page);
 		await answered(page, db, fakeModel, ticket, '/takt');
-		await notice(page).hover();
+		await notice(page).getByRole('button', { name: 'Rückgängig' }).focus(); // focus, not the pointer: the banner's layout shift must not end the hold
 		await expect.poll(() => beats.answered).toBe(1);
 
 		await context.setOffline(true);
