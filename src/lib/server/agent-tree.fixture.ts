@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { processTable, type ProcessEntry } from './tree-kill';
+import { killTree, processTable, type ProcessEntry } from './tree-kill';
 
 export type AgentTree = { agent: number; child: number; grandchild: number; detached: number };
 
@@ -42,13 +42,15 @@ setInterval(() => {}, 1000);
 const handles: ChildProcess[] = [];
 /** Every process a test started, with its start time, so the cleanup never signals a PID that was reused since. */
 const started: ProcessEntry[] = [];
+/** The test agents: whatever they started is ended through them, also when their tree never came up. */
+const agents: ProcessEntry[] = [];
 
-async function track(pids: number[]) {
+async function track(pids: number[], into = started) {
 	const table = await processTable();
 	if (!table) throw new Error('these tests need ps');
 	for (const pid of pids) {
 		const entry = table.get(pid);
-		if (entry) started.push(entry);
+		if (entry) into.push(entry);
 	}
 }
 
@@ -57,6 +59,7 @@ export async function startAgentTree(): Promise<AgentTree> {
 	scripts ??= writeScripts();
 	const agent = spawn(process.execPath, [scripts.agent], { stdio: ['ignore', 'pipe', 'inherit'] });
 	handles.push(agent);
+	await track([agent.pid!], agents);
 	const line = await new Promise<string>((resolve, reject) => {
 		agent.stdout!.once('data', (data: Buffer) => resolve(data.toString()));
 		agent.once('exit', () => reject(new Error('the test agent ended before its tree was up')));
@@ -87,6 +90,10 @@ export async function aliveOf(tree: AgentTree): Promise<number[]> {
 
 /** Ends whatever a test left running, also after a failure; call it from afterEach. */
 export async function endTestProcesses(): Promise<void> {
+	for (const agent of agents.splice(0)) {
+		const table = await processTable();
+		if (table?.get(agent.pid)?.started === agent.started) await killTree(agent.pid, { graceMs: 0 });
+	}
 	const table = await processTable();
 	for (const entry of started.splice(0))
 		if (table?.get(entry.pid)?.started === entry.started) process.kill(entry.pid, 'SIGKILL');
