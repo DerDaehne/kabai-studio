@@ -17,6 +17,7 @@ export type KeyInput = Pick<
 	| 'target'
 	| 'getModifierState'
 	| 'preventDefault'
+	| 'defaultPrevented'
 >;
 
 /** Single keys off: every single-character key needs Alt, so speech input or a slip of the hand triggers nothing. */
@@ -143,7 +144,8 @@ function runOrWait(key: string, event: KeyInput): void {
 
 /** The window keydown listener: a count, prefix or leader waits in `shell.pendingKeys` until a sequence completes. */
 export function handleKey(event: KeyInput): void {
-	if (belongsToTarget(event)) return;
+	// Rekta has used the key already (its menus and sheets take Escape first)
+	if (event.defaultPrevented || belongsToTarget(event)) return;
 	const key = readKey(event);
 	if (key === null) return;
 	if (key === 'Escape' && shell.pendingKeys) {

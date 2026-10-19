@@ -18,7 +18,10 @@ const button = element('button');
 type Modifiers = { alt?: boolean; ctrl?: boolean; shift?: boolean; altGraph?: boolean };
 
 /** Presses one key and reports whether the router took it (prevented the browser default). */
-function press(key: string, options: Modifiers & { code?: string; target?: Target } = {}): boolean {
+function press(
+	key: string,
+	options: Modifiers & { code?: string; target?: Target; defaultPrevented?: boolean } = {}
+): boolean {
 	let taken = false;
 	const event: KeyInput = {
 		key,
@@ -29,6 +32,7 @@ function press(key: string, options: Modifiers & { code?: string; target?: Targe
 		shiftKey: options.shift ?? false,
 		target: (options.target ?? page) as unknown as EventTarget,
 		getModifierState: (modifier) => modifier === 'AltGraph' && (options.altGraph ?? false),
+		defaultPrevented: options.defaultPrevented ?? false,
 		preventDefault: () => (taken = true)
 	};
 	handleKey(event);
@@ -206,6 +210,17 @@ describe('Escape', () => {
 		expect(back).not.toHaveBeenCalled();
 		unbindSearch();
 		press('Escape');
+		expect(back).toHaveBeenCalledOnce();
+	});
+});
+
+describe('a key Rekta has used', () => {
+	it('is left alone: an Escape that closed a menu does not also go back', () => {
+		const back = vi.fn();
+		bind({ back });
+		expect(press('Escape', { defaultPrevented: true })).toBe(false);
+		expect(back).not.toHaveBeenCalled();
+		expect(press('Escape')).toBe(true);
 		expect(back).toHaveBeenCalledOnce();
 	});
 });
