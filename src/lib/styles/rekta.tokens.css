@@ -1,10 +1,10 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 74fdd88248d3a95b035b471698bb700bd7fa3722
+ * Commit: 7b0f7eadff45b7cc273a3f5ea04cc56464d2b697
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.tokens.css
- * SHA-256 of everything below this header: 43565860606cb97c4b25ba71f6f88bd34810f207e43ff530b9a74af7b8258586
+ * SHA-256 of everything below this header: c8920e0827d5437f0119c47b9709a69629b0d418df32dfe7dc20f1664fb58f9d
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -81,6 +81,7 @@
   --rk-appbar-height: 3.5rem;
   --rk-touch-target: 2.75rem;
   --rk-pane-min: 15rem;
+  --rk-pivot-wide: 1300px;
   --rk-duration-press: 100ms;
   --rk-duration-short: 250ms;
   --rk-duration-moderate: 400ms;
