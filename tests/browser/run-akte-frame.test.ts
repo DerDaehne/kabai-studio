@@ -1,11 +1,13 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import type { DatabaseSync } from 'node:sqlite';
-import { addComment, addTask, tasksOf } from '../../src/lib/server/domain/board.ts';
+import { addComment, addTask, deleteTask, tasksOf } from '../../src/lib/server/domain/board.ts';
 import type { Actor } from '../../src/lib/server/domain/core.ts';
+import { createProfile, createRun, finishRun } from '../../src/lib/server/domain/runs.ts';
 import type { FakeModel } from './fake-model.ts';
 import {
 	expect,
+	intoWorkStep,
 	open,
 	queueRun,
 	sidewaysScrollers,
@@ -352,30 +354,35 @@ test.describe('widths', () => {
 	});
 
 	for (const width of [1440, 2560]) {
-		test(`${width} px puts the four facets side by side at their start widths, one stage high`, async ({
+		test(`${width} px keeps one facet behind tabs, and the wheel scrolls the page, not sideways`, async ({
 			page,
 			db,
 			seedTicket,
 			fakeModel
 		}) => {
-			const ticket = seedTicket('Panorama');
+			const ticket = seedTicket('Narrow pivot on a wide screen');
+			for (let n = 1; n <= 40; n++) addTask(db, HUMAN, ticket.id, `Task ${n}`);
 			await askingTicket(page, db, fakeModel, ticket);
 			await page.setViewportSize({ width, height: 900 });
-			await open(page, ticket.path);
+			await open(page, `${ticket.path}?facet=akte`);
 
-			const panels = page.locator('[data-panorama] > section');
-			await expect(panels).toHaveCount(4);
-			const boxes = await Promise.all([0, 1, 2, 3].map((index) => panels.nth(index).boundingBox()));
-			expect(boxes.map((box) => Math.round(box!.width))).toEqual([560, 680, 520, 460]);
-			const stage = await stageHeight(page);
-			for (const box of boxes) expect(Math.round(box!.height)).toBe(Math.round(stage));
-			expect(boxes[1]!.x).toBeGreaterThan(boxes[0]!.x);
+			await expect(page.getByRole('tablist')).toBeVisible();
+			await expect(page.locator('[role="tabpanel"]:not([hidden])')).toHaveCount(1);
+			await expect(page.locator('[data-panorama] > section:not([hidden])')).toHaveCount(1);
 			expect(await pageOverflowX(page)).toBeLessThanOrEqual(0);
+			expect(await sidewaysScrollers(page)).toEqual([]);
+
+			const panel = page.locator('[role="tabpanel"]:not([hidden])');
+			const box = (await panel.boundingBox())!;
+			await page.mouse.move(box.x + 100, box.y + 100);
+			await page.mouse.wheel(0, 400);
+			await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+			expect(await page.locator('[data-panorama]').evaluate((row) => row.scrollLeft)).toBe(0);
 		});
 	}
 
 	for (const scheme of ['light', 'dark'] as const) {
-		test(`passes axe in the ${scheme} theme on every facet and in the panorama`, async ({
+		test(`passes axe in the ${scheme} theme on every facet and on a wide screen`, async ({
 			page,
 			db,
 			seedTicket,
@@ -401,7 +408,7 @@ test.describe('widths', () => {
 			expect(await violations(), `${scheme} phone`).toEqual([]);
 			await page.setViewportSize({ width: 1440, height: 900 });
 			await open(page, ticket.path);
-			expect(await violations(), `${scheme} panorama`).toEqual([]);
+			expect(await violations(), `${scheme} wide screen`).toEqual([]);
 		});
 	}
 });
@@ -436,4 +443,150 @@ test.describe('motion', () => {
 			expect(await panelAnimations(page)).toBe(0);
 		});
 	}
+});
+
+test('the project tag in the kicker is its own element, not just text', async ({
+	page,
+	seedTicket
+}) => {
+	await open(page, seedTicket('Tag in the kicker').path);
+	const tag = page.locator('.rk-kicker span').first();
+	await expect(tag).toHaveText('WEB');
+	expect(await tag.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
+		'rgba(0, 0, 0, 0)'
+	);
+});
+
+test('a switch keeps the scroll position of the window', async ({ page, db, seedTicket }) => {
+	const ticket = seedTicket('Keeps the scroll position');
+	for (let i = 1; i <= 30; i++) addTask(db, HUMAN, ticket.id, `Task ${i}`);
+	intoWorkStep(db, ticket.id);
+	const profile = createProfile(db, HUMAN, {
+		name: 'Unreachable model',
+		executor: 'builtin',
+		provider: 'openai-compatible',
+		base_url: 'http://127.0.0.1:9',
+		model: 'none'
+	});
+	// enough runs that the runs facet is a long page too, so the window never has to clamp
+	for (let i = 0; i < 30; i++) {
+		const run = createRun(db, HUMAN, { ticketId: ticket.id, profileId: profile.id }) as unknown as {
+			id: number;
+		};
+		finishRun(db, HUMAN, run.id, { state: 'cancelled' });
+	}
+	await page.setViewportSize({ width: 375, height: 667 });
+	await open(page, `${ticket.path}?facet=akte`);
+	const target = await page.evaluate(() =>
+		Math.round(
+			document.querySelector('[role="tablist"]')!.getBoundingClientRect().top + scrollY - 120
+		)
+	);
+	expect(target).toBeGreaterThan(100);
+	await page.evaluate((y) => scrollTo(0, y), target);
+	await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+	await page.keyboard.press('l');
+	await expect(selectedTab(page)).toContainText('runs');
+	await page.waitForTimeout(300);
+	expect(await page.evaluate(() => scrollY)).toBe(target);
+});
+
+test('a run link in the runs facet brings its trace in front, and back returns to runs', async ({
+	page,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	const ticket = seedTicket('Run link inside the file');
+	await endedTicket(page, db, fakeModel, ticket);
+	await open(page, `${ticket.path}?facet=runs`);
+	await page.getByRole('list', { name: 'Runs dieses Tickets' }).getByRole('link').first().click();
+	await expect(page).toHaveURL(/\?run=\d+&facet=spur$/);
+	await expect(selectedTab(page)).toContainText('spur');
+	await page.goBack();
+	await expect(page).toHaveURL(`${ticket.path}?facet=runs`);
+	await expect(selectedTab(page)).toContainText('runs');
+});
+
+test('a question answered elsewhere takes frage away and the default facet comes to the front', async ({
+	page,
+	browser,
+	db,
+	seedTicket,
+	fakeModel
+}) => {
+	const ticket = seedTicket('Answered elsewhere');
+	await askingTicket(page, db, fakeModel, ticket);
+	await open(page, ticket.path);
+	await expect(selectedTab(page)).toContainText('frage');
+
+	const other = await browser.newContext();
+	const takt = await other.newPage();
+	await open(takt, '/takt');
+	await expect(takt.getByRole('heading', { name: QUESTION })).toBeVisible();
+	await takt.keyboard.press('1');
+	await expect(takt.getByText(/Antwort gesendet/)).toBeVisible();
+
+	await expect(tab(page, /^frage/)).toHaveCount(0, { timeout: 15000 });
+	await expect(selectedTab(page)).toHaveCount(1);
+	await expect(page.locator('[role="tabpanel"]:not([hidden])')).toHaveCount(1);
+	await other.close();
+});
+
+test('a task switch that the server refuses jumps back', async ({ page, db, seedTicket }) => {
+	const ticket = seedTicket('Refused switch');
+	const task = addTask(db, HUMAN, ticket.id, 'Vanishing task');
+	await open(page, ticket.path);
+	const box = page.getByRole('checkbox', { name: 'Vanishing task' });
+	deleteTask(db, HUMAN, task.id, 'gone before the click');
+	await box.click();
+	await expect(box).not.toBeChecked();
+});
+
+test('back to the file at 1440 px brings the facet and the scroll position of the page back', async ({
+	page,
+	db,
+	seedTicket
+}) => {
+	const ticket = seedTicket('Scroll on back');
+	for (let i = 1; i <= 40; i++) addTask(db, HUMAN, ticket.id, `Task ${i}`);
+	await page.setViewportSize({ width: 1440, height: 600 });
+	await open(page, `${ticket.path}?facet=akte`);
+	await page.evaluate(() => scrollTo(0, 400));
+	await expect.poll(() => page.evaluate(() => scrollY)).toBe(400);
+	await page.getByRole('link', { name: 'takt' }).first().click();
+	await expect(page).toHaveURL('/takt');
+	await page.goBack();
+	await expect(page).toHaveURL(`${ticket.path}?facet=akte`);
+	await expect(selectedTab(page)).toContainText('akte');
+	await expect.poll(() => page.evaluate(() => scrollY)).toBe(400);
+});
+
+test('the facet heading stays in the outline when the tabs show, so no level is skipped', async ({
+	page,
+	seedTicket
+}) => {
+	await page.setViewportSize({ width: 375, height: 667 });
+	await open(page, `${seedTicket('Outline').path}?facet=akte`);
+	await expect(page.getByRole('heading', { level: 2, name: /^akte/ })).toHaveCount(1);
+	const hidden = await page
+		.getByRole('heading', { level: 2, name: /^akte/ })
+		.evaluate((el) => el.getBoundingClientRect().width);
+	expect(hidden, 'visually hidden, not laid out').toBeLessThanOrEqual(1);
+});
+
+test('an expert-view choice kept for /board moves up to every page once the board has loaded', async ({
+	page,
+	context,
+	seedTicket
+}) => {
+	const ticket = seedTicket('Old cookie path');
+	await open(page, '/');
+	const { hostname } = new URL(page.url());
+	await context.addCookies([
+		{ name: 'studio-board-view', value: 'flow', domain: hostname, path: '/board' }
+	]);
+	await open(page, '/board');
+	await open(page, ticket.path);
+	await expect(page.getByTestId('facts')).toContainText('Spalte');
 });

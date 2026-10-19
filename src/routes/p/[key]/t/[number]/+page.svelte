@@ -413,7 +413,7 @@
 </header>
 <RunControl runs={data.runs} start={data.start} selected={data.trace?.id} {form} />
 
-<Pivot {facets} bind:active onchange={rememberFacet} label={t('ticket.facets')}>
+<Pivot narrow {facets} bind:active onchange={rememberFacet} label={t('ticket.facets')}>
 	{#snippet panel(facet)}
 		{#if facet.id === 'frage'}
 			{@render questionFacet()}

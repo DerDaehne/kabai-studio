@@ -18,9 +18,18 @@
 		onchange?: (id: string) => void;
 		/** Names the tab list. */
 		label: string;
+		/** Keeps the tabs and one facet at every width, until the panorama has a rule for its height and wheel. */
+		narrow?: boolean;
 		panel: Snippet<[Facet]>;
 	};
-	let { facets, active = $bindable(facets[0]?.id), onchange, label, panel }: Props = $props();
+	let {
+		facets,
+		active = $bindable(facets[0]?.id),
+		onchange,
+		label,
+		narrow = false,
+		panel
+	}: Props = $props();
 
 	const uid = $props.id();
 	const tabId = (facet: Facet) => `${uid}-tab-${facet.id}`;
@@ -28,7 +37,8 @@
 	const headingId = (facet: Facet) => `${uid}-heading-${facet.id}`;
 
 	// The styles' media query lays the panorama out before hydration; this one switches the roles to match.
-	const panorama = new MediaQuery('min-width: 1300px', false);
+	const wideScreen = new MediaQuery('min-width: 1300px', false);
+	const panorama = $derived(wideScreen.current && !narrow);
 
 	let root = $state<HTMLElement>();
 	let titleRow = $state<HTMLElement>();
@@ -53,7 +63,7 @@
 		const next = facets[roundTheEnd(activeIndex() + steps)];
 		const focusInside = root?.contains(document.activeElement);
 		select(next);
-		if (!focusInside || panorama.current) return;
+		if (!focusInside || panorama) return;
 		await tick();
 		document.getElementById(tabId(next))?.focus({ preventScroll: true });
 	}
@@ -78,7 +88,7 @@
 	function reveal(jump: boolean) {
 		if (titleRow)
 			revealActiveTitle(titleRow, titleRow.querySelector('[aria-selected="true"]'), jump);
-		if (panorama.current) revealActiveFacet(jump);
+		if (panorama) revealActiveFacet(jump);
 	}
 
 	let placed = false;
@@ -98,7 +108,7 @@
 	{#if facet.count !== undefined}<span class="count">{facet.count}</span>{/if}
 {/snippet}
 
-<div class="pivot" bind:this={root}>
+<div class="pivot" class:narrow bind:this={root}>
 	<div class="titles" role="tablist" aria-label={label} bind:this={titleRow} data-title-row>
 		{#each facets as facet (facet.id)}
 			{@const selected = facet.id === active}
@@ -130,9 +140,9 @@
 			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 			<section
 				id={panelId(facet)}
-				role={panorama.current ? undefined : 'tabpanel'}
-				aria-labelledby={panorama.current ? headingId(facet) : tabId(facet)}
-				hidden={!panorama.current && facet.id !== active}
+				role={panorama ? undefined : 'tabpanel'}
+				aria-labelledby={panorama ? headingId(facet) : tabId(facet)}
+				hidden={!panorama && facet.id !== active}
 				tabindex="0"
 				style:--facet-width={facet.width}
 			>
@@ -211,14 +221,19 @@
 	section {
 		padding-top: var(--space-3);
 	}
+	/* a tab names the facet, but the heading keeps the outline whole for readers; visually hidden like .visually-hidden */
 	h2 {
-		display: none;
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 
-	@media (max-width: 1299px) {
-		.switched > section {
-			animation: facet-in calc(var(--motion-moderate) * 0.75) var(--ease-out);
-		}
+	.switched > section {
+		animation: facet-in calc(var(--motion-moderate) * 0.75) var(--ease-out);
 	}
 	@keyframes facet-in {
 		from {
@@ -228,10 +243,13 @@
 	}
 
 	@media (min-width: 1300px) {
-		.titles {
+		.pivot:not(.narrow) .switched > section {
+			animation: none;
+		}
+		.pivot:not(.narrow) .titles {
 			display: none;
 		}
-		.facets {
+		.pivot:not(.narrow) .facets {
 			display: flex;
 			gap: var(--space-8);
 			height: var(--stage-h);
@@ -241,17 +259,22 @@
 			scrollbar-width: thin;
 		}
 		/* also shows the facets the server rendered hidden, until hydration lifts `hidden`; Rekta hides every [hidden] with !important */
-		.facets section[hidden] {
+		.pivot:not(.narrow) .facets section[hidden] {
 			display: block !important;
 		}
-		section {
+		.pivot:not(.narrow) section {
 			display: block;
 			flex: 0 0 var(--facet-width, var(--facet-w));
 			overflow-y: auto;
 		}
-		h2 {
-			display: block;
-			margin-bottom: var(--space-3);
+		.pivot:not(.narrow) h2 {
+			position: static;
+			width: auto;
+			height: auto;
+			margin: 0 0 var(--space-3);
+			overflow: visible;
+			clip-path: none;
+			white-space: normal;
 			font-size: var(--type-group);
 			font-weight: var(--weight-light);
 			text-transform: lowercase;

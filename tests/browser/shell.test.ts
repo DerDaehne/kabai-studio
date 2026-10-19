@@ -437,8 +437,7 @@ test('a new place starts at the top, back restores the scroll position, also fro
 			document.documentElement.dataset.restoredFromCache = String(event.persisted);
 		})
 	);
-	// below the panorama width the facet is a long page; from 1300 px each facet scrolls in itself
-	await page.setViewportSize({ width: 1100, height: 600 });
+	await page.setViewportSize({ width: 1440, height: 600 });
 	await open(page, ticket.path);
 	const scrollY = () => page.evaluate(() => scrollY);
 
