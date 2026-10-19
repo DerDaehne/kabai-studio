@@ -73,9 +73,7 @@ describe('POST /runner/pair', () => {
 		expect(first.body).toEqual({ id: expect.any(Number), name, credential });
 		expect(credential).toMatch(/^[\w-]{43}$/);
 		const hash = createHash('sha256').update(credential).digest('hex');
-		expect(runnerRows()).toContainEqual(
-			expect.objectContaining({ name, credential_hash: hash })
-		);
+		expect(runnerRows()).toContainEqual(expect.objectContaining({ name, credential_hash: hash }));
 		expect(JSON.stringify(runnerRows())).not.toContain(credential);
 		expect(again.status).toBe(400);
 		expect(JSON.stringify(again.body)).not.toContain(credential);
