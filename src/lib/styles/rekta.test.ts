@@ -26,6 +26,8 @@ const hooks = new Set([
 	'--rk-pivot-h',
 	'--rk-pivot-scale',
 	'--rk-toast-left',
+	'--rk-stage-top',
+	'--rk-scrollbar',
 	// the product slots for domain colours (docs/data.md)
 	...Array.from({ length: 8 }, (_, index) => `--rk-series-${index + 1}`)
 ]);

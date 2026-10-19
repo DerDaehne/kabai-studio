@@ -1,16 +1,16 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 7b0f7eadff45b7cc273a3f5ea04cc56464d2b697
- * Tag: v0.4.0
+ * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
+ * Tag: v0.5.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.css
- * SHA-256 of everything below this header: 624db183d0fb8548d8cd16bdc03d10467cfa21a30d8fb65c324d2d7dcdca7673
+ * SHA-256 of everything below this header: 396e9614bda418c8311f00aae942e570fa520f07bd37d19688b5e872c5070f12
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
  */
-/* Rekta Design 0.4.0 components. Load after rekta.tokens.css. */
+/* Rekta Design 0.5.0 components. Load after rekta.tokens.css. */
 /* Rekta Design components.
 
    Load order: rekta.tokens.css, rekta.fonts.css, rekta.css. Every colour, space, type size, radius, duration and
@@ -204,12 +204,18 @@ a.rk-tile > :not(.rk-tile-word), button.rk-tile > :not(.rk-tile-word) { position
 
 /* Facets side by side: from size.pivot-wide up, pivot() marks the facets' common parent data-rk-wide and shows
    every facet as a panorama section, sized in tile units; the strip stays, as a jump list that follows the scroll. */
+/* Below a title block the row is a stage: at most as tall as the window under the sticky chrome (--rk-stage-top, the
+   page's sticky header and strip; the banner's height without it) and above the app bar, so a scroll of the page
+   brings it whole into view, and each facet scrolls within itself. */
 [data-rk-wide]:not(.rk-pivot) {
   display: flex; gap: var(--rk-space-xl); overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
   scrollbar-width: thin; scrollbar-color: var(--rk-text-contrast-low) transparent;
+  max-height: calc(100dvh - var(--rk-stage-top, var(--rk-banner-h, 0px)) - var(--rk-appbar-height) - env(safe-area-inset-bottom, 0px));
+  scroll-margin-top: var(--rk-stage-top, var(--rk-banner-h, 0px));
 }
 [data-rk-wide]:not(.rk-pivot) > [role='tabpanel'] {
   flex: 0 0 var(--rk-sec-w, calc(3 * var(--rk-tile-unit) + 2 * var(--rk-space-s) + 2 * var(--rk-space-xl))); min-width: 0;
+  overflow-y: auto; scrollbar-width: thin; scroll-margin-top: var(--rk-stage-top, var(--rk-banner-h, 0px));
 }
 [data-rk-wide]:not(.rk-pivot) > [role='tabpanel'][data-rk-reveal] { display: block; }   /* shown whatever hidden says */
 
@@ -227,7 +233,9 @@ a.rk-tile > :not(.rk-tile-word), button.rk-tile > :not(.rk-tile-word) { position
 /* An action that cannot be undone (docs/forms.md): frame and words in the error colour, never filled, never primary. */
 .rk-btn[data-status='error'] { border-color: var(--rk-status-error-full); background-color: transparent; color: var(--rk-status-error-full); }
 .rk-btn[data-status='error']:active { background-color: var(--rk-hover); }
-.rk-btn:disabled, .rk-btn[aria-disabled='true'] { border-color: var(--rk-disabled); background: none; color: var(--rk-disabled); cursor: not-allowed; }
+/* A running action (data-rk-pending) refuses clicks with aria-disabled but is not disabled: every variant keeps its
+   colours by itself, and only the line and the cursor say it runs. */
+.rk-btn:disabled, .rk-btn[aria-disabled='true']:not([data-rk-pending]) { border-color: var(--rk-disabled); background: none; color: var(--rk-disabled); cursor: not-allowed; }
 /* An icon-only button: square at the control's height (the row's, in a row), 44px under a coarse pointer whatever the
    density; it needs an aria-label. Quiet (.rk-btn--quiet) for row actions and a sheet's close. */
 .rk-btn--icon { width: var(--rk-control-height); min-width: var(--rk-control-height); padding: 0; }
@@ -635,14 +643,20 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
 .rk-ab-back { order: -1; }
 .rk-ab[data-rk-overflow] { display: none; }
 .rk-ab-status { display: inline-flex; flex: none; align-items: center; gap: var(--rk-space-s); margin-inline-end: auto; font-size: var(--rk-font-size-xs); color: var(--rk-text-contrast-high); white-space: nowrap; }
-/* The middle, between the live state and the controls: the product's own short line (a key waiting for its second
-   key, a mode). It takes the room the controls leave and gives it up first: it cuts its text before any control moves
-   into "more", and shows nothing a user needs that is not said elsewhere too. */
+/* The middle, between the live state and the controls: the product's own short line (a mode, a count). It takes the
+   room the controls leave and gives it up first: it cuts its text before any control moves into "more", and is gone
+   while "more" shows. Several parts (a state and its key hint) stand in a row, space-s apart, and the last is cut.
+   Pinned (data-rk-priority="pinned", a key waiting for its second key) it keeps its words, up to half the bar, and
+   the controls make room for it instead. */
 .rk-ab-mid {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--rk-font-size-xs); color: var(--rk-text-contrast-high);
 }
-.rk-appbar:has(> .rk-ab-more:not([hidden])) > .rk-ab-mid { display: none; }   /* the bar is full: it has given way */
+.rk-ab-mid:has(> *) { display: inline-flex; align-items: baseline; gap: var(--rk-space-s); }
+.rk-ab-mid > * { flex: none; }
+.rk-ab-mid > :last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rk-ab-mid[data-rk-priority='pinned'] { flex: 0 0 auto; max-width: 50%; }
+.rk-appbar:has(> .rk-ab-more:not([hidden])) > .rk-ab-mid:not([data-rk-priority='pinned']) { display: none; }   /* the bar is full: it has given way */
 /* "more" opens its menu above the bar at the bar's trailing edge. rekta.js places it as it places every floating
    surface; this holds without the script. */
 .rk-float.rk-ab-menu { inset: auto var(--rk-space-m) calc(var(--rk-appbar-height) + env(safe-area-inset-bottom) + var(--rk-space-xs)) auto; --_rk-from: 4px; }
@@ -677,10 +691,6 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
 .rk-empty[data-status='error'] > :first-child::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--_rk-mark); }
 /* Pending: the button keeps its width and says what it is doing ("saving…"); the line runs under it. */
 .rk-btn[data-rk-pending] { cursor: progress; }
-/* A running action refuses clicks (aria-disabled) but is not disabled: it keeps its colours and says what it does. */
-.rk-btn[data-rk-pending][aria-disabled='true'] { border-color: currentColor; color: inherit; cursor: progress; }
-.rk-btn--primary[data-rk-pending][aria-disabled='true'] { background-color: var(--rk-accent); border-color: var(--rk-accent); color: var(--rk-on-accent); }
-.rk-btn[data-status='error'][data-rk-pending][aria-disabled='true'] { border-color: var(--rk-status-error-full); color: var(--rk-status-error-full); }
 .rk-btn[data-rk-pending]::after { inset: auto 0 -6px; }
 
 /* Table ---------------------------------------------------------------------------------------------------------- */
@@ -824,11 +834,9 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
 
 /* Sheet ---------------------------------------------------------------------------------------------------------- */
 /* A short question from the top edge; everything behind it stays where it was and does not scroll. A tap on the
-   shading cancels (closedby="any", with a script fallback); with unsaved input, use closedby="closerequest".
-   Sized and centred against the viewport (100vw), not the box the root's reserved scrollbar gutter leaves: with
-   classic scrollbars that box is 15px narrower, and a phone-wide sheet stood short of the right edge. */
+   shading cancels (closedby="any", with a script fallback); with unsaved input, use closedby="closerequest". */
 .rk-sheet {
-  margin: 0 auto auto calc((100vw - min(32rem, 100vw)) / 2); width: min(32rem, 100vw); max-width: none; max-height: calc(100dvh - var(--rk-space-xl)); overflow-y: auto; overscroll-behavior: contain;
+  margin: 0 auto auto; width: min(32rem, 100%); max-width: 100%; max-height: calc(100dvh - var(--rk-space-xl)); overflow-y: auto; overscroll-behavior: contain;
   padding: var(--rk-space-l) var(--rk-space-m);
   border: 0; border-bottom: 1px solid var(--rk-text-contrast-low); border-radius: 0 0 var(--rk-radius-m) var(--rk-radius-m);
   background: var(--rk-bg); color: var(--rk-text-primary);
@@ -837,7 +845,10 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
 .rk-sheet::backdrop { background: var(--rk-shading); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
 .rk-sheet > * + *, .rk-sheet form > * + * { margin-top: var(--rk-space-m); }
 .rk-sheet .rk-kicker + * { margin-top: var(--rk-space-xs); }
-:root:has(dialog.rk-sheet[open]) { overflow: hidden; scrollbar-gutter: stable; }
+/* The page behind stops scrolling; the scrollbar's room is kept as padding (--rk-scrollbar, which sheet() measures as
+   it opens), not as a reserved gutter: a gutter narrows the box a modal is laid out in, and a phone-wide sheet stood
+   15px short of the right edge with classic scrollbars. */
+:root:has(dialog.rk-sheet[open]) { overflow: hidden; padding-right: var(--rk-scrollbar, 0px); }
 /* Every sheet has a visible way out (docs/states.md): its safe answer, or this close button at the top corner,
    <button class="rk-btn rk-btn--icon rk-btn--quiet rk-sheet-close" value="cancel" aria-label="close"> in its form. */
 .rk-sheet-close { position: absolute; top: var(--rk-space-xs); right: var(--rk-space-xs); margin: 0 !important; }
@@ -918,7 +929,8 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
 .rk-toast-act:active { background-color: var(--rk-hover); }
 .rk-toast-act:focus-visible { outline: 2px solid currentColor; outline-offset: -10px; }
 .rk-toast-count { min-width: 1ch; font-weight: var(--rk-font-weight-medium); font-variant-numeric: tabular-nums; }
-/* The undo window: 2px, inset space-xs, anchored under the action. --rk-toast-left (a public hook, 1 to 0) is how much
+/* The undo window: a 2px line along the toast's foot, inset space-xs, shrinking toward its trailing end (the action's
+   side). --rk-toast-left (a public hook, 1 to 0) is how much
    of the window is left: toaster() steps it once a second with the figure, a page without the script may set it; each
    step glides like a live bar. */
 .rk-toast-line {
@@ -1021,7 +1033,7 @@ select.rk-input option { background: var(--rk-bg); color: var(--rk-text-primary)
   .rk-pivot > :hover { color: var(--rk-text-primary); }
   .rk-btn:hover { background-color: var(--rk-hover); }
   .rk-btn--primary:hover { background-color: var(--rk-accent); background-image: linear-gradient(var(--rk-hover), var(--rk-hover)); }
-  .rk-btn:disabled:hover, .rk-btn[aria-disabled='true']:hover { background: none; }
+  .rk-btn:disabled:hover, .rk-btn[aria-disabled='true']:not([data-rk-pending]):hover { background: none; }
   .rk-input:hover:not(:disabled) { border-color: var(--rk-text-primary); }
   .rk-ab:hover { background-color: var(--rk-hover); }
   .rk-crumb:hover { color: var(--rk-text-primary); }

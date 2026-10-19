@@ -1,11 +1,11 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 7b0f7eadff45b7cc273a3f5ea04cc56464d2b697
- * Tag: v0.4.0
+ * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
+ * Tag: v0.5.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.js
- * SHA-256 of everything below this header: ce164820234b1e21c0878aaa03c2b78e831359990678bb0104e5584027ddf97d
+ * SHA-256 of everything below this header: 4702592187593a963b5ffae54f1fde2a8a4cd45cc8ffaad85fc5563cf177eacc
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -62,7 +62,7 @@
      start      the defaults for a page: prefs, press, sheets, steppers, sliders, switches, arrival build-in, words
      tokens     token values as they apply right now (theme, density, reduced motion) */
 
-export const version = '0.4.0';
+export const version = '0.5.0';
 
 // Tokens -------------------------------------------------------------------------------------------------------------
 // The document's root, looked up when used: importing the module touches no DOM, so it loads during server rendering.
@@ -600,7 +600,6 @@ export function places({ root = document, mode = 'hash', base = '', home, title 
   const parentOf = (name) => { const p = byName(name) && byName(name).dataset.rkParent; return byName(p) ? p : home; };
   const titleOf = (name) => { const h = byName(name).querySelector('.rk-title'); const t = h && h.textContent.trim(); return name === home || !t ? title : `${t} · ${title}`; };
   // Everything that scrolls in a place keeps its offset while the place is away.
-  const scrollers = (el) => [el, ...el.querySelectorAll('.rk-panorama, .rk-sec, .rk-split-list, .rk-split-detail, [data-rk-scroll]')];
   let current = home, item = null, params = '', index = 0, below = null, pushedItem = false, busy = Promise.resolve();
   const watchers = new Map();
   const backButtons = () => document.querySelectorAll('.rk-ab-back[data-rk-back], .rk-titlebar [data-rk-back]');
@@ -619,11 +618,10 @@ export function places({ root = document, mode = 'hash', base = '', home, title 
   const rk = () => (history.state && history.state.rk) || {};
   function snapshot(opener) {
     const el = byName(current), prev = rk();
-    return { ...(history.state || {}), rk: { ...prev, place: current, index, below, item, params, pushedItem, scrollY, scroll: scrollers(el).map((s) => [s.scrollLeft, s.scrollTop]), opener: opener || prev.opener || null } };
+    return { ...(history.state || {}), rk: { ...prev, place: current, index, below, item, params, pushedItem, scrollY, scroll: scrollState(el).capture(), opener: opener || prev.opener || null } };
   }
   function restore(el, state) {
-    const offsets = (state && state.scroll) || [];
-    scrollers(el).forEach((s, i) => { const o = offsets[i] || [0, 0]; s.scrollTo({ left: o[0], top: o[1], behavior: 'instant' }); });
+    scrollState(el).restore(state && state.scroll && !Array.isArray(state.scroll) ? state.scroll : { y: 0, at: {} });
     scrollTo({ left: 0, top: (state && state.scrollY) || 0, behavior: 'instant' });
   }
   function focusTarget(to, state, back) {
@@ -1046,7 +1044,7 @@ function pivotGlide(strip, item) {
 // The place turn a pivot that picks the place (rk-pivot--nav) uses: places() registers it, or pivot(el, { turn }) takes
 // it. A facet pivot never references the turn, so a bundle that only uses facets leaves it out.
 let navTurn = null;
-export function pivot(el, { onSelect, turn: placeTurn = null } = {}) {
+export function pivot(el, { onSelect, turn: placeTurn = null, gone = 'select' } = {}) {
   const tabs = () => [...el.querySelectorAll('[role=tab]')];
   const panel = (t) => document.getElementById(t.getAttribute('aria-controls'));
   const nav = el.classList.contains('rk-pivot--nav');
@@ -1056,7 +1054,9 @@ export function pivot(el, { onSelect, turn: placeTurn = null } = {}) {
   // panorama sections; the strip is a jump list that follows the scroll. A pivot that picks the place never goes wide.
   const panels = () => tabs().map(panel);
   const startOf = (p) => Math.min(host.scrollLeft + p.getBoundingClientRect().left - host.getBoundingClientRect().left - (parseFloat(getComputedStyle(host).paddingLeft) || 0), host.scrollWidth - host.clientWidth);
+  let last = 0;                                          // the facet chosen last, to find its neighbour when it goes
   function mark(i) {
+    last = i;
     const list = tabs();
     list.forEach((t, k) => { t.setAttribute('aria-selected', String(k === i)); t.tabIndex = k === i ? 0 : -1; });
     pivotGlide(el, list[i]);
@@ -1084,10 +1084,14 @@ export function pivot(el, { onSelect, turn: placeTurn = null } = {}) {
     if (host.scrollLeft + host.clientWidth >= host.scrollWidth - 1) i = ps.length - 1;   /* at the end: the last */
     if (i >= 0 && i !== chosen()) { mark(i); if (onSelect) onSelect(i, tabs()[i]); }
   }
+  // A facet by its index, or by name: the tab's id, its data-facet or its panel's id (an app that holds the facet by
+  // name need not map it to an index that shifts when a facet comes or goes).
+  const indexOf = (key) => (typeof key === 'number' ? key : tabs().findIndex((t) => t.id === key || t.dataset.facet === key || t.getAttribute('aria-controls') === key));
   // select(i, { focus, silent }): silent, as when the app sets the facet from its own state, calls no onSelect.
-  function select(i, { focus = false, silent = false } = {}) {
-    const list = tabs(), prev = chosen(), told = (k) => { if (!silent && onSelect) onSelect(k, list[k]); };
+  function select(key, { focus = false, silent = false } = {}) {
+    const i = indexOf(key), list = tabs(), prev = chosen(), told = (k) => { if (!silent && onSelect) onSelect(k, list[k]); };
     if (!list[i]) return;
+    last = i;
     if (wide) {
       const p = panel(list[i]), d = ms('--rk-duration-pivot-glide');
       following = Date.now() + d + 50;                  /* the glide is not a scroll to follow */
@@ -1116,6 +1120,23 @@ export function pivot(el, { onSelect, turn: placeTurn = null } = {}) {
     if (focus) list[i].focus();
     told(i);
   }
+  // Facets that come and go (an open question, errors, a draft): one tab stays the tab stop and chosen, and every
+  // panel is hidden or revealed as the mode says. When the chosen facet has gone, its neighbour is chosen (the one now
+  // in its place, else the last), with onSelect unless gone: 'silent'.
+  function sync({ quiet = false } = {}) {
+    const list = tabs();
+    if (!list.length) return;
+    let i = chosen();
+    if (i < 0) {
+      i = Math.min(last, list.length - 1);
+      mark(i);
+      if (!quiet && gone !== 'silent' && onSelect) onSelect(i, list[i]);
+    } else {
+      last = i;
+      list.forEach((t, k) => { if (k !== i) t.setAttribute('aria-selected', 'false'); t.tabIndex = k === i ? 0 : -1; });
+    }
+    if (wide) panels().forEach((p) => { if (p) p.setAttribute('data-rk-reveal', ''); }); else narrow();
+  }
   const click = (e) => { const t = e.target.closest('[role=tab]'); if (t) select(tabs().indexOf(t)); };
   const key = (e) => {
     const list = tabs(), i = list.indexOf(e.target);
@@ -1133,31 +1154,75 @@ export function pivot(el, { onSelect, turn: placeTurn = null } = {}) {
   };
   let watched = null;
   const scrolled = () => follow();
+  // Wide, below a title block: while the row is not yet whole in view, a vertical wheel over it scrolls the window,
+  // and stops where the row meets the sticky chrome (--rk-stage-top); then the facets scroll within themselves.
+  const stage = (e) => {
+    if (!wide || e.ctrlKey || e.shiftKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY) || e.deltaY <= 0) return;
+    const top = host.getBoundingClientRect().top - (px('--rk-stage-top', host) || px('--rk-banner-h'));
+    const room = document.documentElement.scrollHeight - innerHeight - scrollY;
+    if (top <= 1 || room <= 0) return;
+    e.preventDefault();
+    const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1);
+    scrollBy({ top: Math.min(dy, top, room), behavior: 'instant' });
+  };
   const resize = () => {
     layout();
-    if (watched !== host) { if (watched) watched.removeEventListener('scroll', scrolled); watched = host; if (host) host.addEventListener('scroll', scrolled, { passive: true }); }
+    if (watched !== host) {
+      if (watched) { watched.removeEventListener('scroll', scrolled); watched.removeEventListener('wheel', stage); }
+      watched = host;
+      if (host) { host.addEventListener('scroll', scrolled, { passive: true }); host.addEventListener('wheel', stage, { passive: false }); }
+    }
     pivotScale(el); pivotFit(el);
   };
   const ro = new ResizeObserver(resize);
   // A title's words change (a count: "questions 2" → "questions 12"): measure again, once per frame.
   let frame = 0;
-  const mo = new MutationObserver((records) => { if (realChange(records)) { cancelAnimationFrame(frame); frame = requestAnimationFrame(resize); } });
+  const mo = new MutationObserver((records) => {
+    if (!realChange(records)) return;
+    if (records.some((r) => r.type === 'childList')) sync();          /* a facet came or went */
+    cancelAnimationFrame(frame); frame = requestAnimationFrame(resize);
+  });
   el.addEventListener('click', click); el.addEventListener('keydown', key); el.addEventListener('wheel', stripWheel, { passive: false });
   ro.observe(el);
   mo.observe(el, { childList: true, characterData: true, subtree: true });
   const first = tabs().map(panel).find(Boolean);
   if (first && first.parentElement) ro.observe(first.parentElement);
-  narrow();
+  last = Math.max(0, chosen());
+  sync({ quiet: true });
   resize();
   if (document.fonts) document.fonts.ready.then(resize);
   return {
     select,
+    sync: () => sync(),
     get wide() { return wide; },
+    get chosen() { const t = tabs()[chosen()]; return t ? (t.dataset.facet || t.id || chosen()) : null; },
     layout: resize,
     destroy() {
       el.removeEventListener('click', click); el.removeEventListener('keydown', key); el.removeEventListener('wheel', stripWheel); ro.disconnect(); mo.disconnect();
       cancelAnimationFrame(frame);
-      if (watched) watched.removeEventListener('scroll', scrolled);
+      if (watched) { watched.removeEventListener('scroll', scrolled); watched.removeEventListener('wheel', stage); }
+    },
+  };
+}
+
+// scrollState(root): every scrolled box of a place (the place, a panorama and its sections, a wide facet row and its
+// facets, a split's panes, anything marked data-rk-scroll) and the window, as plain data a router can keep with its
+// history entry (history.state, SvelteKit's snapshot), and put back on back. Boxes are known by their id or
+// data-rk-scroll value, else by their order. Restore once the place is rendered and laid out.
+const SCROLLERS = '.rk-panorama, .rk-sec, .rk-split-list, .rk-split-detail, [data-rk-wide]:not(.rk-pivot), [data-rk-wide]:not(.rk-pivot) > [role=tabpanel], [data-rk-scroll]';
+export function scrollState(root) {
+  const boxes = () => [root, ...root.querySelectorAll(SCROLLERS)];
+  const keyOf = (b, i) => (b === root ? 'root' : b.id ? `#${b.id}` : b.dataset.rkScroll ? `@${b.dataset.rkScroll}` : String(i));
+  return {
+    capture() {
+      const at = {};
+      boxes().forEach((b, i) => { if (b.scrollLeft || b.scrollTop) at[keyOf(b, i)] = [Math.round(b.scrollLeft), Math.round(b.scrollTop)]; });
+      return { y: Math.round(scrollY), at };
+    },
+    restore(state) {
+      if (!state || !state.at) return;
+      boxes().forEach((b, i) => { const o = state.at[keyOf(b, i)]; if (o || b.scrollLeft || b.scrollTop) b.scrollTo({ left: o ? o[0] : 0, top: o ? o[1] : 0, behavior: 'instant' }); });
+      if (typeof state.y === 'number') scrollTo({ left: scrollX, top: state.y, behavior: 'instant' });
     },
   };
 }
@@ -1192,6 +1257,14 @@ export function strip(el) {
 // leaving is inserted once that one has gone, so only what shows is announced. The same key with undo updates the
 // open toast and restarts its window. Hover, a touch or focus holds the window. Escape inside a toast dismisses it;
 // Ctrl/Cmd+Z undoes while the window is open, except in a text field. Undo is a shortcut, never the only way back.
+// A change inside a live region that is not news: the element is a live region of its own, off, while the change is
+// read into the accessibility tree, then it follows its region again.
+function quietly(el, change) {
+  const live = el.getAttribute('aria-live');
+  el.setAttribute('aria-live', 'off');
+  change();
+  setTimeout(() => { if (live === null) el.removeAttribute('aria-live'); else el.setAttribute('aria-live', live); }, 250);
+}
 export function toaster(region) {
   let open = null;
   const tokenWindow = () => (Math.round(ms('--rk-duration-toast') / 1000) || 5) * 1000;
@@ -1206,9 +1279,11 @@ export function toaster(region) {
   function show(text, { key = text, undo = null, from = null, action = 'undo', act = null, status = '', windowMs = 0, onEnd = null } = {}) {
     if (open && open.key === key && open.undo && undo) { open.update(text, undo, { windowMs, onEnd }); return open; }
     if (open) open.leave(false, 'replaced');
-    // remaining counts down in ms; an undo toast steps its figure on whole seconds, a plain one goes when it runs out.
+    // The window runs against a deadline in wall-clock time, so a late or throttled timer (a busy page, a background
+    // tab) never stretches it: each tick reads the clock. remaining is what is left while it stands still (held, or not
+    // yet in); an undo toast steps its figure on whole seconds, a plain one goes when it runs out.
     let total = undo ? windowMs || tokenWindow() : ms('--rk-duration-toast'), remaining = total;
-    let timer = 0, step = 0, since = 0, hover = false, focus = false, held = false, done = false, waiting = 0;
+    let timer = 0, deadline = 0, running = false, hover = false, focus = false, held = false, released = false, done = false, waiting = 0;
     const el = document.createElement('div');
     el.className = 'rk-toast';
     if (status) { el.dataset.status = status; if (status === 'error') el.setAttribute('role', 'alert'); }
@@ -1230,28 +1305,36 @@ export function toaster(region) {
       btn.type = 'button'; btn.className = 'rk-toast-act'; btn.textContent = act.label;
       btn.addEventListener('click', () => { leave(false, 'acted'); act.run(); });
     }
-    const secs = () => Math.max(0, Math.ceil(remaining / 1000));
+    const left = () => (running ? Math.max(0, deadline - Date.now()) : remaining);
+    const secs = () => Math.max(0, Math.ceil(left() / 1000));
     say(msg, text, !!undo, false, secs());
-    const paint = () => { if (count) { count.textContent = secs(); el.style.setProperty('--rk-toast-left', total ? Math.max(0, remaining) / total : 0); } };
-    const tick = () => {
-      timer = 0; remaining -= step;
-      if (remaining <= 0) { remaining = 0; paint(); leave(false, 'expired'); return; }
-      paint(); hold();
-    };
+    const paint = () => { if (count) { count.textContent = secs(); el.style.setProperty('--rk-toast-left', total ? left() / total : 0); } };
+    function schedule() {
+      clearTimeout(timer);
+      const l = deadline - Date.now();
+      timer = setTimeout(tick, Math.max(0, undo ? l % 1000 || 1000 : l));
+    }
+    function tick() {
+      timer = 0;
+      if (!running) return;
+      if (deadline - Date.now() <= 0) { running = false; remaining = 0; paint(); leave(false, 'expired'); return; }
+      paint(); schedule();
+    }
+    function run() { if (running || done || waiting) return; running = true; deadline = Date.now() + remaining; schedule(); }
+    function stop() { if (!running) return; remaining = Math.max(0, deadline - Date.now()); running = false; clearTimeout(timer); timer = 0; }
     function hold() {
       if (done || waiting) return;
       const was = held;
-      held = hover || focus;
-      if (held) { if (timer) { clearTimeout(timer); timer = 0; remaining -= Date.now() - since; } }
-      else if (!timer) { since = Date.now(); step = undo ? remaining % 1000 || 1000 : remaining; timer = setTimeout(tick, Math.max(0, step)); }
+      held = (hover || focus) && !released;
+      if (held) stop(); else run();
       if (held !== was) {
         el.toggleAttribute('data-rk-held', held);
-        el.dispatchEvent(new CustomEvent('rk:toasthold', { bubbles: true, detail: { held, remaining } }));
+        el.dispatchEvent(new CustomEvent('rk:toasthold', { bubbles: true, detail: { held, remaining: left() } }));
       }
     }
     function leave(doUndo, reason = doUndo ? 'undone' : 'dismissed') {
       if (done) return;
-      done = true; clearTimeout(timer);
+      done = true; running = false; clearTimeout(timer);
       const end = () => { if (doUndo && undo) undo(); if (onEnd) onEnd(doUndo && undo ? 'undone' : reason); };
       if (waiting) { clearTimeout(waiting); waiting = 0; if (open === api) open = null; end(); return; }
       const hadFocus = el.contains(document.activeElement);
@@ -1261,26 +1344,42 @@ export function toaster(region) {
       end();
       if (hadFocus) returnFocus(from);
     }
-    // A time the server reports: the window shows what is left of it, and 0 ends it, held or not.
+    // A time the server reports: the window shows what is left of it from now, and 0 ends it, held or not.
     function setRemaining(t) {
       if (done) return;
-      clearTimeout(timer); timer = 0;
+      const was = running;
+      stop();
       remaining = Math.max(0, t); total = Math.max(total, remaining);
       if (!remaining) { paint(); leave(false, 'expired'); return; }
-      paint(); hold();
+      paint();
+      if (was || !held) run();
     }
     const api = {
       key, el, action,
       leave,
       setRemaining,
-      get remaining() { return held || !timer ? remaining : Math.max(0, remaining - (Date.now() - since)); },
-      get held() { return held; },
-      undo: undo ? () => leave(true) : null,
-      update(t, u, { windowMs: w = 0, onEnd: e = null } = {}) {
-        undo = u; if (e) onEnd = e;
-        total = remaining = w || (undo ? windowMs || tokenWindow() : total);
-        say(msg, t, !!u, true, secs()); paint(); clearTimeout(timer); timer = 0; hold();
+      // The server no longer extends: the window runs out from here although the pointer or focus rests on it.
+      release() { if (done || released) return; released = true; hold(); },
+      // A new text, the window left alone; announced once (without the window sentence) only when asked.
+      setText(t, { announce = false } = {}) {
+        if (done) return;
+        const node = msg.firstChild && msg.firstChild.nodeType === 3 ? msg.firstChild : msg.insertBefore(document.createTextNode(''), msg.firstChild);
+        if (announce) node.nodeValue = t; else quietly(el, () => { node.nodeValue = t; });
       },
+      get remaining() { return left(); },
+      get held() { return held; },
+      get released() { return released; },
+      undo: undo ? () => leave(true) : null,
+      // The same key: a second action joins this toast. Its undo, window and onEnd are the new ones; a previous onEnd
+      // replaced by a new one hears 'merged' (its action now rides on the new one), else it stays for the whole toast.
+      update(t, u, { windowMs: w = 0, onEnd: e = null } = {}) {
+        undo = u;
+        if (e) { const before = onEnd; onEnd = e; if (before && before !== e) before('merged'); }
+        stop(); released = false;
+        total = remaining = w || (undo ? windowMs || tokenWindow() : total);
+        say(msg, t, !!u, true, secs()); paint(); hold(); if (!held) run();
+      },
+      sync() { if (running) { clearTimeout(timer); tick(); } },
     };
     el.addEventListener('pointerenter', () => { hover = true; hold(); });
     el.addEventListener('pointerleave', () => { hover = false; hold(); });
@@ -1288,10 +1387,13 @@ export function toaster(region) {
     el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget)) { focus = false; hold(); } });
     paint();
     open = api;
-    const insert = () => { waiting = 0; region.appendChild(el); hold(); };
+    const insert = () => { waiting = 0; region.appendChild(el); hold(); if (!held) run(); };
     if (region.querySelector('.rk-toast[data-rk-phase="leaving"]')) waiting = setTimeout(insert, ms('--rk-duration-short')); else insert();
     return api;
   }
+  // Back in view (a tab that was in the background), the window catches up with the clock at once.
+  const visible = () => { if (open && document.visibilityState === 'visible') open.sync(); };
+  document.addEventListener('visibilitychange', visible);
   const offEsc = keys.on(30, (e) => {
     if (e.key !== 'Escape' || !open || !open.el.contains(e.target)) return false;
     open.leave(false); return true;
@@ -1304,7 +1406,7 @@ export function toaster(region) {
     show,
     get open() { return open; },
     dismiss() { if (open) open.leave(false); },
-    destroy() { offEsc(); offUndo(); },
+    destroy() { offEsc(); offUndo(); document.removeEventListener('visibilitychange', visible); },
   };
 }
 
@@ -1315,6 +1417,7 @@ export function toaster(region) {
 // glides to its new height; an ending state is an event, so the toaster says so once the banner has gone. Both live
 // regions stay mounted. The app bar follows with data-rk-state (halted for error, paused for warning).
 export function banner(el, { states, order = Object.keys(states), appbar = null, liveWord = null, toaster: toasts = null, onAction = null } = {}) {
+  states = { ...states };                                               // the banner's own copy: update() writes to it
   const alertRegion = el.querySelector('[role=alert]'), statusRegion = el.querySelector('[role=status]');
   const remedy = el.querySelector('.rk-actions .rk-btn');
   let remedyLink = null;                                                // the remedy of a state whose action navigates
@@ -1398,9 +1501,18 @@ export function banner(el, { states, order = Object.keys(states), appbar = null,
   }
   const act = () => { if (shown && remedy.getAttribute('aria-disabled') !== 'true') (onAction ? onAction(shown) : set(shown, false)); };
   if (remedy) remedy.addEventListener('click', act);
-  function set(name, value, { from = null, since } = {}) {
+  // A state that is on gets a new sentence (a figure that changes): it is written in place, not announced again, and
+  // its start stays.
+  function update(name, text) {
     if (!(name in on)) throw new Error(`unknown banner state ${name}`);
-    if (on[name] === !!value) return;
+    states[name] = { ...states[name], text };
+    const m = shown === name && el.querySelector('.rk-banner-msg');
+    if (m && m.textContent !== text) quietly(m, () => { m.textContent = text; });
+  }
+  function set(name, value, { from = null, since, text } = {}) {
+    if (!(name in on)) throw new Error(`unknown banner state ${name}`);
+    if (on[name] === !!value) { if (value && text !== undefined) update(name, text); return; }
+    if (text !== undefined) states[name] = { ...states[name], text };
     on[name] = !!value;
     if (value) { const d = since === false || since === null ? null : since === undefined ? new Date() : new Date(since); started[name] = d && !isNaN(d) ? d : null; }
     sync(name, from);
@@ -1408,6 +1520,7 @@ export function banner(el, { states, order = Object.keys(states), appbar = null,
   sync(null, null);
   return {
     set,
+    update,
     toggle(name, opts) { set(name, !on[name], opts); },
     is(name) { return on[name]; },
     get shown() { return shown; },
@@ -1479,9 +1592,20 @@ export function sheet(dialog, opts = {}) {
     if (value === 'cancel') request(value); else leaveThen(value);
   };
   const cancel = (e) => { if (!e.cancelable) { unask(false); return; } e.preventDefault(); request('cancel'); };
+  // Escape is taken on its keydown while there is something to lose: there it can always be stopped, where the
+  // browser lets a page stop only one cancel event per user activation (a third Escape would close the sheet).
+  const key = (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || !(ask || isDirty())) return;
+    e.preventDefault(); request('cancel');
+  };
   const closed = () => unask(false);
   if (!dialog.hasAttribute('closedby')) dialog.setAttribute('closedby', 'any');
   dialog.close = (value) => leaveThen(value);
+  // The page behind stops scrolling while the sheet is open; the root keeps its scrollbar's room as padding
+  // (--rk-scrollbar, measured here), so nothing shifts and the sheet still spans the viewport.
+  const showModal = HTMLDialogElement.prototype.showModal;
+  dialog.showModal = () => { docEl().style.setProperty('--rk-scrollbar', `${Math.max(0, innerWidth - docEl().clientWidth)}px`); showModal.call(dialog); };
+  dialog.addEventListener('keydown', key);
   dialog.addEventListener('click', click);
   dialog.addEventListener('submit', submit);
   dialog.addEventListener('cancel', cancel);
@@ -1491,7 +1615,8 @@ export function sheet(dialog, opts = {}) {
     destroy() {
       unask(false); sheets.delete(dialog);
       dialog.removeEventListener('click', click); dialog.removeEventListener('submit', submit); dialog.removeEventListener('cancel', cancel); dialog.removeEventListener('close', closed);
-      delete dialog.close;
+      dialog.removeEventListener('keydown', key);
+      delete dialog.close; delete dialog.showModal;
     },
   };
   sheets.set(dialog, { opts: o, api });
@@ -2226,15 +2351,30 @@ export function appbar(el, { more = el.querySelector('.rk-ab-more') } = {}) {
   const m = menu(more, pop, { onSelect: (item) => { if (item._rkFor) item._rkFor.click(); } });
   const rebuild = () => build();
   more.addEventListener('pointerdown', rebuild); more.addEventListener('keydown', rebuild);
-  const ro = new ResizeObserver(layout);
+  // It lays out again when the bar's width changes, when its children change, and when a child grows or shrinks by
+  // itself (the live word a banner writes, a pinned middle, a web font arriving). Sizes its own layout causes are
+  // remembered, so they do not set it off again.
+  const sizes = new WeakMap();
+  const kids = () => [...el.children].filter((c) => c !== pop);
+  const remember = () => { for (const c of kids()) sizes.set(c, Math.round(c.getBoundingClientRect().width)); };
+  let frame = 0;
+  const relayout = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { layout(); remember(); }); };
+  const ro = new ResizeObserver(relayout);
   ro.observe(el);
-  const mo = new MutationObserver(layout);                // places or commands a framework renders later
+  const kro = new ResizeObserver((entries) => {
+    if (entries.some((e) => sizes.get(e.target) !== Math.round(e.target.getBoundingClientRect().width))) relayout();
+  });
+  const watch = () => kids().forEach((c) => kro.observe(c));
+  const mo = new MutationObserver(() => { watch(); relayout(); });   // places or commands a framework renders later
   mo.observe(el, { childList: true });
-  layout();
+  watch();
+  layout(); remember();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(relayout);
   return {
-    layout,
+    layout() { layout(); remember(); },
     destroy() {
-      ro.disconnect(); mo.disconnect(); m.destroy(); more.removeEventListener('pointerdown', rebuild); more.removeEventListener('keydown', rebuild); pop.remove();
+      cancelAnimationFrame(frame); ro.disconnect(); kro.disconnect(); mo.disconnect(); m.destroy();
+      more.removeEventListener('pointerdown', rebuild); more.removeEventListener('keydown', rebuild); pop.remove();
       markPlaces(el, false);
     },
   };

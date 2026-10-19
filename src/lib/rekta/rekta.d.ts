@@ -1,11 +1,11 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 7b0f7eadff45b7cc273a3f5ea04cc56464d2b697
- * Tag: v0.4.0
+ * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
+ * Tag: v0.5.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.d.ts
- * SHA-256 of everything below this header: cf5e2c52205ecfc2391ca027f04db9b189ec512e28ab05984b88108e396347aa
+ * SHA-256 of everything below this header: ab1f23ea7afa5da6f8b8dc3b891f816fd28e130a2cc2411d3492c6e8844cf32d
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -116,18 +116,28 @@ export declare function panorama(el: HTMLElement, options?: { pivot?: HTMLElemen
 export declare function pivot(el: HTMLElement, options?: {
   onSelect?: (index: number, item: HTMLElement) => void;
   turn?: typeof turn | null;
+  /** When the chosen facet goes: its neighbour is chosen with onSelect ('select', the default) or without ('silent'). */
+  gone?: 'select' | 'silent';
 }): Destroyable & {
-  /** `silent` changes the facet without calling onSelect. */
-  select(index: number, options?: { focus?: boolean; silent?: boolean }): void;
+  /** By index, or by name (the tab's id, data-facet or its panel's id); `silent` calls no onSelect. */
+  select(indexOrName: number | string, options?: { focus?: boolean; silent?: boolean }): void;
+  /** Facets came or went: one tab stop, one chosen tab, panels hidden or revealed (rekta.js does it on its own too). */
+  sync(): void;
+  /** The chosen facet's data-facet, else its id, else its index. */
+  readonly chosen: string | number | null;
   readonly wide: boolean;
   layout(): void;
 };
+
+/** Every scrolled box of a place, and the window, as plain data for a router's history entry. */
+export interface ScrollState { y: number; at: Record<string, [number, number]>; }
+export declare function scrollState(root: Element): { capture(): ScrollState; restore(state: ScrollState | null | undefined): void };
 
 export declare function strip(el: HTMLElement): Destroyable & { layout(): void };
 
 // Feedback ------------------------------------------------------------------------------------------------------------
 
-export type ToastEnd = 'expired' | 'undone' | 'replaced' | 'acted' | 'dismissed';
+export type ToastEnd = 'expired' | 'undone' | 'replaced' | 'acted' | 'dismissed' | 'merged';
 export interface ToastOptions {
   key?: string;
   undo?: (() => void) | null;
@@ -145,10 +155,17 @@ export interface Toast {
   readonly action: string;
   undo: (() => void) | null;
   leave(doUndo?: boolean, reason?: ToastEnd): void;
-  /** What is left of the window; 0 ends the toast, held or not. */
+  /** What is left of the window from now; 0 ends the toast, held or not. */
   setRemaining(ms: number): void;
+  /** Holding extends nothing any more: the window runs out although pointer or focus rest on the toast. */
+  release(): void;
+  /** New words, the window left alone; announced once only with `announce`. */
+  setText(text: string, options?: { announce?: boolean }): void;
   readonly remaining: number;
   readonly held: boolean;
+  readonly released: boolean;
+  /** Catches the window up with the clock (rekta.js calls it when the page comes back into view). */
+  sync(): void;
   update(text: string, undo: (() => void) | null, options?: { windowMs?: number; onEnd?: ((reason: ToastEnd) => void) | null }): void;
 }
 export interface Toaster extends Destroyable {
@@ -180,7 +197,9 @@ export declare function banner(el: HTMLElement, options: {
   onAction?: ((name: string) => void) | null;
 }): Destroyable & {
   /** `since`: the real start (a Date, or anything new Date() reads), or false when it is unknown. */
-  set(name: string, on: boolean, options?: { from?: HTMLElement | null; since?: Date | string | number | false | null }): void;
+  set(name: string, on: boolean, options?: { from?: HTMLElement | null; since?: Date | string | number | false | null; text?: string }): void;
+  /** A new sentence for a state that is on: written in place, not announced again, its start kept. */
+  update(name: string, text: string): void;
   toggle(name: string, options?: { from?: HTMLElement | null; since?: Date | string | number | false | null }): void;
   is(name: string): boolean;
   readonly shown: string | null;
