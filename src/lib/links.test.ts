@@ -1,6 +1,6 @@
 import { globSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { isTicketFacet, isTicketPath, openingFacet, ticketHref } from './links';
+import { isTicketFacet, isTicketPath, openingFacet, refNumber, ticketHref } from './links';
 
 describe('ticketHref', () => {
 	it('is the bare path without options', () => {
@@ -67,5 +67,12 @@ describe('the address of a ticket', () => {
 			.filter((file) => !file.endsWith('src/lib/links.ts') && !file.endsWith('.test.ts'))
 			.filter((file) => /\/p\/[^`'"\s]*\/t\//.test(readFileSync(file, 'utf8')));
 		expect(builders).toEqual([]);
+	});
+});
+
+describe('refNumber', () => {
+	it('is the part of a ref after the last hyphen', () => {
+		expect(refNumber('STU-12')).toBe('12');
+		expect(refNumber('WEB-3')).toBe('3');
 	});
 });

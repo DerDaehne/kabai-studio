@@ -25,7 +25,7 @@
 	import FinishedRuns from './FinishedRuns.svelte';
 	import LiveRuns from './LiveRuns.svelte';
 	import { arranged, deferred, restored, type QueuedQuestion } from './queue';
-	import { ticketHref } from '$lib/links';
+	import { refNumber, ticketHref } from '$lib/links';
 
 	type Answer = { option: number } | { text: string };
 
@@ -360,8 +360,7 @@
 			{#each paused as run (run.id)}
 				<li class="row">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a
-						href={ticketHref(run.project.code, run.ticket.split('-').at(-1) ?? '', { run: run.id })}
+					<a href={ticketHref(run.project.code, refNumber(run.ticket), { run: run.id })}
 						>{run.ticket}</a
 					>
 					<Tag tone="warning">{t('start.state.paused')}</Tag>

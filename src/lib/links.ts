@@ -18,6 +18,9 @@ export function ticketHref(
 	return `/p/${key}/t/${number}${search}`;
 }
 
+/** The number in a ticket ref such as `STU-12`; a project key never contains a hyphen. */
+export const refNumber = (ref: string): string => ref.slice(ref.lastIndexOf('-') + 1);
+
 /** Whether a path lies in a Run-Akte; the one pattern that goes with {@link ticketHref}. */
 export const isTicketPath = (path: string): boolean => /^\/p\/[^/]+\/t\/\d+/.test(path);
 

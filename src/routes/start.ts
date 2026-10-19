@@ -1,4 +1,4 @@
-import { ticketHref } from '$lib/links';
+import { refNumber, ticketHref } from '$lib/links';
 import type { LiveRun, ProjectRef, QueuedQuestion } from '$lib/live';
 import type { FinishedRunWithWayOut } from '$lib/server/start-view';
 import type { Tone } from '$lib/ui/rekta/tone';
@@ -31,9 +31,6 @@ const RUN_TONE: Record<LiveRun['state'], Tone> = {
 	paused: 'warning'
 };
 
-// LiveRun.ticket is "KEY-N"; a project key never contains a hyphen, so the part after the last one is the number.
-const ticketNumber = (ref: string) => ref.split('-').at(-1) ?? '';
-
 function questionTile(question: QueuedQuestion): NowTile {
 	return {
 		key: `question-${question.id}`,
@@ -57,7 +54,7 @@ function runTile(run: LiveRun): NowTile {
 		tone: RUN_TONE[run.state],
 		project: run.project,
 		ticket: run.ticket,
-		href: ticketHref(run.project.code, ticketNumber(run.ticket), { run: run.id }),
+		href: ticketHref(run.project.code, refNumber(run.ticket), { run: run.id }),
 		runId: run.id,
 		run
 	};
