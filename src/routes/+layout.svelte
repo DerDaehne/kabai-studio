@@ -203,7 +203,7 @@
 						<button
 							class="rk-btn rk-btn--icon rk-btn--quiet"
 							aria-label="Projekt-Fokus aufheben"
-							onclick={() => (shell.focus = null)}><Icon name="x" size={14} /></button
+							onclick={() => (shell.focus = null)}><Icon name="x" /></button
 						>
 					</p>
 				{/if}
