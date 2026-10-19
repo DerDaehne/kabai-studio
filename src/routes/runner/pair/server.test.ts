@@ -18,6 +18,10 @@ let lastIp = 0;
 /** Every test pairs from an address of its own, so the shared rate limit never leaks between tests. */
 const freshIp = () => `10.1.0.${++lastIp}`;
 
+let lastName = 0;
+/** A paired runner gets a free name, so a test that expects its own name needs one no other test took. */
+const freshName = () => `laptop-${++lastName}`;
+
 type Call = {
 	body?: unknown;
 	ip?: string;
@@ -58,18 +62,19 @@ describe('POST /runner/pair', () => {
 			vi.spyOn(console, method)
 		);
 		const { code } = issuePairingCode();
+		const name = freshName();
 
-		const first = await pair({ body: { code, name: 'laptop' } });
-		const again = await pair({ body: { code, name: 'laptop' } });
+		const first = await pair({ body: { code, name } });
+		const again = await pair({ body: { code, name } });
 
 		expect(first.status).toBe(201);
 		expect(first.cache).toBe('no-store');
 		const credential = first.body.credential as string;
-		expect(first.body).toEqual({ id: expect.any(Number), name: 'laptop', credential });
+		expect(first.body).toEqual({ id: expect.any(Number), name, credential });
 		expect(credential).toMatch(/^[\w-]{43}$/);
 		const hash = createHash('sha256').update(credential).digest('hex');
 		expect(runnerRows()).toContainEqual(
-			expect.objectContaining({ name: 'laptop', credential_hash: hash })
+			expect.objectContaining({ name, credential_hash: hash })
 		);
 		expect(JSON.stringify(runnerRows())).not.toContain(credential);
 		expect(again.status).toBe(400);
@@ -87,7 +92,7 @@ describe('POST /runner/pair', () => {
 				body: { code: 'browser_origin_forbidden', hint: expect.stringContaining('terminal') }
 			});
 
-		expect((await pair({ body: { code, name: 'browserless' } })).status).toBe(201);
+		expect((await pair({ body: { code, name: freshName() } })).status).toBe(201);
 	});
 
 	it('answers 429 with a hint after five failed attempts per minute from one address, and lets it try again after that minute', async () => {
@@ -143,8 +148,10 @@ describe('POST /runner/pair', () => {
 	it('hands out no credential over plain http to an address other than loopback', async () => {
 		const { code } = issuePairingCode();
 
-		const plain = await pair({ body: { code, name: 'laptop' }, studio: 'http://studio.lan' });
-		const tls = await pair({ body: { code, name: 'laptop' }, studio: 'https://studio.lan' });
+		const name = freshName();
+
+		const plain = await pair({ body: { code, name }, studio: 'http://studio.lan' });
+		const tls = await pair({ body: { code, name }, studio: 'https://studio.lan' });
 
 		expect(plain).toMatchObject({
 			status: 403,
