@@ -78,6 +78,18 @@ describe('provenanceHeader', () => {
 	});
 });
 
+describe('provenanceHeader tag line', () => {
+	it('names the tag when the commit has one and leaves the line out when it has none', () => {
+		const commit = 'a'.repeat(40);
+		expect(
+			provenanceHeader(commit, 'scripts/build.mjs', 'dist/rekta.css', 'x', 'v0.4.0')
+		).toContain(` * Commit: ${commit}\n * Tag: v0.4.0\n`);
+		expect(provenanceHeader(commit, 'scripts/build.mjs', 'dist/rekta.css', 'x')).not.toContain(
+			' * Tag:'
+		);
+	});
+});
+
 describe('buildAt', () => {
 	it('returns both stylesheets of one build and its commit', () => {
 		const { source, commit } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));

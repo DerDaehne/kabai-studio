@@ -33,6 +33,7 @@ export class RektaProblem extends Error {}
 
 export interface Build {
 	commit: string;
+	tag: string | undefined;
 	generator: string;
 	files: Record<TargetName, string>;
 }
@@ -51,13 +52,15 @@ export function provenanceHeader(
 	commit: string,
 	generator: string,
 	output: string,
-	body: string
+	body: string,
+	tag?: string
 ): string {
 	return [
 		'/*!',
 		' * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.',
 		` * Source: ${UPSTREAM}`,
 		` * Commit: ${commit}`,
+		...(tag ? [` * Tag: ${tag}`] : []),
 		` * Generator: ${generator} of Rekta Design`,
 		` * Output: ${output}`,
 		` * SHA-256 of everything below this header: ${sha256(body)}`,
@@ -85,10 +88,19 @@ function git(cwd: string, ...args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
+function tagOf(clone: string): string | undefined {
+	try {
+		return git(clone, 'describe', '--tags', '--exact-match', 'HEAD');
+	} catch {
+		return undefined; // an untagged commit has no tag line
+	}
+}
+
 /** Checks out `ref` in the clone, runs the generator's own completeness and AA check, then its build. */
 export function buildAt(clone: string, ref: string): Build {
 	git(clone, 'checkout', '--quiet', '--detach', ref);
 	const commit = git(clone, 'rev-parse', 'HEAD');
+	const tag = tagOf(clone);
 	if (!existsSync(join(clone, GENERATOR)))
 		throw new RektaProblem(
 			`Rekta Design ${commit} has no ${GENERATOR}; adapt scripts/sync-rekta.ts to its new build.`
@@ -111,7 +123,7 @@ export function buildAt(clone: string, ref: string): Build {
 	const files = Object.fromEntries(
 		VENDORED_FILES.map(({ output, target }) => [target, readFileSync(join(clone, output), 'utf8')])
 	) as Record<TargetName, string>;
-	return { commit, generator: GENERATOR, files };
+	return { commit, tag, generator: GENERATOR, files };
 }
 
 function withClone<T>(source: string, work: (clone: string) => T): T {
@@ -126,11 +138,11 @@ function withClone<T>(source: string, work: (clone: string) => T): T {
 }
 
 function sync(source: string, ref: string): void {
-	const { commit, generator, files } = withClone(source, (clone) => buildAt(clone, ref));
+	const { commit, tag, generator, files } = withClone(source, (clone) => buildAt(clone, ref));
 	for (const { output, target } of VENDORED_FILES)
 		writeFileSync(
 			new URL(target, STYLES),
-			provenanceHeader(commit, generator, output, files[target]) + files[target]
+			provenanceHeader(commit, generator, output, files[target], tag) + files[target]
 		);
 	console.log(`src/lib/styles/rekta.tokens.css and rekta.css now hold Rekta Design ${commit}.`);
 }
