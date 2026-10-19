@@ -8,7 +8,7 @@ const readabilityRules = {
 };
 
 export default [
-	{ ignores: ['build/', '.svelte-kit/', 'node_modules/', 'data/'] },
+	{ ignores: ['build/', '.svelte-kit/', 'node_modules/', 'data/', 'src/lib/rekta/rekta.js'] },
 	{
 		files: ['**/*.{js,ts}'],
 		languageOptions: { parser: tsParser },

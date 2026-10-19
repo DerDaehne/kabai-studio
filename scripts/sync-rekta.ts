@@ -1,5 +1,5 @@
-// Vendors Rekta Design: builds a Rekta commit once in a throwaway clone and writes its token stylesheet and its
-// component stylesheet, byte for byte, each below its own provenance header into src/lib/styles.
+// Vendors Rekta Design: builds a Rekta commit once in a throwaway clone and writes its token stylesheet, its component
+// stylesheet, its script and the script's declarations, byte for byte, each below its own provenance header.
 //
 //   node scripts/sync-rekta.ts [source] [--ref <commit>]   update the vendored files (default: upstream, its HEAD)
 //   node scripts/sync-rekta.ts --check [source]             rebuild the pinned commit and upstream HEAD, report drift
@@ -8,23 +8,28 @@
 // upstream, never the source given here.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 export const UPSTREAM = 'https://github.com/DerDaehne/Rekta-Design';
-const STYLES = new URL('../src/lib/styles/', import.meta.url);
+const LIB = new URL('../src/lib/', import.meta.url);
 const HEADER_END = '\n */\n';
 
 export const GENERATOR = 'scripts/build.mjs';
 
-/** What the generator writes and where the app keeps it. */
+/** What the generator writes and where the app keeps it, below src/lib. */
 export const VENDORED_FILES = [
-	{ output: 'dist/rekta.tokens.css', target: 'rekta.tokens.css' },
-	{ output: 'dist/rekta.css', target: 'rekta.css' }
+	{ output: 'dist/rekta.tokens.css', target: 'rekta.tokens.css', directory: 'styles' },
+	{ output: 'dist/rekta.css', target: 'rekta.css', directory: 'styles' },
+	{ output: 'dist/rekta.js', target: 'rekta.js', directory: 'rekta' },
+	{ output: 'dist/rekta.d.ts', target: 'rekta.d.ts', directory: 'rekta' }
 ] as const;
+
+const vendoredUrl = ({ directory, target }: (typeof VENDORED_FILES)[number]) =>
+	new URL(`${directory}/${target}`, LIB);
 
 export type TargetName = (typeof VENDORED_FILES)[number]['target'];
 
@@ -139,12 +144,14 @@ function withClone<T>(source: string, work: (clone: string) => T): T {
 
 function sync(source: string, ref: string): void {
 	const { commit, tag, generator, files } = withClone(source, (clone) => buildAt(clone, ref));
-	for (const { output, target } of VENDORED_FILES)
+	for (const file of VENDORED_FILES) {
+		mkdirSync(new URL(`${file.directory}/`, LIB), { recursive: true });
 		writeFileSync(
-			new URL(target, STYLES),
-			provenanceHeader(commit, generator, output, files[target], tag) + files[target]
+			vendoredUrl(file),
+			provenanceHeader(commit, generator, file.output, files[file.target], tag) + files[file.target]
 		);
-	console.log(`src/lib/styles/rekta.tokens.css and rekta.css now hold Rekta Design ${commit}.`);
+	}
+	console.log(`The vendored Rekta Design files now hold ${commit}${tag ? ` (${tag})` : ''}.`);
 }
 
 function attempt(build: () => Build, problems: string[]): Build | undefined {
@@ -172,7 +179,7 @@ function offlineProblem(vendored: Record<TargetName, Vendored>): string | undefi
 		return `${mixed.target} comes from another Rekta commit than ${first.target}; run the sync.`;
 }
 
-/** Returns the problems found; an empty list means both vendored files are genuine and current. */
+/** Returns the problems found; an empty list means all vendored files are genuine and current. */
 export function check(source: string, vendoredTexts: Record<TargetName, string>): string[] {
 	const vendored = Object.fromEntries(
 		VENDORED_FILES.map(({ target }) => [target, splitVendored(vendoredTexts[target])])
@@ -193,7 +200,7 @@ export function check(source: string, vendoredTexts: Record<TargetName, string>)
 		const drifted = upstream ? differing(upstream) : [];
 		if (upstream && drifted.length === 0)
 			console.log(
-				`Rekta Design HEAD is ${upstream.commit}; both files match the pinned ${pinned}.`
+				`Rekta Design HEAD is ${upstream.commit}; all vendored files match the pinned ${pinned}.`
 			);
 		if (upstream && drifted.length > 0)
 			problems.push(
@@ -220,12 +227,12 @@ function main(): void {
 		process.exit(1);
 	}
 	const texts = Object.fromEntries(
-		VENDORED_FILES.map(({ target }) => [target, readFileSync(new URL(target, STYLES), 'utf8')])
+		VENDORED_FILES.map((file) => [file.target, readFileSync(vendoredUrl(file), 'utf8')])
 	) as Record<TargetName, string>;
 	const problems = check(source, texts);
 	for (const problem of problems) console.error(problem);
 	if (problems.length > 0) process.exit(1);
-	console.log('rekta.tokens.css and rekta.css are genuine and current.');
+	console.log('The vendored Rekta Design files are genuine and current.');
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

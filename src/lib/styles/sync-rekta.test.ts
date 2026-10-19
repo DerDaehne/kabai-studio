@@ -66,7 +66,9 @@ const vendoredFor = (commit: string, files: Record<TargetName, string>) =>
 
 const upstreamFiles = (tokens: string, components: string) => ({
 	'dist/rekta.tokens.css': tokens,
-	'dist/rekta.css': components
+	'dist/rekta.css': components,
+	'dist/rekta.js': 'script',
+	'dist/rekta.d.ts': 'declarations'
 });
 
 describe('provenanceHeader', () => {
@@ -91,12 +93,17 @@ describe('provenanceHeader tag line', () => {
 });
 
 describe('buildAt', () => {
-	it('returns both stylesheets of one build and its commit', () => {
+	it('returns all vendored files of one build and its commit', () => {
 		const { source, commit } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
 		expect(buildAt(clone(source), 'origin/HEAD')).toEqual({
 			commit,
 			generator: 'scripts/build.mjs',
-			files: { 'rekta.tokens.css': 'tokens', 'rekta.css': 'components' }
+			files: {
+				'rekta.tokens.css': 'tokens',
+				'rekta.css': 'components',
+				'rekta.js': 'script',
+				'rekta.d.ts': 'declarations'
+			}
 		});
 	});
 
@@ -124,10 +131,21 @@ describe('buildAt without a vendored output', () => {
 		const { source } = fakeRekta(buildScript({ 'dist/rekta.tokens.css': 'tokens' }));
 		expect(() => buildAt(clone(source), 'origin/HEAD')).toThrow(/wrote no dist\/rekta\.css/);
 	});
+
+	it('names the script when only the script is missing', () => {
+		const { 'dist/rekta.js': _script, ...withoutScript } = upstreamFiles('tokens', 'components');
+		const { source } = fakeRekta(buildScript(withoutScript));
+		expect(() => buildAt(clone(source), 'origin/HEAD')).toThrow(/wrote no dist\/rekta\.js/);
+	});
 });
 
 describe('check', () => {
-	const files = { 'rekta.tokens.css': 'tokens', 'rekta.css': 'components' } as const;
+	const files = {
+		'rekta.tokens.css': 'tokens',
+		'rekta.css': 'components',
+		'rekta.js': 'script',
+		'rekta.d.ts': 'declarations'
+	} as const;
 
 	function pinnedRekta() {
 		const pinned = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
@@ -139,7 +157,7 @@ describe('check', () => {
 		return { ...pinned, git };
 	}
 
-	it('is silent when both files match the pin and upstream', () => {
+	it('is silent when every file matches the pin and upstream', () => {
 		const { source, commit } = pinnedRekta();
 		expect(check(source, vendoredFor(commit, files))).toEqual([]);
 	});
@@ -165,12 +183,10 @@ describe('check', () => {
 
 	it("reports upstream dropping one vendored output instead of reading the pinned build's stale file", () => {
 		const pinned = pinnedRekta();
+		const { 'dist/rekta.css': _dropped, ...rest } = upstreamFiles('tokens', 'components');
 		writeFileSync(
 			join(pinned.source, 'scripts/build.mjs'),
-			generatorThatWrites({
-				'dist/rekta.tokens.css': 'tokens',
-				'dist/rekta.components.css': 'components'
-			})
+			generatorThatWrites({ ...rest, 'dist/rekta.components.css': 'components' })
 		);
 		pinned.git('commit', '--quiet', '-am', 'rename the component sheet');
 

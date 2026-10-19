@@ -8,18 +8,34 @@ import { sha256, splitVendored, UPSTREAM } from '../../../scripts/sync-rekta.ts'
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');
 const vendoredFiles = {
 	'rekta.tokens.css': read('./rekta.tokens.css'),
-	'rekta.css': read('./rekta.css')
+	'rekta.css': read('./rekta.css'),
+	'rekta.js': read('../rekta/rekta.js'),
+	'rekta.d.ts': read('../rekta/rekta.d.ts')
 };
 const tokens = splitVendored(vendoredFiles['rekta.tokens.css']);
 const declared = new Set([...tokens.body.matchAll(/(--rk-[\w-]+):/g)].map((match) => match[1]));
-// Public hooks the page writes and Rekta's stylesheet reads; they are no tokens
-const hooks = new Set(['--rk-banner-h', '--rk-pivot-h', '--rk-pivot-scale', '--rk-toast-left']);
+// Rekta's documented public hooks (docs/behaviour.md, "Public hooks"): properties a page or the script writes and the
+// stylesheet reads. They are no tokens. Rekta lists no machine-readable form yet, so the list lives here.
+const hooks = new Set([
+	'--rk-i',
+	'--rk-v',
+	'--rk-titlebar-controls',
+	'--rk-sec-w',
+	'--rk-split-w',
+	'--rk-banner-h',
+	'--rk-pivot-h',
+	'--rk-pivot-scale',
+	'--rk-toast-left'
+]);
 
 function appSources(): { file: string; text: string }[] {
 	const root = new URL('../../', import.meta.url);
 	return readdirSync(root, { recursive: true, encoding: 'utf8' })
 		.filter((file) => /\.(css|svelte|ts)$/.test(file))
-		.filter((file) => !file.endsWith('.test.ts') && !/(^|\/)rekta(\.tokens)?\.css$/.test(file))
+		.filter(
+			(file) =>
+				!file.endsWith('.test.ts') && !/(^|\/)rekta(\.tokens\.css|\.css|\.js|\.d\.ts)$/.test(file)
+		)
 		.map((file) => ({ file, text: readFileSync(new URL(file, root), 'utf8') }));
 }
 
@@ -40,14 +56,15 @@ describe.each(Object.entries(vendoredFiles))('vendored %s', (name, text) => {
 	});
 });
 
-describe('the two vendored files together', () => {
-	it('reads every hook the app writes', () => {
+describe('the vendored files together', () => {
+	it('reads every documented hook', () => {
 		const sheet = splitVendored(vendoredFiles['rekta.css']).body;
 		for (const hook of hooks) expect(sheet, hook).toContain(`var(${hook}`);
 	});
 
 	it('come from the same Rekta commit', () => {
-		expect(splitVendored(vendoredFiles['rekta.css']).commit).toBe(tokens.commit);
+		const commits = Object.values(vendoredFiles).map((text) => splitVendored(text).commit);
+		expect(new Set(commits)).toEqual(new Set([tokens.commit]));
 	});
 
 	it('start their bodies with the generator line, so the header hides nothing of the generated file', () => {
