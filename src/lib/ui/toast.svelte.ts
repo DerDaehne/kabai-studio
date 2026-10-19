@@ -50,6 +50,8 @@ let beatTimer: ReturnType<typeof setInterval> | undefined;
 /** Once a lease toast's hold has ended (unconfirmed beat, cap, nothing to hold) it counts down again for good. */
 let holdEnded = false;
 let confirmed = { left: 0, at: 0 };
+/** When the open toast runs out on the wall clock; unset while it stands still. Ticks only show it, they never count. */
+let endsAt: number | undefined;
 
 /** How long a toast stays: Rekta's `--rk-duration-toast`, which the product sets. */
 export const toastMs = () => tokenMs('--rk-duration-toast');
@@ -64,9 +66,15 @@ function expire(open: Toast) {
 	open.action?.onExpire?.();
 }
 
-/** The server-confirmed remaining time, less what has passed since. */
+/** The server-confirmed end of the window. */
 function continueFromConfirmed(open: Toast) {
-	open.left = Math.max(0, confirmed.left - (Date.now() - confirmed.at));
+	endsAt = confirmed.at + confirmed.left;
+	showTimeLeft(open);
+}
+
+/** A tick that comes late (stalled main thread, throttled tab) finds the time up and closes the toast at once. */
+function showTimeLeft(open: Toast) {
+	open.left = Math.max(0, endsAt! - Date.now());
 	if (open.left <= 0) expire(open);
 	else schedule();
 }
@@ -75,13 +83,19 @@ function schedule() {
 	clearTimeout(timer);
 	timer = undefined;
 	const [open] = toasts;
-	if (!open || open.left <= 0 || stands(open)) return;
-	const step = Math.min(STEP_MS, open.left);
-	timer = setTimeout(() => {
-		open.left -= step;
-		if (open.left <= 0) expire(open);
-		else schedule();
-	}, step);
+	if (!open || open.left <= 0) return;
+	if (stands(open)) {
+		endsAt = undefined;
+		return;
+	}
+	endsAt ??= Date.now() + open.left;
+	timer = setTimeout(() => showTimeLeft(open), (endsAt - Date.now()) % STEP_MS || STEP_MS);
+}
+
+/** Holding freezes what is left; letting go ends the window at a new time. */
+function freezeTimeLeft(open: Toast) {
+	if (endsAt !== undefined) showTimeLeft(open);
+	endsAt = undefined;
 }
 
 /** Every toast goes after `timeout`, errors too: what has to stay belongs in the banner or at the field. */
@@ -95,6 +109,7 @@ export function toast(
 	holds.clear();
 	stopBeating();
 	holdEnded = false;
+	endsAt = undefined;
 	toasts.splice(0, toasts.length, { id, message, tone, action, left: timeout, windowMs: timeout });
 	schedule();
 	return id;
@@ -103,7 +118,10 @@ export function toast(
 export function dismiss(id: number): void {
 	const i = toasts.findIndex((t) => t.id === id);
 	if (i === -1) return;
-	if (i === 0) stopBeating();
+	if (i === 0) {
+		stopBeating();
+		endsAt = undefined;
+	}
 	toasts.splice(i, 1);
 	schedule();
 }
@@ -114,6 +132,7 @@ export function hold(reason: HoldReason, value: boolean): void {
 	if (value) holds.add(reason);
 	else holds.delete(reason);
 	const [open] = toasts;
+	if (open && value && !wasHeld) freezeTimeLeft(open);
 	if (open?.action?.hold && !holdEnded) leaseFollowsHolds(open, wasHeld);
 	schedule();
 }
@@ -159,6 +178,7 @@ async function beat(open: Toast, lease: HoldLease) {
 	confirmed = { left: answer.closesInMs, at: sentAt };
 	if (answer.capped) return endHold(open, lease.cappedMessage(Math.ceil(answer.closesInMs / 1000)));
 	open.left = answer.closesInMs;
+	endsAt = holds.size ? undefined : sentAt + answer.closesInMs;
 }
 
 /** The hold ends for good: the toast runs down from the last time the server confirmed. */
