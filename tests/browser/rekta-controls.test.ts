@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, open, test } from './fixtures.ts';
 
 const sheet = (page: Page) => page.locator('dialog.rk-sheet[open]');
@@ -70,6 +70,10 @@ test.describe('buttons', () => {
 	});
 
 	test.describe('an icon button', () => {
+		// the dialog scales in, so its box is only exact once the transition has ended
+		const expectBox = (button: Locator, side: number) =>
+			expect.poll(() => button.boundingBox()).toMatchObject({ width: side, height: side });
+
 		const closeOfDialog = async (page: Page) => {
 			await open(page, '/dev/ui');
 			await page.getByRole('button', { name: 'Dialog öffnen' }).click();
@@ -79,7 +83,7 @@ test.describe('buttons', () => {
 		test('is a square as high as a control: 32 px with a fine pointer', async ({ page }) => {
 			const close = await closeOfDialog(page);
 			await expect(close).toHaveClass(/\brk-btn--icon\b/);
-			expect(await close.boundingBox()).toMatchObject({ width: 32, height: 32 });
+			await expectBox(close, 32);
 		});
 
 		test.describe('with touch', () => {
@@ -87,7 +91,7 @@ test.describe('buttons', () => {
 
 			test('is 44 px square', async ({ page }) => {
 				const close = await closeOfDialog(page);
-				expect(await close.boundingBox()).toMatchObject({ width: 44, height: 44 });
+				await expectBox(close, 44);
 			});
 		});
 	});
