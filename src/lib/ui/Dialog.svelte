@@ -126,8 +126,10 @@
 		<div class="frame">
 			<header>
 				<h2 id="{id}-title">{title}</h2>
-				<button class="rk-btn rk-btn--quiet btn-icon" aria-label="Schließen" onclick={requestClose}
-					><Icon name="x" /></button
+				<button
+					class="rk-btn rk-btn--icon rk-btn--quiet"
+					aria-label="Schließen"
+					onclick={requestClose}><Icon name="x" /></button
 				>
 			</header>
 			<div class="body">{@render children()}</div>

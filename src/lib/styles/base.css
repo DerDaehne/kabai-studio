@@ -158,35 +158,10 @@ input[type='radio'] {
 	opacity: 0.55;
 	cursor: not-allowed;
 }
-/* Rekta's frame, plus what links and the studio's own variants need */
+/* Rekta's frame, plus what links need */
 a.rk-btn {
 	text-decoration: none;
 	white-space: nowrap;
-}
-.rk-btn[data-status='error'] {
-	border-color: var(--rk-status-error-full);
-}
-/* A running action is not greyed out like a disabled one: the spinner and the line show the state */
-.rk-btn[aria-busy='true'] {
-	border-color: currentColor;
-	background-color: transparent;
-	color: inherit;
-}
-.rk-btn--primary[aria-busy='true'] {
-	border-color: var(--rk-accent);
-	background-color: var(--rk-accent);
-	color: var(--rk-on-accent);
-}
-.rk-btn--quiet[aria-busy='true'] {
-	border-color: transparent;
-}
-.rk-btn[data-status='error'][aria-busy='true'] {
-	border-color: var(--rk-status-error-full);
-}
-/* A square icon button (close, toolbar): always with an aria-label */
-.btn-icon {
-	width: var(--control-h);
-	padding: 0;
 }
 
 /* A change of place (motion.ts starts the view transition): the page swings around its left edge like a turnstile,

@@ -489,6 +489,8 @@
 			<Button variant="danger">Ticket löschen</Button>
 			<Button size="sm">Klein</Button>
 			<Button variant="primary" loading>Speichert</Button>
+			<Button loading>Lädt</Button>
+			<Button variant="danger" loading>Löscht</Button>
 			<Button disabled>Deaktiviert</Button>
 		</div>
 	</section>

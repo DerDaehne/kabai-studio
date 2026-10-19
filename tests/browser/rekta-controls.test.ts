@@ -9,6 +9,16 @@ const twoFrames = (page: Page) =>
 		() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 	);
 
+/** The computed colour of a Rekta token, as a style declares it. */
+const colourOf = (page: Page, token: string) =>
+	page.evaluate((name) => {
+		const probe = document.body.appendChild(document.createElement('i'));
+		probe.style.color = `var(${name})`;
+		const colour = getComputedStyle(probe).color;
+		probe.remove();
+		return colour;
+	}, token);
+
 test.describe('buttons', () => {
 	test('every variant is a Rekta button, and danger is marked by the status attribute alone', async ({
 		page
@@ -30,6 +40,56 @@ test.describe('buttons', () => {
 		await expect(running).toHaveCSS('background-color', accent);
 		// the pending line is the one indicator: no spinner next to it
 		await expect(running.locator('svg')).toHaveCount(0);
+	});
+
+	test('a danger button draws frame and words in the error colour and is never filled', async ({
+		page
+	}) => {
+		await open(page, '/dev/ui');
+		const error = await colourOf(page, '--rk-status-error-full');
+		const danger = page.getByRole('button', { name: 'Ticket löschen' });
+		await expect(danger).toHaveCSS('border-top-color', error);
+		await expect(danger).toHaveCSS('color', error);
+		await expect(danger).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+	});
+
+	test('a running action keeps its colours whatever its variant, and a running danger stays red', async ({
+		page
+	}) => {
+		await open(page, '/dev/ui');
+		const error = await colourOf(page, '--rk-status-error-full');
+		const secondary = page.getByRole('button', { name: 'Lädt' });
+		const text = await secondary.evaluate((el) => getComputedStyle(el.parentElement!).color);
+		await expect(secondary).toHaveAttribute('data-rk-pending', 'true');
+		await expect(secondary).toHaveCSS('color', text);
+		await expect(secondary).toHaveCSS('border-top-color', text);
+		await expect(secondary).toHaveCSS('opacity', '1');
+		const danger = page.getByRole('button', { name: 'Löscht' });
+		await expect(danger).toHaveCSS('color', error);
+		await expect(danger).toHaveCSS('border-top-color', error);
+	});
+
+	test.describe('an icon button', () => {
+		const closeOfDialog = async (page: Page) => {
+			await open(page, '/dev/ui');
+			await page.getByRole('button', { name: 'Dialog öffnen' }).click();
+			return page.getByRole('button', { name: 'Schließen' });
+		};
+
+		test('is a square as high as a control: 32 px with a fine pointer', async ({ page }) => {
+			const close = await closeOfDialog(page);
+			await expect(close).toHaveClass(/\brk-btn--icon\b/);
+			expect(await close.boundingBox()).toMatchObject({ width: 32, height: 32 });
+		});
+
+		test.describe('with touch', () => {
+			test.use({ hasTouch: true });
+
+			test('is 44 px square', async ({ page }) => {
+				const close = await closeOfDialog(page);
+				expect(await close.boundingBox()).toMatchObject({ width: 44, height: 44 });
+			});
+		});
 	});
 });
 
