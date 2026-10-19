@@ -243,8 +243,7 @@
 				<p>{question.lead}</p>
 			</div>
 			{#if question.rest}<AgentText text={question.rest} />{/if}
-			<a class="rk-btn" href="/takt"
-				>{t('ticket.question.toTakt')} <Kbd key="g" /><Kbd key="t" /></a
+			<a class="rk-btn" href="/takt">{t('ticket.question.toTakt')} <Kbd key="g" /><Kbd key="t" /></a
 			>
 		</div>
 	{/if}
