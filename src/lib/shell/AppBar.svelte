@@ -27,24 +27,7 @@
 	}
 
 	let bar: HTMLElement;
-	let layout: (() => void) | undefined;
-
-	// Rekta moves what does not fit into "more" and builds its menu. It does not yet re-measure when
-	// the runner's word or the font changes, so those are asked for here.
-	$effect(() => {
-		const controller = appbar(bar);
-		layout = controller.layout;
-		void document.fonts?.ready.then(() => layout?.());
-		return () => {
-			layout = undefined;
-			controller.destroy();
-		};
-	});
-
-	$effect(() => {
-		void runner.word;
-		layout?.();
-	});
+	$effect(() => appbar(bar).destroy);
 </script>
 
 <footer
