@@ -139,10 +139,6 @@
 	.rk-appbar {
 		view-transition-name: app-bar;
 	}
-	/* Takes the room the controls leave over, and gives it up first when the bar is full */
-	.rk-ab-status {
-		margin-right: 0;
-	}
 	.rk-ab-mid {
 		margin-left: var(--space-4);
 	}

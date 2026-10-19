@@ -94,6 +94,25 @@ test('the "mehr" menu is a keyboard menu: the first item takes focus on open, ar
 	await expect(more).toBeFocused();
 });
 
+test('at 375 px "mehr" stands at the trailing edge of the bar, under its menu', async ({
+	page
+}) => {
+	await page.setViewportSize(PHONE);
+	await open(page, '/');
+	const bar = barOf(page);
+	const more = bar.getByRole('button', { name: 'mehr' });
+	await expect(more).toBeVisible();
+	const contentEnd = await bar.evaluate(
+		(el) => el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight)
+	);
+	const box = (await more.boundingBox())!;
+	expect(box.x + box.width).toBeCloseTo(contentEnd, 0);
+	await more.click();
+	const menu = (await page.getByRole('menu').boundingBox())!;
+	expect(menu.x + menu.width).toBeGreaterThanOrEqual(box.x + box.width);
+	expect(menu.x).toBeLessThanOrEqual(box.x);
+});
+
 test('the least important control moves into "mehr" first: tasten, at the first width where any control moves', async ({
 	page
 }) => {
