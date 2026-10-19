@@ -25,7 +25,9 @@ const hooks = new Set([
 	'--rk-banner-h',
 	'--rk-pivot-h',
 	'--rk-pivot-scale',
-	'--rk-toast-left'
+	'--rk-toast-left',
+	// the product slots for domain colours (docs/data.md)
+	...Array.from({ length: 8 }, (_, index) => `--rk-series-${index + 1}`)
 ]);
 
 function appSources(): { file: string; text: string }[] {
@@ -60,6 +62,13 @@ describe('the vendored files together', () => {
 	it('reads every documented hook', () => {
 		const sheet = splitVendored(vendoredFiles['rekta.css']).body;
 		for (const hook of hooks) expect(sheet, hook).toContain(`var(${hook}`);
+	});
+
+	it('lists every property its stylesheet reads without declaring it as a token', () => {
+		const sheet = splitVendored(vendoredFiles['rekta.css']).body;
+		const read = new Set([...sheet.matchAll(/var\((--rk-[\w-]+)/g)].map((match) => match[1]));
+		const undeclared = [...read].filter((name) => !declared.has(name) && !hooks.has(name));
+		expect(undeclared).toEqual([]);
 	});
 
 	it('come from the same Rekta commit', () => {
