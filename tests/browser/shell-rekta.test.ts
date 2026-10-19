@@ -22,6 +22,11 @@ const bannerHeight = (page: Page) =>
 		parseFloat(document.documentElement.style.getPropertyValue('--rk-banner-h') || '0')
 	);
 
+test('the main area names itself the focus fallback of Rekta', async ({ page }) => {
+	await open(page, '/');
+	await expect(page.locator('#main')).toHaveAttribute('data-rk-focus-fallback', '');
+});
+
 test('the shell root carries the Rekta classes and the product sets the toast window to 10 s', async ({
 	page
 }) => {

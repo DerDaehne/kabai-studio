@@ -195,7 +195,7 @@
 			<Banner standing={standingBanner()} />
 			<HeadPivot />
 
-			<main id="main" tabindex="-1">
+			<main id="main" tabindex="-1" data-rk-focus-fallback>
 				{#if shell.focus}
 					<p class="focus">
 						Fokus <ProjectTag code={shell.focus.code} palette={shell.focus.palette} />
