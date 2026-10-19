@@ -54,9 +54,6 @@ export const LAGEN: Lage[] = ['waiting', 'working', 'open', 'acceptance', 'done'
 /** Older finished tickets are left to the search. */
 export const DONE_SHOWN = 20;
 
-/** The cookie that remembers the expert view, so the server renders the chosen view right away. */
-export const FLOW_COOKIE = 'studio-board-view';
-
 // Tickets have no position the human could set, so a group lists them in the order they were created.
 const byNumber = (a: BoardTicket, b: BoardTicket) =>
 	a.number - b.number || a.project.code.localeCompare(b.project.code);

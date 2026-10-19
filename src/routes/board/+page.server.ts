@@ -1,3 +1,4 @@
+import { FLOW_COOKIE } from '$lib/board-view';
 import { BOARD_DEPENDENCY, LIVE_DEPENDENCY } from '$lib/live';
 import { db } from '$lib/server/db';
 import * as board from '$lib/server/domain/board';
@@ -9,8 +10,9 @@ import { attempt } from '$lib/server/domain-failure';
 import { projectRef } from '$lib/server/live';
 import { ticketLagen, type TicketLage } from '$lib/server/lagen';
 import { STEP_LABELS, VARIANTS, type Step, type Variant } from '$lib/server/domain/variants';
-import { FLOW_COOKIE, type BoardColumn, type BoardTicket, type ColumnPhase } from './list';
+import { type BoardColumn, type BoardTicket, type ColumnPhase } from './list';
 import type { RunTraceState } from '$lib/trace/trace';
+import type { Cookies } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
 const HUMAN: Actor = { kind: 'user' };
@@ -98,9 +100,23 @@ const boardColumns = () =>
 			variantIndex(a) - variantIndex(b) || stepIndex(a) - stepIndex(b) || a.projectId - b.projectId
 	);
 
+/** The choice used to be kept for /board only, where it outranks the one for every page: this moves it up. */
+function moveFlowCookieToRoot(cookies: Cookies) {
+	const choice = cookies.get(FLOW_COOKIE);
+	if (!choice) return;
+	cookies.delete(FLOW_COOKIE, { path: '/board' });
+	cookies.set(FLOW_COOKIE, choice, {
+		path: '/',
+		maxAge: 31536000,
+		sameSite: 'lax',
+		httpOnly: false
+	});
+}
+
 // A reconnect reloads the live state; the board reloads with it, as it has no replay of the events it missed.
 export const load: PageServerLoad = ({ depends, cookies }): BoardPage => {
 	depends(LIVE_DEPENDENCY, BOARD_DEPENDENCY);
+	moveFlowCookieToRoot(cookies);
 	const rows = db().prepare(TICKETS).all() as TicketRow[];
 	const lagen = new Map(ticketLagen(db()).map((lage) => [lage.ticketId, lage]));
 	return {

@@ -15,7 +15,7 @@ import {
 	runTrace,
 	ticketDetail
 } from '$lib/server/ticket-view';
-import { FLOW_COOKIE } from '../../../../board/list';
+import { FLOW_COOKIE } from '$lib/board-view';
 import type { Actions, PageServerLoad } from './$types';
 
 // Studio has one owner account; every action in the Run-Akte acts for the human (see CLAUDE.md "Architecture guardrails").

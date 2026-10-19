@@ -22,13 +22,13 @@
 	import { sideways } from '$lib/ui/sideways';
 	import { toast } from '$lib/ui/toast.svelte';
 	import TicketRow from './TicketRow.svelte';
+	import { FLOW_COOKIE } from '$lib/board-view';
 	import type { PageProps } from './$types';
 	import * as actions from './board-actions';
 	import DraftForm from './DraftForm.svelte';
 	import { Deletion, RowEditor } from './row-flows.svelte';
 	import {
 		BOARD_DEPENDENCY,
-		FLOW_COOKIE,
 		edgeIndex,
 		groupByColumn,
 		groupByLage,
