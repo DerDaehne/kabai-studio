@@ -50,7 +50,8 @@ const FAILURE_STANDS = `(r.column_id IS t.column_id
 /** The run ended without finish_step and the ticket still stands in its step, so nothing carries it on. */
 const STEP_LEFT_OPEN = `(r.state = 'succeeded' AND r.step_result IS NULL AND r.column_id IS t.column_id)`;
 
-const LAGE_ROWS = `
+/** `filter` stays out of an OR with a parameter, or SQLite scans every ticket instead of searching the one. */
+const lageRows = (filter: string) => `
 	SELECT t.id AS ticketId, t.project_id AS projectId, c.step, c.phase, p.variant,
 		r.id AS runId, r.state AS runState, ${FAILURE_STANDS} AS failureStands, ${STEP_LEFT_OPEN} AS stepLeftOpen,
 		EXISTS (SELECT 1 FROM runs a WHERE a.ticket_id = t.id AND a.state = 'waiting_approval') AS approving,
@@ -62,7 +63,7 @@ const LAGE_ROWS = `
 			WHERE rel.to_ticket_id = t.id AND rel.type = 'blocks' AND ${PREDECESSOR_OPEN}) AS predecessors
 	FROM tickets t JOIN projects p ON p.id = t.project_id JOIN columns c ON c.id = t.column_id
 	LEFT JOIN runs r ON r.id = (SELECT max(id) FROM runs WHERE ticket_id = t.id)
-	WHERE p.archived = 0 AND (?1 IS NULL OR t.project_id = ?1) AND (?2 IS NULL OR t.id = ?2)
+	WHERE p.archived = 0 AND ${filter}
 	ORDER BY t.id`;
 
 /**
@@ -77,12 +78,10 @@ function runInput(row: Row): LageRun | null {
 	return state === 'queued' || state === 'paused' ? state : null;
 }
 
-function lagenOf(
-	db: DatabaseSync,
-	projectId: number | null,
-	ticketId: number | null
-): TicketLage[] {
-	const rows = db.prepare(LAGE_ROWS).all(projectId, ticketId) as Row[];
+const IN_PROJECTS = lageRows('(?1 IS NULL OR t.project_id = ?1)');
+export const ONE_TICKET = lageRows('t.id = ?1');
+
+function lagenOf(db: DatabaseSync, rows: Row[]): TicketLage[] {
 	const capacity = rows.some((row) => runInput(row) === 'queued')
 		? waitReasons(db, limits())
 		: new Map();
@@ -111,8 +110,8 @@ function lagenOf(
 
 /** The Lage of every ticket in one project, or in every non-archived project, in a constant number of queries. */
 export const ticketLagen = (db: DatabaseSync, options: { projectId?: number } = {}): TicketLage[] =>
-	lagenOf(db, options.projectId ?? null, null);
+	lagenOf(db, db.prepare(IN_PROJECTS).all(options.projectId ?? null) as Row[]);
 
 /** The Lage of one ticket; `undefined` when it does not exist or its project is archived. */
 export const ticketLage = (db: DatabaseSync, ticketId: number): TicketLage | undefined =>
-	lagenOf(db, null, ticketId)[0];
+	lagenOf(db, db.prepare(ONE_TICKET).all(ticketId) as Row[])[0];

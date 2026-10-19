@@ -7,7 +7,7 @@ import * as runs from './domain/runs';
 import { finishStep } from './domain/steps';
 import type { Variant } from './domain/variants';
 import { migrate, openDb } from './db';
-import { ticketLage, ticketLagen } from './lagen';
+import { ONE_TICKET, ticketLage, ticketLagen } from './lagen';
 
 const user: Actor = { kind: 'user' };
 
@@ -374,5 +374,15 @@ describe('ticketLage', () => {
 		)!;
 		expect(statementsFor(crowded, queuedInCrowd)).toBe(statementsFor(alone, aloneId));
 		expect(statementsFor(crowded, queuedInCrowd)).toBeLessThanOrEqual(2);
+	});
+});
+
+describe('reading the Lage of one ticket', () => {
+	it('searches the ticket by its primary key instead of scanning every ticket', () => {
+		const { db } = setup();
+		const plan = (
+			db.prepare(`EXPLAIN QUERY PLAN ${ONE_TICKET}`).all(1) as { detail: string }[]
+		).map((row) => row.detail);
+		expect(plan).toContain('SEARCH t USING INTEGER PRIMARY KEY (rowid=?)');
 	});
 });
