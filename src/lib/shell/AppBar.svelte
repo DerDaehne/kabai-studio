@@ -34,7 +34,7 @@
 	$effect(() => {
 		const controller = appbar(bar);
 		layout = controller.layout;
-		void document.fonts?.ready.then(controller.layout);
+		void document.fonts?.ready.then(() => layout?.());
 		return () => {
 			layout = undefined;
 			controller.destroy();
