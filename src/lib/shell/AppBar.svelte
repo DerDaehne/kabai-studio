@@ -73,7 +73,7 @@
 		<i class="rk-pulse" aria-hidden="true"></i>
 		<span class="rk-ab-k">{runner.word}</span>
 	</span>
-	<div class="hints">
+	<div class="rk-ab-mid">
 		{#if !keyboard.singleKeys}
 			<p class="keys">nur mit <Kbd key="Alt" /></p>
 		{/if}
@@ -143,18 +143,12 @@
 	.rk-ab-status {
 		margin-right: 0;
 	}
-	.hints {
-		display: flex;
-		flex: 1 1 0;
-		align-items: center;
-		gap: var(--space-4);
-		min-width: 0;
+	.rk-ab-mid {
 		margin-left: var(--space-4);
-		overflow: hidden;
-		white-space: nowrap;
 	}
 	.keys {
-		display: flex;
+		display: inline-flex;
+		margin-right: var(--space-4);
 		align-items: center;
 		gap: var(--space-1);
 		color: var(--text-muted);

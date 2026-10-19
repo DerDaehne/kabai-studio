@@ -47,7 +47,9 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="rk-toast"
-			data-tone={toast.tone}
+			data-status={toast.tone === 'error' ? 'error' : undefined}
+			role={toast.tone === 'error' ? 'alert' : undefined}
+			style:--rk-toast-left={toast.action?.countdown ? toast.left / toast.windowMs : undefined}
 			onkeydown={(event) => escapeDismisses(event, toast)}
 			onpointerenter={() => hold('pointer', true)}
 			onpointerleave={() => hold('pointer', false)}
@@ -76,6 +78,7 @@
 							>{seconds(toast)}</span
 						>{/if}
 				</button>
+				{#if toast.action.countdown}<span class="rk-toast-line" aria-hidden="true"></span>{/if}
 			{/if}
 		</div>
 	{/each}

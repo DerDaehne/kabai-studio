@@ -121,7 +121,7 @@ test('with single keys off, the hints stand once inside the bar: no stray text, 
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page.keyboard.press('Alt+g');
 	const hints = await page.evaluate(() =>
-		[...document.querySelectorAll('div.hints')].map((el) => Boolean(el.closest('.rk-appbar')))
+		[...document.querySelectorAll('div.rk-ab-mid')].map((el) => Boolean(el.closest('.rk-appbar')))
 	);
 	expect(hints, 'the one hints strip is inside the bar').toEqual([true]);
 	await expect(page.getByText('$1')).toHaveCount(0);
@@ -219,7 +219,7 @@ test.describe('the toast', () => {
 
 	test('an error goes after the same window instead of staying for good', async ({ page }) => {
 		await page.getByRole('button', { name: 'Fehler', exact: true }).click();
-		await expect(toastOf(page)).toHaveAttribute('data-tone', 'error');
+		await expect(toastOf(page)).toHaveAttribute('data-status', 'error');
 		await page.clock.runFor(9_500);
 		await expect(toastOf(page)).toHaveCount(1);
 		await page.clock.runFor(1_000);
@@ -281,6 +281,48 @@ test.describe('the toast', () => {
 		await page.keyboard.press('Escape');
 		await expect(toastOf(page)).toHaveCount(0);
 		await expect(page.locator('#main')).toBeFocused();
+	});
+
+	test('an error takes the error fill by status and is announced at once; a plain toast has neither', async ({
+		page
+	}) => {
+		await page.getByRole('button', { name: 'Info-Meldung' }).click();
+		await expect(toastOf(page)).not.toHaveAttribute('data-status', /./);
+		await expect(toastOf(page)).not.toHaveAttribute('role', /./);
+		const plainFill = await toastOf(page).evaluate((el) => getComputedStyle(el).backgroundColor);
+
+		await page.getByRole('button', { name: 'Fehler', exact: true }).click();
+		await expect(toastOf(page)).toHaveCount(1);
+		await expect(toastOf(page)).toHaveAttribute('data-status', 'error');
+		await expect(page.getByRole('alert').and(toastOf(page))).toContainText(
+			'Run STU-37 fehlgeschlagen'
+		);
+		await expect(toastOf(page)).not.toHaveCSS('background-color', plainFill);
+	});
+
+	test('the undo window draws a line that shrinks with the count and stays only on a toast that can be undone', async ({
+		page
+	}) => {
+		const left = () => toastOf(page).evaluate((el) => el.style.getPropertyValue('--rk-toast-left'));
+		await undoDemo(page).click();
+		await expect(toastOf(page).locator('.rk-toast-line')).toHaveCount(1);
+		expect(Number(await left())).toBe(1);
+		await page.clock.runFor(3_000);
+		await expect(count(page)).toHaveText('7');
+		expect(Number(await left())).toBeCloseTo(0.7, 5);
+
+		await page.getByRole('button', { name: 'Info-Meldung' }).click();
+		await expect(toastOf(page).filter({ hasText: 'Run STU-41 gestartet' })).toHaveCount(1);
+		await expect(toastOf(page).locator('.rk-toast-line')).toHaveCount(0);
+	});
+
+	test('under reduced motion the line steps without gliding', async ({ page }) => {
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await undoDemo(page).click();
+		await expect(toastOf(page).locator('.rk-toast-line')).toHaveCSS(
+			'transition-duration',
+			/^(0s|1e-05s)$/
+		);
 	});
 
 	test('stands still under reduced motion: no animation runs in the toast or the bar', async ({

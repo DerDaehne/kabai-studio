@@ -13,7 +13,7 @@ const vendoredFiles = {
 const tokens = splitVendored(vendoredFiles['rekta.tokens.css']);
 const declared = new Set([...tokens.body.matchAll(/(--rk-[\w-]+):/g)].map((match) => match[1]));
 // Public hooks the page writes and Rekta's stylesheet reads; they are no tokens
-const hooks = new Set(['--rk-banner-h', '--rk-pivot-h', '--rk-pivot-scale']);
+const hooks = new Set(['--rk-banner-h', '--rk-pivot-h', '--rk-pivot-scale', '--rk-toast-left']);
 
 function appSources(): { file: string; text: string }[] {
 	const root = new URL('../../', import.meta.url);

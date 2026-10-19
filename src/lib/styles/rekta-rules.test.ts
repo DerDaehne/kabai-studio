@@ -28,3 +28,18 @@ describe("Rekta's basic rules", () => {
 		expect(styles('base.css')).toMatch(/animation-timing-function: var\(--ease-out\);/);
 	});
 });
+
+describe("Rekta's view transition and breakpoints", () => {
+	it("leaves the page's own view transitions alone: Rekta's cross-fade applies only while it marks the root", () => {
+		const rules = styles('rekta.css').match(/^[^\n{]*::view-transition-[^{]*\{/gm) ?? [];
+		expect(rules.length).toBeGreaterThan(0);
+		for (const rule of rules) expect(rule).toContain('[data-rk-crossfade]');
+		expect(styles('base.css')).not.toContain('data-rk-crossfade');
+	});
+
+	it('puts the wide pivot where the studio does', () => {
+		expect(styles('rekta.tokens.css')).toMatch(/--rk-pivot-wide: 1300px;/);
+		for (const file of ['src/lib/ui/Pivot.svelte', 'src/routes/takt/+page.svelte'])
+			expect(readFileSync(file, 'utf8')).toContain('min-width: 1300px');
+	});
+});

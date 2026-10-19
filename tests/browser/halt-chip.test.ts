@@ -26,7 +26,8 @@ const runnerOf = (view: Page) =>
 async function expectToast(page: Page, text: string, tone?: 'success' | 'error') {
 	const shown = page.locator('.rk-toast:not([data-seen])', { hasText: text });
 	await expect(shown).toHaveCount(1);
-	if (tone) await expect(shown).toHaveAttribute('data-tone', tone);
+	if (tone === 'error') await expect(shown).toHaveAttribute('data-status', 'error');
+	if (tone === 'success') await expect(shown).not.toHaveAttribute('data-status');
 	await shown.evaluate((toast) => toast.setAttribute('data-seen', ''));
 }
 
