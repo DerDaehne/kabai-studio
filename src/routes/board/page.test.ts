@@ -59,17 +59,11 @@ const queuedRun = (title: string) => {
 
 async function loaded(cookie?: string) {
 	const dependencies: string[] = [];
-	const written: unknown[][] = [];
 	const data = (await load({
 		depends: (...d: string[]) => dependencies.push(...d),
-		cookies: {
-			get: (name: string) => (name === FLOW_COOKIE ? cookie : undefined),
-			delete: (name: string, options: object) => written.push(['delete', name, options]),
-			set: (name: string, value: string, options: object) =>
-				written.push(['set', name, value, options])
-		}
+		cookies: { get: (name: string) => (name === FLOW_COOKIE ? cookie : undefined) }
 	} as never)) as BoardPage;
-	return { data, dependencies, written };
+	return { data, dependencies };
 }
 const loadedTicket = async (id: number) =>
 	(await loaded()).data.tickets.find((ticket) => ticket.id === id)!;
@@ -126,14 +120,6 @@ describe('the board load', () => {
 		expect((await loaded()).data.flow).toBe(false);
 		expect((await loaded('lage')).data.flow).toBe(false);
 		expect((await loaded('flow')).data.flow).toBe(true);
-	});
-
-	it('moves a choice kept for /board up to every page, so the Run-Akte sees it too', async () => {
-		expect((await loaded()).written).toEqual([]);
-		const { written } = await loaded('flow');
-		expect(written[0]).toEqual(['delete', 'studio-board-view', { path: '/board' }]);
-		expect(written[1].slice(0, 3)).toEqual(['set', 'studio-board-view', 'flow']);
-		expect(written[1][3]).toMatchObject({ path: '/' });
 	});
 
 	it('lists every column of every active project once, in step order, with its project and step', async () => {

@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { t } from '$lib/i18n/t';
 	import { ticketHref } from '$lib/links';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { crossfade } from 'svelte/transition';
 	import NoProject from '$lib/components/NoProject.svelte';
@@ -22,7 +22,7 @@
 	import { sideways } from '$lib/ui/sideways';
 	import { toast } from '$lib/ui/toast.svelte';
 	import TicketRow from './TicketRow.svelte';
-	import { FLOW_COOKIE } from '$lib/board-view';
+	import { moveFlowChoiceToRoot, rememberFlowChoice } from '$lib/board-view';
 	import type { PageProps } from './$types';
 	import * as actions from './board-actions';
 	import DraftForm from './DraftForm.svelte';
@@ -49,6 +49,7 @@
 	/** The expert view with the flow's columns; the browser remembers the choice in a cookie. */
 	let flowChoice = $state<boolean>();
 	const flow = $derived(flowChoice ?? data.flow);
+	onMount(() => moveFlowChoiceToRoot(data.flow));
 
 	const editor = new RowEditor({
 		reload: () => reload(),
@@ -151,9 +152,7 @@
 
 	function toggleFlow() {
 		flowChoice = !flow;
-		// the choice used to be kept for /board only, and that older cookie would outrank this one there
-		document.cookie = `${FLOW_COOKIE}=; path=/board; max-age=0`;
-		document.cookie = `${FLOW_COOKIE}=${flowChoice ? 'flow' : 'lage'}; path=/; max-age=31536000; samesite=lax`;
+		rememberFlowChoice(flowChoice);
 		void focusRow(current?.id);
 	}
 
