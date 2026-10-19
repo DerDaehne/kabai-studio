@@ -41,6 +41,11 @@ describe.each(Object.entries(vendoredFiles))('vendored %s', (name, text) => {
 });
 
 describe('the two vendored files together', () => {
+	it('reads every hook the app writes', () => {
+		const sheet = splitVendored(vendoredFiles['rekta.css']).body;
+		for (const hook of hooks) expect(sheet, hook).toContain(`var(${hook}`);
+	});
+
 	it('come from the same Rekta commit', () => {
 		expect(splitVendored(vendoredFiles['rekta.css']).commit).toBe(tokens.commit);
 	});
