@@ -3,6 +3,11 @@ import { expect, open, test } from './fixtures.ts';
 
 const barOf = (page: Page) => page.getByRole('contentinfo', { name: 'App-Leiste' });
 
+// All tests share one server; a halt left standing would show in every later test's banner.
+test.afterEach(async ({ page }) => {
+	expect((await page.request.delete('/api/halt')).ok()).toBe(true);
+});
+
 test('befehl is pinned: it stays in the bar at widths where everything else has moved into "mehr"', async ({
 	page
 }) => {
