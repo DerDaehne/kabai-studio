@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Build: installs devDependencies (vite, svelte-kit, …) and produces the bundled server.
-FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 AS build
-# node 24.21.0 (>=24.18.1 fixes CVE-2026-58041 in node:sqlite, see package.json "engines")
+FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS build
+# node 24.22.1 (fixes CVE-2026-111497 in the Brotli decoder; >=24.18.1 fixes CVE-2026-58041 in node:sqlite, see package.json "engines")
 WORKDIR /app
 # Baked into build/ by vite.config.ts's `define` (src/lib/version.ts); set by container-image.yml to the pushed
 # tag without its "v" prefix, or sha-<short> for an untagged build. Without it, the build would fall back to
@@ -21,7 +21,7 @@ RUN npm run build
 # imports every source file below, all Node-builtin-only (one `import type` from @sveltejs/kit in
 # auth.ts, erased by type stripping); every file it can reach must be copied here (CI starts the
 # image and runs the CLI subcommands below, so a missing file fails CI, not just a user).
-FROM node:24-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 AS runtime
+FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS runtime
 WORKDIR /app
 # Same build arg as above, redeclared for this stage: Docker scopes ARG per stage, so `--version`
 # would otherwise read `dev` here even though the build stage baked the real version into build/.

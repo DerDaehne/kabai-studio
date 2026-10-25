@@ -19,8 +19,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '24.22.1'
           cache: npm
+      # Fails on an older runtime (CVE-2026-111497, Brotli decoder); independent of package.json "engines".
+      - run: node -e "const [a,b,c]=process.versions.node.split('.').map(Number);if(a<24||(a===24&&(b<22||(b===22&&c<1)))){console.error(process.version+' < v24.22.1');process.exit(1)}"
       - run: npm ci
       # A separate process per repeat, not vitest's --repeats: that reruns suites inside one
       # worker process, and several suites keep state across repeats there (e.g. an owner row
@@ -65,7 +67,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '24.22.1'
+      # Fails on an older runtime (CVE-2026-111497, Brotli decoder); independent of package.json "engines".
+      - run: node -e "const [a,b,c]=process.versions.node.split('.').map(Number);if(a<24||(a===24&&(b<22||(b===22&&c<1)))){console.error(process.version+' < v24.22.1');process.exit(1)}"
       - run: node scripts/sync-rekta.ts --check
 
   # Separate job so only this one needs issues: write, scoped to the single step that uses it.

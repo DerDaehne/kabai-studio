@@ -23,8 +23,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '24.22.1'
           cache: npm
+      # Fails on an older runtime (CVE-2026-111497, Brotli decoder); independent of package.json "engines".
+      - run: node -e "const [a,b,c]=process.versions.node.split('.').map(Number);if(a<24||(a===24&&(b<22||(b===22&&c<1)))){console.error(process.version+' < v24.22.1');process.exit(1)}"
       - run: npm ci
       - run: npm run check
       - run: npm test
@@ -61,8 +63,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '24.22.1'
           cache: npm
+      # Fails on an older runtime (CVE-2026-111497, Brotli decoder); independent of package.json "engines".
+      - run: node -e "const [a,b,c]=process.versions.node.split('.').map(Number);if(a<24||(a===24&&(b<22||(b===22&&c<1)))){console.error(process.version+' < v24.22.1');process.exit(1)}"
       - run: npm ci
       # No --omit=dev: package.json has only devDependencies (adapter-node bundles them into
       # build/), so --omit=dev would drop the whole tree from the audit.
