@@ -1,11 +1,11 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
- * Tag: v0.5.0
+ * Commit: 1116956c67ed9d34a90a0bed18e1046ebdb3366e
+ * Tag: v0.6.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.js
- * SHA-256 of everything below this header: 4702592187593a963b5ffae54f1fde2a8a4cd45cc8ffaad85fc5563cf177eacc
+ * SHA-256 of everything below this header: 2a6f5ac3bdd4c3a957ec629ced8b5b47978a53d0b6d90ec8fc9743d858be87b4
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -17,7 +17,8 @@
    classes, so a framework that owns className keeps working. Each controller returns { destroy() }.
 
    The parts:
-     prefs      theme, density and motion switches on the root element, remembered per user
+     prefs      theme, density, motion, contrast, transparency and accent switches on the root element, remembered per
+                user
      keys       one layered keyboard dispatcher: the innermost thing that owns a key gets it (Escape, Ctrl/Cmd+Z)
      press      tiles nudge back where they are pressed; dragging or selecting text never activates them
      turn       the place change (turnstile) as two primitives, leave() and enter(), any router can call
@@ -41,6 +42,7 @@
      disable    a control that cannot act now says why
      tips       a short ink label for a control, after a rest of the pointer or on keyboard focus
      contextMenu a menu where the pointer is: a right click, a long press, Shift+F10
+     grid       a grid of tiles that open is one tab stop; the arrows move to the nearest tile that way
      tree       a hierarchy that opens and closes, one tab stop
      sortable   items reordered by their grip, with the pointer or the keyboard
      virtual    a list of any length: only the rows in view exist
@@ -53,6 +55,7 @@
      reflow     FLIP: what a change moves or resizes glides there (a tile resized, a grid re-flowed)
      enter, leave, presence   things arrive in and leave a list or a grid; the rest close the gap
      tileUpdate a live tile has news: the new number peeks up, a new status flips the tile
+     nudge      a part whose gesture nobody can see (a swipe) hints at it when it is only tapped
      sparkTo    a live line moves to its new points
      crossfade  a change of the whole look fades instead of flipping
      combobox   a field with a list of choices that filters as you type
@@ -62,7 +65,7 @@
      start      the defaults for a page: prefs, press, sheets, steppers, sliders, switches, arrival build-in, words
      tokens     token values as they apply right now (theme, density, reduced motion) */
 
-export const version = '0.5.0';
+export const version = '0.6.0';
 
 // Tokens -------------------------------------------------------------------------------------------------------------
 // The document's root, looked up when used: importing the module touches no DOM, so it loads during server rendering.
@@ -113,6 +116,7 @@ export const strings = {
   guardKeep: 'keep editing',
   discardTitle: 'Discard what you entered?',
   move: (item) => `move ${item}`,
+  inBack: (name) => `back · ${name}`,
   nothingToUndo: 'Nothing to undo.',
   undone: (what) => `Undone: ${what}`,
   justNow: 'just now',
@@ -136,6 +140,9 @@ export const strings = {
   putBack: (item) => `${item} put back.`,
   position: (item, at, of) => (item ? `${item}: position ${at} of ${of}.` : `position ${at} of ${of}`),
   loadFailed: 'Could not load the choices. Type to try again.',
+  keyMeta: (os) => (os === 'windows' ? 'Win' : 'Super'),
+  cannotAct: (label, reason) => `${label} (${reason})`,
+  back: 'back',
 };
 // rk-strings-end
 const COUNT_ARG = { undoWindow: 0, selected: 0, guardText: 1, updatesWaiting: 0, needAttention: 0 };
@@ -175,6 +182,24 @@ export const tokens = { value: css, ms, number: num, px };
 const openLayer = (sel) => { try { return !!document.querySelector(sel); } catch { return false; } };
 const later = (fn, wait) => (wait > 0 ? setTimeout(fn, wait) : (queueMicrotask(fn), 0));
 const isEditable = (t) => !!t && (t.isContentEditable || (t.matches && t.matches('textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button], [type=submit], [type=reset], [type=image])')));
+// Type-ahead (docs/navigation.md): in a collection whose entries take focus, a letter or digit goes to the next entry
+// whose text starts with it. Letters typed less than timing.type-ahead apart form a prefix ("mar" after "may"); the
+// same letter again moves on to the next entry with it. Never in a text field: where there is a field, typing filters.
+// typeAhead() keeps one collection's typing and returns find(e, entries, current, textOf): the entry to go to, or null
+// when the key is not one it takes or nothing starts so. Entries may be elements or anything textOf reads (an index).
+function typeAhead() {
+  let typed = '', at = 0;
+  return (e, entries, current, textOf = (x) => x.textContent) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || isEditable(e.target) || !/^[\p{L}\p{N}]$/u.test(e.key)) return null;
+    const now = Date.now();
+    typed = now - at < (ms('--rk-duration-type-ahead') || 1000) ? typed + e.key.toLowerCase() : e.key.toLowerCase();
+    at = now;
+    const again = [...typed].every((c) => c === typed[0]), want = again ? typed[0] : typed, i = entries.indexOf(current);
+    // A first letter, or the same one again, looks past the current entry; a longer prefix may still be the current one.
+    const from = again ? i + 1 : Math.max(0, i), order = [...entries.slice(from), ...entries.slice(0, from)];
+    return order.find((x) => String(textOf(x)).replace(/\s+/g, ' ').trim().toLowerCase().startsWith(want)) ?? null;
+  };
+}
 function animateScroll(el, to, duration, ease) {
   cancelAnimationFrame(el._rkRaf);
   const from = el.scrollLeft;
@@ -210,9 +235,13 @@ function focusHeading(scope) {
 }
 
 // Prefs --------------------------------------------------------------------------------------------------------------
-// theme: system | light | dark; density: auto | comfortable | compact; motion: system | on | off. The default
-// removes the attribute, so the system setting (or the pointer, for density) decides. Set them before first paint.
-const PREF_DEFAULT = { theme: 'system', density: 'auto', motion: 'system' };
+// theme: system | light | dark; density: auto | comfortable | compact; motion: system | on | off; contrast: system |
+// more | normal (more: every text pair at 7:1, a frame on status tiles); transparency: system | reduce | normal
+// (reduce: glass is the ground, nothing blurs); accent: product | a named accent (ink, teal, steel, violet, mauve,
+// pink, magenta: tokens/rekta.accents.json, which rekta.tokens.css carries as [data-accent]). The default removes the
+// attribute, so the system setting (or the pointer, for density; the product's own --rk-accent, for the accent)
+// decides. Set them before first paint.
+const PREF_DEFAULT = { theme: 'system', density: 'auto', motion: 'system', contrast: 'system', transparency: 'system', accent: 'product' };
 export const prefs = {
   key: 'rekta-prefs',
   read() { try { return JSON.parse(localStorage.getItem(this.key) || '{}'); } catch { return {}; } },
@@ -225,8 +254,9 @@ export const prefs = {
       if (remember) { const all = this.read(); all[name] = this.get(name); this.write(all); }
       document.dispatchEvent(new CustomEvent('rk:prefs', { detail: { name, value: this.get(name) } }));
     };
-    // A theme chosen by the user cross-fades (view transitions); a restored one applies before the first paint.
-    if (name === 'theme' && remember && this.get('theme') !== (value || PREF_DEFAULT.theme)) crossfade(commit);
+    // A theme, contrast or accent chosen by the user cross-fades (view transitions); a restored one applies before the
+    // first paint.
+    if ((name === 'theme' || name === 'contrast' || name === 'accent') && remember && this.get(name) !== (value || PREF_DEFAULT[name])) crossfade(commit);
     else commit();
   },
   restore() { const all = this.read(); for (const name of Object.keys(PREF_DEFAULT)) if (all[name]) this.set(name, all[name], { remember: false }); },
@@ -356,9 +386,9 @@ export function press(scope = document) {
 }
 
 // Turn ---------------------------------------------------------------------------------------------------------------
-// The place change as two primitives. leave(place) turns the visible units of a place away, a row at a time, the
-// pressed tile last from its pressed pose, then hides the place. enter(place) shows it and turns its units in, a row
-// at a time. A router (this one, or any other) calls leave, swaps what it renders, then calls enter. finish() ends a
+// The place change as two primitives. leave(place) turns the visible units of a place away, light ones first, the
+// pressed tile last from its pressed pose, then hides the place. enter(place) shows it and turns its units in, light
+// ones first. A router (this one, or any other) calls leave, swaps what it renders, then calls enter. finish() ends a
 // running turn in its end state: a navigation is never refused.
 // The units are the parts a place shows: a plain layout box lets its children turn one by one. Each turns in a time
 // that follows its size (heft): a small part turns quicker than a large one, as something light starts and stops
@@ -382,20 +412,25 @@ function turnsWhole(el) {
   for (const n of el.childNodes) if (n.nodeType === 3 && n.textContent.trim()) return true;
   return false;
 }
-// A part's time against the token's grows with its area, against a tile's (150 × 150): 0.8 × (area / tile)^0.35,
-// from 0.5 (a line of text, about 0.6) through 0.8 (a tile) and 1.0 (a wide tile) to 1.4 (a table).
-function heft(r) { return Math.min(1.4, Math.max(0.5, 0.8 * Math.pow(Math.max(1, r.width * r.height) / 22500, 0.35))); }
-// Heft sets when a part starts as well as how long it takes: light parts first, heavy ones later, (heft - 0.5) × 6 ×
-// duration-stagger after the turn begins. Parts of one size (heft within 0.05) follow one another in reading order,
-// half a duration-stagger apart, six steps at most: the size leads, the order only sorts what weighs the same.
-function turnStarts(list, at, held) {
-  const step = ms('--rk-duration-stagger'), seen = new Map();
+// A part's time against the token's grows with its area, against a tile's (heft-reference², 150 × 150):
+// heft-tile × (area / tile)^heft-exponent, held between heft-min and heft-max: a line of text about 0.6, a tile 0.8,
+// a wide tile 1.0, a table 1.4.
+function heftOf() {
+  const tile = num('--rk-heft-tile'), side = num('--rk-heft-reference'), exp = num('--rk-heft-exponent'), lo = num('--rk-heft-min'), hi = num('--rk-heft-max');
+  return (r) => Math.min(hi, Math.max(lo, tile * Math.pow(Math.max(1, r.width * r.height) / (side * side), exp)));
+}
+// Heft sets when a part starts as well as how long it takes: light parts first, heavy ones later, (heft - heft-min) ×
+// heft-spread × duration-stagger after the turn begins. Parts of one size (heft within 0.05) follow one another in
+// reading order, half a duration-stagger apart, six steps at most: the size leads, the order only sorts what weighs
+// the same. `pace` is 1, or 0.5 for a place that is called up (calledUp()): half the stagger as well as half the time.
+function turnStarts(list, at, held, pace = 1) {
+  const step = ms('--rk-duration-stagger') * pace, seen = new Map(), heft = heftOf(), lo = num('--rk-heft-min'), spread = num('--rk-heft-spread');
   return list.map((el) => {
     const h = heft(at.get(el));
     if (el === held) return { h, at: 0 };
     const key = Math.round(h * 20), n = seen.get(key) || 0;
     seen.set(key, n + 1);
-    return { h, at: (h - 0.5) * 6 * step + Math.min(n, 6) * step / 2 };
+    return { h, at: (h - lo) * spread * step + Math.min(n, 6) * step / 2 };
   });
 }
 function turnUnits(place, last) {
@@ -407,13 +442,14 @@ function turnUnits(place, last) {
       if (turnsWhole(c)) list.push(c); else walk(c);
     }
   })(place);
-  const at = new Map(list.map((u) => [u, u.getBoundingClientRect()]));
-  list.sort((a, b) => { const p = at.get(a), q = at.get(b); return (Math.round(p.top / 8) - Math.round(q.top / 8)) || (p.left - q.left); });
+  const at = new Map(list.map((u) => [u, u.getBoundingClientRect()])), row = num('--rk-turnstile-row') || 8;
+  list.sort((a, b) => { const p = at.get(a), q = at.get(b); return (Math.round(p.top / row) - Math.round(q.top / row)) || (p.left - q.left); });
   if (last && at.has(last)) { list.splice(list.indexOf(last), 1); list.push(last); }
   return { list, at };
 }
 // Each unit turns around the leading edge of the box that clips it, so that edge never cuts it; a unit flush with that
-// box's top turns from its top. A row shares a delay and a perspective; the pressed tile has the last slot to itself.
+// box's top (within turnstile-flush) turns from its top. A row (top edges rounded to turnstile-row) shares a
+// perspective; the pressed tile has the last slot to itself.
 // A turning part is a layer, and the compositor rasterises a turned layer from its own top left, rounding within it;
 // the page at rest rounds where things lie on the screen. The two agree only when the layer starts on a whole pixel.
 // A part with a fill or a line of its own is moved onto the pixels its edges will rest on (--_rk-turn-snap). A part
@@ -436,36 +472,99 @@ function unalignLayer(el) {
 }
 function turnRows(u, place, held) {
   let slot = -1, key;
-  const slots = [], far = [];
+  const slots = [], far = [], row = num('--rk-turnstile-row') || 8, flush = num('--rk-turnstile-flush');
   u.list.forEach((el, n) => {
     const r = u.at.get(el);
     let c = el.parentElement;
     while (c && c !== place && getComputedStyle(c).overflowX === 'visible') c = c.parentElement;
-    const cr = (c || place).getBoundingClientRect(), k = el === held ? 'P' : Math.round(r.top / 8);
+    const cr = (c || place).getBoundingClientRect(), k = el === held ? 'P' : Math.round(r.top / row);
     if (k !== key) { slot += 1; key = k; far[slot] = 0; }
     slots.push(slot);
     far[slot] = Math.max(far[slot], r.right - cr.left);
     const [gx, gy] = alignLayer(el, r), left = r.left - gx, top = r.top - gy;
     el.style.setProperty('--_rk-turn-origin', `${cr.left - left}px`);
-    if (Math.abs(top - cr.top) < 2) el.style.setProperty('--_rk-turn-oy', '0px');
+    if (Math.abs(top - cr.top) < flush) el.style.setProperty('--_rk-turn-oy', '0px');
   });
   u.list.forEach((el, i) => el.style.setProperty('--_rk-turn-perspective', perspective(far[slots[i]])));
   return { slots };
 }
-function perspective(far) { return Math.round((num('--rk-turnstile-perspective') || 800) + 1.2 * Math.max(0, far)) + 'px'; }
+// A row's perspective grows with its reach from the edge it turns about, so a wide row turns as flat as a narrow one.
+function perspective(far) { return Math.round((num('--rk-turnstile-perspective') || 800) + num('--rk-turnstile-reach') * Math.max(0, far)) + 'px'; }
+// A place that is called up and left again many times an hour (a launcher, a start surface; data-rk-called) turns at
+// half the pace, in and out: every duration and the stagger halve, the curves, angles and hand-over stay (motion.md).
+// A change takes that pace when either side is such a place, so the way in and the way out match.
+const calledUp = (...list) => list.some((p) => p && p.hasAttribute && p.hasAttribute('data-rk-called'));
 // arrive(el): a place (or the root) builds in: tiles rise and sparklines draw while data-rk-arriving is on, for the arrival
-// window. A framework router calls it for a place it opened by client navigation.
+// window: the last tile (three duration-greet steps, then its duration-long rise), a sparkline's duration-long after
+// it, and a frame to spare. A framework router calls it for a place it opened by client navigation.
 export function arrive(el) {
   el.setAttribute('data-rk-arriving', '');
-  const wait = ms('--rk-duration-moderate') + 10 * ms('--rk-duration-stagger') + ms('--rk-duration-long') + 50;
+  const wait = 3 * ms('--rk-duration-greet') + 2 * ms('--rk-duration-long') + 50;
   clearTimeout(el._rkArrive);
   el._rkArrive = setTimeout(() => el.removeAttribute('data-rk-arriving'), wait);
+}
+// The title a part carries into the place it opens (motion.md): it does not turn away with its part. Leaving, a copy
+// stands where it was (the title itself turns transparent, keeping its room, and can still take focus) while the rest
+// of the place turns away. Arriving, it travels over duration-moderate on ease-pivot-glide to where the new place
+// rests its title: a copy of that title
+// travels from the old one's place and size to its own, under the old copy, which fades over the first half, so the
+// same words never change and other words cross over. The new place's parts arrive from the middle of the travel on.
+// The copies stand in the body, fixed (a place is a container, which would hold a fixed box), with the look
+// they had where they stood. Back runs it the other way.
+let lifted = null;
+const COPIED = ['font-family', 'font-size', 'font-weight', 'font-style', 'font-variant-numeric', 'line-height', 'letter-spacing', 'text-transform', 'text-align', 'white-space', 'overflow-wrap', 'color', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+function copyOf(el, r) {
+  const s = getComputedStyle(el), c = el.cloneNode(true);
+  for (const x of [c, ...c.querySelectorAll('[id]')]) x.removeAttribute('id');
+  c.removeAttribute('data-rk-carry'); c.removeAttribute('class'); c.setAttribute('aria-hidden', 'true');
+  // An inline title keeps its one line: a block as wide as its box would round it onto two.
+  const w = s.display === 'inline' ? Math.ceil(r.width) + 1 : r.width;
+  c.style.cssText = `${COPIED.map((k) => `${k}:${s.getPropertyValue(k)}`).join(';')};position:fixed;left:${r.left}px;top:${r.top}px;width:${w}px;height:${r.height}px;margin:0;border:0;box-sizing:border-box;display:block;overflow:visible;visibility:visible;pointer-events:none;transform-origin:0 0;z-index:var(--rk-layer-sticky)`;
+  return c;
+}
+function liftTitle(el) {
+  const r = el.getBoundingClientRect(), copy = copyOf(el, r);
+  document.body.appendChild(copy);
+  lifted = { el, copy, r, size: parseFloat(getComputedStyle(el).fontSize) || 1, was: el.style.opacity };
+  el.style.opacity = '0';
+}
+function dropTitle() {
+  if (!lifted) return;
+  lifted.copy.remove(); lifted.el.style.opacity = lifted.was;
+  lifted = null;
+}
+function flyTitle(to, d) {
+  const from = lifted, r = to.getBoundingClientRect(), copy = copyOf(to, r), was = to.style.opacity;
+  lifted = null;
+  from.copy.before(copy);
+  to.style.opacity = '0';
+  const k = from.size / (parseFloat(getComputedStyle(to).fontSize) || from.size), dx = from.r.left - r.left, dy = from.r.top - r.top, ease = css('--rk-ease-pivot-glide');
+  const anims = [
+    copy.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: d, easing: ease, fill: 'forwards' }),
+    from.copy.animate([{ transform: 'none' }, { transform: `translate(${-dx}px, ${-dy}px) scale(${1 / k})` }], { duration: d, easing: ease, fill: 'forwards' }),
+    from.copy.animate([{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], { duration: d, fill: 'forwards' }),
+  ];
+  let over = false;
+  const f = {
+    d, host: null, flown: false, held: false,
+    // The title shows itself when it has arrived and the part that holds it has come to rest, in the same frame.
+    end() {
+      if (over) return;
+      over = true;
+      anims.forEach((a) => a.cancel()); copy.remove(); from.copy.remove();
+      from.el.style.opacity = from.was; to.style.opacity = was;
+    },
+    landed() { f.held = false; if (f.flown) f.end(); },
+  };
+  f.finished = finished(anims).then(() => { f.flown = true; if (!f.held) f.end(); });
+  return f;
 }
 export const turn = {
   get running() { return !!turning; },
   finish() { if (turning) turning.finish(); },
-  leave(place, { pressed = null, back = false } = {}) {
+  leave(place, { pressed = null, back = false, called = calledUp(place), carry = null } = {}) {
     turn.finish();
+    dropTitle();
     // A place still building in leaves from its end state: the turn wins over the arrival.
     for (const el of [place, docEl()]) { clearTimeout(el._rkArrive); el.removeAttribute('data-rk-arriving'); }
     return new Promise((resolve) => {
@@ -481,16 +580,22 @@ export const turn = {
       }
       releasePress(true);
       if (held) held.setAttribute('data-rk-pressed', '');
-      const out = ms('--rk-duration-short');
+      const pace = called ? 0.5 : 1, out = ms('--rk-duration-short') * pace, overlap = num('--rk-turn-overlap');
       const u = turnUnits(place, held), kind = back ? 'back-out' : 'out';
+      // A title carried into the next place stands: it is lifted when the part that holds it starts to turn, at once
+      // when it is a part of its own.
+      const title = carry && ms('--rk-duration-moderate') && carry.getClientRects().length ? carry : null;
+      if (title && u.list.includes(title)) { u.list.splice(u.list.indexOf(title), 1); liftTitle(title); }
+      const titleHost = title && !lifted ? u.list.find((el) => el.contains(title)) : null;
       turnRows(u, place, held);
       // the pressed tile goes when the last of the others does, or later
-      const starts = turnStarts(u.list, u.at, held), lastStart = Math.max(0, ...starts.filter((x, i) => u.list[i] !== held).map((x) => x.at));
+      const starts = turnStarts(u.list, u.at, held, pace), lastStart = Math.max(0, ...starts.filter((x, i) => u.list[i] !== held).map((x) => x.at));
       let end = 0;
       u.list.forEach((el, i) => {
         const h = starts[i].h, d = out * h;
         let at = el === held ? lastStart : starts[i].at;
         el.style.setProperty('--_rk-turn-duration', `${Math.round(d)}ms`);
+        if (el === titleHost) timers.push(later(() => liftTitle(title), el === held ? Math.max(at, hold) : at));
         if (el === held) {
           at = Math.max(at, hold);
           timers.push(later(() => { if (el.matches(':hover')) el.style.setProperty('--_rk-tint', 'var(--rk-hover)'); el.setAttribute('data-rk-turn', 'pressed'); }, at));
@@ -498,7 +603,7 @@ export const turn = {
           el.style.setProperty('--_rk-turn-delay', `${at}ms`);
           el.setAttribute('data-rk-turn', kind);
         }
-        end = Math.max(end, at + 0.75 * d);
+        end = Math.max(end, at + overlap * d);
       });
       const done = () => {
         timers.forEach(clearTimeout);
@@ -509,25 +614,31 @@ export const turn = {
         resolve();
       };
       turning = { finish: done };
-      // The place goes when its last unit is 75% through, fading, so the next one swings in without a gap.
+      // The place goes when its last unit is turn-overlap (75%) through, fading, so the next one swings in without a gap.
       timers.push(later(done, u.list.length ? end : 0));
     });
   },
-  enter(place, { back = false, focus = null, arriving = !back } = {}) {
+  enter(place, { back = false, focus = null, arriving = !back, called = calledUp(place), carry = null } = {}) {
     turn.finish();
     return new Promise((resolve) => {
       place.hidden = false;
       // A place you return to comes back as you left it: no second build-in, no redraw.
       if (arriving) arrive(place);
-      else place.getAnimations({ subtree: true }).forEach((a) => { if (a.animationName === 'rk-build-in' || a.animationName === 'rk-draw') a.finish(); });
-      // Its units turn in from the other side, a row at a time, each in its own time.
-      const d0 = ms('--rk-duration-moderate');
+      else place.getAnimations({ subtree: true }).forEach((a) => { if (['rk-build-in', 'rk-build-in-fade', 'rk-draw', 'rk-wipe'].includes(a.animationName)) a.finish(); });
+      // Its units turn in from the other side, light ones first, each in its own time.
+      const pace = called ? 0.5 : 1, d0 = ms('--rk-duration-moderate') * pace;
       const u = turnUnits(place, null), kind = back ? 'back-in' : 'in';
+      // The carried title travels in; the part that holds it lands with it, the others arrive from its middle on.
+      const flight = lifted && carry && d0 && carry.getClientRects().length ? flyTitle(carry, d0) : null;
+      if (!flight) dropTitle();
+      else if (u.list.includes(carry)) u.list.splice(u.list.indexOf(carry), 1);
+      else if ((flight.host = u.list.find((el) => el.contains(carry)) || null)) flight.held = true;
       turnRows(u, place, null);
-      let end = 0;
-      const starts = turnStarts(u.list, u.at, null);
+      let end = flight ? d0 : 0;
+      const starts = turnStarts(u.list, u.at, null, pace);
       u.list.forEach((el, i) => {
-        const { h, at } = starts[i], d = d0 * h;
+        const { h } = starts[i], d = d0 * h;
+        const at = !flight ? starts[i].at : el === flight.host ? Math.max(0, flight.d - d) : starts[i].at + flight.d / 2;
         el.style.setProperty('--_rk-turn-delay', `${at}ms`);
         el.style.setProperty('--_rk-turn-duration', `${Math.round(d)}ms`);
         el.setAttribute('data-rk-turn', kind);
@@ -540,20 +651,21 @@ export const turn = {
       // one let go a frame early would jump, one held after it stopped would keep its layer and sharpen a moment
       // later. The parts fill backwards only, so motion, animation and layer all end in the same frame.
       let over = false;
-      const release = (el) => { el.removeAttribute('data-rk-turn'); TURN_PROPS.forEach((p) => el.style.removeProperty(p)); unalignLayer(el); };
+      const release = (el) => { el.removeAttribute('data-rk-turn'); TURN_PROPS.forEach((p) => el.style.removeProperty(p)); unalignLayer(el); if (flight && el === flight.host) flight.landed(); };
       const done = () => {
         if (over) return;
         over = true;
         clearTimeout(timer);
         u.list.forEach(release);
+        if (flight) flight.end();
         turning = null;
         resolve();
       };
       turning = { finish: done };
-      Promise.all(u.list.map((el) => {
+      Promise.all([...u.list.map((el) => {
         const own = el.getAnimations().filter((a) => /^rk-turn-(back-)?in$/.test(a.animationName));
         return Promise.all(own.map((a) => a.finished)).then(() => { if (!over) release(el); }, () => {});
-      })).then(done);
+      }), flight && flight.finished]).then(done);
       const timer = later(done, end + 250);                      // a part that never animates (hidden meanwhile)
     });
   },
@@ -639,6 +751,14 @@ export function places({ root = document, mode = 'hash', base = '', home, title 
     const w = watchers.get(current), named = w ? w.fn(item, { ...opts, params: new URLSearchParams(params) }) : null;
     document.title = typeof named === 'string' && named ? `${named} · ${titleOf(current)}` : titleOf(current);
   }
+  // The title that travels (motion.md): forward, the opened part's [data-rk-carry] to the new place's title; back, the
+  // place's title to the [data-rk-carry] of the part that opened it.
+  const carried = (el) => (el ? (el.matches('[data-rk-carry]') ? el : el.querySelector('[data-rk-carry]')) : null);
+  function carryOf(from, to, state, back, pressed) {
+    const opener = back && state && state.opener ? [...to.querySelectorAll('a[href]')].find((a) => a.getAttribute('href') === state.opener) : null;
+    const pair = back ? [from.querySelector('.rk-title'), carried(opener)] : [carried(pressed), to.querySelector('.rk-title')];
+    return pair[0] && pair[1] ? pair : [null, null];
+  }
   function show(name, state, { instant = false, back = false, pressed = null } = {}) {
     const prev = current, from = byName(prev), to = byName(name);
     current = name;
@@ -647,14 +767,15 @@ export function places({ root = document, mode = 'hash', base = '', home, title 
     params = (state && state.params) || '';
     showBack();
     const run = async () => {
+      const [lifts, lands] = from && from !== to && !instant ? carryOf(from, to, state, back, pressed) : [null, null];
       if (from && from !== to) {
-        if (instant) { turn.finish(); from.hidden = true; } else await turn.leave(from, { back, pressed });
+        if (instant) { turn.finish(); from.hidden = true; } else await turn.leave(from, { back, pressed, called: calledUp(from, to), carry: lifts });
       }
       to.hidden = false;
       setItem(state && state.item, { back, place: true });
       restore(to, state);
       const f = focusTarget(to, state, back);
-      if (instant) { turn.finish(); if (!back) arrive(to); f.focus({ preventScroll: true }); } else await turn.enter(to, { back, focus: f });
+      if (instant) { turn.finish(); if (!back) arrive(to); f.focus({ preventScroll: true }); } else await turn.enter(to, { back, focus: f, called: calledUp(from, to), carry: lands });
       if (onChange) onChange({ from: prev, to: name, back });
       document.dispatchEvent(new CustomEvent('rk:placechange', { detail: { from: prev, to: name, back } }));
     };
@@ -869,7 +990,10 @@ export function panorama(el, { pivot = null } = {}) {
     if (sideways()) {
       const edge = el.getBoundingClientRect().left, reach = el.clientWidth / 3;
       for (const s of list) if (s.getBoundingClientRect().left - edge <= reach) active = s;
-      if (el.scrollLeft >= el.scrollWidth - el.clientWidth - 1) active = list[list.length - 1];
+      // At either end the end's section is the one, however narrow the sections are (several edges may lie in the
+      // first third of the width).
+      if (Math.abs(el.scrollLeft) <= 1) active = list[0];
+      else if (Math.abs(el.scrollLeft) >= el.scrollWidth - el.clientWidth - 1) active = list[list.length - 1];
     } else {
       const edge = num('--rk-banner-h') + num('--rk-pivot-h'), reach = innerHeight / 3;
       for (const s of list) if (s.getBoundingClientRect().top - edge <= reach) active = s;
@@ -878,7 +1002,9 @@ export function panorama(el, { pivot = null } = {}) {
   }
   let queued = false;
   const queue = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; follow(); }); } };
-  const userScroll = () => { clicked = false; };
+  // A scroll of the user's own ends a jump's hold on the mark; a key the panorama took for a jump (key(), which runs
+  // first and prevents its default) is the jump itself, so its target stays marked for the whole glide.
+  const userScroll = (e) => { if (e.type === 'keydown' && e.defaultPrevented) return; clicked = false; };
 
   // One gesture, one scroller.
   function wheel(e) {
@@ -926,18 +1052,45 @@ export function panorama(el, { pivot = null } = {}) {
     e.preventDefault();
     goTo(sec);
   }
+  // A panorama that reaches past its window never ends flush on a section edge, so something always says there is more
+  // (layout.md): the window's edge falls inside a section, at least space-xl from either of its ends. The sections keep
+  // their size; the gap between them (space-xl) changes by as little as that takes, never below space-m; a last section
+  // cut by less than space-xl fits instead, when a smaller gap lets it. The edge is where it lies with the first section
+  // at the start, and with any section aligned there, when they are all as wide. Says whether everything fits; then
+  // nothing scrolls.
+  function spread(list) {
+    const xl = num('--rk-space-xl'), least = num('--rk-space-m'), sizes = list.map((s) => parseFloat(getComputedStyle(s).width) || 0);
+    const edge = el.clientWidth - (parseFloat(getComputedStyle(el).paddingLeft) || 0), n = sizes.length;
+    const before = (j) => sizes.slice(0, j).reduce((a, w) => a + w, 0);
+    const fitsWith = (g) => before(n) + (n - 1) * g <= edge + 1;
+    const inside = (g) => sizes.some((w, i) => before(i) + i * g + xl <= edge + 0.5 && edge - 0.5 <= before(i) + i * g + w - xl);
+    let gap = xl;
+    if (sideways() && !fitsWith(xl) && !inside(xl)) {
+      const ways = n > 1 ? [Math.floor((edge - before(n)) / (n - 1))] : [];      // everything fits
+      for (let j = 1; j <= n; j += 1) {
+        if (j < n) ways.push(Math.floor((edge - xl - before(j)) / j));            // section j shows space-xl
+        if (j > 1) ways.push(Math.ceil((edge + xl - before(j)) / (j - 1)));      // section j - 1 reaches space-xl past it
+      }
+      const best = ways.filter((g) => g >= least && (inside(g) || fitsWith(g))).sort((a, b) => Math.abs(a - xl) - Math.abs(b - xl))[0];
+      if (best !== undefined) gap = best;
+    }
+    if (gap === xl) el.style.removeProperty('--_rk-sec-gap'); else el.style.setProperty('--_rk-sec-gap', `${gap}px`);
+    return fitsWith(gap);
+  }
   function fit() {
     const list = sections();
     // A panorama in a place that is away keeps everything as it was; it is measured again when it shows.
     if (!list.length || !el.getClientRects().length) { stickyStrip(); return; }
-    const last = list[list.length - 1];
-    const contentRight = el.scrollLeft + last.getBoundingClientRect().right - el.getBoundingClientRect().left;
-    el.toggleAttribute('data-rk-fit', sideways() && contentRight <= el.clientWidth + 1);
+    const was = el.style.getPropertyValue('--_rk-sec-gap');
+    el.toggleAttribute('data-rk-fit', sideways() && spread(list.filter((s) => s.getClientRects().length)));
     if (pivot) { pivotScale(pivot); pivotFit(pivot); }
     stickyStrip();
-    // A change of window-size class keeps the reading position: the current section is state, not an offset.
+    // A change of window-size class keeps the reading position: the current section is state, not an offset. So does
+    // a new gap between the sections.
     const now = sideways();
-    if (now !== wasSideways) { wasSideways = now; if (current) goTo(current, { focus: false, instant: true }); clicked = false; }
+    if (now !== wasSideways || (now && el.scrollLeft > 0 && el.style.getPropertyValue('--_rk-sec-gap') !== was)) {
+      wasSideways = now; if (current) goTo(current, { focus: false, instant: true }); clicked = false;
+    }
   }
   // A section strip that sticks (compact, a direct child of the place) publishes its height, so focus and section
   // jumps land below it.
@@ -989,7 +1142,9 @@ function stripWheel(e) {
 // Pivot --------------------------------------------------------------------------------------------------------------
 // Inactive titles scale down from the active title's line box by the token ratio (pivot-inactive / pivot-active, or
 // nav-inactive / nav-active for rk-pivot--nav; the stylesheet names the inactive size in --_rk-inactive), measured in
-// the page so fluid sizes and window-size classes stay right.
+// the page so fluid sizes and window-size classes stay right. They scale about the baseline, so every title stands on
+// the active one's: the distance from the baseline to the line box's bottom (the face's descent and half the leading)
+// is measured too, in --_rk-base, the transform's origin.
 function pivotScale(strip) {
   if (!strip.getClientRects().length) return;
   // Measuring is not a change to show: from the stylesheet's measure-free sizes (font-size) to the scale the first time,
@@ -1005,6 +1160,20 @@ function pivotScale(strip) {
   const inactive = parseFloat(getComputedStyle(probe).fontSize), active = item ? parseFloat(getComputedStyle(item).fontSize) : inactive;
   probe.remove();
   if (inactive && active) strip.style.setProperty('--rk-pivot-scale', (inactive / active).toFixed(3));
+  if (item) {
+    // A line in the title's font with an empty inline block on its baseline: the block's foot is the baseline.
+    const line = document.createElement('span'), mark = document.createElement('span');
+    line.dataset.rkProbe = '';
+    line.style.cssText = 'position:absolute;visibility:hidden;display:block;white-space:nowrap';
+    line.style.font = getComputedStyle(item).font;
+    line.textContent = 'x';
+    mark.style.cssText = 'display:inline-block;width:0;height:0';
+    line.appendChild(mark);
+    strip.appendChild(line);
+    const base = line.getBoundingClientRect().bottom - mark.getBoundingClientRect().bottom;
+    line.remove();
+    if (base >= 0) strip.style.setProperty('--_rk-base', `${base.toFixed(2)}px`);
+  }
   for (const el of titles) if (el.offsetWidth) el.style.setProperty('--_rk-w', `${el.offsetWidth}px`);
   void strip.offsetWidth;
   for (const el of titles) el.style.transition = '';
@@ -1064,9 +1233,18 @@ export function pivot(el, { onSelect, turn: placeTurn = null, gone = 'select' } 
   // Who owns hidden on the panels: pivot() sets it one facet at a time (from the start, too); wide, it leaves hidden as
   // it is and shows every panel with data-rk-reveal, so a framework that binds hidden to the chosen facet stays right.
   function narrow() { const i = Math.max(0, chosen()); panels().forEach((p, k) => { if (p) { p.removeAttribute('data-rk-reveal'); p.hidden = k !== i; } }); }
+  // The width that decides: the panels' common parent's, or with .rk-facets around it, that container's content
+  // width, the one rekta.css's first paint queries, so the two never disagree.
+  const widthOf = (parent) => {
+    const box = parent.parentElement && parent.parentElement.classList.contains('rk-facets') ? parent.parentElement : null;
+    if (!box) return parent.clientWidth;
+    const s = getComputedStyle(box);
+    return box.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0);
+  };
   function layout() {
     const ps = panels(), parent = ps.length && ps.every((p) => p && p.parentElement === ps[0].parentElement) ? ps[0].parentElement : null;
-    const min = px('--rk-pivot-wide', el), now = !nav && !!parent && min > 0 && parent.clientWidth >= min;
+    const min = px('--rk-pivot-wide', el), now = !nav && !!parent && min > 0 && widthOf(parent) >= min;
+    if (parent && !nav) parent.toggleAttribute('data-rk-narrow', !now);    /* decided: the first paint's rules step back */
     if (now === wide) return;
     wide = now; host = now ? parent : null;
     el.toggleAttribute('data-rk-wide', now);
@@ -1109,7 +1287,7 @@ export function pivot(el, { onSelect, turn: placeTurn = null, gone = 'select' } 
       list.forEach((t, k) => { t.setAttribute('aria-selected', String(k === i)); t.tabIndex = k === i ? 0 : -1; const p = panel(t); if (p && p !== from) p.hidden = true; });
       pivotGlide(el, list[i]);
       if (focus) list[i].focus();
-      (from ? turn.leave(from, { back }) : Promise.resolve()).then(() => { if (mine === gen && to) turn.enter(to, { back }); });
+      (from ? turn.leave(from, { back, called: calledUp(from, to) }) : Promise.resolve()).then(() => { if (mine === gen && to) turn.enter(to, { back, called: calledUp(from, to) }); });
       told(i);
       return;
     }
@@ -1187,6 +1365,7 @@ export function pivot(el, { onSelect, turn: placeTurn = null, gone = 'select' } 
   mo.observe(el, { childList: true, characterData: true, subtree: true });
   const first = tabs().map(panel).find(Boolean);
   if (first && first.parentElement) ro.observe(first.parentElement);
+  if (first && first.parentElement && first.parentElement.parentElement && first.parentElement.parentElement.classList.contains('rk-facets')) ro.observe(first.parentElement.parentElement);
   last = Math.max(0, chosen());
   sync({ quiet: true });
   resize();
@@ -1208,22 +1387,73 @@ export function pivot(el, { onSelect, turn: placeTurn = null, gone = 'select' } 
 // scrollState(root): every scrolled box of a place (the place, a panorama and its sections, a wide facet row and its
 // facets, a split's panes, anything marked data-rk-scroll) and the window, as plain data a router can keep with its
 // history entry (history.state, SvelteKit's snapshot), and put back on back. Boxes are known by their id or
-// data-rk-scroll value, else by their order. Restore once the place is rendered and laid out.
+// data-rk-scroll value, else by their order.
+// restore(state) sets every offset it can at once. One it cannot set yet (its box is not there, or still too short or
+// narrow for it: data that renders after the navigation, a fetch on mount, a stream) waits, and is set as the boxes
+// appear and grow (a MutationObserver and a ResizeObserver on root). It gives up when the user scrolls (the wheel, a
+// touch, a press, a scrolling key, or a scroll it did not cause), after duration-restore, or on cancel() or destroy().
 const SCROLLERS = '.rk-panorama, .rk-sec, .rk-split-list, .rk-split-detail, [data-rk-wide]:not(.rk-pivot), [data-rk-wide]:not(.rk-pivot) > [role=tabpanel], [data-rk-scroll]';
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 export function scrollState(root) {
   const boxes = () => [root, ...root.querySelectorAll(SCROLLERS)];
   const keyOf = (b, i) => (b === root ? 'root' : b.id ? `#${b.id}` : b.dataset.rkScroll ? `@${b.dataset.rkScroll}` : String(i));
+  const runs = new Set();
+  function restore(state) {
+    if (!state || !state.at) return { pending: false, cancel() {} };
+    const page = document.scrollingElement || docEl(), WINDOW = {};
+    const want = new Map(Object.entries(state.at)), set = new Map();
+    if (typeof state.y === 'number') want.set(WINDOW, [scrollX, state.y]);
+    const at = (b, [l, t]) => Math.abs(b.scrollLeft - l) <= 1 && Math.abs(b.scrollTop - t) <= 1;
+    // A box scrolls as far as it can towards its offset; it is done once there. What it reached is remembered, so its
+    // own scroll event is known for one.
+    const put = (key, b, o) => {
+      if (!at(b, o)) b.scrollTo({ left: o[0], top: o[1], behavior: 'instant' });
+      set.set(b, [b.scrollLeft, b.scrollTop]);
+      if (at(b, o)) want.delete(key);
+    };
+    boxes().forEach((b, i) => { if (!want.has(keyOf(b, i)) && (b.scrollLeft || b.scrollTop)) { b.scrollTo({ left: 0, top: 0, behavior: 'instant' }); set.set(b, [0, 0]); } });
+    const pass = () => {
+      frame = 0;
+      boxes().forEach((b, i) => { const k = keyOf(b, i), o = want.get(k); if (o) put(k, b, o); });
+      if (want.has(WINDOW)) put(WINDOW, page, want.get(WINDOW));
+      if (!want.size) stop(); else if (live) watch();
+    };
+    let live = true, frame = 0, timer = 0;
+    const later = () => { if (!frame) frame = requestAnimationFrame(pass); };
+    const mo = new MutationObserver(later), ro = new ResizeObserver(later);
+    const watch = () => { for (const b of [root, page, ...root.querySelectorAll(SCROLLERS)]) { ro.observe(b); for (const k of b.children) ro.observe(k); } };
+    // The user's own scroll ends it. A box that only lost content (scrolled back to its new end) is not the user's.
+    const scrolled = (e) => {
+      const b = e.target === document ? page : e.target, s = set.get(b);
+      if (!s || (Math.abs(b.scrollLeft - s[0]) <= 1 && Math.abs(b.scrollTop - s[1]) <= 1)) return;
+      const clamped = (b.scrollTop < s[1] && b.scrollTop >= b.scrollHeight - b.clientHeight - 1) || (b.scrollLeft < s[0] && b.scrollLeft >= b.scrollWidth - b.clientWidth - 1);
+      if (clamped) set.set(b, [b.scrollLeft, b.scrollTop]); else stop();
+    };
+    const keyed = (e) => { if (SCROLL_KEYS.has(e.key)) stop(); };
+    const INPUT = [['wheel', stop], ['touchstart', stop], ['pointerdown', stop], ['keydown', keyed], ['scroll', scrolled]];
+    function stop() {
+      if (!live) return;
+      live = false; runs.delete(run);
+      mo.disconnect(); ro.disconnect(); cancelAnimationFrame(frame); clearTimeout(timer);
+      for (const [type, fn] of INPUT) removeEventListener(type, fn, { capture: true });
+    }
+    const run = { get pending() { return live; }, cancel: stop };
+    pass();
+    if (!live) return run;
+    runs.add(run);
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    for (const [type, fn] of INPUT) addEventListener(type, fn, { capture: true, passive: true });
+    timer = setTimeout(stop, ms('--rk-duration-restore'));
+    return run;
+  }
   return {
     capture() {
       const at = {};
       boxes().forEach((b, i) => { if (b.scrollLeft || b.scrollTop) at[keyOf(b, i)] = [Math.round(b.scrollLeft), Math.round(b.scrollTop)]; });
       return { y: Math.round(scrollY), at };
     },
-    restore(state) {
-      if (!state || !state.at) return;
-      boxes().forEach((b, i) => { const o = state.at[keyOf(b, i)]; if (o || b.scrollLeft || b.scrollTop) b.scrollTo({ left: o ? o[0] : 0, top: o ? o[1] : 0, behavior: 'instant' }); });
-      if (typeof state.y === 'number') scrollTo({ left: scrollX, top: state.y, behavior: 'instant' });
-    },
+    restore,
+    destroy() { for (const r of [...runs]) r.cancel(); },
   };
 }
 
@@ -1276,19 +1506,53 @@ export function toaster(region) {
     sr.textContent = tx('undoWindow', secs, again);
     msg.appendChild(sr);
   }
-  function show(text, { key = text, undo = null, from = null, action = 'undo', act = null, status = '', windowMs = 0, onEnd = null } = {}) {
+  function show(text, { key = text, undo = null, from = null, action = 'undo', act = null, status = '', windowMs = 0, onEnd = null, title = '', icon: pic = null, picture = '', open: run = null, edge = false } = {}, gauge = null) {
     if (open && open.key === key && open.undo && undo) { open.update(text, undo, { windowMs, onEnd }); return open; }
     if (open) open.leave(false, 'replaced');
     // The window runs against a deadline in wall-clock time, so a late or throttled timer (a busy page, a background
     // tab) never stretches it: each tick reads the clock. remaining is what is left while it stands still (held, or not
     // yet in); an undo toast steps its figure on whole seconds, a plain one goes when it runs out.
-    let total = undo ? windowMs || tokenWindow() : ms('--rk-duration-toast'), remaining = total;
+    let total = undo ? windowMs || tokenWindow() : ms(gauge ? '--rk-duration-level' : '--rk-duration-toast'), remaining = total;
     let timer = 0, deadline = 0, running = false, hover = false, focus = false, held = false, released = false, done = false, waiting = 0;
     const el = document.createElement('div');
     el.className = 'rk-toast';
     if (status) { el.dataset.status = status; if (status === 'error') el.setAttribute('role', 'alert'); }
-    const msg = el.appendChild(document.createElement('p'));
+    // A notification from another program enters whole from the window's edge: it came from outside (motion.md).
+    if (edge) el.setAttribute('data-rk-from', 'edge');
+    // A level indicator (toaster.level()): the value's icon, its word, a meter and the figure, no action.
+    let bar = null, figure = null;
+    if (gauge) {
+      el.className = 'rk-toast rk-toast--level';
+      if (gauge.icon) el.appendChild(icon(gauge.icon));
+    }
+    // Its text is pressable when it has a default action ("open what this is about"); a notification without one
+    // closes when its text is pressed. It may bring a title, and the sender's icon or its own picture at the start.
+    const pressable = !gauge && (!!run || edge);
+    const msg = el.appendChild(document.createElement(pressable ? 'button' : 'p'));
     msg.className = 'rk-toast-msg';
+    let words = msg;
+    if (pressable) {
+      msg.type = 'button';
+      msg.addEventListener('click', () => { if (run) { leave(false, 'opened'); run(); } else leave(false); });
+    }
+    if (gauge) {
+      bar = el.appendChild(document.createElement('span'));
+      bar.className = 'rk-meter'; bar.setAttribute('aria-hidden', 'true');
+      figure = el.appendChild(document.createElement('span'));
+      figure.className = 'rk-toast-level';
+    }
+    if (title || pic || picture) {
+      if (pic || picture) {
+        const field = msg.appendChild(document.createElement('span'));
+        field.className = 'rk-toast-pic'; field.setAttribute('aria-hidden', 'true');
+        if (picture) { const img = field.appendChild(document.createElement('img')); img.src = picture; img.alt = ''; } else field.appendChild(typeof pic === 'string' ? icon(pic) : pic);
+      }
+      const body = msg.appendChild(document.createElement('span'));
+      body.className = 'rk-toast-body';
+      if (title) { const b = body.appendChild(document.createElement('b')); b.className = 'rk-toast-title'; b.textContent = title; }
+      words = body.appendChild(document.createElement('span'));
+      words.className = 'rk-toast-text';
+    }
     let count = null;
     if (undo) {
       const btn = el.appendChild(document.createElement('button'));
@@ -1307,7 +1571,7 @@ export function toaster(region) {
     }
     const left = () => (running ? Math.max(0, deadline - Date.now()) : remaining);
     const secs = () => Math.max(0, Math.ceil(left() / 1000));
-    say(msg, text, !!undo, false, secs());
+    say(words, text, !!undo, false, secs());
     const paint = () => { if (count) { count.textContent = secs(); el.style.setProperty('--rk-toast-left', total ? left() / total : 0); } };
     function schedule() {
       clearTimeout(timer);
@@ -1320,13 +1584,13 @@ export function toaster(region) {
       if (deadline - Date.now() <= 0) { running = false; remaining = 0; paint(); leave(false, 'expired'); return; }
       paint(); schedule();
     }
-    function run() { if (running || done || waiting) return; running = true; deadline = Date.now() + remaining; schedule(); }
+    function go() { if (running || done || waiting) return; running = true; deadline = Date.now() + remaining; schedule(); }
     function stop() { if (!running) return; remaining = Math.max(0, deadline - Date.now()); running = false; clearTimeout(timer); timer = 0; }
     function hold() {
       if (done || waiting) return;
       const was = held;
       held = (hover || focus) && !released;
-      if (held) stop(); else run();
+      if (held) stop(); else go();
       if (held !== was) {
         el.toggleAttribute('data-rk-held', held);
         el.dispatchEvent(new CustomEvent('rk:toasthold', { bubbles: true, detail: { held, remaining: left() } }));
@@ -1339,7 +1603,7 @@ export function toaster(region) {
       if (waiting) { clearTimeout(waiting); waiting = 0; if (open === api) open = null; end(); return; }
       const hadFocus = el.contains(document.activeElement);
       el.setAttribute('data-rk-phase', 'leaving');
-      setTimeout(() => el.remove(), ms('--rk-duration-short'));
+      setTimeout(() => el.remove(), ms('--rk-duration-short') * (edge ? 0.6 : 1));
       if (open === api) open = null;
       end();
       if (hadFocus) returnFocus(from);
@@ -1352,10 +1616,14 @@ export function toaster(region) {
       remaining = Math.max(0, t); total = Math.max(total, remaining);
       if (!remaining) { paint(); leave(false, 'expired'); return; }
       paint();
-      if (was || !held) run();
+      if (was || !held) go();
     }
     const api = {
       key, el, action,
+      level: gauge ? gauge.key : null,
+      // A level indicator's new value: the meter glides to it, the figure changes, and its time starts again.
+      setLevel(v, t) { if (done || !bar) return; bar.style.setProperty('--rk-v', v); figure.textContent = t; setRemaining(ms('--rk-duration-level')); },
+      get done() { return done; },
       leave,
       setRemaining,
       // The server no longer extends: the window runs out from here although the pointer or focus rests on it.
@@ -1363,7 +1631,7 @@ export function toaster(region) {
       // A new text, the window left alone; announced once (without the window sentence) only when asked.
       setText(t, { announce = false } = {}) {
         if (done) return;
-        const node = msg.firstChild && msg.firstChild.nodeType === 3 ? msg.firstChild : msg.insertBefore(document.createTextNode(''), msg.firstChild);
+        const node = words.firstChild && words.firstChild.nodeType === 3 ? words.firstChild : words.insertBefore(document.createTextNode(''), words.firstChild);
         if (announce) node.nodeValue = t; else quietly(el, () => { node.nodeValue = t; });
       },
       get remaining() { return left(); },
@@ -1377,7 +1645,7 @@ export function toaster(region) {
         if (e) { const before = onEnd; onEnd = e; if (before && before !== e) before('merged'); }
         stop(); released = false;
         total = remaining = w || (undo ? windowMs || tokenWindow() : total);
-        say(msg, t, !!u, true, secs()); paint(); hold(); if (!held) run();
+        say(words, t, !!u, true, secs()); paint(); hold(); if (!held) go();
       },
       sync() { if (running) { clearTimeout(timer); tick(); } },
     };
@@ -1386,8 +1654,9 @@ export function toaster(region) {
     el.addEventListener('focusin', () => { focus = true; hold(); });
     el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget)) { focus = false; hold(); } });
     paint();
+    if (gauge) { bar.style.setProperty('--rk-v', gauge.value); figure.textContent = gauge.text; }
     open = api;
-    const insert = () => { waiting = 0; region.appendChild(el); hold(); if (!held) run(); };
+    const insert = () => { waiting = 0; region.appendChild(el); hold(); if (!held) go(); };
     if (region.querySelector('.rk-toast[data-rk-phase="leaving"]')) waiting = setTimeout(insert, ms('--rk-duration-short')); else insert();
     return api;
   }
@@ -1402,8 +1671,20 @@ export function toaster(region) {
     if (!open || !open.undo || open.action !== 'undo' || e.shiftKey || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || isEditable(e.target)) return false;
     open.undo(); return true;
   });
+  // level(word, value, { icon, text, key }): a level indicator for a value the user changed by a key (volume,
+  // brightness, zoom): a toast without an action, an icon, the word, a meter at value (0 to 1) and the figure (text,
+  // else the share in per cent). It takes the toast's place like any toast; again while it shows (the same key, the
+  // word by default) it stays where it is and only its value glides. It goes timing.level after the last change.
+  function level(word, value, { icon: name = '', text = '', key = word } = {}) {
+    const v = Math.max(0, Math.min(1, Number(value) || 0));
+    let t = text;
+    if (!t) { try { t = new Intl.NumberFormat(locale(), { style: 'percent', maximumFractionDigits: 0 }).format(v); } catch { t = `${Math.round(v * 100)}%`; } }
+    if (open && open.level === key && !open.done) { open.setLevel(v, t); return open; }
+    return show(word, { key: `level:${key}` }, { key, value: v, text: t, icon: name });
+  }
   return {
     show,
+    level,
     get open() { return open; },
     dismiss() { if (open) open.leave(false); },
     destroy() { offEsc(); offUndo(); document.removeEventListener('visibilitychange', visible); },
@@ -1540,17 +1821,31 @@ export function sheet(dialog, opts = {}) {
   if (had) { Object.assign(had.opts, opts); return had.api; }
   const o = { dirty: null, ...opts };
   const close = HTMLDialogElement.prototype.close;
-  let leaving = false, ask = null, before = null;
+  let leaving = null, ask = null, before = null;
+  // The answer is given as the sheet starts to leave. A further close request while it leaves (a tap on the shading,
+  // Escape, another button) changes no answer and asks nothing: it only ends the leaving at once.
   function leaveThen(value) {
-    const d = ms('--rk-duration-short') * 0.8;
+    const side = dialog.classList.contains('rk-sheet--side');
+    const d = ms(side ? '--rk-duration-moderate' : '--rk-duration-short') * 0.8;
     if (!dialog.open) return;
+    if (leaving) { leaving.end(); return; }
     if (ask) unask(false);
-    if (!d || leaving) { leaving = false; close.call(dialog, value); return; }
-    leaving = true;
+    if (!d) { close.call(dialog, value); return; }
     dialog.setAttribute('data-rk-phase', 'leaving');
-    const anims = [dialog.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-16px)' }], { duration: d, easing: css('--rk-ease-out'), fill: 'forwards' })];
-    try { anims.push(dialog.animate([{ opacity: 1 }, { opacity: 0 }], { duration: d, easing: 'linear', fill: 'forwards', pseudoElement: '::backdrop' })); } catch { /* no pseudo-element animation */ }
-    finished(anims).then(() => { leaving = false; dialog.removeAttribute('data-rk-phase'); close.call(dialog, value); anims.forEach((a) => a.cancel()); });
+    // The sheet and its shading leave together, as they came: 0.8 × duration-short, easing out; a side panel whole
+    // towards its trailing edge, over 0.8 × duration-moderate.
+    const ease = css('--rk-ease-out'), away = getComputedStyle(dialog).direction === 'rtl' ? '-100%' : '100%';
+    const frames = side ? [{ transform: 'none' }, { transform: `translateX(${away})` }] : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-16px)' }];
+    const anims = [dialog.animate(frames, { duration: d, easing: ease, fill: 'forwards' })];
+    try { anims.push(dialog.animate([{ opacity: 1 }, { opacity: 0 }], { duration: d, easing: ease, fill: 'forwards', pseudoElement: '::backdrop' })); } catch { /* no pseudo-element animation */ }
+    const run = leaving = {
+      value,
+      end() {
+        if (leaving !== run) return;
+        leaving = null; dialog.removeAttribute('data-rk-phase'); close.call(dialog, value); anims.forEach((a) => a.cancel());
+      },
+    };
+    finished(anims).then(run.end);
   }
   const isDirty = () => { try { return !!(o.dirty && o.dirty()); } catch { return false; } };
   function askFirst(value) {
@@ -1563,7 +1858,7 @@ export function sheet(dialog, opts = {}) {
     const title = ask.appendChild(document.createElement('h2')); title.className = 'rk-group'; title.id = id; title.textContent = tx('discardTitle');
     const row = ask.appendChild(document.createElement('p')); row.className = 'rk-actions';
     const keep = row.appendChild(document.createElement('button')); keep.type = 'button'; keep.className = 'rk-btn rk-btn--primary'; keep.textContent = tx('guardKeep');
-    const drop = row.appendChild(document.createElement('button')); drop.type = 'button'; drop.className = 'rk-btn'; drop.textContent = tx('guardDiscard');
+    const drop = row.appendChild(document.createElement('button')); drop.type = 'button'; drop.className = 'rk-btn'; drop.dataset.status = 'error'; drop.textContent = tx('guardDiscard');
     keep.addEventListener('click', () => unask(true));
     drop.addEventListener('click', () => leaveThen(value));
     dialog.setAttribute('data-rk-asking', '');
@@ -1577,6 +1872,7 @@ export function sheet(dialog, opts = {}) {
   }
   // A close request: ask when there is something to lose; while asking, it means "keep editing".
   function request(value) {
+    if (leaving) { leaving.end(); return; }
     if (ask) { unask(true); return; }
     if (isDirty()) askFirst(value); else leaveThen(value);
   }
@@ -1591,7 +1887,12 @@ export function sheet(dialog, opts = {}) {
     const value = e.submitter ? e.submitter.value : '';
     if (value === 'cancel') request(value); else leaveThen(value);
   };
-  const cancel = (e) => { if (!e.cancelable) { unask(false); return; } e.preventDefault(); request('cancel'); };
+  const cancel = (e) => {
+    // While it leaves, the browser's own close (one it does not let a page stop) keeps the answer too.
+    if (leaving && !e.cancelable) { if (leaving.value !== undefined) dialog.returnValue = leaving.value; return; }
+    if (!e.cancelable) { unask(false); return; }
+    e.preventDefault(); request('cancel');
+  };
   // Escape is taken on its keydown while there is something to lose: there it can always be stopped, where the
   // browser lets a page stop only one cancel event per user activation (a third Escape would close the sheet).
   const key = (e) => {
@@ -1623,6 +1924,65 @@ export function sheet(dialog, opts = {}) {
   return api;
 }
 
+// inPlace(scope): choosing in place (docs/states.md). A control with data-rk-in="ID" opens the element with that id (a
+// list, hidden until then) in the place of the group that holds the control (its closest [data-rk-group], else its
+// parent): the group hides and the list shows, under a row "back · name" (.rk-in-back, made when the list has none;
+// name is the control's data-rk-in-name, else the list's aria-label), and focus goes to the list's first control.
+// That row, Escape and ← (outside a text field) go back one level: the list hides, the group shows, focus returns to
+// the control that opened it. Levels may nest. Each step slides in like the next item of a place, back from the other
+// side. Escape here goes back before it would close the sheet or panel around it.
+export function inPlace(scope) {
+  const open = [];                                     // { control, group, list }, innermost last
+  const slide = (el, dir) => {
+    const d = ms('--rk-duration-moderate') * 0.75;
+    if (d) el.animate([{ transform: `translateX(${dir * num('--rk-slide-distance')}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: d, easing: css('--rk-ease-out') });
+  };
+  const focusIn = (el) => { const f = el.querySelector('[aria-selected="true"], [aria-checked="true"], :checked, a[href], button:not(.rk-in-back), input, select, [tabindex]:not([tabindex="-1"])') || el.querySelector('.rk-in-back'); if (f) f.focus(); };
+  function go(control) {
+    const list = document.getElementById(control.dataset.rkIn);
+    if (!list) return;
+    const group = control.closest('[data-rk-group]') || control.parentElement;
+    let back = list.querySelector(':scope > .rk-in-back');
+    if (!back) {
+      back = document.createElement('button');
+      back.type = 'button'; back.className = 'rk-in-back';
+      back.append(icon('chevron-left'), tx('inBack', control.dataset.rkInName || list.getAttribute('aria-label') || control.textContent.replace(/\s+/g, ' ').trim()));
+      list.prepend(back);
+    }
+    open.push({ control, group, list });
+    group.hidden = true; list.hidden = false;
+    slide(list, 1); focusIn(list);
+  }
+  function out() {
+    const top = open.pop();
+    if (!top) return false;
+    top.list.hidden = true; top.group.hidden = false;
+    slide(top.group, -1);
+    if (top.control.isConnected) top.control.focus();
+    return true;
+  }
+  const click = (e) => {
+    const t = e.target.closest && e.target.closest('[data-rk-in], .rk-in-back');
+    if (!t || !scope.contains(t)) return;
+    if (t.matches('.rk-in-back')) { if (open.length && open[open.length - 1].list.contains(t)) out(); return; }
+    e.preventDefault(); go(t);
+  };
+  const key = (e) => {
+    if (!open.length || e.defaultPrevented || e.isComposing || isEditable(e.target)) return;
+    const top = open[open.length - 1];
+    if (!top.list.contains(e.target)) return;
+    if (e.key === 'Escape' || (e.key === 'ArrowLeft' && !e.target.closest('[role=slider], input[type=range], [role=tree], [role=tablist]'))) { e.preventDefault(); e.stopPropagation(); out(); }
+  };
+  scope.addEventListener('click', click);
+  scope.addEventListener('keydown', key);
+  return {
+    get depth() { return open.length; },
+    back: out,
+    reset() { while (open.length) out(); },
+    destroy() { scope.removeEventListener('click', click); scope.removeEventListener('keydown', key); },
+  };
+}
+
 // Data states ------------------------------------------------------------------------------------------------------
 // busy(region, work): the region is aria-busy while work (a promise or a function returning one) runs. The line shows
 // only after busy-delay (CSS), and once shown stays at least busy-min, so an answer never makes it flash. Resolves or
@@ -1640,6 +2000,7 @@ export async function busy(region, work) {
 }
 // pending(button, work, { label }): the button says what it is doing ("saving…") at the same width, refuses further
 // clicks, and runs the line under it after busy-delay. Label: the option, data-rk-pending-label, or its text plus "…".
+// The line goes with the label, in one step, and no busy-min holds it: the label coming back says the end.
 export async function pending(button, work, { label } = {}) {
   if (button.hasAttribute('data-rk-pending')) return undefined;
   const nodes = [...button.childNodes], width = button.offsetWidth;
@@ -1661,18 +2022,26 @@ export async function pending(button, work, { label } = {}) {
 }
 
 // Floating surfaces -------------------------------------------------------------------------------------------------
-// place(el, anchor): puts a fixed floating surface below its control, aligned to its leading edge, or above it when
-// there is no room below; it never leaves the viewport. data-rk-side says which side it took.
-export function place(el, anchor) {
-  const a = anchor.getBoundingClientRect(), gap = 4, edge = num('--rk-space-s') || 8;
+// place(el, anchor, { align }): puts a fixed floating surface next to its control, by one rule (docs/states.md, the same
+// in rekta-core): space-xs from the control, space-m from the window's edges (the stylesheet's width limit). Below when
+// it fits there; else above when it fits there; else on the side with more room, kept inside the window, where it may
+// cover the control and its content scrolls. Aligned to the control's leading edge, or with align 'center' (the
+// default for a control marked data-rk-align="center") to its centre; either way inside the window. data-rk-side says
+// which side it took.
+export function place(el, anchor, { align = anchor.getAttribute('data-rk-align') === 'center' ? 'center' : 'start' } = {}) {
+  const a = anchor.getBoundingClientRect(), gap = px('--rk-space-xs'), edge = px('--rk-space-m');
   el.style.left = '0px'; el.style.top = '0px'; el.style.right = 'auto'; el.style.bottom = 'auto';   /* over a stylesheet's own placement */
-  const w = el.offsetWidth, h = el.offsetHeight, vw = document.documentElement.clientWidth, vh = innerHeight;
+  el.style.maxHeight = '';
+  const vw = document.documentElement.clientWidth, vh = innerHeight;
+  if (el.offsetHeight > vh - 2 * edge) el.style.maxHeight = `${Math.max(0, vh - 2 * edge)}px`;
+  const w = el.offsetWidth, h = el.offsetHeight;
   const below = vh - a.bottom - gap - edge, above = a.top - gap - edge;
-  const side = h <= below || below >= above ? 'below' : 'above';
-  const top = side === 'below' ? a.bottom + gap : Math.max(edge, a.top - gap - h);
+  const side = h <= below ? 'below' : h <= above ? 'above' : below >= above ? 'below' : 'above';
+  const top = side === 'below' ? a.bottom + gap : a.top - gap - h;
   // From the control's leading edge; one too near the trailing edge for that opens from its trailing edge instead.
-  const left = a.left + w <= vw - edge ? Math.max(edge, a.left) : Math.max(edge, Math.min(a.right, vw - edge) - w);
-  el.style.left = `${Math.round(left)}px`; el.style.top = `${Math.round(top)}px`;
+  const left = align === 'center' ? a.left + a.width / 2 - w / 2 : a.left + w <= vw - edge ? a.left : Math.min(a.right, vw - edge) - w;
+  el.style.left = `${Math.round(Math.max(edge, Math.min(left, vw - edge - w)))}px`;
+  el.style.top = `${Math.round(Math.max(edge, Math.min(top, vh - edge - h)))}px`;
   el.dataset.rkSide = side;
 }
 const canPopover = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
@@ -1682,11 +2051,14 @@ const isOpen = (el) => (canPopover ? el.matches(':popover-open') : !el.hidden);
 
 // menu(trigger, el, { onSelect }): a menu button. el is a .rk-float of .rk-menu-item buttons (role menuitem,
 // menuitemcheckbox or menuitemradio), opened by a click, Enter, Space or ↓ (↑ from the end). In the menu: ↑ ↓ wrap,
-// Home End, a letter jumps to the next item starting with it; Enter or Space chooses; Escape, Tab or a click outside
+// Home End, letters jump (typeAhead); Enter or Space chooses; Escape, Tab or a click outside
 // closes and focus returns to the trigger after a choice or Escape. A checkbox item toggles and leaves the menu open,
 // so several can be ticked in a row. With summary ("status"), the trigger says what is ticked: "status: failed, done",
-// or "status: any" when nothing is (a filter button).
-export function menu(trigger, el, { onSelect, summary = null } = {}) {
+// or "status: any" when nothing is (a filter button). align goes to place(): by default the trigger's data-rk-align.
+// A second level stands in place of the list (docs/states.md): an item with aria-haspopup="menu" and aria-controls
+// names a .rk-menu-level (role menu, hidden) inside the menu; → Enter or Space opens it under a "back" row with its
+// name, the surface keeping its width and place; ← or Escape goes back one level, focus to the item that opened it.
+export function menu(trigger, el, { onSelect, summary = null, align } = {}) {
   el.id = el.id || `rk-menu-${Math.random().toString(36).slice(2, 8)}`;
   el.setAttribute('role', 'menu');
   if (canPopover) el.setAttribute('popover', 'auto'); else el.hidden = true;
@@ -1696,6 +2068,7 @@ export function menu(trigger, el, { onSelect, summary = null } = {}) {
   trigger.setAttribute('aria-expanded', 'false');
   const items = () => [...el.querySelectorAll('.rk-menu-item')].filter((i) => i.getClientRects().length);
   const focusItem = (i) => { const list = items(); if (list.length) list[(i + list.length) % list.length].focus(); };
+  const find = typeAhead();
   function summarize() {
     if (!summary) return;
     const on = [...el.querySelectorAll('[aria-checked="true"]')].map((i) => i.textContent.trim());
@@ -1706,7 +2079,40 @@ export function menu(trigger, el, { onSelect, summary = null } = {}) {
   // never counts as a click outside. Placement and focus follow the toggle.
   let first = 0;
   if (canPopover && 'popoverTargetElement' in trigger) trigger.popoverTargetElement = el;
-  const shown = () => { place(el, trigger); trigger.setAttribute('aria-expanded', 'true'); focusItem(first); first = 0; };
+  const levelOf = (item) => { const id = item && item.getAttribute('aria-haspopup') === 'menu' && item.getAttribute('aria-controls'); const l = id && document.getElementById(id); return l && el.contains(l) ? l : null; };
+  const openLevels = () => [...el.querySelectorAll('.rk-menu-level:not([hidden])')];
+  // The level in sight: its rows stand in place of the list, under a back row with the level's name. The surface
+  // keeps its width and place (moved back inside the window only when the level does not fit there); nothing moves.
+  function enter(item) {
+    const level = levelOf(item);
+    if (!level || item.getAttribute('aria-disabled') === 'true') return false;
+    let back = level.querySelector(':scope > .rk-menu-back');
+    if (!back) {
+      back = level.insertBefore(document.createElement('button'), level.firstChild);
+      back.type = 'button'; back.className = 'rk-menu-item rk-menu-back'; back.setAttribute('role', 'menuitem');
+      back.textContent = level.getAttribute('aria-label') || item.textContent.trim();
+      back.setAttribute('aria-label', `${tx('back')}: ${back.textContent}`);
+    }
+    el.style.minWidth = `${el.offsetWidth}px`;
+    level.hidden = false;
+    item.setAttribute('aria-expanded', 'true');
+    reflow();
+    const rows = items();
+    (rows[rows.indexOf(back) + 1] || back).focus();
+    return true;
+  }
+  function out() {
+    const level = openLevels().pop();
+    if (!level) return false;
+    const item = el.querySelector(`[aria-controls="${CSS.escape(level.id)}"]`);
+    level.hidden = true;
+    if (item) { item.setAttribute('aria-expanded', 'false'); item.focus(); }
+    if (!openLevels().length) el.style.minWidth = '';
+    reflow();
+    return true;
+  }
+  const reset = () => { openLevels().forEach((l) => { l.hidden = true; }); el.querySelectorAll('[aria-haspopup="menu"][aria-expanded]').forEach((i) => i.setAttribute('aria-expanded', 'false')); el.style.minWidth = ''; };
+  const shown = () => { place(el, trigger, { align }); trigger.setAttribute('aria-expanded', 'true'); focusItem(first); first = 0; };
   function open(at = 0) {
     if (isOpen(el)) { focusItem(at); return; }
     first = at;
@@ -1716,10 +2122,11 @@ export function menu(trigger, el, { onSelect, summary = null } = {}) {
   function close(refocus = true) {
     if (!isOpen(el)) return;
     closeFloat(el);
+    reset();
     trigger.setAttribute('aria-expanded', 'false');
     if (refocus) trigger.focus();
   }
-  const toggle = (e) => { if (e.newState === 'open') shown(); else trigger.setAttribute('aria-expanded', 'false'); };
+  const toggle = (e) => { if (e.newState === 'open') shown(); else { trigger.setAttribute('aria-expanded', 'false'); reset(); } };
   const click = (e) => {
     if (canPopover && trigger.popoverTargetElement === el) return;                    // the browser toggles
     e.preventDefault(); if (isOpen(el)) close(); else open(0);
@@ -1733,26 +2140,26 @@ export function menu(trigger, el, { onSelect, summary = null } = {}) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); focusItem(i - 1); }
     else if (e.key === 'Home') { e.preventDefault(); focusItem(0); }
     else if (e.key === 'End') { e.preventDefault(); focusItem(-1); }
-    else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowRight' && levelOf(list[i])) { e.preventDefault(); enter(list[i]); }
+    else if (e.key === 'ArrowLeft' && openLevels().length) { e.preventDefault(); out(); }
+    else if (e.key === 'Escape') { e.preventDefault(); if (!out()) close(); }
     else if (e.key === 'Tab') close(false);
-    else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const k = e.key.toLowerCase(), order = [...list.slice(i + 1), ...list.slice(0, i + 1)];
-      const hit = order.find((it) => it.textContent.trim().toLowerCase().startsWith(k));
-      if (hit) hit.focus();
-    }
+    else { const hit = find(e, list, list[i]); if (hit) { e.preventDefault(); hit.focus(); } }
   };
   const choose = (e) => {
     const item = e.target.closest('.rk-menu-item');
     if (!item || item.getAttribute('aria-disabled') === 'true') { if (item) e.preventDefault(); return; }
+    if (item.classList.contains('rk-menu-back')) { out(); return; }
+    if (enter(item)) return;
     const checkbox = item.getAttribute('role') === 'menuitemcheckbox';
     if (checkbox) item.setAttribute('aria-checked', String(item.getAttribute('aria-checked') !== 'true'));
     if (item.getAttribute('role') === 'menuitemradio') el.querySelectorAll('[role=menuitemradio]').forEach((r) => r.setAttribute('aria-checked', String(r === item)));
     summarize();
-    if (!checkbox) close(); else if (!canPopover || el.matches(':popover-open')) place(el, trigger);
+    if (!checkbox) close(); else if (!canPopover || el.matches(':popover-open')) place(el, trigger, { align });
     if (onSelect) onSelect(item);
   };
   const outside = (e) => { if (!canPopover && isOpen(el) && !el.contains(e.target) && !trigger.contains(e.target)) close(false); };
-  const reflow = () => { if (isOpen(el)) place(el, trigger); };
+  function reflow() { if (isOpen(el)) place(el, trigger, { align }); }
   trigger.addEventListener('click', click);
   trigger.addEventListener('keydown', triggerKey);
   el.addEventListener('keydown', key);
@@ -1777,8 +2184,9 @@ export function menu(trigger, el, { onSelect, summary = null } = {}) {
 // select(el, { items, onShow, onChange, appbar }): Metro selection over the items of a list (li) or a table body (tr).
 // A click selects an item and shows it (onShow), the way a file list does. Ctrl/Cmd+click adds or removes an item and
 // starts the selection mode: then every click adds or removes, until the selection is empty or Escape ends it.
-// Shift+click selects the range from the last item. Keys: ↑ ↓ (← → in a grid) Home End move the focus; Space and
-// Enter act as a click, Ctrl/Cmd+Space as a Ctrl+click; Ctrl/Cmd+A selects all. A selected item takes the accent fill
+// Shift+click selects the range from the last item. Keys: ↑ ↓ (← → in a grid) Home End move the focus, and letters
+// jump (typeAhead: an item's aria-label, a row's th, else its text); Space and Enter act as a click, Ctrl/Cmd+Space as
+// a Ctrl+click; Ctrl/Cmd+A selects all. A selected item takes the accent fill
 // and a checkmark; it nudges where it is pressed (data-rk-press). Items a filter hides drop out. With an appbar, the
 // bar carries the selection in the mode (data-rk-selecting, .rk-ab-count, [data-rk-clear]).
 const selecting = new WeakMap();                                       // app bar → the selections in their mode
@@ -1800,6 +2208,7 @@ export function select(el, { items = ':scope > li, :scope > tr', onShow = null, 
   const isTable = el.tagName === 'TBODY';
   const host = isTable ? el.closest('table') : el;
   let mode = false, anchor = null;
+  const find = typeAhead(), nameOf = (i) => i.getAttribute('aria-label') || (i.querySelector(':scope > th') || i).textContent;
   host.setAttribute('role', isTable ? 'grid' : 'listbox');
   host.setAttribute('aria-multiselectable', 'true');
   el.setAttribute('data-rk-select', '');
@@ -1881,7 +2290,10 @@ export function select(el, { items = ':scope > li, :scope > tr', onShow = null, 
       return;
     }
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); act(item, { add: e.ctrlKey || e.metaKey, extend: e.shiftKey }); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); mode = true; for (const v of vis) set(v, true); sync(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); mode = true; for (const v of vis) set(v, true); sync(); return; }
+    if (e.target !== item) return;
+    const hit = find(e, vis, item, nameOf);
+    if (hit) { e.preventDefault(); roving(hit); hit.focus(); }
   };
   const offEsc = keys.on(20, (e) => {
     if (e.key !== 'Escape' || !mode || isEditable(e.target)) return false;
@@ -2299,7 +2711,8 @@ export function palette(el, { items = () => [], trigger = null, router = null, s
 // appbar(el, { more }): controls that do not fit move into a "more" menu, the least important first (data-rk-priority,
 // higher stays longer, none is 0; then from the end). more is a .rk-ab button shown only while something has moved;
 // its menu repeats each moved control's words (its key hint apart, as the palette shows it), and choosing one clicks
-// the control. Back, the live state, a selection's controls and data-rk-priority="pinned" never move (pinned ones do
+// the control; a control that cannot act (disable()) is a disabled item whose label names the reason. Back, the live
+// state, a selection's controls and data-rk-priority="pinned" never move (pinned ones do
 // while the bar holds the places, which come first). While the bar holds the places, data-rk-places is on the bar and the root, and rekta.css leaves the places' top strip out.
 const placesBars = new Set();                                         // bars holding the places: the root says so while any does
 const markPlaces = (bar, on) => { if (on) placesBars.add(bar); else placesBars.delete(bar); bar.toggleAttribute('data-rk-places', on); docEl().toggleAttribute('data-rk-places', placesBars.size > 0); };
@@ -2315,13 +2728,20 @@ export function appbar(el, { more = el.querySelector('.rk-ab-more') } = {}) {
     return copy.textContent.replace(/\s+/g, ' ').trim();
   };
   const keyHint = (c) => shortcutText(c) || ((c.querySelector('.rk-key') || {}).textContent || '').trim();
-  const candidates = (pinned = false) => [...el.querySelectorAll(':scope > .rk-ab')].filter((c) => c !== more && !c.classList.contains('rk-ab-back') && (pinned || c.dataset.rkPriority !== 'pinned'))
-    .map((c, i) => ({ c, i, p: Number(c.dataset.rkPriority || 0) }))
-    .sort((a, b) => a.p - b.p || b.i - a.i).map((x) => x.c);
+  // Running things (.rk-ab-run) give way before any command, the latest started first and the one in front last.
+  const runRank = (c) => (!c.classList.contains('rk-ab-run') ? 2 : /^(true|page)$/.test(c.getAttribute('aria-current') || '') ? 1 : 0);
+  const candidates = (pinned = false) => [...el.querySelectorAll(':scope > .rk-ab')].filter((c) => c !== more && !c.classList.contains('rk-ab-back') && c.dataset.rkAlign !== 'center' && (pinned || c.dataset.rkPriority !== 'pinned'))
+    .map((c, i) => ({ c, i, r: runRank(c), p: Number(c.dataset.rkPriority || 0) }))
+    .sort((a, b) => a.r - b.r || a.p - b.p || b.i - a.i).map((x) => x.c);
   function build() {
     pop.replaceChildren(...[...el.querySelectorAll(':scope > .rk-ab[data-rk-overflow]')].map((c) => {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'rk-menu-item'; b.setAttribute('role', 'menuitem'); b.textContent = words(c);
+      if (c.getAttribute('aria-disabled') === 'true' || c.disabled) {
+        const why = document.getElementById(c.dataset.rkWhy || '');
+        b.setAttribute('aria-disabled', 'true');
+        if (why && why.textContent.trim()) b.textContent = tx('cannotAct', words(c), why.textContent.trim());
+      }
       const k = keyHint(c);
       if (k) {
         const kk = b.appendChild(document.createElement('span')); kk.className = 'rk-menu-key'; kk.setAttribute('aria-hidden', 'true'); kk.textContent = k;
@@ -2333,16 +2753,42 @@ export function appbar(el, { more = el.querySelector('.rk-ab-more') } = {}) {
   }
   const fits = () => el.scrollWidth <= el.clientWidth + 1;
   const placesShown = () => { const p = el.querySelector(':scope > .rk-ab-places'); return !!p && getComputedStyle(p).display !== 'none'; };
+  // Two sides around a control in the middle (a clock, data-rk-align="center"; docs/navigation.md). Each side has half
+  // the bar less half that control. A side that does not fit gives its own controls away, least important first:
+  // giving away one of the other side's would not help. "more" ends the trailing side. The middle line cuts before
+  // the centred control, pinned (up to half the bar) or not, and is gone only while the leading side has given
+  // controls away (data-rk-full="start"). The centred control stands at the bar's centre (--_rk-shift).
+  function twoSides(c) {
+    const cs = getComputedStyle(el), gap = parseFloat(cs.columnGap) || 0;
+    const inner = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const room = (inner - c.offsetWidth) / 2 - gap;
+    const mid = el.querySelector(':scope > .rk-ab-mid');
+    const kidsOf = (lead) => [...el.children].filter((k) => k !== pop && k !== c && k !== mid && !!(k.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) === lead);
+    const width = (list) => { const v = list.filter((k) => k.getClientRects().length); return v.reduce((sum, k) => sum + k.getBoundingClientRect().width, 0) + Math.max(0, v.length - 1) * gap; };
+    const lead = kidsOf(true), trail = kidsOf(false), full = [];
+    el.style.removeProperty('--_rk-mid-max');
+    const pinned = mid && mid.dataset.rkPriority === 'pinned';
+    const midNeed = pinned ? Math.min(mid.scrollWidth, inner / 2) + gap : 0;
+    for (const x of candidates().filter((k) => lead.includes(k))) { if (width(lead) + midNeed <= room) break; x.setAttribute('data-rk-overflow', ''); full.push('start'); }
+    if (mid) el.style.setProperty('--_rk-mid-max', `${Math.max(0, Math.floor(room - width(lead) - (lead.some((k) => k.getClientRects().length) ? gap : 0)))}px`);
+    if (full.length || width(trail) > room) more.hidden = false;
+    for (const x of candidates().filter((k) => trail.includes(k))) { if (width(trail) <= room) break; x.setAttribute('data-rk-overflow', ''); full.push('end'); }
+    if (full.length) el.setAttribute('data-rk-full', [...new Set(full)].join(' ')); else el.removeAttribute('data-rk-full');
+    const b = el.getBoundingClientRect(), r = c.getBoundingClientRect(), was = parseFloat(el.style.getPropertyValue('--_rk-shift')) || 0;
+    el.style.setProperty('--_rk-shift', `${Math.round(b.left + b.width / 2 - (r.left - was + r.width / 2))}px`);
+  }
   function layout() {
     if (el.hasAttribute('data-rk-selecting')) return;
     el.querySelectorAll(':scope > [data-rk-overflow]').forEach((c) => c.removeAttribute('data-rk-overflow'));
+    el.removeAttribute('data-rk-full');
     more.hidden = true;
-    const withPlaces = placesShown();
+    const withPlaces = placesShown(), centred = el.querySelector(':scope > .rk-ab[data-rk-align="center"]');
     markPlaces(el, withPlaces);
     if (withPlaces) {                                 /* the places hold the bar: every command is in "more", pinned too */
       const all = candidates(true);
       if (all.length) { more.hidden = false; all.forEach((c) => c.setAttribute('data-rk-overflow', '')); }
-    } else if (!fits()) {
+    } else if (centred && centred.getClientRects().length) twoSides(centred);
+    else if (!fits()) {
       more.hidden = false;
       for (const c of candidates()) { if (fits()) break; c.setAttribute('data-rk-overflow', ''); }
     }
@@ -2387,31 +2833,46 @@ const labelOf = (c) => { const l = c.id && document.querySelector(`label[for="${
 
 // disable(control, reason): a control that cannot act now, and says why next to it (a .rk-hint linked by
 // aria-describedby). It stays focusable (aria-disabled), so the reason is read with it; clicks do nothing.
+// An app-bar control (.rk-ab) has no room beside it: its reason is its tooltip (data-rk-tip, shown on a resting
+// pointer, keyboard focus or a tap), read from a hidden element linked the same way; in "more" its item says it.
 // disable(control, null) enables it again.
 export function disable(control, reason) {
   const id = control.dataset.rkWhy || uid('rk-why');
   control.dataset.rkWhy = id;
   let hint = document.getElementById(id);
   const ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter((x) => x && x !== id);
+  const bar = control.matches('.rk-ab');
   if (!control._rkBlock) control._rkBlock = (e) => { if (control.getAttribute('aria-disabled') === 'true') { e.preventDefault(); e.stopImmediatePropagation(); } };
   if (reason) {
     control.disabled = false;
     control.setAttribute('aria-disabled', 'true');
-    if (!hint) { hint = document.createElement('span'); hint.className = 'rk-hint rk-why'; hint.id = id; control.after(hint); }
+    if (!hint) {
+      hint = document.createElement('span'); hint.className = bar ? 'rk-why' : 'rk-hint rk-why'; hint.id = id; hint.hidden = bar;
+      control.after(hint);
+    }
     hint.textContent = reason;
+    if (bar) {
+      if (!('_rkTipWas' in control)) control._rkTipWas = control.getAttribute('data-rk-tip');
+      control.setAttribute('data-rk-tip', reason);
+    }
     control.setAttribute('aria-describedby', [...ids, id].join(' '));
     control.addEventListener('click', control._rkBlock, true);
   } else {
     control.removeAttribute('aria-disabled');
     if (hint) hint.remove();
+    if ('_rkTipWas' in control) {
+      if (control._rkTipWas === null) control.removeAttribute('data-rk-tip'); else control.setAttribute('data-rk-tip', control._rkTipWas);
+      delete control._rkTipWas;
+      if (tip.for === control) hideTip(false);
+    }
     if (ids.length) control.setAttribute('aria-describedby', ids.join(' ')); else control.removeAttribute('aria-describedby');
     control.removeEventListener('click', control._rkBlock, true);
   }
 }
 
 // confirm({ title, text, kicker, ok, cancel, safe }): a short question in a sheet; resolves true when ok is chosen.
-// The safe answer is the primary button and takes focus: for an action that cannot be undone, safe: 'cancel'.
-// Escape and a tap on the shading answer cancel.
+// The safe answer is the primary button and takes focus: for an action that cannot be undone, safe: 'cancel', and ok
+// is then the destructive button (data-status="error", forms.md). Escape and a tap on the shading answer cancel.
 export function confirm({ title, text = '', kicker = '', ok = tx('ok'), cancel = tx('cancel'), safe = 'ok', root = document.querySelector('.rk') || document.body } = {}) {
   const d = document.createElement('dialog');
   d.className = 'rk-sheet';
@@ -2425,7 +2886,9 @@ export function confirm({ title, text = '', kicker = '', ok = tx('ok'), cancel =
   const row = f.appendChild(document.createElement('p')); row.className = 'rk-actions';
   const b = (label, value) => { const x = row.appendChild(document.createElement('button')); x.className = `rk-btn${safe === value ? ' rk-btn--primary' : ''}`; x.value = value; x.textContent = label; if (safe === value) x.autofocus = true; return x; };
   const opener = document.activeElement;
-  b(cancel, 'cancel'); b(ok, 'ok');
+  b(cancel, 'cancel');
+  const yes = b(ok, 'ok');
+  if (safe === 'cancel') yes.dataset.status = 'error';
   root.appendChild(d);
   const sh = sheet(d);
   return new Promise((resolve) => {
@@ -2541,16 +3004,30 @@ export function guard(el, { router = null, what = tx('guardWhat') } = {}) {
 // Tooltip ----------------------------------------------------------------------------------------------------------
 // tips(): a short ink label for a control that has one (data-rk-tip="text"; the control's aria-keyshortcuts adds
 // its keys), or for text its box cuts off (data-rk-tip="overflow": the element's own text, only while it is cut). It
-// shows after tip-delay under a mouse or pen, at once after another tip or on keyboard focus, never on touch;
+// shows after tip-delay under a mouse or pen, at once after another tip or on keyboard focus; on touch only a tap on
+// a disabled control (aria-disabled) shows its tip, the reason it cannot act (disable() in the app bar).
 // Escape, a press, scrolling or leaving hide it. It repeats or completes what the control says: never the only way to
 // learn what it does. start() turns it on.
 const tip = { el: null, for: null, timer: 0, hid: 0, described: null, on: false };
-const KEY_NAMES = { Control: 'Ctrl', Meta: '⌘', Alt: 'Alt', Shift: 'Shift', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc' };
+// A combination is written one way (navigation.md, "Writing a key"): the modifiers in the order Ctrl, Alt, Shift, Meta,
+// then the key, joined by "+" ("Ctrl+Shift+Z"); on Apple, the symbols with no separator ("⇧⌘Z"). Meta outside Apple
+// is the catalogue's keyMeta: "Win" on Windows, "Super" elsewhere.
+const KEY_NAMES = { Control: 'Ctrl', Alt: 'Alt', Shift: 'Shift', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc' };
+const APPLE_KEYS = { Control: '⌃', Alt: '⌥', Shift: '⇧', Meta: '⌘' };
+const MODIFIERS = ['Control', 'Alt', 'Shift', 'Meta'];
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform || navigator.userAgent);
+function keyName(k) {
+  if (isMac && APPLE_KEYS[k]) return APPLE_KEYS[k];
+  if (k === 'Meta') return tx('keyMeta', isWindows ? 'windows' : 'other');
+  return KEY_NAMES[k] || (k.length === 1 ? k.toUpperCase() : k);
+}
 function shortcutText(el) {
   const all = (el.getAttribute('aria-keyshortcuts') || '').split(/\s+/).filter(Boolean);
   const pick = all.find((k) => (isMac ? /Meta/.test(k) : !/Meta/.test(k))) || all[0];
-  return pick ? pick.split('+').map((k) => KEY_NAMES[k] || k.toUpperCase()).join(isMac ? '' : ' ') : '';
+  if (!pick) return '';
+  const rank = (k) => { const i = MODIFIERS.indexOf(k); return i < 0 ? MODIFIERS.length : i; };
+  return pick.split('+').sort((a, b) => rank(a) - rank(b)).map(keyName).join(isMac ? '' : '+');
 }
 function tipText(el) {
   const t = el.getAttribute('data-rk-tip');
@@ -2558,7 +3035,7 @@ function tipText(el) {
   return t || '';
 }
 function placeTip(t, anchor) {
-  const a = anchor.getBoundingClientRect(), gap = 6, edge = num('--rk-space-s') || 8;
+  const a = anchor.getBoundingClientRect(), gap = px('--rk-tip-gap'), edge = px('--rk-space-m');
   t.style.left = '0px'; t.style.top = '0px';
   const w = t.offsetWidth, h = t.offsetHeight, vw = document.documentElement.clientWidth;
   const above = a.top - gap - h >= edge;
@@ -2580,8 +3057,11 @@ function showTip(el, given = null) {
   tip.el.replaceChildren(text);
   if (keysText) { const k = document.createElement('span'); k.className = 'rk-key'; k.textContent = keysText; tip.el.append(' ', k); }
   openFloat(tip.el); placeTip(tip.el, el);
+  // It describes its control while it shows, unless it repeats the control's name or a description it already has
+  // (a disabled app-bar control's reason).
   const name = (el.getAttribute('aria-label') || el.textContent || '').trim();
-  if (text !== name) { tip.described = el.getAttribute('aria-describedby'); el.setAttribute('aria-describedby', `${tip.described ? `${tip.described} ` : ''}rk-tip`); }
+  const said = (el.getAttribute('aria-describedby') || '').split(/\s+/).some((d) => { const x = d && document.getElementById(d); return x && x.textContent.trim() === text; });
+  if (text !== name && !said) { tip.described = el.getAttribute('aria-describedby'); el.setAttribute('aria-describedby', `${tip.described ? `${tip.described} ` : ''}rk-tip`); }
   else tip.described = undefined;
   tip.for = el;
 }
@@ -2605,6 +3085,7 @@ function tips() {
     if (tip.for || Date.now() - tip.hid < wait) showTip(el); else tip.timer = setTimeout(() => showTip(el), wait);
   };
   const out = (e) => {
+    if (e.pointerType === 'touch') return;                           // a lifted finger leaves: a tapped tip stays
     const el = e.target.closest && e.target.closest('[data-rk-tip]');
     if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
     if (tip.for === el || tip.timer) hideTip();
@@ -2612,13 +3093,20 @@ function tips() {
   const focus = (e) => { const el = e.target.closest && e.target.closest('[data-rk-tip]'); if (el && e.target.matches(':focus-visible')) showTip(el); };
   const blur = (e) => { if (tip.for && tip.for.contains(e.target)) hideTip(); };
   const away = () => hideTip();
+  // A tap cannot rest: on a control that cannot act anyway it shows the reason, until the next press or a scroll.
+  const tap = (e) => {
+    const el = e.pointerType === 'touch' && e.target.closest && e.target.closest('[aria-disabled="true"][data-rk-tip]');
+    if (el) showTip(el);
+  };
   const offEsc = keys.on(45, (e) => { if (e.key !== 'Escape' || !tip.for) return false; hideTip(); return true; });
+  document.addEventListener('pointerup', tap);
   document.addEventListener('pointerover', over); document.addEventListener('pointerout', out);
   document.addEventListener('focusin', focus); document.addEventListener('focusout', blur);
   document.addEventListener('pointerdown', away, true); addEventListener('scroll', away, true); addEventListener('blur', away);
   return {
     destroy() {
       tip.on = false; hideTip(); offEsc();
+      document.removeEventListener('pointerup', tap);
       document.removeEventListener('pointerover', over); document.removeEventListener('pointerout', out);
       document.removeEventListener('focusin', focus); document.removeEventListener('focusout', blur);
       document.removeEventListener('pointerdown', away, true); removeEventListener('scroll', away, true); removeEventListener('blur', away);
@@ -2629,23 +3117,20 @@ function tips() {
 // Context menu ------------------------------------------------------------------------------------------------------
 // placeAt(el, x, y): a floating surface at a point (a context menu at the pointer), turned to stay in the viewport.
 function placeAt(el, x, y) {
-  const edge = num('--rk-space-s') || 8;
+  const edge = px('--rk-space-m');
   el.style.left = '0px'; el.style.top = '0px';
   const w = el.offsetWidth, h = el.offsetHeight, vw = document.documentElement.clientWidth, vh = innerHeight;
   const left = x + w > vw - edge ? Math.max(edge, x - w) : x, top = y + h > vh - edge ? Math.max(edge, y - h) : y;
   el.style.left = `${Math.round(left)}px`; el.style.top = `${Math.round(top)}px`;
   el.dataset.rkSide = top < y ? 'above' : 'below';
 }
-// The keys of an open menu: ↑ ↓ wrap, Home End, a letter jumps; Escape and Tab close.
-function menuKeys(e, list, close) {
+// The keys of an open menu: ↑ ↓ wrap, Home End, letters jump (find, a typeAhead()); Escape and Tab close.
+function menuKeys(e, list, close, find) {
   const i = list.indexOf(document.activeElement), go = (k) => { if (list.length) list[(k + list.length) % list.length].focus(); };
   if (e.key === 'ArrowDown') { e.preventDefault(); go(i + 1); } else if (e.key === 'ArrowUp') { e.preventDefault(); go(i < 0 ? -1 : i - 1); }
   else if (e.key === 'Home') { e.preventDefault(); go(0); } else if (e.key === 'End') { e.preventDefault(); go(-1); }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); } else if (e.key === 'Tab') { e.preventDefault(); close(true); }
-  else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const k = e.key.toLowerCase(), hit = [...list.slice(i + 1), ...list.slice(0, i + 1)].find((it) => it.textContent.trim().toLowerCase().startsWith(k));
-    if (hit) hit.focus();
-  }
+  else { const hit = find(e, list, list[i]); if (hit) { e.preventDefault(); hit.focus(); } }
 }
 // contextMenu(scope, el, { target, onOpen, onSelect }): a menu opened where the pointer is: a right click, a long
 // press on touch (long-press), or Shift+F10 or the context-menu key on a focused target, then below it. target picks
@@ -2702,7 +3187,7 @@ export function contextMenu(scope, el, { target = '[tabindex], a, button', onOpe
   const move = (e) => { if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) { clearTimeout(hold); hold = 0; start = null; } };
   const up = () => { if (hold > 0) clearTimeout(hold); hold = 0; start = null; };
   const click = (e) => { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } };
-  const key = (e) => menuKeys(e, items(), close);
+  const jump = typeAhead(), key = (e) => menuKeys(e, items(), close, jump);
   const choose = (e) => {
     const item = e.target.closest('.rk-menu-item');
     if (!item || item.getAttribute('aria-disabled') === 'true') { if (item) e.preventDefault(); return; }
@@ -2743,10 +3228,84 @@ export function contextMenu(scope, el, { target = '[tabindex], a, button', onOpe
   };
 }
 
+// Tile grid --------------------------------------------------------------------------------------------------------
+// grid(el): a grid of tiles that open (a.rk-tile, button.rk-tile in a .rk-tiles) is one tab stop, and the arrows move
+// through it the way the eye does: ← → ↑ ↓ go to the nearest tile that way, one sharing the row or column first (on a
+// tie the better-aligned one), and on into the grids of the panorama's other sections; at the edge focus stays. Home
+// End go to the grid's first and last tile, letters jump (typeAhead: a tile's aria-label, else its words without its
+// status word), Tab leaves. The tile last focused is the grid's tab stop. start() attaches it to every .rk-tiles that
+// holds a tile that opens; a grid a framework renders later calls it itself. Returns { refresh, destroy }.
+const OPENS = 'a.rk-tile, button.rk-tile';
+const ARROWS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
+const grids = new WeakMap();
+const tileName = (t) => t.getAttribute('aria-label') || [...t.childNodes].filter((n) => !(n.nodeType === 1 && n.matches('.rk-tile-word, [aria-hidden="true"]'))).map((n) => n.textContent).join(' ');
+export function grid(el) {
+  if (grids.has(el)) return grids.get(el);
+  el.setAttribute('data-rk-grid', '');
+  const shown = (t) => t.getClientRects().length > 0 && !t.closest('[hidden], [inert]');
+  const own = () => [...el.querySelectorAll(OPENS)].filter((t) => t.closest('[data-rk-grid]') === el);
+  // Every tile the arrows may reach: in this grid and, in a panorama, in its other sections' grids.
+  const reach = () => [...(el.closest('.rk-panorama') || el).querySelectorAll(OPENS)].filter((t) => t.closest('[data-rk-grid]') && shown(t));
+  let stop = null;
+  function prepare() {
+    const list = own();
+    if (!list.includes(stop) || !shown(stop)) stop = list.find(shown) || list[0] || null;
+    for (const t of list) t.tabIndex = t === stop ? 0 : -1;
+  }
+  // The nearest tile from `from` in the direction [dx, dy]: wholly that way, sharing the row (or column) before not,
+  // then by the gap to it, then by how much of its row (column) it shares. One that shares none counts only while it
+  // lies more that way than across (within 45°), so → reaches the next section's grid and ↓ at a grid's foot stays.
+  function nearest(from, [dx, dy]) {
+    const a = from.getBoundingClientRect();
+    let best = null, bk = null;
+    for (const t of reach()) {
+      if (t === from) continue;
+      const b = t.getBoundingClientRect();
+      const gap = dx > 0 ? b.left - a.right : dx < 0 ? a.left - b.right : dy > 0 ? b.top - a.bottom : a.top - b.bottom;
+      if (gap < -1) continue;
+      const shared = dx ? Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) : Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const mx = (b.left + b.right - a.left - a.right) / 2, my = (b.top + b.bottom - a.top - a.bottom) / 2;
+      if (shared <= 0 && Math.abs(dx ? my : mx) > Math.abs(dx ? mx : my)) continue;
+      const k = shared > 0 ? [0, gap, -shared] : [1, gap - 2 * shared, 0];
+      if (!bk || k[0] < bk[0] || (k[0] === bk[0] && (k[1] < bk[1] - 1 || (Math.abs(k[1] - bk[1]) <= 1 && k[2] < bk[2])))) { best = t; bk = k; }
+    }
+    return best;
+  }
+  const find = typeAhead();
+  const key = (e) => {
+    const t = e.target;
+    if (!t.matches || !t.matches(OPENS) || t.closest('[data-rk-grid]') !== el || e.ctrlKey || e.metaKey || e.altKey) return;
+    let to;
+    if (ARROWS[e.key]) to = nearest(t, ARROWS[e.key]);                       // none at the edge: focus stays
+    else if (e.key === 'Home' || e.key === 'End') { const list = own().filter(shown); to = list[e.key === 'Home' ? 0 : list.length - 1]; }
+    else if (!(to = find(e, reach(), t, tileName))) return;
+    e.preventDefault();
+    if (to && to !== t) to.focus();
+  };
+  const focusin = (e) => { const t = e.target; if (t.matches && t.matches(OPENS) && t.closest('[data-rk-grid]') === el) { stop = t; prepare(); } };
+  let queued = 0;
+  const mo = new MutationObserver(() => { if (!queued) queued = requestAnimationFrame(() => { queued = 0; prepare(); }); });
+  mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  el.addEventListener('keydown', key);
+  el.addEventListener('focusin', focusin);
+  prepare();
+  const ctl = {
+    refresh: prepare,
+    destroy() {
+      mo.disconnect(); cancelAnimationFrame(queued); grids.delete(el);
+      el.removeEventListener('keydown', key); el.removeEventListener('focusin', focusin);
+      el.removeAttribute('data-rk-grid');
+      for (const t of own()) t.removeAttribute('tabindex');
+    },
+  };
+  grids.set(el, ctl);
+  return ctl;
+}
+
 // Tree -------------------------------------------------------------------------------------------------------------
 // tree(el, { onShow, onToggle }): a hierarchy (ul.rk-tree of li, each its row first, then a ul of children). A click
 // selects an item and shows it; the chevron or a double click opens and closes it. Keys: ↑ ↓, → opens or goes in,
-// ← closes or goes up, Home End, Enter or Space shows, * opens the siblings, a letter jumps. One tab stop.
+// ← closes or goes up, Home End, Enter or Space shows, * opens the siblings, letters jump (typeAhead). One tab stop.
 export function tree(el, { onShow = null, onToggle = null } = {}) {
   el.setAttribute('role', 'tree');
   function prepare(ul, level) {
@@ -2775,6 +3334,7 @@ export function tree(el, { onShow = null, onToggle = null } = {}) {
   const roving = (li) => { for (const x of all()) x.tabIndex = x === li ? 0 : -1; };
   roving(all().find((li) => li.getAttribute('aria-selected') === 'true') || all()[0]);
   const rowOf = (li) => li.querySelector(':scope > .rk-tree-row');
+  const find = typeAhead();
   function expand(li, open) {
     const sub = li.querySelector(':scope > ul');
     if (!sub || (li.getAttribute('aria-expanded') === 'true') === open) return;
@@ -2819,10 +3379,7 @@ export function tree(el, { onShow = null, onToggle = null } = {}) {
     else if (e.key === 'ArrowLeft') { if (open === 'true') expand(li, false); else go(li.parentElement.closest('[role=treeitem]')); }
     else if (e.key === 'Enter' || e.key === ' ') choose(li);
     else if (e.key === '*') [...li.parentElement.children].forEach((x) => expand(x, true));
-    else if (e.key.length === 1 && /\S/.test(e.key)) {
-      const k = e.key.toLowerCase(), hit = [...list.slice(i + 1), ...list.slice(0, i + 1)].find((x) => rowOf(x).textContent.trim().toLowerCase().startsWith(k));
-      go(hit); if (!hit) return;
-    } else return;
+    else { const hit = find(e, list, li, (x) => rowOf(x).textContent); if (!hit) return; go(hit); }
     e.preventDefault();
   };
   el.addEventListener('click', click); el.addEventListener('dblclick', dbl); el.addEventListener('keydown', key);
@@ -2931,13 +3488,101 @@ export function sortable(list, { items = ':scope > li', handle = '.rk-grip', onM
   };
 }
 
+// Removable ----------------------------------------------------------------------------------------------------------
+// removable(list, { items, onRemove }): entries a person may remove, each removal reversible (docs/collections.md).
+// Three ways, all calling onRemove(item, { left }): a button marked data-rk-remove inside the entry; Delete (or ⌫,
+// outside a text field) on the entry focus is in, after which focus moves to the next entry, or the one before at the
+// end; and dragging the entry towards its trailing edge, a shortcut beside the other two. Dragged, the entry follows
+// the pointer sideways; let go past half its width it leaves that way (left: true: it has gone from sight, so remove it
+// at once, with no leave() of its own), else it glides back. A drag starts only sideways and never from the window's
+// edges, where a phone's back gesture begins; a click that ends one is cancelled, so dragging never activates.
+export function removable(list, { items = ':scope > li, :scope > tr', onRemove = () => {} } = {}) {
+  const entries = () => [...list.querySelectorAll(items)].filter((x) => !x.hidden);
+  const entryOf = (t) => { const x = t && t.closest && t.closest(items.split(',').map((s) => s.trim().replace(/^:scope > /, '')).join(', ')); return x && list.contains(x) && entries().includes(x) ? x : null; };
+  const away = () => (getComputedStyle(list).direction === 'rtl' ? -1 : 1);
+  const focusable = (x) => (x.matches('[tabindex], a[href], button') ? x : x.querySelector('[tabindex]:not([tabindex="-1"]), a[href], button:not([data-rk-remove])') || x);
+  function remove(item, left) {
+    const all = entries(), i = all.indexOf(item), next = all[i + 1] || all[i - 1] || null;
+    const hadFocus = item.contains(document.activeElement);
+    onRemove(item, { left });
+    if (hadFocus && next && next.isConnected) { const f = focusable(next); if (f.tabIndex < 0 && !f.hasAttribute('tabindex')) f.tabIndex = -1; f.focus(); }
+  }
+  const click = (e) => {
+    const b = e.target.closest && e.target.closest('[data-rk-remove]'), item = b && entryOf(b);
+    if (item) { e.preventDefault(); remove(item, false); }
+  };
+  const key = (e) => {
+    if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.defaultPrevented || e.isComposing || e.altKey || e.ctrlKey || e.metaKey || isEditable(e.target)) return;
+    const item = entryOf(e.target);
+    if (!item) return;
+    e.preventDefault(); remove(item, false);
+  };
+  let drag = null, swallow = false;
+  const down = (e) => {
+    if (e.button !== 0 || drag) return;
+    const item = entryOf(e.target);
+    if (!item || e.target.closest('a, button, input, select, textarea, label, .rk-grip, [data-rk-remove]')) return;
+    const edge = px('--rk-space-l');
+    if (e.pointerType !== 'mouse' && (e.clientX < edge || e.clientX > innerWidth - edge)) return;
+    drag = { item, id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, on: false };
+  };
+  const move = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.on) {
+      if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) { drag = null; return; }      // a scroll, not a drag
+      if (dx * away() < 8 || Math.abs(dx) <= Math.abs(dy)) return;
+      drag.on = true;
+      try { list.setPointerCapture(e.pointerId); } catch { /* the pointer has gone */ }
+      for (const a of drag.item.getAnimations()) a.cancel();
+    }
+    drag.dx = Math.max(0, dx * away()) * away();
+    drag.item.style.transform = `translateX(${drag.dx}px)`;
+  };
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { item, dx, on } = drag;
+    drag = null;
+    if (!on) return;
+    swallow = true; setTimeout(() => { swallow = false; });
+    const w = item.getBoundingClientRect().width, gone = e.type === 'pointerup' && Math.abs(dx) > w / 2;
+    item.style.transform = '';
+    const from = `translateX(${dx}px)`;
+    if (gone) {
+      const d = ms('--rk-duration-short') * 0.6;
+      if (d) item.animate([{ transform: from, opacity: 1 }, { transform: `translateX(${away() * w}px)`, opacity: 0 }], { duration: d, easing: css('--rk-ease-out'), fill: 'forwards' }).finished.then(() => remove(item, true), () => {});
+      else { item.style.opacity = '0'; remove(item, true); }
+    } else {
+      const d = ms('--rk-duration-short');
+      if (d) item.animate([{ transform: from }, { transform: 'none' }], { duration: d, easing: css('--rk-ease-base') });
+    }
+  };
+  const stopClick = (e) => { if (swallow) { e.preventDefault(); e.stopImmediatePropagation(); swallow = false; } };
+  list.setAttribute('data-rk-removable', '');
+  list.addEventListener('click', click); list.addEventListener('keydown', key);
+  list.addEventListener('pointerdown', down); list.addEventListener('pointermove', move);
+  list.addEventListener('pointerup', end); list.addEventListener('pointercancel', end);
+  list.addEventListener('click', stopClick, true);
+  return {
+    remove: (item) => remove(item, false),
+    destroy() {
+      list.removeAttribute('data-rk-removable');
+      list.removeEventListener('click', click); list.removeEventListener('keydown', key);
+      list.removeEventListener('pointerdown', down); list.removeEventListener('pointermove', move);
+      list.removeEventListener('pointerup', end); list.removeEventListener('pointercancel', end);
+      list.removeEventListener('click', stopClick, true);
+    },
+  };
+}
+
 // Virtual list -----------------------------------------------------------------------------------------------------
 // virtual(el, { count, render, onShow, onChange, appbar, label }): a list of any length in a .rk-virtual scroller
 // with a bounded height. Only the rows in view (and a few more) exist; render(i, row) fills a row. It is one tab stop
 // (a listbox; the active row by aria-activedescendant) chosen the Metro way like select(): a click selects and shows,
 // Ctrl/Cmd+click starts the selection mode, Shift takes a range, Ctrl/Cmd+A all, Escape ends the mode. ↑ ↓ PageUp
-// PageDown Home End move. The row height is the density's.
-export function virtual(el, { count = 0, render, onShow = null, onChange = null, appbar = null, label = '' } = {}) {
+// PageDown Home End move, and letters jump (typeAhead) by text(i), an item's words; without it, by the text render()
+// writes into a row that is not shown (once per item, until refresh()). The row height is the density's.
+export function virtual(el, { count = 0, render, text = null, onShow = null, onChange = null, appbar = null, label = '' } = {}) {
   const id = uid('rk-virtual');
   el.setAttribute('role', 'listbox'); el.setAttribute('aria-multiselectable', 'true'); el.tabIndex = 0;
   if (label) el.setAttribute('aria-label', label);
@@ -2945,7 +3590,12 @@ export function virtual(el, { count = 0, render, onShow = null, onChange = null,
   body.className = 'rk-virtual-body';
   el.replaceChildren(body);
   let n = count, h = 0, first = 0, last = 0, active = -1, anchor = -1, mode = false, frame = 0;
-  const sel = new Set();
+  const sel = new Set(), find = typeAhead(), words = new Map();
+  const textAt = (i) => {
+    if (text) return text(i);
+    if (!words.has(i)) { const row = document.createElement('div'); render(i, row); words.set(i, row.textContent); }
+    return words.get(i);
+  };
   function paint(force = false) {
     frame = 0;
     h = px('--rk-row-height') || 44;
@@ -3014,6 +3664,10 @@ export function virtual(el, { count = 0, render, onShow = null, onChange = null,
     }
     if ((e.key === ' ' || e.key === 'Enter') && active >= 0) { e.preventDefault(); act(active, { add: e.ctrlKey || e.metaKey, extend: e.shiftKey }); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); mode = true; for (let i = 0; i < n; i++) sel.add(i); sync(); }
+    else {
+      const hit = find(e, Array.from({ length: n }, (_, i) => i), active, textAt);
+      if (hit !== null) { e.preventDefault(); active = hit; mark(); reveal(hit); }
+    }
   };
   const focus = () => { if (active < 0 && n) { active = Math.min(n - 1, Math.floor(el.scrollTop / (h || 1))); mark(); } };
   const offEsc = keys.on(20, (e) => {
@@ -3030,7 +3684,7 @@ export function virtual(el, { count = 0, render, onShow = null, onChange = null,
   if (appbar) appbar.addEventListener('click', clearClick);
   paint(true);
   return {
-    refresh(count = n) { n = count; for (const i of [...sel]) if (i >= n) sel.delete(i); if (active >= n) active = n - 1; paint(true); sync(); },
+    refresh(count = n) { n = count; words.clear(); for (const i of [...sel]) if (i >= n) sel.delete(i); if (active >= n) active = n - 1; paint(true); sync(); },
     scrollTo(i) { active = i; reveal(i); },
     selected: () => [...sel].sort((x, y) => x - y),
     only, clear() { sel.clear(); sync(); },
@@ -3333,10 +3987,19 @@ export function titlebar(el, { router = null } = {}) {
     place.textContent = p && p.dataset.rkParent && h ? h.textContent.trim() : '';
   };
   const geometry = () => docEl().toggleAttribute('data-rk-wco', !!(wco && wco.visible));
+  // Another window is the active one: the name steps back (data-rk-inactive). Read after the event, since focus
+  // moving into a frame of the page blurs the window first and still leaves the page active.
+  const active = () => setTimeout(() => el.toggleAttribute('data-rk-inactive', !document.hasFocus()));
   document.addEventListener('rk:placechange', paint);
   if (wco) wco.addEventListener('geometrychange', geometry);
-  paint(); geometry();
-  return { destroy() { document.removeEventListener('rk:placechange', paint); if (wco) wco.removeEventListener('geometrychange', geometry); } };
+  addEventListener('focus', active); addEventListener('blur', active);
+  paint(); geometry(); active();
+  return {
+    destroy() {
+      document.removeEventListener('rk:placechange', paint); if (wco) wco.removeEventListener('geometrychange', geometry);
+      removeEventListener('focus', active); removeEventListener('blur', active); el.removeAttribute('data-rk-inactive');
+    },
+  };
 }
 
 // pwa({ sw, toaster, onChange }): the page as an installable app. Registers the service worker (only where a web app
@@ -3395,10 +4058,15 @@ export function pwa({ sw = 'sw.js', toaster: toasts = null, onChange = null } = 
 // from a token, so reduced motion makes it instant, never skipped.
 const shown = (el) => el.getClientRects().length > 0;
 const finished = (anims) => Promise.all(anims.map((a) => a.finished.catch(() => {})));
+// A control in a one-line bar (the app bar, a row of actions, a row of tags marked data-rk-motion="inline") is neither
+// a row nor a tile: a path would lead out of a bar of fixed height, or into the next control. It arrives and leaves
+// by a fade only, and grows or shrinks without scaling, its content standing.
+const INLINE = '.rk-appbar > *, .rk-actions > *, [data-rk-motion="inline"]';
 // reflow(scope, change, { items, size }): FLIP. Whatever change() moves or resizes among the items (scope's children
 // by default) glides from where it was to where it is, over duration-moderate. A box that changes size scales from
 // its old size and fades its content back in near the end, so text is never seen stretched: a tile resized, a grid
-// re-flowed around it. Resolves with change()'s result once everything has settled.
+// re-flowed around it. A bar control only glides: it takes its new size at once and its content stands. Resolves
+// with change()'s result once everything has settled.
 export function reflow(scope, change, { items = null, size = true } = {}) {
   const list = () => (items ? [...(typeof items === 'function' ? items() : items)] : [...scope.children]);
   const before = new Map(list().filter(shown).map((el) => [el, el.getBoundingClientRect()]));
@@ -3410,7 +4078,8 @@ export function reflow(scope, change, { items = null, size = true } = {}) {
     const a = before.get(el);
     if (!a || !shown(el)) continue;
     const b = el.getBoundingClientRect();
-    const dx = a.left - b.left, dy = a.top - b.top, sx = size && b.width ? a.width / b.width : 1, sy = size && b.height ? a.height / b.height : 1;
+    const scale = size && !el.matches(INLINE);
+    const dx = a.left - b.left, dy = a.top - b.top, sx = scale && b.width ? a.width / b.width : 1, sy = scale && b.height ? a.height / b.height : 1;
     const resized = Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && !resized) continue;
     anims.push(el.animate([{ transformOrigin: '0 0', transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transformOrigin: '0 0', transform: 'none' }], { duration: d, easing: ease }));
@@ -3418,61 +4087,129 @@ export function reflow(scope, change, { items = null, size = true } = {}) {
   }
   return finished(anims).then(() => out);
 }
-// enter(el): something new arrives in a list or a grid: a row slides in by 6px and fades up, a tile builds in.
-export function enter(el) {
+// enter(el): something new arrives in a list or a grid: a row slides in by 6px and fades up, a tile builds in, a bar
+// control fades in.
+export function enter(el) { const a = arrival(el); return a ? a.finished.catch(() => {}) : Promise.resolve(); }
+function arrival(el) {
   const d = ms('--rk-duration-short');
-  if (!d || !shown(el)) return Promise.resolve();
+  if (!d || !shown(el)) return null;
   const tile = el.classList.contains('rk-tile');
-  const frames = tile ? [{ opacity: 0, transform: 'translateY(6px) scale(0.96)' }, { opacity: 1, transform: 'none' }] : [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }];
-  return el.animate(frames, { duration: tile ? ms('--rk-duration-moderate') : d, easing: css('--rk-ease-in'), fill: 'backwards' }).finished.catch(() => {});
+  const frames = tile ? [{ opacity: 0, transform: 'translateY(6px) scale(0.96)' }, { opacity: 1, transform: 'none' }]
+    : el.matches(INLINE) ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }];
+  return el.animate(frames, { duration: tile ? ms('--rk-duration-moderate') : d, easing: css('--rk-ease-in'), fill: 'backwards' });
 }
-// leave(el): something goes: a row fades and drifts 12px towards its trailing edge, a tile shrinks and fades. The
-// animation holds its end until the caller hides or removes the element; resolves with it (cancel it afterwards).
+// leave(el): something goes: a row fades and drifts 12px towards its trailing edge, a tile shrinks and fades, a bar
+// control fades. The animation holds its end until the caller hides or removes the element; resolves with it (cancel
+// it afterwards).
 export function leave(el) {
   const d = ms('--rk-duration-short') * 0.6;
   if (!d || !shown(el)) return Promise.resolve(null);
   const tile = el.classList.contains('rk-tile');
-  const a = el.animate(tile ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.9)' }] : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(12px)' }], { duration: d, easing: css('--rk-ease-out'), fill: 'forwards' });
+  const frames = tile ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.9)' }]
+    : el.matches(INLINE) ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(12px)' }];
+  const a = el.animate(frames, { duration: d, easing: css('--rk-ease-out'), fill: 'forwards' });
   return a.finished.then(() => a, () => a);
 }
 // presence(scope, { items, show }): items come and go by show(item). Those that go leave first; then the rest close
-// the gap (FLIP) while those that come enter. A newer call finishes the one still running at once. More than 60
-// changes at a time are shown at once: motion is for a few things moving, not for a whole list replaced.
+// the gap (FLIP) while those that come enter. A bar control that comes waits, unseen, until the others have made room
+// for it, then fades in: the mirror of leaving, so nothing lies over its neighbour. A newer call finishes the one still
+// running at once. More than 60 changes at a time are shown at once: motion is for a few things moving, not for a
+// whole list replaced.
 const presenceRuns = new WeakMap();
 export async function presence(scope, { items = () => [...scope.children], show }) {
   const prev = presenceRuns.get(scope);
   if (prev) prev.finish();
   const all = typeof items === 'function' ? items() : [...items];
   const going = all.filter((el) => !el.hidden && !show(el)), coming = all.filter((el) => el.hidden && show(el));
-  let done = false, leaving = [];
+  let done = false, leaving = [], waiting = [];
   const apply = () => { going.forEach((el) => { el.hidden = true; }); coming.forEach((el) => { el.hidden = false; }); };
-  const run = { finish() { if (done) return; done = true; leaving.forEach((a) => a && a.cancel()); apply(); } };
+  const run = { finish() { waiting.forEach((a) => a.finish()); waiting = []; if (done) return; done = true; leaving.forEach((a) => a && a.cancel()); apply(); } };
   presenceRuns.set(scope, run);
   if (!going.length && !coming.length) { done = true; return; }
   if (!ms('--rk-duration-short') || going.length + coming.length > 60) { run.finish(); return; }
   leaving = await Promise.all(going.map(leave));
   if (done) return;
   done = true;
-  await reflow(scope, () => { apply(); leaving.forEach((a) => a && a.cancel()); coming.forEach(enter); }, { items: () => all.filter((el) => !el.hidden || going.includes(el)), size: false });
+  await reflow(scope, () => {
+    apply(); leaving.forEach((a) => a && a.cancel());
+    // A bar control's fade is held at its start, unseen, while the others glide.
+    for (const el of coming) { const a = arrival(el); if (a && el.matches(INLINE)) { a.pause(); waiting.push(a); } }
+  }, { items: () => all.filter((el) => !el.hidden || going.includes(el)), size: false });
+  waiting.forEach((a) => a.play());
+  await finished(waiting);
+  waiting = [];
   if (presenceRuns.get(scope) === run) presenceRuns.delete(scope);
 }
+// Several tiles with news within duration-moderate show it one after another in reading order (the document's),
+// duration-greet apart, four steps at most: the rest go with the fourth. Each tileUpdate() starts its animations at
+// once; the calls made together are sorted in a microtask, before the frame that would show them, and each one's
+// animations wait for its step.
+let news = null;
+function greet(tile, anims) {
+  if (!news) news = { t0: -Infinity, n: 0, batch: [] };
+  news.batch.push({ tile, anims });
+  if (news.batch.length > 1) return;
+  queueMicrotask(() => {
+    const now = performance.now(), batch = news.batch.sort((a, b) => (a.tile.compareDocumentPosition(b.tile) & 4 ? -1 : 1));
+    news.batch = [];
+    if (now - news.t0 > ms('--rk-duration-moderate')) { news.t0 = now; news.n = 0; }
+    const step = ms('--rk-duration-greet');
+    for (const { anims } of batch) {
+      const wait = Math.max(0, news.t0 + Math.min(news.n, 3) * step - now);
+      news.n += 1;
+      for (const a of anims) a.effect.updateTiming({ delay: a.effect.getTiming().delay + wait });
+    }
+  });
+}
+// indicate(control, content): a short indicator (a volume or a brightness being set) stands in place of a control:
+// the control turns away as a live tile does for a new status, and the indicator turns in; timing.level after the
+// last call it turns back. A call while it stands changes it in place: a reading that keeps changing is no news. The
+// control's own children are hidden meanwhile, and data-rk-indicating is on it. The words to hear go through a live
+// region, not through this.
+const indicating = new WeakMap();
+export function indicate(control, content) {
+  let s = indicating.get(control);
+  const back = () => {
+    const t = indicating.get(control);
+    if (!t) return;
+    indicating.delete(control);
+    tileUpdate(control, () => { t.node.remove(); t.hid.forEach((k) => { k.hidden = false; }); control.removeAttribute('data-rk-indicating'); }, { kind: 'flip' });
+  };
+  if (s) {
+    if (s.node !== content) { s.node.replaceWith(content); s.node = content; }
+  } else {
+    s = { node: content, hid: [], timer: 0 };
+    indicating.set(control, s);
+    tileUpdate(control, () => {
+      s.hid = [...control.children].filter((k) => !k.hidden);
+      s.hid.forEach((k) => { k.hidden = true; });
+      control.appendChild(s.node);
+      control.setAttribute('data-rk-indicating', '');
+    }, { kind: 'flip' });
+  }
+  clearTimeout(s.timer);
+  s.timer = setTimeout(back, ms('--rk-duration-level'));
+}
 // tileUpdate(tile, change, { kind }): a live tile has news. 'peek' (a new number or line): the new content rises
-// from below while the old one leaves upwards, over duration-moderate. 'flip' (a new status): the tile turns away
-// around its horizontal axis, changes, and turns back. A continuous reading (frames a second) is no news: it updates
-// in place. Inside a live region (live()) the change already waits while the region is held.
+// from peek-travel of its height below while the old one leaves upwards by as much, over duration-moderate. 'flip' (a
+// new status): the tile turns flip-angle away around its horizontal axis, changes, and turns back. What peeks is the
+// tile's .rk-stat, or the part a page marks data-rk-peek (a count in an app-bar control). A continuous reading
+// (frames a second) is no news: it updates in place. Inside a live region (live()) the change already waits while the
+// region is held. News on several tiles at once comes one after another (greet).
 export function tileUpdate(tile, change, { kind = 'peek' } = {}) {
   const d = ms('--rk-duration-moderate');
   if (!d || !shown(tile)) { change(); return Promise.resolve(); }
   if (kind === 'flip') {
-    const p = num('--rk-turnstile-perspective') || 800;
-    const a = tile.animate([{ transform: `perspective(${p}px) rotateX(0deg)` }, { transform: `perspective(${p}px) rotateX(-90deg)` }], { duration: d / 2, easing: css('--rk-ease-out'), fill: 'forwards' });
+    const p = num('--rk-turnstile-perspective') || 800, turn = num('--rk-flip-angle');
+    const a = tile.animate([{ transform: `perspective(${p}px) rotateX(0deg)` }, { transform: `perspective(${p}px) rotateX(${-turn}deg)` }], { duration: d / 2, easing: css('--rk-ease-out'), fill: 'forwards' });
+    greet(tile, [a]);
     return a.finished.catch(() => {}).then(() => {
       change();
       a.cancel();
-      return tile.animate([{ transform: `perspective(${p}px) rotateX(90deg)` }, { transform: `perspective(${p}px) rotateX(0deg)` }], { duration: d / 2, easing: css('--rk-ease-in') }).finished.catch(() => {});
+      return tile.animate([{ transform: `perspective(${p}px) rotateX(${turn}deg)` }, { transform: `perspective(${p}px) rotateX(0deg)` }], { duration: d / 2, easing: css('--rk-ease-in') }).finished.catch(() => {});
     });
   }
-  const target = tile.querySelector('.rk-stat') || tile;
+  const target = tile.querySelector('.rk-stat, [data-rk-peek]') || tile;
   const was = target.textContent;
   const ghost = target.cloneNode(true);
   const tr = tile.getBoundingClientRect(), r = target.getBoundingClientRect();
@@ -3482,15 +4219,33 @@ export function tileUpdate(tile, change, { kind = 'peek' } = {}) {
   ghost.style.cssText = `position:absolute;left:${r.left - tr.left}px;top:${r.top - tr.top}px;width:${r.width}px;margin:0;pointer-events:none`;
   tile.appendChild(ghost);
   tile.style.overflow = 'hidden';                                                    // the old number leaves through the edge
-  const out = ghost.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-40%)' }], { duration: d * 0.6, easing: css('--rk-ease-out'), fill: 'forwards' });
-  const inn = target.animate([{ opacity: 0, transform: 'translateY(40%)' }, { opacity: 1, transform: 'none' }], { duration: d * 0.8, delay: d * 0.2, easing: css('--rk-ease-in'), fill: 'backwards' });
+  const travel = num('--rk-peek-travel') * 100;
+  const out = ghost.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${-travel}%)` }], { duration: d * 0.6, easing: css('--rk-ease-out'), fill: 'forwards' });
+  const inn = target.animate([{ opacity: 0, transform: `translateY(${travel}%)` }, { opacity: 1, transform: 'none' }], { duration: d * 0.8, delay: d * 0.2, easing: css('--rk-ease-in'), fill: 'backwards' });
+  greet(tile, [out, inn]);
   return finished([out, inn]).then(() => { ghost.remove(); if (!tile.querySelector('.rk-stat[aria-hidden]')) tile.style.overflow = ''; });
+}
+// nudge(el, direction): a part that answers a gesture nobody can see (a swipe) hints at it when it is only tapped: it
+// moves nudge-distance the gesture's way ('left', 'right', 'up', 'down') and back, duration-short each way on
+// ease-landing, and rests where it was. The movement adds to the part's own transform, so a press still shows under
+// it; a tap while it moves starts it again. Under reduced motion it stays still: the words that name the gesture say it.
+const nudges = new WeakMap();
+export function nudge(el, direction) {
+  const d = ms('--rk-duration-short'), n = num('--rk-nudge-distance');
+  const to = { left: [-n, 0], right: [n, 0], up: [0, -n], down: [0, n] }[direction];
+  if (!to) throw new Error(`unknown nudge direction ${direction}`);
+  if (nudges.has(el)) nudges.get(el).cancel();
+  if (!d || !shown(el)) return Promise.resolve();
+  const ease = css('--rk-ease-landing');
+  const a = el.animate([{ transform: 'none', easing: ease }, { transform: `translate(${to[0]}px, ${to[1]}px)`, easing: ease }, { transform: 'none' }], { duration: 2 * d, composite: 'add' });
+  nudges.set(el, a);
+  return a.finished.catch(() => {}).then(() => { if (nudges.get(el) === a) nudges.delete(el); });
 }
 // sparkTo(line, points): a live line moves to its new points over duration-long instead of jumping. Points are an
 // SVG points list; with the same number of points each one travels, otherwise the line is redrawn at once.
 const sparkRuns = new WeakMap();
 export function sparkTo(line, points) {
-  const parse = (s) => (s || '').trim().split(/\s+/).map((p) => p.split(',').map(Number));
+  const parse = (s) => (s || '').trim().split(/\s+/).filter(Boolean).map((p) => p.split(',').map(Number));
   const from = parse(line.getAttribute('points')), to = parse(points), d = ms('--rk-duration-long');
   cancelAnimationFrame(sparkRuns.get(line) || 0);
   if (!d || from.length !== to.length) { line.setAttribute('points', points); return; }
@@ -3645,7 +4400,7 @@ export function stepper(el) {
     for (const b of btns) { const up = +b.dataset.rkStep > 0, at = Number.isFinite(v) && (up ? v >= max : v <= min); b.setAttribute('aria-disabled', String(at)); }
   };
   function step(b) {
-    if (b.getAttribute('aria-disabled') === 'true' || input.disabled) return false;
+    if (b.getAttribute('aria-disabled') === 'true' || input.disabled || input.getAttribute('aria-disabled') === 'true') return false;
     const n = +b.dataset.rkStep;
     try { if (n > 0) input.stepUp(n); else input.stepDown(-n); } catch { input.value = String((+input.value || 0) + n); }
     input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -3709,17 +4464,18 @@ const onRange = (e) => { if (e.target.matches && e.target.matches('input.rk-rang
 
 // drop(el, { onFiles, accept }): a .rk-drop zone around a file input takes files dropped on it or chosen with the
 // input. While files are dragged over it, it gets data-rk-over. Dropping files elsewhere on the page never opens
-// them in the browser while a zone is mounted.
+// them in the browser while a zone is mounted. While its input is disabled (or aria-disabled) it takes none.
 export function drop(el, { onFiles = null, accept = null } = {}) {
   const input = el.querySelector('input[type=file]');
   let depth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  const off = () => !!input && (input.disabled || input.getAttribute('aria-disabled') === 'true');
   const ok = (f) => !accept || accept.split(',').some((a) => { a = a.trim(); return a.startsWith('.') ? f.name.toLowerCase().endsWith(a.toLowerCase()) : a.endsWith('/*') ? f.type.startsWith(a.slice(0, -1)) : f.type === a; });
   const give = (files) => { const list = [...files].filter(ok); if (list.length && onFiles) onFiles(list, [...files].filter((f) => !ok(f))); };
-  const enter = (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth += 1; el.setAttribute('data-rk-over', ''); };
-  const over = (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
+  const enter = (e) => { if (!hasFiles(e)) return; e.preventDefault(); if (off()) return; depth += 1; el.setAttribute('data-rk-over', ''); };
+  const over = (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = off() ? 'none' : 'copy'; };
   const leave = () => { depth = Math.max(0, depth - 1); if (!depth) el.removeAttribute('data-rk-over'); };
-  const dropped = (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; el.removeAttribute('data-rk-over'); give(e.dataTransfer.files); };
+  const dropped = (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; el.removeAttribute('data-rk-over'); if (!off()) give(e.dataTransfer.files); };
   const page = (e) => { if (hasFiles(e) && !el.contains(e.target)) { e.preventDefault(); if (e.type === 'dragover') e.dataTransfer.dropEffect = 'none'; } };
   const chose = () => { give(input.files); input.value = ''; };
   el.addEventListener('dragenter', enter); el.addEventListener('dragover', over); el.addEventListener('dragleave', leave); el.addEventListener('drop', dropped);
@@ -3734,8 +4490,8 @@ export function drop(el, { onFiles = null, accept = null } = {}) {
 }
 
 // Start --------------------------------------------------------------------------------------------------------------
-// The defaults for a page: restore the user's prefs, press on tiles, sheets, steppers, sliders, switches, and the
-// first paint's build-in. An embedded page whose host owns theme, density and motion passes restore: false.
+// The defaults for a page: restore the user's prefs, press on tiles, sheets, steppers, sliders, switches, tile grids
+// (one tab stop, arrows), and the first paint's build-in. An embedded page whose host owns theme, density and motion passes restore: false.
 export function start({ root = document, restore = true, locale: tag = '', strings: words = null, focusFallback = null } = {}) {
   if (tag) setLocale(tag);
   if (focusFallback) fallbackFocus = focusFallback;
@@ -3744,6 +4500,7 @@ export function start({ root = document, restore = true, locale: tag = '', strin
   const parts = [press(root)];
   root.querySelectorAll('dialog.rk-sheet').forEach((d) => parts.push(sheet(d)));
   root.querySelectorAll('.rk-stepper').forEach((s) => parts.push(stepper(s)));
+  root.querySelectorAll('.rk-tiles').forEach((g) => { if (!g.hasAttribute('data-rk-select') && g.querySelector(OPENS)) parts.push(grid(g)); });
   root.querySelectorAll('input.rk-range').forEach(rangeFill);
   root.querySelectorAll('.rk-toggle input[type=checkbox]').forEach((i) => i.setAttribute('role', 'switch'));
   parts.push(tips());

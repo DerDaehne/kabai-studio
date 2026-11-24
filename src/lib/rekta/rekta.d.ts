@@ -1,11 +1,11 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
- * Tag: v0.5.0
+ * Commit: 1116956c67ed9d34a90a0bed18e1046ebdb3366e
+ * Tag: v0.6.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.d.ts
- * SHA-256 of everything below this header: ab1f23ea7afa5da6f8b8dc3b891f816fd28e130a2cc2411d3492c6e8844cf32d
+ * SHA-256 of everything below this header: 375b28397199af2d6c1132d5d92d0bb93a0d8c6cc9288edec326ebb0808353ea
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -18,7 +18,8 @@
 export interface Destroyable { destroy(): void; }
 
 type StatusName = 'info' | 'success' | 'warning' | 'error';
-type Word = string | ((...args: any[]) => string);
+// never[]: every word function, whatever it takes, is assignable to it, and no `any` reaches a product's linter.
+type Word = string | ((...args: never[]) => string);
 /** The forms of an entry that counts, one per category of Intl.PluralRules for the locale; `other` is the fallback. */
 export interface PluralForms { zero?: Word; one: Word; two?: Word; few?: Word; many?: Word; other: Word; }
 
@@ -47,7 +48,9 @@ export declare const tokens: {
   px(name: string, el?: Element): number;
 };
 
-type PrefName = 'theme' | 'density' | 'motion';
+type PrefName = 'theme' | 'density' | 'motion' | 'contrast' | 'transparency' | 'accent';
+/** A named accent of tokens/rekta.accents.json, or `product`: the product's own `--rk-accent` (ink when it sets none). */
+type AccentName = 'product' | 'ink' | 'teal' | 'steel' | 'violet' | 'mauve' | 'pink' | 'magenta';
 export declare const prefs: {
   key: string;
   read(): Partial<Record<PrefName, string>>;
@@ -55,9 +58,19 @@ export declare const prefs: {
   get(name: 'theme'): 'system' | 'light' | 'dark';
   get(name: 'density'): 'auto' | 'comfortable' | 'compact';
   get(name: 'motion'): 'system' | 'on' | 'off';
+  get(name: 'contrast'): 'system' | 'more' | 'normal';
+  get(name: 'transparency'): 'system' | 'reduce' | 'normal';
+  get(name: 'accent'): AccentName | (string & {});
   set(name: 'theme', value: 'system' | 'light' | 'dark', options?: { remember?: boolean }): void;
   set(name: 'density', value: 'auto' | 'comfortable' | 'compact', options?: { remember?: boolean }): void;
   set(name: 'motion', value: 'system' | 'on' | 'off', options?: { remember?: boolean }): void;
+  /** more: every text pair at 7:1 and a frame on status tiles; normal: as designed, whatever the system asks. */
+  set(name: 'contrast', value: 'system' | 'more' | 'normal', options?: { remember?: boolean }): void;
+  /** reduce: glass is the ground and nothing blurs; normal: glass, whatever the system asks. */
+  set(name: 'transparency', value: 'system' | 'reduce' | 'normal', options?: { remember?: boolean }): void;
+  /** A named accent wins over the product's own; `product` goes back to it. A product's own names work as well when it
+      styles `:root[data-accent="NAME"]` itself. */
+  set(name: 'accent', value: AccentName | (string & {}), options?: { remember?: boolean }): void;
   restore(): void;
 };
 
@@ -85,8 +98,9 @@ export declare function press(scope?: Document | Element): Destroyable;
 
 export declare function arrive(el: Element): void;
 export declare const turn: {
-  leave(place: Element, options?: { pressed?: Element | null; back?: boolean }): Promise<void>;
-  enter(place: Element, options?: { back?: boolean; focus?: HTMLElement | null; arriving?: boolean }): Promise<void>;
+  /** `called`: a change to or from a place that is called up (`data-rk-called`) turns at half the pace; by default, whether `place` is one. `carry`: a title that does not turn away but stands for the next enter(), which takes it to its own `carry`. */
+  leave(place: Element, options?: { pressed?: Element | null; back?: boolean; called?: boolean; carry?: Element | null }): Promise<void>;
+  enter(place: Element, options?: { back?: boolean; focus?: HTMLElement | null; arriving?: boolean; called?: boolean; carry?: Element | null }): Promise<void>;
   finish(): void;
   readonly running: boolean;
 };
@@ -131,13 +145,15 @@ export declare function pivot(el: HTMLElement, options?: {
 
 /** Every scrolled box of a place, and the window, as plain data for a router's history entry. */
 export interface ScrollState { y: number; at: Record<string, [number, number]>; }
-export declare function scrollState(root: Element): { capture(): ScrollState; restore(state: ScrollState | null | undefined): void };
+/** A restore that waits for content rendered after the navigation; `pending` until every offset is set or it gives up. */
+export interface ScrollRestore { readonly pending: boolean; cancel(): void; }
+export declare function scrollState(root: Element): Destroyable & { capture(): ScrollState; restore(state: ScrollState | null | undefined): ScrollRestore };
 
 export declare function strip(el: HTMLElement): Destroyable & { layout(): void };
 
 // Feedback ------------------------------------------------------------------------------------------------------------
 
-export type ToastEnd = 'expired' | 'undone' | 'replaced' | 'acted' | 'dismissed' | 'merged';
+export type ToastEnd = 'expired' | 'undone' | 'replaced' | 'acted' | 'opened' | 'dismissed' | 'merged';
 export interface ToastOptions {
   key?: string;
   undo?: (() => void) | null;
@@ -148,6 +164,16 @@ export interface ToastOptions {
   /** The undo window in ms (default: duration-toast). */
   windowMs?: number;
   onEnd?: ((reason: ToastEnd) => void) | null;
+  /** A notification's title, in semibold over its text (which is then cut after two lines). */
+  title?: string;
+  /** The sender's icon at the start: a name from the icon set, or an element drawn in the text colour. */
+  icon?: string | Element | null;
+  /** The notification's own picture (an avatar, a cover) in place of the icon, cropped square. */
+  picture?: string;
+  /** The default action: pressing the text runs it and the toast ends `opened`. */
+  open?: (() => void) | null;
+  /** From another program: it enters whole from the window's edge, and pressing its text closes it when it has no `open`. */
+  edge?: boolean;
 }
 export interface Toast {
   readonly key: string;
@@ -167,9 +193,24 @@ export interface Toast {
   /** Catches the window up with the clock (rekta.js calls it when the page comes back into view). */
   sync(): void;
   update(text: string, undo: (() => void) | null, options?: { windowMs?: number; onEnd?: ((reason: ToastEnd) => void) | null }): void;
+  /** A level indicator's key (`level()`), else null. */
+  readonly level: string | null;
+  /** A level indicator's new value (0 to 1) and figure: the meter glides, and its time starts again. */
+  setLevel(value: number, text: string): void;
+  readonly done: boolean;
+}
+export interface LevelOptions {
+  /** An icon from the set, beside the word. */
+  icon?: string;
+  /** The figure; by default the value in per cent, in the locale's way. */
+  text?: string;
+  /** Calls with the same key update the one open (default: the word). */
+  key?: string;
 }
 export interface Toaster extends Destroyable {
   show(text: string, options?: ToastOptions): Toast;
+  /** A level indicator for a value changed by a key (volume, brightness): word, meter (value 0 to 1) and figure. */
+  level(word: string, value: number, options?: LevelOptions): Toast;
   readonly open: Toast | null;
   dismiss(): void;
 }
@@ -208,16 +249,23 @@ export declare function banner(el: HTMLElement, options: {
 /** With `dirty`, a close request asks in the sheet before unsaved input goes. Called again for an attached sheet, it
  * updates the options and returns the same handle. */
 export declare function sheet(dialog: HTMLDialogElement, options?: { dirty?: (() => boolean) | null }): Destroyable & { readonly asking: boolean };
+/** Choosing in place: a control with `data-rk-in="ID"` opens that list in the place of its group; the back row, Escape
+ * and ← go back one level. */
+export declare function inPlace(scope: HTMLElement): Destroyable & { readonly depth: number; back(): boolean; reset(): void };
 export declare function busy<T>(region: HTMLElement, work: Promise<T> | (() => Promise<T>)): Promise<T>;
 export declare function pending<T>(button: HTMLElement, work: Promise<T> | (() => Promise<T>), options?: { label?: string }): Promise<T | undefined>;
 
 // Floating surfaces, collections --------------------------------------------------------------------------------------
 
-export declare function place(el: HTMLElement, anchor: Element): void;
+/** Below the control when it fits, else above, else on the side with more room, inside the window; `align: 'center'`
+ * (the default under a control marked `data-rk-align="center"`) centres it on the control. */
+export declare function place(el: HTMLElement, anchor: Element, options?: { align?: 'start' | 'center' }): void;
 
 export declare function menu(trigger: HTMLElement, el: HTMLElement, options?: {
   onSelect?: (item: HTMLElement) => void;
   summary?: string | null;
+  /** Default: the trigger's `data-rk-align`, else 'start'. */
+  align?: 'start' | 'center';
 }): Destroyable & {
   open(index?: number): void;
   close(focusTrigger?: boolean): void;
@@ -289,6 +337,8 @@ export declare function confirm(options: {
   kicker?: string;
   ok?: string;
   cancel?: string;
+  /** The primary answer, with focus. `'cancel'` for an action that cannot be undone: `ok` is then the destructive
+   * button (`data-status="error"`). */
   safe?: 'ok' | 'cancel';
   root?: Element;
 }): Promise<boolean>;
@@ -328,6 +378,9 @@ export declare function contextMenu(scope: Element, el: HTMLElement, options?: {
   onSelect?: ((item: HTMLElement, target: HTMLElement) => void) | null;
 }): Destroyable & { open(target: HTMLElement): void; close(): void; readonly target: HTMLElement | null };
 
+/** A grid of tiles that open: one tab stop, ← → ↑ ↓ to the nearest tile that way (across a panorama's grids), Home
+ * End, letters jump. start() attaches it to every .rk-tiles holding a tile that opens. */
+export declare function grid(el: HTMLElement): Destroyable & { refresh(): void };
 export declare function tree(el: HTMLElement, options?: {
   onShow?: ((li: HTMLElement) => void) | null;
   onToggle?: ((li: HTMLElement, open: boolean) => void) | null;
@@ -345,9 +398,18 @@ export declare function sortable(list: HTMLElement, options?: {
   onMove?: ((from: number, to: number, item: HTMLElement) => void) | null;
 }): Destroyable & { move(item: HTMLElement, to: number): boolean; refresh(): void };
 
+/** Entries a person may remove: a `data-rk-remove` button, Delete, or a drag towards the trailing edge. `left`: the
+ * entry has already gone from sight (a drag), so remove it at once. */
+export declare function removable(list: HTMLElement, options?: {
+  items?: string;
+  onRemove?: (item: HTMLElement, how: { left: boolean }) => void;
+}): Destroyable & { remove(item: HTMLElement): void };
+
 export declare function virtual(el: HTMLElement, options: {
   count?: number;
   render: (i: number, row: HTMLElement) => void;
+  /** An item's words, for the letter jump; without it, the text render() writes. */
+  text?: ((i: number) => string) | null;
   onShow?: ((i: number) => void) | null;
   onChange?: ((indices: number[], info: { mode: boolean }) => void) | null;
   appbar?: HTMLElement | null;
@@ -423,6 +485,10 @@ export declare function enter(el: Element): Promise<void>;
 export declare function leave(el: Element): Promise<Animation | null>;
 export declare function presence(scope: Element, options: { items?: (() => Element[]) | Iterable<Element>; show: (item: Element) => boolean }): Promise<void>;
 export declare function tileUpdate(tile: HTMLElement, change: () => void, options?: { kind?: 'peek' | 'flip' }): Promise<void>;
+/** A short indicator stands in place of an app-bar control and turns back `timing.level` after the last call. */
+export declare function indicate(control: HTMLElement, content: Element): void;
+/** A part that answers a gesture nobody can see hints at it when tapped: the gesture's way and back. */
+export declare function nudge(el: Element, direction: 'left' | 'right' | 'up' | 'down'): Promise<void>;
 /** `points` as in the polyline's attribute ("0,4 10,2 20,6"). */
 export declare function sparkTo(line: SVGPolylineElement, points: string): void;
 export declare function crossfade(change: () => void): Promise<void>;

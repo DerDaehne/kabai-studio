@@ -55,6 +55,10 @@ describe.each(Object.entries(vendoredFiles))('vendored %s', (name, text) => {
 		expect(text).toContain('Porsche Design System source code (Apache License 2.0)');
 	});
 
+	it('names a release tag, so the pin is a release and not a stray commit', () => {
+		expect(vendored.tag).toMatch(/^v\d+\.\d+\.\d+$/);
+	});
+
 	it('matches the SHA-256 in its header, so nobody edited the generated CSS by hand', () => {
 		expect(sha256(vendored.body)).toBe(vendored.sha256);
 	});

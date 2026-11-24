@@ -1,11 +1,11 @@
 /*!
  * Rekta Design, vendored unchanged. Regenerate with scripts/sync-rekta.ts; never edit by hand.
  * Source: https://github.com/DerDaehne/Rekta-Design
- * Commit: 1a4133f27c37025f4e6de97db8a8f4a30129a148
- * Tag: v0.5.0
+ * Commit: 1116956c67ed9d34a90a0bed18e1046ebdb3366e
+ * Tag: v0.6.0
  * Generator: scripts/build.mjs of Rekta Design
  * Output: dist/rekta.tokens.css
- * SHA-256 of everything below this header: c8920e0827d5437f0119c47b9709a69629b0d418df32dfe7dc20f1664fb58f9d
+ * SHA-256 of everything below this header: 8a2a22b1068856c4698983ca42a7073e4ef408eedf7d41a64ff48f5c2f28a10f
  * License: MIT, Copyright (c) 2026 DerDaehne; full text in NOTICE.
  * Notice: some token values derive from the Porsche Design System source code (Apache License 2.0).
  * No Porsche fonts, icons, assets or marks are included.
@@ -35,6 +35,11 @@
   --rk-status-error-full: #aa0013;
   --rk-status-error-soft: #ffe2e4;
   --rk-status-error-tile: #c86065;
+  --rk-content-teal: #56a8a7;
+  --rk-content-steel: #89a2b5;
+  --rk-content-violet: #9177b8;
+  --rk-content-plum: #c897ca;
+  --rk-content-rose: #efb8d1;
   --rk-focus: #1a44ea;
   --rk-hover: rgba(148, 149, 152, 0.18);
   --rk-disabled: #949598;
@@ -59,10 +64,13 @@
   --rk-font-size-xxl: clamp(1.875rem, 2.6cqi, 2.75rem);
   --rk-font-size-nav-active: clamp(2.5rem, 4.2cqi, 4.5rem);
   --rk-font-size-nav-inactive: clamp(1.375rem, 1.9cqi, 2rem);
+  --rk-font-size-display: clamp(5rem, 8.4cqi, 9rem);
   --rk-font-size-pivot-active: clamp(1.75rem, 2.6cqi, 2.625rem);
   --rk-font-size-pivot-inactive: clamp(1.25rem, 1.6cqi, 1.625rem);
   --rk-font-size-group: clamp(1.375rem, 1.7cqi, 1.875rem);
   --rk-font-size-title: clamp(1.875rem, 2.8cqi, 3rem);
+  --rk-font-ascent: 1;
+  --rk-font-descent: 0.2;
   --rk-line-height-body: 1.5;
   --rk-line-height-compact: 1.35;
   --rk-line-height-tight: 1.15;
@@ -82,6 +90,10 @@
   --rk-appbar-height: 3.5rem;
   --rk-touch-target: 2.75rem;
   --rk-pane-min: 15rem;
+  --rk-tip-gap: 6px;
+  --rk-day-cell: 36px;
+  --rk-tile-icon: 48px;
+  --rk-tile-icon-large: 96px;
   --rk-pivot-wide: 1300px;
   --rk-duration-press: 100ms;
   --rk-duration-short: 250ms;
@@ -90,21 +102,64 @@
   --rk-duration-pivot-glide: 500ms;
   --rk-duration-pivot-size: 220ms;
   --rk-duration-stagger: 30ms;
+  --rk-duration-greet: 75ms;
   --rk-duration-pulse: 1400ms;
   --rk-duration-busy: 1200ms;
   --rk-duration-float: 150ms;
   --rk-duration-dots: 2400ms;
+  --rk-duration-beads: 3000ms;
   --rk-ease-base: cubic-bezier(0.25, 0.1, 0.25, 1);
   --rk-ease-in: cubic-bezier(0, 0, 0.2, 1);
   --rk-ease-out: cubic-bezier(0.4, 0, 0.5, 1);
+  --rk-ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
   --rk-ease-pivot-glide: cubic-bezier(0.65, 0, 0.35, 1);
-  --rk-turnstile-angle: 40deg;
+  --rk-ease-turn-out: cubic-bezier(0.35, 0, 0.65, 0.6);
+  --rk-ease-turn-in: cubic-bezier(0.22, 0.9, 0.6, 0.98);
+  --rk-ease-landing: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --rk-turnstile-out-angle: 60deg;
+  --rk-turnstile-in-angle: 70deg;
+  --rk-turnstile-angle: var(--rk-turnstile-out-angle);
   --rk-turnstile-perspective: 800px;
+  --rk-turnstile-reach: 1.2;
+  --rk-turnstile-row: 8px;
+  --rk-turnstile-flush: 2px;
   --rk-slide-distance: 24px;
+  --rk-arrive-distance: 32px;
+  --rk-nudge-distance: 16px;
   --rk-tile-tilt: 8deg;
   --rk-tile-press-scale: 0.97;
   --rk-row-tilt: 2deg;
   --rk-row-press-scale: 0.99;
+  --rk-peek-travel: 0.4;
+  --rk-flip-angle: 90deg;
+  --rk-step-back-scale: 0.86;
+  --rk-step-back-brightness: 0.78;
+  --rk-turn-out-whole: 0.4;
+  --rk-turn-in-whole: 0.35;
+  --rk-turn-overlap: 0.75;
+  --rk-heft-tile: 0.8;
+  --rk-heft-reference: 150px;
+  --rk-heft-exponent: 0.35;
+  --rk-heft-min: 0.5;
+  --rk-heft-max: 1.4;
+  --rk-heft-spread: 6;
+  --rk-busy-segment: 0.3;
+  --rk-busy-from: -0.35;
+  --rk-busy-to: 1.05;
+  --rk-dots-stagger: 0.07;
+  --rk-dots-from: -0.02;
+  --rk-dots-middle-start: 0.44;
+  --rk-dots-middle-start-at: 0.35;
+  --rk-dots-middle-end: 0.56;
+  --rk-dots-middle-end-at: 0.62;
+  --rk-dots-to: 1.02;
+  --rk-dots-whole-at: 0.06;
+  --rk-dots-fade-at: 0.9;
+  --rk-dots-ease-arrive: cubic-bezier(0.1, 0.7, 0.4, 1);
+  --rk-dots-ease-leave: cubic-bezier(0.6, 0, 0.9, 0.3);
+  --rk-beads-track: 0.8;
+  --rk-beads-spacing: 0.16;
+  --rk-beads-fade: 0.12;
   --rk-duration-toast: 5000ms;
   --rk-duration-wheel-latch: 200ms;
   --rk-duration-tap-delay: 100ms;
@@ -113,6 +168,9 @@
   --rk-duration-tip-delay: 500ms;
   --rk-duration-long-press: 500ms;
   --rk-duration-stale: 30000ms;
+  --rk-duration-restore: 5000ms;
+  --rk-duration-type-ahead: 1000ms;
+  --rk-duration-level: 1500ms;
   --rk-layer-sticky: 10;
   --rk-layer-appbar: 20;
   --rk-layer-banner: 30;
@@ -151,6 +209,11 @@
     --rk-status-error-full: #fc4040;
     --rk-status-error-soft: #3a0f0f;
     --rk-status-error-tile: #76171f;
+    --rk-content-teal: #055959;
+    --rk-content-steel: #425565;
+    --rk-content-violet: #665283;
+    --rk-content-plum: #633d65;
+    --rk-content-rose: #7d415f;
     --rk-focus: #178bff;
     --rk-hover: rgba(148, 149, 152, 0.18);
     --rk-disabled: #7e7f82;
@@ -181,6 +244,11 @@
   --rk-status-error-full: #fc4040;
   --rk-status-error-soft: #3a0f0f;
   --rk-status-error-tile: #76171f;
+  --rk-content-teal: #055959;
+  --rk-content-steel: #425565;
+  --rk-content-violet: #665283;
+  --rk-content-plum: #633d65;
+  --rk-content-rose: #7d415f;
   --rk-focus: #178bff;
   --rk-hover: rgba(148, 149, 152, 0.18);
   --rk-disabled: #7e7f82;
@@ -218,10 +286,12 @@
     --rk-duration-pivot-glide: 0s;
     --rk-duration-pivot-size: 0s;
     --rk-duration-stagger: 0s;
+    --rk-duration-greet: 0s;
     --rk-duration-pulse: 0s;
     --rk-duration-busy: 0s;
     --rk-duration-float: 0s;
     --rk-duration-dots: 0s;
+    --rk-duration-beads: 0s;
   }
 }
 :root[data-motion="off"] {
@@ -232,8 +302,445 @@
   --rk-duration-pivot-glide: 0s;
   --rk-duration-pivot-size: 0s;
   --rk-duration-stagger: 0s;
+  --rk-duration-greet: 0s;
   --rk-duration-pulse: 0s;
   --rk-duration-busy: 0s;
   --rk-duration-float: 0s;
   --rk-duration-dots: 0s;
+  --rk-duration-beads: 0s;
+}
+
+/* More contrast: the system setting, unless the page chose normal; and an explicit choice. Light first, dark over it.
+   Both blocks set the same names (every colour either contrast set changes), so no light value reaches dark. */
+@media (prefers-contrast: more) {
+  :root:not([data-contrast="normal"]) {
+    --rk-text-contrast-medium: #4d4e51;
+    --rk-text-contrast-high: #424346;
+    --rk-status-success-tile: #74d8b0;
+    --rk-status-warning-tile: #f8d866;
+    --rk-status-error-tile: #dd7b7b;
+    --rk-content-teal: var(--rk-surface);
+    --rk-content-steel: var(--rk-surface);
+    --rk-content-violet: var(--rk-surface);
+    --rk-content-plum: var(--rk-surface);
+    --rk-content-rose: var(--rk-surface);
+    --rk-glass: var(--rk-bg);
+  }
+}
+:root[data-contrast="more"] {
+  --rk-text-contrast-medium: #4d4e51;
+  --rk-text-contrast-high: #424346;
+  --rk-status-success-tile: #74d8b0;
+  --rk-status-warning-tile: #f8d866;
+  --rk-status-error-tile: #dd7b7b;
+  --rk-content-teal: var(--rk-surface);
+  --rk-content-steel: var(--rk-surface);
+  --rk-content-violet: var(--rk-surface);
+  --rk-content-plum: var(--rk-surface);
+  --rk-content-rose: var(--rk-surface);
+  --rk-glass: var(--rk-bg);
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-text-contrast-medium: #aeafb1;
+    --rk-text-contrast-high: #c2c3c5;
+    --rk-status-success-tile: #245f5b;
+    --rk-status-warning-tile: #6c5310;
+    --rk-status-error-tile: #690615;
+    --rk-content-teal: var(--rk-surface);
+    --rk-content-steel: var(--rk-surface);
+    --rk-content-violet: var(--rk-surface);
+    --rk-content-plum: var(--rk-surface);
+    --rk-content-rose: var(--rk-surface);
+    --rk-glass: var(--rk-bg);
+  }
+}
+@media (prefers-contrast: more) {
+  :root:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-text-contrast-medium: #aeafb1;
+    --rk-text-contrast-high: #c2c3c5;
+    --rk-status-success-tile: #245f5b;
+    --rk-status-warning-tile: #6c5310;
+    --rk-status-error-tile: #690615;
+    --rk-content-teal: var(--rk-surface);
+    --rk-content-steel: var(--rk-surface);
+    --rk-content-violet: var(--rk-surface);
+    --rk-content-plum: var(--rk-surface);
+    --rk-content-rose: var(--rk-surface);
+    --rk-glass: var(--rk-bg);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-contrast="more"]:not([data-theme="light"]) {
+    --rk-text-contrast-medium: #aeafb1;
+    --rk-text-contrast-high: #c2c3c5;
+    --rk-status-success-tile: #245f5b;
+    --rk-status-warning-tile: #6c5310;
+    --rk-status-error-tile: #690615;
+    --rk-content-teal: var(--rk-surface);
+    --rk-content-steel: var(--rk-surface);
+    --rk-content-violet: var(--rk-surface);
+    --rk-content-plum: var(--rk-surface);
+    --rk-content-rose: var(--rk-surface);
+    --rk-glass: var(--rk-bg);
+  }
+}
+:root[data-contrast="more"][data-theme="dark"] {
+  --rk-text-contrast-medium: #aeafb1;
+  --rk-text-contrast-high: #c2c3c5;
+  --rk-status-success-tile: #245f5b;
+  --rk-status-warning-tile: #6c5310;
+  --rk-status-error-tile: #690615;
+  --rk-content-teal: var(--rk-surface);
+  --rk-content-steel: var(--rk-surface);
+  --rk-content-violet: var(--rk-surface);
+  --rk-content-plum: var(--rk-surface);
+  --rk-content-rose: var(--rk-surface);
+  --rk-glass: var(--rk-bg);
+}
+
+/* Reduced transparency: glass is the ground (rekta.css takes the blur away). */
+@media (prefers-reduced-transparency: reduce) {
+  :root:not([data-transparency="normal"]) {
+    --rk-glass: var(--rk-bg);
+  }
+}
+:root[data-transparency="reduce"] {
+  --rk-glass: var(--rk-bg);
+}
+
+/* Accent "ink". */
+:root[data-accent="ink"] {
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="ink"]:not([data-theme="light"]) {
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+  }
+}
+:root[data-accent="ink"][data-theme="dark"] {
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="ink"]:not([data-contrast="normal"]) {
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+  }
+}
+:root[data-accent="ink"][data-contrast="more"] {
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="ink"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="ink"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="ink"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: var(--rk-text-primary);
+    --rk-on-accent: var(--rk-bg);
+  }
+}
+:root[data-accent="ink"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: var(--rk-text-primary);
+  --rk-on-accent: var(--rk-bg);
+}
+
+/* Accent "teal". */
+:root[data-accent="teal"] {
+  --rk-accent: #049896;
+  --rk-on-accent: #010205;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="teal"]:not([data-theme="light"]) {
+    --rk-accent: #00aba9;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="teal"][data-theme="dark"] {
+  --rk-accent: #00aba9;
+  --rk-on-accent: #0e0e12;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="teal"]:not([data-contrast="normal"]) {
+    --rk-accent: #005f5e;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="teal"][data-contrast="more"] {
+  --rk-accent: #005f5e;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="teal"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #0daeac;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="teal"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #0daeac;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="teal"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #0daeac;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="teal"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #0daeac;
+  --rk-on-accent: #0e0e12;
+}
+
+/* Accent "steel". */
+:root[data-accent="steel"] {
+  --rk-accent: #637586;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="steel"]:not([data-theme="light"]) {
+    --rk-accent: #6c7e8f;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="steel"][data-theme="dark"] {
+  --rk-accent: #6c7e8f;
+  --rk-on-accent: #0e0e12;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="steel"]:not([data-contrast="normal"]) {
+    --rk-accent: #495a6a;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="steel"][data-contrast="more"] {
+  --rk-accent: #495a6a;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="steel"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #8d9fb1;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="steel"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #8d9fb1;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="steel"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #8d9fb1;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="steel"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #8d9fb1;
+  --rk-on-accent: #0e0e12;
+}
+
+/* Accent "violet". */
+:root[data-accent="violet"] {
+  --rk-accent: #65389f;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="violet"]:not([data-theme="light"]) {
+    --rk-accent: #c2a7f4;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="violet"][data-theme="dark"] {
+  --rk-accent: #c2a7f4;
+  --rk-on-accent: #0e0e12;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="violet"]:not([data-contrast="normal"]) {
+    --rk-accent: #65389f;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="violet"][data-contrast="more"] {
+  --rk-accent: #65389f;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="violet"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #c2a7f4;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="violet"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #c2a7f4;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="violet"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #c2a7f4;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="violet"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #c2a7f4;
+  --rk-on-accent: #0e0e12;
+}
+
+/* Accent "mauve". */
+:root[data-accent="mauve"] {
+  --rk-accent: #756089;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="mauve"]:not([data-theme="light"]) {
+    --rk-accent: #7a648e;
+    --rk-on-accent: #fbfcff;
+  }
+}
+:root[data-accent="mauve"][data-theme="dark"] {
+  --rk-accent: #7a648e;
+  --rk-on-accent: #fbfcff;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="mauve"]:not([data-contrast="normal"]) {
+    --rk-accent: #655078;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="mauve"][data-contrast="more"] {
+  --rk-accent: #655078;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="mauve"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #aa93c0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="mauve"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #aa93c0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="mauve"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #aa93c0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="mauve"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #aa93c0;
+  --rk-on-accent: #0e0e12;
+}
+
+/* Accent "pink". */
+:root[data-accent="pink"] {
+  --rk-accent: #d858b6;
+  --rk-on-accent: #010205;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="pink"]:not([data-theme="light"]) {
+    --rk-accent: #f472d0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="pink"][data-theme="dark"] {
+  --rk-accent: #f472d0;
+  --rk-on-accent: #0e0e12;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="pink"]:not([data-contrast="normal"]) {
+    --rk-accent: #9e1c81;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="pink"][data-contrast="more"] {
+  --rk-accent: #9e1c81;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="pink"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #f472d0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="pink"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #f472d0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="pink"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #f472d0;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="pink"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #f472d0;
+  --rk-on-accent: #0e0e12;
+}
+
+/* Accent "magenta". */
+:root[data-accent="magenta"] {
+  --rk-accent: #d70473;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="magenta"]:not([data-theme="light"]) {
+    --rk-accent: #d70473;
+    --rk-on-accent: #fbfcff;
+  }
+}
+:root[data-accent="magenta"][data-theme="dark"] {
+  --rk-accent: #d70473;
+  --rk-on-accent: #fbfcff;
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="magenta"]:not([data-contrast="normal"]) {
+    --rk-accent: #95004e;
+    --rk-on-accent: #ffffff;
+  }
+}
+:root[data-accent="magenta"][data-contrast="more"] {
+  --rk-accent: #95004e;
+  --rk-on-accent: #ffffff;
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root[data-accent="magenta"]:not([data-contrast="normal"]):not([data-theme="light"]) {
+    --rk-accent: #ff9bbb;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-accent="magenta"]:not([data-contrast="normal"])[data-theme="dark"] {
+    --rk-accent: #ff9bbb;
+    --rk-on-accent: #0e0e12;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="magenta"][data-contrast="more"]:not([data-theme="light"]) {
+    --rk-accent: #ff9bbb;
+    --rk-on-accent: #0e0e12;
+  }
+}
+:root[data-accent="magenta"][data-contrast="more"][data-theme="dark"] {
+  --rk-accent: #ff9bbb;
+  --rk-on-accent: #0e0e12;
 }
