@@ -225,6 +225,19 @@ describe('hello and welcome', () => {
 	});
 });
 
+describe('closing the channel', () => {
+	it('lets connected machines leave before the database closes, so no late write hits a closed database', async () => {
+		const failures = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { socket } = await join();
+		const end = closed(socket);
+		channel.close();
+		db.close();
+		await end;
+		db = openDb(':memory:'); // the hook after each test closes it again
+		expect(failures).not.toHaveBeenCalled();
+	});
+});
+
 describe('revoking', () => {
 	it('closes the open socket at once', async () => {
 		const { socket } = await join();

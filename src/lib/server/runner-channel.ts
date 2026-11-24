@@ -140,8 +140,13 @@ class Channel implements RunnerChannel {
 		}
 	}
 
+	// The machines leave the register now, while the database is still open: a terminated socket reports its close later.
 	close() {
-		for (const socket of this.open.keys()) socket.terminate();
+		for (const [socket, name] of this.open) {
+			this.open.delete(socket);
+			this.unregister(socket, name);
+			socket.terminate();
+		}
 		this.wss.close();
 	}
 
