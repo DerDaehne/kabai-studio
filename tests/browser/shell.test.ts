@@ -257,18 +257,46 @@ test('the keys sheet closes when the browser goes back to another page', async (
 	await expect(sheet).toBeHidden();
 });
 
-test('a sheet opened as soon as the address has changed stays open, also when the new page is slow to settle', async ({
-	page
-}) => {
-	await open(page, '/');
-	const cpu = await page.context().newCDPSession(page);
-	await cpu.send('Emulation.setCPUThrottlingRate', { rate: 20 });
-	await titleOf(page, 'takt').click();
-	await page.waitForURL('/takt');
-	await page.keyboard.press('?');
-	await cpu.send('Emulation.setCPUThrottlingRate', { rate: 1 });
-	await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeVisible();
-});
+/** Runs `act` as its own task right after the next history entry is pushed: input that arrives once a link changed the address. */
+function actRightAfterAddressChange(page: Page, act: 'keys' | 'command' | 'halt') {
+	return page.evaluate((what) => {
+		const push = history.pushState;
+		history.pushState = function (...args: Parameters<History['pushState']>) {
+			push.apply(this, args);
+			history.pushState = push;
+			setTimeout(() => {
+				if (what === 'halt')
+					document.querySelector<HTMLButtonElement>('button[title^="Alle Runs anhalten"]')!.click();
+				else
+					document.body.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: what === 'keys' ? '?' : ':',
+							bubbles: true,
+							cancelable: true
+						})
+					);
+			});
+		};
+	}, act);
+}
+
+for (const [act, name] of [
+	['keys', 'Alle Tasten'],
+	['command', 'Befehlszeile'],
+	['halt', 'Alle Agents anhalten?']
+] as const) {
+	test(`the ${act} sheet opened right after a link changed the address stays open on the new page`, async ({
+		page
+	}) => {
+		await open(page, '/');
+		await actRightAfterAddressChange(page, act);
+		await titleOf(page, 'takt').click();
+		await expect(titleOf(page, 'takt')).toHaveAttribute('aria-current', 'page');
+		await twoFrames(page); // the navigation ends (afterNavigate) after the new page has rendered
+		// open, not visible: a closing sheet stays visible while it slides away
+		await expect(page.getByRole('dialog', { name })).toHaveJSProperty('open', true);
+	});
+}
 
 test('the halt confirmation sheet closes when the browser goes back to another page', async ({
 	page

@@ -13,8 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     # Measured on the nightly runs: setup, build and browser install take about 5 min, the 3x unit suite about 4.5 min and
     # the 3x browser suite 30 to 38 min on one pinned core, so the whole job took 34 to 44 min and sometimes hit the limit.
-    # Three shards of the browser suite take 10 to 13 min each; the unit suite runs on the first shard only. The slowest
-    # shard needs about 5 + 4.5 + 13 x 1.15 (uneven shards) = 25 min, which leaves 20 min below the limit.
+    # Estimate, not yet measured: three shards of the browser suite take about a third each, 10 to 13 min; the unit suite
+    # runs on the first shard only. The slowest shard needs about 5 + 4.5 + 13 x 1.15 (uneven shards) = 25 min, which
+    # leaves 20 min below the limit. Replace the estimate with the leg times of the first sharded run.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -83,7 +84,9 @@ jobs:
   # Separate job so only this one needs issues: write, scoped to the single step that uses it.
   report-failure:
     needs: [stress, rekta-drift]
-    if: failure()
+    # A leg that hits timeout-minutes ends as cancelled, not failed. cancelled() is true only when the whole run was
+    # cancelled, so a timed-out leg is reported and a run that someone cancelled is not.
+    if: ${{ !cancelled() && (needs.stress.result == 'failure' || needs.stress.result == 'cancelled' || needs.rekta-drift.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -105,5 +108,5 @@ jobs:
               gh issue create --repo "$REPO" --title "$title" --body "$body"
             fi
           }
-          if [ "$STRESS_RESULT" = failure ]; then report "Nightly stress run failing"; fi
+          if [ "$STRESS_RESULT" = failure ] || [ "$STRESS_RESULT" = cancelled ]; then report "Nightly stress run failing"; fi
           if [ "$REKTA_DRIFT_RESULT" = failure ]; then report "Rekta Design tokens drifted from upstream"; fi

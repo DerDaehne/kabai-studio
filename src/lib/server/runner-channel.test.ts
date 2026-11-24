@@ -236,6 +236,21 @@ describe('closing the channel', () => {
 		db = openDb(':memory:'); // the hook after each test closes it again
 		expect(failures).not.toHaveBeenCalled();
 	});
+
+	it('stamps last seen, forgets and announces each machine as the channel closes', async () => {
+		const { runner } = await join();
+		db.prepare('UPDATE runners SET last_seen_at = NULL').run();
+		events.length = 0;
+		channel.close();
+		expect(channel.connected().size).toBe(0);
+		const row = db.prepare('SELECT last_seen_at FROM runners WHERE name = ?').get(runner.name) as {
+			last_seen_at: string | null;
+		};
+		expect(row.last_seen_at).not.toBeNull();
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: 'machine.disconnected', name: runner.name })
+		);
+	});
 });
 
 describe('revoking', () => {
