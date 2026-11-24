@@ -1,8 +1,10 @@
 // Vendors Rekta Design: builds a Rekta commit once in a throwaway clone and writes its token stylesheet, its component
 // stylesheet, its script and the script's declarations, byte for byte, each below its own provenance header.
 //
-//   node scripts/sync-rekta.ts [source] [--ref <commit>]   update the vendored files (default: upstream, its HEAD)
-//   node scripts/sync-rekta.ts --check [source]             rebuild the pinned commit and upstream HEAD, report drift
+//   node scripts/sync-rekta.ts [source] [--ref <tag|commit>]  update the vendored files (default: upstream's newest v* tag)
+//   node scripts/sync-rekta.ts --check [source]                rebuild the pin and upstream's newest v* tag, report drift
+//
+// Commits on upstream's default branch after the newest tag are unreleased and never count as drift.
 //
 // `source` is anything `git clone` accepts; a local checkout stays untouched. The header always names the public
 // upstream, never the source given here.
@@ -46,6 +48,7 @@ export interface Build {
 export interface Vendored {
 	body: string;
 	commit: string | undefined;
+	tag: string | undefined;
 	sha256: string | undefined;
 }
 
@@ -80,17 +83,35 @@ export function provenanceHeader(
 /** Splits the vendored file into its provenance fields and the generated CSS below the header. */
 export function splitVendored(text: string): Vendored {
 	const end = text.startsWith('/*!') ? text.indexOf(HEADER_END) : -1;
-	if (end < 0) return { body: text, commit: undefined, sha256: undefined };
+	if (end < 0) return { body: text, commit: undefined, tag: undefined, sha256: undefined };
 	const header = text.slice(0, end);
 	return {
 		body: text.slice(end + HEADER_END.length),
 		commit: header.match(/^ \* Commit: ([0-9a-f]{40})$/m)?.[1],
+		tag: header.match(/^ \* Tag: (v\S+)$/m)?.[1],
 		sha256: header.match(/^ \* SHA-256 of everything below this header: ([0-9a-f]{64})$/m)?.[1]
 	};
 }
 
 function git(cwd: string, ...args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+/** The newest release tag in version order; upstream without one has nothing to vendor or compare against. */
+export function latestReleaseTag(clone: string): string {
+	const [newest] = git(clone, 'tag', '--list', 'v*', '--sort=-v:refname').split('\n');
+	if (!newest)
+		throw new RektaProblem(
+			'Rekta Design has no release tag (v*); pin a commit with --ref <commit> or ask upstream to tag a release.'
+		);
+	return newest;
+}
+
+/** Builds `ref`, or the newest release tag when no ref is given. */
+export function buildRelease(clone: string, ref?: string): Build {
+	if (ref) return buildAt(clone, ref);
+	const tag = latestReleaseTag(clone);
+	return { ...buildAt(clone, tag), tag };
 }
 
 function tagOf(clone: string): string | undefined {
@@ -142,8 +163,8 @@ function withClone<T>(source: string, work: (clone: string) => T): T {
 	}
 }
 
-function sync(source: string, ref: string): void {
-	const { commit, tag, generator, files } = withClone(source, (clone) => buildAt(clone, ref));
+function sync(source: string, ref?: string): void {
+	const { commit, tag, generator, files } = withClone(source, (clone) => buildRelease(clone, ref));
 	for (const file of VENDORED_FILES) {
 		mkdirSync(new URL(`${file.directory}/`, LIB), { recursive: true });
 		writeFileSync(
@@ -187,6 +208,7 @@ export function check(source: string, vendoredTexts: Record<TargetName, string>)
 	const offline = offlineProblem(vendored);
 	if (offline) return [offline];
 	const pinned = vendored[VENDORED_FILES[0].target].commit!;
+	const pinnedLabel = vendored[VENDORED_FILES[0].target].tag ?? pinned;
 	const differing = (build: Build) =>
 		VENDORED_FILES.map(({ target }) => target).filter(
 			(target) => build.files[target] !== vendored[target].body
@@ -196,15 +218,15 @@ export function check(source: string, vendoredTexts: Record<TargetName, string>)
 		const rebuilt = attempt(() => buildAt(clone, pinned), problems);
 		for (const target of rebuilt ? differing(rebuilt) : [])
 			problems.push(`The pinned commit ${pinned} no longer builds the vendored ${target}.`);
-		const upstream = attempt(() => buildAt(clone, 'origin/HEAD'), problems);
-		const drifted = upstream ? differing(upstream) : [];
-		if (upstream && drifted.length === 0)
+		const release = attempt(() => buildRelease(clone), problems);
+		const drifted = release ? differing(release) : [];
+		if (release && drifted.length === 0)
 			console.log(
-				`Rekta Design HEAD is ${upstream.commit}; all vendored files match the pinned ${pinned}.`
+				`Rekta Design ${release.tag} is ${release.commit}; all vendored files match the pin ${pinnedLabel}.`
 			);
-		if (upstream && drifted.length > 0)
+		if (release && drifted.length > 0)
 			problems.push(
-				`Rekta Design ${upstream.commit} changed ${drifted.join(' and ')} against the pinned ${pinned}; review the Rekta changelog, then run the sync to update.`
+				`Rekta Design ${release.tag} (${release.commit}) changed ${drifted.join(' and ')} against the pinned ${pinnedLabel}; read its CHANGELOG section, then run \`node scripts/sync-rekta.ts --ref ${release.tag}\`.`
 			);
 		return problems;
 	});
@@ -214,7 +236,7 @@ function main(): void {
 	const { values, positionals } = parseArgs({
 		options: {
 			check: { type: 'boolean', default: false },
-			ref: { type: 'string', default: 'origin/HEAD' }
+			ref: { type: 'string' }
 		},
 		allowPositionals: true
 	});

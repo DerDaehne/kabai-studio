@@ -5,7 +5,9 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	buildAt,
+	buildRelease,
 	check,
+	latestReleaseTag,
 	provenanceHeader,
 	RektaProblem,
 	sha256,
@@ -154,7 +156,17 @@ describe('check', () => {
 				cwd: pinned.source,
 				encoding: 'utf8'
 			}).trim();
+		git('tag', 'v0.1.0');
 		return { ...pinned, git };
+	}
+
+	function commitComponents(pinned: ReturnType<typeof pinnedRekta>, components: string): string {
+		writeFileSync(
+			join(pinned.source, 'scripts/build.mjs'),
+			generatorThatWrites(upstreamFiles('tokens', components))
+		);
+		pinned.git('commit', '--quiet', '-am', 'change components');
+		return pinned.git('rev-parse', 'HEAD');
 	}
 
 	it('is silent when every file matches the pin and upstream', () => {
@@ -162,23 +174,60 @@ describe('check', () => {
 		expect(check(source, vendoredFor(commit, files))).toEqual([]);
 	});
 
-	it('names the one file that drifted upstream, with both commits and a way out', () => {
+	it('names the tag, commit and file of a newer release and the command that adopts it', () => {
 		const pinned = pinnedRekta();
-		writeFileSync(
-			join(pinned.source, 'scripts/build.mjs'),
-			generatorThatWrites(upstreamFiles('tokens', 'new components'))
-		);
-		pinned.git('commit', '--quiet', '-am', 'next');
-		const head = pinned.git('rev-parse', 'HEAD');
+		const head = commitComponents(pinned, 'new components');
+		pinned.git('tag', 'v0.2.0');
 
 		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
 
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toContain(
-			`Rekta Design ${head} changed rekta.css against the pinned ${pinned.commit}`
+			`Rekta Design v0.2.0 (${head}) changed rekta.css against the pinned ${pinned.commit}`
 		);
 		expect(problems[0]).not.toContain('rekta.tokens.css');
-		expect(problems[0]).toContain('run the sync to update');
+		expect(problems[0]).toContain('`node scripts/sync-rekta.ts --ref v0.2.0`');
+	});
+
+	it('names the pinned tag when the vendored header has one', () => {
+		const pinned = pinnedRekta();
+		commitComponents(pinned, 'new components');
+		pinned.git('tag', 'v0.2.0');
+		const taggedHeaders = Object.fromEntries(
+			VENDORED_FILES.map(({ output, target }) => [
+				target,
+				provenanceHeader(pinned.commit, 'scripts/build.mjs', output, files[target], 'v0.1.0') +
+					files[target]
+			])
+		) as Record<TargetName, string>;
+
+		expect(check(pinned.source, taggedHeaders)[0]).toContain('against the pinned v0.1.0;');
+	});
+
+	it('ignores commits after the newest tag, even when they change a file', () => {
+		const pinned = pinnedRekta();
+		commitComponents(pinned, 'unreleased components');
+
+		expect(check(pinned.source, vendoredFor(pinned.commit, files))).toEqual([]);
+	});
+
+	it('compares against the newest tag in version order, not the latest created', () => {
+		const pinned = pinnedRekta();
+		commitComponents(pinned, 'new components');
+		pinned.git('tag', 'v0.10.0');
+		pinned.git('tag', 'v0.9.0');
+
+		expect(check(pinned.source, vendoredFor(pinned.commit, files))[0]).toContain('v0.10.0');
+	});
+
+	it('reports upstream without any release tag as one line with a way out', () => {
+		const { source, commit } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
+
+		const problems = check(source, vendoredFor(commit, files));
+
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain('has no release tag');
+		expect(problems[0]).toContain('--ref <commit>');
 	});
 
 	it("reports upstream dropping one vendored output instead of reading the pinned build's stale file", () => {
@@ -189,6 +238,7 @@ describe('check', () => {
 			generatorThatWrites({ ...rest, 'dist/rekta.components.css': 'components' })
 		);
 		pinned.git('commit', '--quiet', '-am', 'rename the component sheet');
+		pinned.git('tag', 'v0.2.0');
 
 		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
 
@@ -225,10 +275,51 @@ describe('check', () => {
 		const pinned = pinnedRekta();
 		pinned.git('rm', '--quiet', 'scripts/build.mjs');
 		pinned.git('commit', '--quiet', '-m', 'drop generator');
+		pinned.git('tag', 'v0.2.0');
 
 		const problems = check(pinned.source, vendoredFor(pinned.commit, files));
 
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toMatch(/has no scripts\/build.mjs/);
+	});
+});
+
+describe('the default release', () => {
+	function taggedThenMoved() {
+		const { source, commit } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
+		const git = (...args: string[]) =>
+			execFileSync('git', [...gitIdentity, ...args], { cwd: source, encoding: 'utf8' }).trim();
+		git('tag', 'v1.0.0');
+		writeFileSync(
+			join(source, 'scripts/build.mjs'),
+			generatorThatWrites(upstreamFiles('tokens', 'unreleased components'))
+		);
+		git('commit', '--quiet', '-am', 'unreleased');
+		return { source, released: commit };
+	}
+
+	it('builds the newest release tag rather than the default branch when no ref is given', () => {
+		const { source, released } = taggedThenMoved();
+
+		const build = buildRelease(clone(source));
+
+		expect(build.commit).toBe(released);
+		expect(build.tag).toBe('v1.0.0');
+		expect(build.files['rekta.css']).toBe('components');
+	});
+
+	it('still builds an explicit ref', () => {
+		const { source } = taggedThenMoved();
+
+		expect(buildRelease(clone(source), 'origin/HEAD').files['rekta.css']).toBe(
+			'unreleased components'
+		);
+	});
+
+	it('refuses to pick a default when upstream has no release tag', () => {
+		const { source } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
+
+		expect(() => latestReleaseTag(clone(source))).toThrow(RektaProblem);
+		expect(() => buildRelease(clone(source))).toThrow(/has no release tag/);
 	});
 });
