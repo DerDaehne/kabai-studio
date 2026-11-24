@@ -257,6 +257,19 @@ test('the keys sheet closes when the browser goes back to another page', async (
 	await expect(sheet).toBeHidden();
 });
 
+test('a sheet opened as soon as the address has changed stays open, also when the new page is slow to settle', async ({
+	page
+}) => {
+	await open(page, '/');
+	const cpu = await page.context().newCDPSession(page);
+	await cpu.send('Emulation.setCPUThrottlingRate', { rate: 20 });
+	await titleOf(page, 'takt').click();
+	await page.waitForURL('/takt');
+	await page.keyboard.press('?');
+	await cpu.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+	await expect(page.getByRole('dialog', { name: 'Alle Tasten' })).toBeVisible();
+});
+
 test('the halt confirmation sheet closes when the browser goes back to another page', async ({
 	page
 }) => {

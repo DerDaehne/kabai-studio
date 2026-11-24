@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { afterNavigate } from '$app/navigation';
+	import { onNavigate } from '$app/navigation';
 	import { globalHaltCommands } from './commands';
 	import { pauseAll, pauseQuestion, resumeAll, stopAll, stopQuestion } from './halt';
 	import { live } from './live.svelte';
@@ -42,7 +42,9 @@
 	let confirming = $state<keyof typeof CONFIRMATIONS>();
 	const confirmation = $derived(confirming && CONFIRMATIONS[confirming]);
 
-	afterNavigate(() => (confirming = undefined));
+	onNavigate(() => {
+		confirming = undefined;
+	});
 
 	async function confirm() {
 		const run = confirmation?.run;

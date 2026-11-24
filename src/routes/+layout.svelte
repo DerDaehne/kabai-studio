@@ -75,9 +75,10 @@
 
 	let keysOpen = $state(false);
 
-	// a sheet belongs to the page it was opened on; invalidate() is no navigation, so live events leave it open
 	afterNavigate(recordNavigation);
-	afterNavigate(() => {
+	// A sheet belongs to the page it was opened on; invalidate() is no navigation, so live events leave it open. It closes
+	// before the address changes: afterNavigate runs later, and a sheet opened in between would close at once.
+	onNavigate(() => {
 		commandOpen = false;
 		keysOpen = false;
 	});
