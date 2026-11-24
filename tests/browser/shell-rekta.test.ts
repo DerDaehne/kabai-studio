@@ -124,12 +124,27 @@ test('the least important control moves into "mehr" first: tasten, at the first 
 	await page.setViewportSize(DESKTOP);
 	await open(page, '/');
 	const moved = barOf(page).locator('[data-rk-overflow]');
-	let width = DESKTOP.width;
-	for (; width > PHONE.width; width -= 4) {
-		await page.setViewportSize({ width, height: 700 });
-		await page.waitForTimeout(60); // the bar re-measures on the resize
-		if ((await moved.count()) > 0) break;
+	const STEP = 4;
+	const widthAt = (steps: number) => DESKTOP.width - steps * STEP;
+	const overflowsAfter = async (steps: number) => {
+		await page.setViewportSize({ width: widthAt(steps), height: 700 });
+		// the bar re-measures in the frame after the resize observer fires
+		await page.evaluate(
+			() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+		);
+		return (await moved.count()) > 0;
+	};
+	// Overflow only grows as the window narrows, so the first width where a control moves can be bisected; a linear
+	// walk down from the desktop width needs ~270 resizes and ran into the test timeout on a contended CPU.
+	let fitting = 0;
+	let overflowing = Math.floor((DESKTOP.width - PHONE.width) / STEP);
+	while (overflowing - fitting > 1) {
+		const middle = Math.floor((fitting + overflowing) / 2);
+		if (await overflowsAfter(middle)) overflowing = middle;
+		else fitting = middle;
 	}
+	await overflowsAfter(overflowing);
+	const width = widthAt(overflowing);
 	await expect(moved, `one control moves at ${width} px`).toHaveCount(1);
 	await expect(moved).toHaveText('tasten');
 });
