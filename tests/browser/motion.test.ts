@@ -6,7 +6,7 @@ import { createProfile, createRun, finishRun, startRun } from '../../src/lib/ser
 import { expect, intoWorkStep, open, queueRun, test } from './fixtures.ts';
 
 const HUMAN: Actor = { kind: 'user' };
-const REKTA_EASE_OUT = 'cubic-bezier(0.4, 0, 0.5, 1)';
+const REKTA_EASE_TURN_IN = 'cubic-bezier(0.22, 0.9, 0.6, 0.98)';
 
 /** Seeds a run of `ticketId` that already ended in failure, so the start page shows a tile for it. */
 function failedRun(db: DatabaseSync, ticketId: number): void {
@@ -69,7 +69,7 @@ test('headings use the Rekta weights: the title 600, the group headings 500', as
 	expect(weights).toEqual(['600', '500', '500']);
 });
 
-test("the turnstile eases with Rekta's curve and keeps its duration", async ({ page }) => {
+test("the turnstile comes in on Rekta's turn curve and keeps its duration", async ({ page }) => {
 	await open(page, '/');
 	await page.evaluate(() => {
 		const seen: string[][] = [];
@@ -89,7 +89,7 @@ test("the turnstile eases with Rekta's curve and keeps its duration", async ({ p
 	await expect(page).toHaveURL('/takt');
 	await expect
 		.poll(() => page.evaluate(() => (window as unknown as { turnstile: string[][] }).turnstile))
-		.toContainEqual([REKTA_EASE_OUT, '0.4s']);
+		.toContainEqual([REKTA_EASE_TURN_IN, '0.4s']);
 });
 
 test.describe('tiles build in', () => {

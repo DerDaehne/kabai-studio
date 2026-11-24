@@ -170,25 +170,26 @@ a.rk-btn {
 ::view-transition-new(root) {
 	transform-origin: left center;
 	animation-duration: var(--motion-moderate);
-	animation-timing-function: var(--ease-out);
 	animation-fill-mode: both;
 }
 ::view-transition-old(root) {
 	animation-name: turnstile-out;
+	animation-timing-function: var(--ease-turn-out);
 }
 ::view-transition-new(root) {
 	animation-name: turnstile-in;
+	animation-timing-function: var(--ease-turn-in);
 }
 @keyframes turnstile-out {
 	to {
 		opacity: 0;
-		transform: perspective(1400px) rotateY(calc(-1 * var(--motion-turnstile)));
+		transform: perspective(1400px) rotateY(calc(-1 * var(--motion-turnstile-out)));
 	}
 }
 @keyframes turnstile-in {
 	from {
 		opacity: 0;
-		transform: perspective(1400px) rotateY(var(--motion-turnstile));
+		transform: perspective(1400px) rotateY(var(--motion-turnstile-in));
 	}
 }
 

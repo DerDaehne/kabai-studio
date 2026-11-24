@@ -231,11 +231,14 @@
 	--motion-short: var(--rk-duration-short);
 	--motion-moderate: var(--rk-duration-moderate);
 	--motion-long: var(--rk-duration-long);
-	--motion-turnstile: var(--rk-turnstile-angle);
+	--motion-turnstile-out: var(--rk-turnstile-out-angle);
+	--motion-turnstile-in: var(--rk-turnstile-in-angle);
 	--motion-slide: var(--rk-slide-distance);
 	--motion-stagger: var(--rk-duration-stagger);
 	--motion-pivot-glide: var(--rk-duration-pivot-glide);
 	--ease-pivot-glide: var(--rk-ease-pivot-glide);
+	--ease-turn-out: var(--rk-ease-turn-out);
+	--ease-turn-in: var(--rk-ease-turn-in);
 	--ease-base: var(--rk-ease-base);
 
 	/* Shell: the window scrolls under a sticky head and above a fixed app bar, whose height the page keeps free */

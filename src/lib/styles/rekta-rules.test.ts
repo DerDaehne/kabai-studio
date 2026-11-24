@@ -23,9 +23,25 @@ describe("Rekta's basic rules", () => {
 		expect(tokens).not.toMatch(/pointer:\s*coarse/);
 	});
 
-	it("eases the turnstile with Rekta's curve", () => {
-		expect(styles('tokens.css')).toMatch(/--ease-out: var\(--rk-ease-out\);/);
-		expect(styles('base.css')).toMatch(/animation-timing-function: var\(--ease-out\);/);
+	it("turns the turnstile out and in with Rekta's angles and curves", () => {
+		const tokens = styles('tokens.css');
+		expect(tokens).toMatch(/--motion-turnstile-out: var\(--rk-turnstile-out-angle\);/);
+		expect(tokens).toMatch(/--motion-turnstile-in: var\(--rk-turnstile-in-angle\);/);
+		expect(tokens).toMatch(/--ease-turn-out: var\(--rk-ease-turn-out\);/);
+		expect(tokens).toMatch(/--ease-turn-in: var\(--rk-ease-turn-in\);/);
+		const base = styles('base.css');
+		expect(base).toMatch(/turnstile-out;\s+animation-timing-function: var\(--ease-turn-out\);/);
+		expect(base).toMatch(/turnstile-in;\s+animation-timing-function: var\(--ease-turn-in\);/);
+		expect(base).toMatch(/rotateY\(calc\(-1 \* var\(--motion-turnstile-out\)\)\)/);
+		expect(base).toMatch(/rotateY\(var\(--motion-turnstile-in\)\)/);
+	});
+
+	it('reads no turnstile angle through the deprecated alias', () => {
+		const readers = globSync('src/**/*.{svelte,css,ts}')
+			.filter((file) => !/(^|\/)rekta(\.tokens\.css|\.css|\.js|\.d\.ts)$/.test(file))
+			.filter((file) => !file.endsWith('.test.ts'))
+			.filter((file) => /--rk-turnstile-angle\b/.test(readFileSync(file, 'utf8')));
+		expect(readers).toEqual([]);
 	});
 });
 
