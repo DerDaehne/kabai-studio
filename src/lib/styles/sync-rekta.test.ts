@@ -1,5 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -211,7 +219,34 @@ describe('check', () => {
 		expect(check(pinned.source, vendoredFor(pinned.commit, files))).toEqual([]);
 	});
 
-	it('compares against the newest tag in version order, not the latest created', () => {
+	it('ignores a pre-release tag above the newest release', () => {
+		const pinned = pinnedRekta();
+		commitComponents(pinned, 'candidate components');
+		pinned.git('tag', 'v0.2.0-rc.1');
+
+		expect(check(pinned.source, vendoredFor(pinned.commit, files))).toEqual([]);
+	});
+
+	it('prefers a release over its own release candidate', () => {
+		const pinned = pinnedRekta();
+		const released = commitComponents(pinned, 'released components');
+		pinned.git('tag', 'v0.2.0');
+		pinned.git('tag', 'v0.2.0-rc.1');
+
+		expect(check(pinned.source, vendoredFor(pinned.commit, files))[0]).toContain(
+			`Rekta Design v0.2.0 (${released})`
+		);
+	});
+
+	it('ignores a tag that starts with v but is no version', () => {
+		const pinned = pinnedRekta();
+		commitComponents(pinned, 'vendor components');
+		pinned.git('tag', 'vendor-snapshot');
+
+		expect(check(pinned.source, vendoredFor(pinned.commit, files))).toEqual([]);
+	});
+
+	it('compares against the newest tag in version order: v0.10.0 comes after v0.9.0', () => {
 		const pinned = pinnedRekta();
 		commitComponents(pinned, 'new components');
 		pinned.git('tag', 'v0.10.0');
@@ -321,5 +356,47 @@ describe('the default release', () => {
 
 		expect(() => latestReleaseTag(clone(source))).toThrow(RektaProblem);
 		expect(() => buildRelease(clone(source))).toThrow(/has no release tag/);
+	});
+});
+
+describe('the sync command', () => {
+	/** Runs a copy of the script, so its writes land below a scratch src/lib instead of the app's. */
+	function runSync(...args: string[]) {
+		const root = mkdtempSync(join(tmpdir(), 'sync-cli-'));
+		scratchDirs.push(root);
+		mkdirSync(join(root, 'scripts'));
+		copyFileSync('scripts/sync-rekta.ts', join(root, 'scripts/sync-rekta.ts'));
+		const run = spawnSync(process.execPath, [join(root, 'scripts/sync-rekta.ts'), ...args], {
+			encoding: 'utf8'
+		});
+		const vendoredCss = join(root, 'src/lib/styles/rekta.css');
+		return { ...run, css: existsSync(vendoredCss) ? readFileSync(vendoredCss, 'utf8') : undefined };
+	}
+
+	it('vendors the newest release tag, not the default branch, when no ref is given', () => {
+		const { source } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
+		const git = (...args: string[]) =>
+			execFileSync('git', [...gitIdentity, ...args], { cwd: source, encoding: 'utf8' }).trim();
+		git('tag', 'v1.0.0');
+		writeFileSync(
+			join(source, 'scripts/build.mjs'),
+			generatorThatWrites(upstreamFiles('tokens', 'unreleased components'))
+		);
+		git('commit', '--quiet', '-am', 'unreleased');
+
+		const { status, css } = runSync(source);
+
+		expect(status).toBe(0);
+		expect(splitVendored(css!)).toMatchObject({ body: 'components', tag: 'v1.0.0' });
+	});
+
+	it('reports upstream without a release tag as one line and writes nothing', () => {
+		const { source } = fakeRekta(buildScript(upstreamFiles('tokens', 'components')));
+
+		const { status, stderr, css } = runSync(source);
+
+		expect(status).toBe(1);
+		expect(stderr.trim().split('\n')).toEqual([expect.stringContaining('has no release tag')]);
+		expect(css).toBeUndefined();
 	});
 });

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { sha256, splitVendored, UPSTREAM } from '../../../scripts/sync-rekta.ts';
+import { RELEASE_TAG, sha256, splitVendored, UPSTREAM } from '../../../scripts/sync-rekta.ts';
 
 // Offline drift guard for the vendored Rekta Design files. Comparing against upstream needs the network and
 // runs nightly (scripts/sync-rekta.ts --check); this suite only proves the files are what the sync wrote.
@@ -56,7 +56,7 @@ describe.each(Object.entries(vendoredFiles))('vendored %s', (name, text) => {
 	});
 
 	it('names a release tag, so the pin is a release and not a stray commit', () => {
-		expect(vendored.tag).toMatch(/^v\d+\.\d+\.\d+$/);
+		expect(vendored.tag).toMatch(RELEASE_TAG);
 	});
 
 	it('matches the SHA-256 in its header, so nobody edited the generated CSS by hand', () => {

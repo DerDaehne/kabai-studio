@@ -97,12 +97,17 @@ function git(cwd: string, ...args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
+/** A release is a plain vX.Y.Z tag; pre-releases and other v-words are not. */
+export const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+
 /** The newest release tag in version order; upstream without one has nothing to vendor or compare against. */
 export function latestReleaseTag(clone: string): string {
-	const [newest] = git(clone, 'tag', '--list', 'v*', '--sort=-v:refname').split('\n');
+	const newest = git(clone, 'tag', '--list', 'v*', '--sort=-v:refname')
+		.split('\n')
+		.find((tag) => RELEASE_TAG.test(tag));
 	if (!newest)
 		throw new RektaProblem(
-			'Rekta Design has no release tag (v*); pin a commit with --ref <commit> or ask upstream to tag a release.'
+			'Rekta Design has no release tag (vX.Y.Z); ask upstream to tag a release, or pin a commit with --ref <commit> and give the release-tag test in src/lib/styles/rekta.test.ts a reason to accept it.'
 		);
 	return newest;
 }

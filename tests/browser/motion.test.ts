@@ -6,6 +6,7 @@ import { createProfile, createRun, finishRun, startRun } from '../../src/lib/ser
 import { expect, intoWorkStep, open, queueRun, test } from './fixtures.ts';
 
 const HUMAN: Actor = { kind: 'user' };
+const REKTA_EASE_TURN_OUT = 'cubic-bezier(0.35, 0, 0.65, 0.6)';
 const REKTA_EASE_TURN_IN = 'cubic-bezier(0.22, 0.9, 0.6, 0.98)';
 
 /** Seeds a run of `ticketId` that already ended in failure, so the start page shows a tile for it. */
@@ -69,16 +70,24 @@ test('headings use the Rekta weights: the title 600, the group headings 500', as
 	expect(weights).toEqual(['600', '500', '500']);
 });
 
-test("the turnstile comes in on Rekta's turn curve and keeps its duration", async ({ page }) => {
+test("the turnstile turns out and in on Rekta's two turn curves and keeps its duration", async ({
+	page
+}) => {
 	await open(page, '/');
 	await page.evaluate(() => {
-		const seen: string[][] = [];
-		(window as unknown as { turnstile: string[][] }).turnstile = seen;
+		const seen: Record<string, string[][]> = { old: [], new: [] };
+		(window as unknown as { turnstile: typeof seen }).turnstile = seen;
 		const sample = () => {
-			const style = getComputedStyle(document.documentElement, '::view-transition-new(root)');
-			if (style.animationName === 'turnstile-in')
-				seen.push([style.animationTimingFunction, style.animationDuration]);
-			if (seen.length < 5) requestAnimationFrame(sample);
+			for (const side of ['old', 'new'] as const) {
+				const style = getComputedStyle(document.documentElement, `::view-transition-${side}(root)`);
+				if (style.animationName.startsWith('turnstile-'))
+					seen[side].push([
+						style.animationName,
+						style.animationTimingFunction,
+						style.animationDuration
+					]);
+			}
+			if (seen.old.length + seen.new.length < 10) requestAnimationFrame(sample);
 		};
 		sample();
 	});
@@ -87,9 +96,14 @@ test("the turnstile comes in on Rekta's turn curve and keeps its duration", asyn
 		.getByRole('link', { name: /^takt/i })
 		.click();
 	await expect(page).toHaveURL('/takt');
+	const turnstile = () =>
+		page.evaluate(() => (window as unknown as { turnstile: Record<string, string[][]> }).turnstile);
 	await expect
-		.poll(() => page.evaluate(() => (window as unknown as { turnstile: string[][] }).turnstile))
-		.toContainEqual([REKTA_EASE_TURN_IN, '0.4s']);
+		.poll(async () => (await turnstile()).old)
+		.toContainEqual(['turnstile-out', REKTA_EASE_TURN_OUT, '0.4s']);
+	await expect
+		.poll(async () => (await turnstile()).new)
+		.toContainEqual(['turnstile-in', REKTA_EASE_TURN_IN, '0.4s']);
 });
 
 test.describe('tiles build in', () => {
