@@ -83,16 +83,16 @@
 			<li class="row" data-run={run.id}>
 				<span class="head">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a href={ticketHref(run.project.code, refNumber(run.ticket), { run: run.id })}
-						>{run.ticket}</a
-					>
-					<Tag tone={run.state === 'waiting' ? 'warning' : 'info'}
-						>{t(`start.state.${run.state}` as MessageKey)}</Tag
-					>
+					<a href={ticketHref(run.project.code, refNumber(run.ticket), { run: run.id })}>
+						{run.ticket}
+					</a>
+					<Tag tone={run.state === 'waiting' ? 'warning' : 'info'}>
+						{t(`start.state.${run.state}` as MessageKey)}
+					</Tag>
 				</span>
-				<span class="detail"
-					>{run.profile} · {t(`start.location.${run.location}` as MessageKey)}</span
-				>
+				<span class="detail">
+					{run.profile} · {t(`start.location.${run.location}` as MessageKey)}
+				</span>
 				{#if tracked}
 					<span class="detail">{phaseWord(run.id)}</span>
 					<span class="ticker mono">{tickerLine(run.id)}</span>

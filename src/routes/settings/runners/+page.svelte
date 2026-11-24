@@ -89,9 +89,9 @@
 						{t('runners.neverConnected')}
 					{/if}
 				</span>
-				<Button variant="ghost" size="sm" onclick={() => (disconnecting = runner)}
-					>{t('runners.disconnect')}</Button
-				>
+				<Button variant="ghost" size="sm" onclick={() => (disconnecting = runner)}>
+					{t('runners.disconnect')}
+				</Button>
 			</li>
 		{/each}
 	</ul>
@@ -131,9 +131,9 @@
 	<p>{t('runners.disconnect.body')}</p>
 	{#snippet footer()}
 		<!-- svelte-ignore a11y_autofocus -->
-		<Button variant="primary" autofocus onclick={() => (disconnecting = undefined)}
-			>{t('runners.cancel')}</Button
-		>
+		<Button variant="primary" autofocus onclick={() => (disconnecting = undefined)}>
+			{t('runners.cancel')}
+		</Button>
 		<form
 			method="POST"
 			action="?/disconnect"

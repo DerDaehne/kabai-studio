@@ -27,10 +27,9 @@
 		/>
 		<span>
 			Einzeltasten
-			<span class="muted"
-				>Aus: jede Taste nur mit Alt, etwa <Kbd key="Alt" /><Kbd key="j" />. Hilft bei
-				Spracheingabe.</span
-			>
+			<span class="muted">
+				Aus: jede Taste nur mit Alt, etwa <Kbd key="Alt" /><Kbd key="j" />. Hilft bei Spracheingabe.
+			</span>
 		</span>
 	</label>
 	{#each groups as [title, bindings = []] (title)}

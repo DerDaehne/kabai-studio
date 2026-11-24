@@ -29,9 +29,9 @@
 				<span class="detail">{duration(run)}</span>
 				{#if run.summary}<span class="detail">{run.summary}</span>{/if}
 				{#if run.failure?.wayOut}
-					<span class="detail"
-						>{t('start.ops.wayOut', { text: firstLine(run.failure.wayOut) })}</span
-					>
+					<span class="detail">
+						{t('start.ops.wayOut', { text: firstLine(run.failure.wayOut) })}
+					</span>
 				{/if}
 			</li>
 		{/each}

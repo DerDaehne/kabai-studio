@@ -12,9 +12,9 @@
 <h1>Secrets</h1>
 <p>
 	API-Keys und Tokens, verschlüsselt gespeichert. Nach dem Speichern zeigt Studio einen Wert nie
-	wieder an — nur ersetzen oder löschen. In Agent-Profilen und MCP-Servern verweist <code
-		>secret:&lt;name&gt;</code
-	> darauf.
+	wieder an — nur ersetzen oder löschen. In Agent-Profilen und MCP-Servern verweist <code>
+		secret:&lt;name&gt;
+	</code> darauf.
 </p>
 <ul>
 	{#each data.secrets as secret (secret.name)}

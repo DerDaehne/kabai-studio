@@ -101,9 +101,9 @@
 	<p>{confirmation?.question(live.activeRuns)}</p>
 	{#snippet footer()}
 		<!-- svelte-ignore a11y_autofocus -->
-		<Button variant="primary" autofocus onclick={() => (confirming = undefined)}
-			>Weiterlaufen lassen</Button
-		>
+		<Button variant="primary" autofocus onclick={() => (confirming = undefined)}>
+			Weiterlaufen lassen
+		</Button>
 		<Button variant="danger" onclick={confirm}>{confirmation?.action}</Button>
 	{/snippet}
 </Dialog>

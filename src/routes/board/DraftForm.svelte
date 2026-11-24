@@ -40,11 +40,11 @@
 		{@attach focusField}
 	/>
 	<Button type="submit" size="sm">{t('board.draft.create')}</Button>
-	<span class="hint"
-		><Kbd key="Enter" />
+	<span class="hint">
+		<Kbd key="Enter" />
 		{t('board.draft.hintCreate')} · <Kbd key="Escape" />
-		{t('board.draft.hintDiscard')}</span
-	>
+		{t('board.draft.hintDiscard')}
+	</span>
 	{#if error}<p class="refusal" role="alert">{error}</p>{/if}
 </form>
 

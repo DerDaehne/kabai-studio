@@ -114,9 +114,9 @@
 	{:else}
 		<EmptyState title="Noch kein Agent-Profil">
 			Ein Run braucht ein Agent-Profil, lokal oder in der Cloud.
-			{#snippet action()}<a class="rk-btn rk-btn--primary" href="/settings/profiles"
-					>Agent-Profil anlegen</a
-				>{/snippet}
+			{#snippet action()}<a class="rk-btn rk-btn--primary" href="/settings/profiles">
+					Agent-Profil anlegen
+				</a>{/snippet}
 		</EmptyState>
 	{/if}
 
@@ -148,8 +148,9 @@
 									<Button size="sm" onclick={() => resumeRun(tab.id)}>Fortsetzen</Button>
 								{/if}
 								{#if isPausable(tab)}
-									<Button size="sm" variant="ghost" onclick={() => (pausing = tab)}>Anhalten</Button
-									>
+									<Button size="sm" variant="ghost" onclick={() => (pausing = tab)}>
+										Anhalten
+									</Button>
 								{/if}
 								{#if isStoppable(tab)}
 									<Button size="sm" variant="ghost" onclick={() => (stopping = tab)}>
@@ -187,9 +188,9 @@
 		>
 			<input type="hidden" name="runId" value={stopping.id} />
 			{@render formError('stop')}
-			<Button type="button" variant="ghost" onclick={() => (stopping = undefined)}
-				>Weiterlaufen lassen</Button
-			>
+			<Button type="button" variant="ghost" onclick={() => (stopping = undefined)}>
+				Weiterlaufen lassen
+			</Button>
 			<Button type="submit" variant="danger">Abbrechen (y)</Button>
 		</form>
 	{/if}

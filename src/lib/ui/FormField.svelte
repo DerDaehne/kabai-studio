@@ -33,10 +33,10 @@
 </script>
 
 <div class="rk-field" data-status={error ? 'error' : undefined}>
-	<label class="rk-label" for={id}
-		>{label}{#if optional}{' '}
-			<span class="rk-optional">{t('form.optional')}</span>{/if}</label
-	>
+	<label class="rk-label" for={id}>
+		{label}{#if optional}{' '}
+			<span class="rk-optional">{t('form.optional')}</span>{/if}
+	</label>
 	{@render children({
 		id,
 		class: 'rk-input',

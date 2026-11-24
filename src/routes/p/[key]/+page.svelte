@@ -45,8 +45,9 @@
 				/>
 			{/snippet}
 		</FormField>
-		<Button type="submit" variant="primary" loading={creating}>{t('projects.ticket.create')}</Button
-		>
+		<Button type="submit" variant="primary" loading={creating}>
+			{t('projects.ticket.create')}
+		</Button>
 	</form>
 </section>
 

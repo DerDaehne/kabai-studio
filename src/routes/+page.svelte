@@ -412,9 +412,9 @@
 							>
 								<span class="row-head">
 									<ProjectTag code={run.project.code} palette={run.project.palette} />
-									<a href={ticketHref(run.project.code, run.number, { run: run.id })}
-										>{run.ticket}</a
-									>
+									<a href={ticketHref(run.project.code, run.number, { run: run.id })}>
+										{run.ticket}
+									</a>
 									<span class="muted">{run.profile}</span>
 								</span>
 								<span class="detail">{run.waitText}</span>
@@ -441,16 +441,18 @@
 							>
 								<span class="row-head">
 									<ProjectTag code={run.project.code} palette={run.project.palette} />
-									<a href={ticketHref(run.project.code, run.number, { run: run.id })}
-										>{run.ticket}</a
-									>
+									<a href={ticketHref(run.project.code, run.number, { run: run.id })}>
+										{run.ticket}
+									</a>
 									<Tag
 										tone={run.state === 'failed'
 											? 'error'
 											: run.state === 'succeeded'
 												? 'success'
-												: 'neutral'}>{t(`start.state.${run.state}` as MessageKey)}</Tag
+												: 'neutral'}
 									>
+										{t(`start.state.${run.state}` as MessageKey)}
+									</Tag>
 								</span>
 								<span class="detail">
 									{duration(run.startedAt, run.finishedAt)} · {costText(run.cost)}
@@ -461,9 +463,9 @@
 									</span>
 								{/if}
 								{#if run.failure?.wayOut}
-									<span class="detail"
-										>{t('start.ops.wayOut', { text: firstLine(run.failure.wayOut) })}</span
-									>
+									<span class="detail">
+										{t('start.ops.wayOut', { text: firstLine(run.failure.wayOut) })}
+									</span>
 								{/if}
 							</li>
 						{/each}
@@ -528,11 +530,13 @@
 					class="more"
 					data-detail={short.rest ? '' : undefined}
 					href={tile.href}
-					aria-label={t('start.tile.moreLabel', { ref: tile.ticket })}>{t('start.tile.more')}</a
+					aria-label={t('start.tile.moreLabel', { ref: tile.ticket })}
 				>
-				{#if question.profile}<span class="muted"
-						>{t('start.tile.asks', { profile: question.profile })}</span
-					>{/if}
+					{t('start.tile.more')}
+				</a>
+				{#if question.profile}<span class="muted">
+						{t('start.tile.asks', { profile: question.profile })}
+					</span>{/if}
 				<span class="options">
 					{#each question.options.slice(0, 3) as option, index (index)}
 						<button
@@ -540,11 +544,12 @@
 							class="option"
 							title={plainText(option.label)}
 							onclick={() => answer(question, index + 1)}
-							>{t('start.answer.option', {
+						>
+							{t('start.answer.option', {
 								number: index + 1,
 								label: plainText(option.label)
-							})}</button
-						>
+							})}
+						</button>
 					{/each}
 				</span>
 			</Tile>
@@ -560,9 +565,9 @@
 					<span>{tile.ticket}</span>
 					<Tag tone={tile.tone}>{stateWord(tile)}</Tag>
 				</span>
-				{#if tile.run}<span class="muted"
-						>{tile.run.profile} · {t(`start.location.${tile.run.location}` as MessageKey)}</span
-					>{/if}
+				{#if tile.run}<span class="muted">
+						{tile.run.profile} · {t(`start.location.${tile.run.location}` as MessageKey)}
+					</span>{/if}
 				{#if tile.failed?.summary}<span class="failure">{tile.failed.summary}</span>{/if}
 				{#if track}
 					<span class="muted">{phaseWord(track.id)}</span>
@@ -606,9 +611,9 @@
 		>
 			<input type="hidden" name="runId" value={stopping} />
 			<!-- svelte-ignore a11y_autofocus -->
-			<Button type="button" variant="primary" autofocus onclick={() => (stopping = undefined)}
-				>{t('start.stop.keep')}</Button
-			>
+			<Button type="button" variant="primary" autofocus onclick={() => (stopping = undefined)}>
+				{t('start.stop.keep')}
+			</Button>
 			<Button type="submit" variant="danger">{t('start.stop.confirm')}</Button>
 		</form>
 	{/snippet}

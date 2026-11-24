@@ -8,11 +8,11 @@
 </script>
 
 <span class="stat">
-	<span class="value"
-		>{typeof value === 'number' ? numbers.format(value) : value}{#if unit}<span class="unit"
-				>&nbsp;{unit}</span
-			>{/if}</span
-	>
+	<span class="value">
+		{typeof value === 'number' ? numbers.format(value) : value}{#if unit}<span class="unit">
+				&nbsp;{unit}
+			</span>{/if}
+	</span>
 	<span class="label">{label}</span>
 </span>
 

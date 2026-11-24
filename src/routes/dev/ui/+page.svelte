@@ -332,9 +332,9 @@
 			<Badge tone="accent">Epic</Badge>
 		</div>
 		<div class="row" role="list" aria-label="Projektpalette">
-			{#each projects as project (project.code)}<span role="listitem"
-					><ProjectTag {...project} /></span
-				>{/each}
+			{#each projects as project (project.code)}<span role="listitem">
+					<ProjectTag {...project} />
+				</span>{/each}
 		</div>
 	</section>
 
@@ -352,26 +352,31 @@
 		<h2 id="h-shell">Shell</h2>
 		<p class="muted">Füttert Kopf-Dock, Tastenleiste und Suche (/) mit Beispieldaten.</p>
 		<div class="row">
-			<Button variant="secondary" size="sm" onclick={() => (agentCount = agentCount === 2 ? 3 : 2)}
-				>{agentCount === 2 ? '3 Agents' : '2 Agents'}</Button
-			>
+			<Button variant="secondary" size="sm" onclick={() => (agentCount = agentCount === 2 ? 3 : 2)}>
+				{agentCount === 2 ? '3 Agents' : '2 Agents'}
+			</Button>
 			<Button
 				variant="secondary"
 				size="sm"
 				onclick={() => (shell.focus = { id: 1, code: 'STU', palette: 1, name: 'kabai studio' })}
-				>Projekt-Fokus</Button
 			>
+				Projekt-Fokus
+			</Button>
 			<Button variant="secondary" size="sm" onclick={announceSignal}>Neues Signal</Button>
 			<Button
 				variant="secondary"
 				size="sm"
-				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : 'g')}>Präfix g</Button
+				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : 'g')}
 			>
+				Präfix g
+			</Button>
 			<Button
 				variant="secondary"
 				size="sm"
-				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : '3')}>Zähler 3</Button
+				onclick={() => (shell.pendingKeys = shell.pendingKeys ? '' : '3')}
 			>
+				Zähler 3
+			</Button>
 		</div>
 	</section>
 
@@ -391,11 +396,11 @@
 			/>, <Kbd key="d" /><Kbd key="d" /> löschen, <Kbd key=">" /><Kbd key="<" /> Spalte,
 			<Kbd key="u" /> und <Kbd key="Ctrl+r" />; <Kbd key="?" /> zeigt alle Tasten.
 		</p>
-		<label
-			><input type="checkbox" bind:checked={decisionInFocus} /> Entscheidung im Fokus (<Kbd
+		<label>
+			<input type="checkbox" bind:checked={decisionInFocus} /> Entscheidung im Fokus (<Kbd
 				key="1"
-			/>–<Kbd key="3" /> antworten)</label
-		>
+			/>–<Kbd key="3" /> antworten)
+		</label>
 		<ol class="demo-rows" aria-label="Beispielzeilen">
 			{#each rows as row, index (row.id)}
 				<li aria-current={index === selected || undefined}>
@@ -413,8 +418,9 @@
 		<fieldset class="row">
 			<legend>Glas-Stärke</legend>
 			<label><input type="radio" name="glass" bind:group={glass} value="bold" /> Mutig</label>
-			<label><input type="radio" name="glass" bind:group={glass} value="frosted" /> Milchglas</label
-			>
+			<label>
+				<input type="radio" name="glass" bind:group={glass} value="frosted" /> Milchglas
+			</label>
 			<label><input type="radio" name="glass" bind:group={glass} value="solid" /> Solide</label>
 		</fieldset>
 		<p class="muted">
@@ -430,9 +436,10 @@
 						class:selected={lane.key === focusedLane}
 						aria-current={lane.key === focusedLane || undefined}
 					>
-						<span class="mono"
-							><ProjectTag code={lane.code} palette={lane.project} /> {lane.ticket}</span
-						>
+						<span class="mono">
+							<ProjectTag code={lane.code} palette={lane.project} />
+							{lane.ticket}
+						</span>
 						<span class="title">{lane.title}</span>
 						<Badge tone={lane.badge}>{lane.state}</Badge>
 					</article>
@@ -454,9 +461,9 @@
 		<div class="row">
 			<Button onclick={() => advance(1)}>Weiterrücken</Button>
 			<Button variant="ghost" onclick={() => advance(-1)}>Rückgängig</Button>
-			<Button variant="ghost" onclick={() => (noteShown = !noteShown)}
-				>Hinweis {noteShown ? 'ausblenden' : 'einblenden'}</Button
-			>
+			<Button variant="ghost" onclick={() => (noteShown = !noteShown)}>
+				Hinweis {noteShown ? 'ausblenden' : 'einblenden'}
+			</Button>
 		</div>
 		<div class="queue">
 			{#key question}
@@ -500,11 +507,13 @@
 		<div class="table-wrap">
 			<table>
 				<thead>
-					<tr
-						><th scope="col">Ticket</th><th scope="col">Titel</th><th scope="col">Status</th><th
-							scope="col">Rolle</th
-						><th scope="col">Aktiv</th></tr
-					>
+					<tr>
+						<th scope="col">Ticket</th><th scope="col">Titel</th><th scope="col">Status</th><th
+							scope="col"
+						>
+							Rolle
+						</th><th scope="col">Aktiv</th>
+					</tr>
 				</thead>
 				<tbody>
 					{#each runs as run (run.key)}
@@ -544,9 +553,9 @@
 			</FormField>
 			<FormField label="Agent-Profil">
 				{#snippet children(a)}
-					<select {...a}
-						><option>Developer</option><option>Reviewer</option><option>Refiner</option></select
-					>
+					<select {...a}>
+						<option>Developer</option><option>Reviewer</option><option>Refiner</option>
+					</select>
 				{/snippet}
 			</FormField>
 			<FormField label="Endpoint" error="Keine Verbindung. Adresse prüfen oder den Server starten.">
@@ -569,14 +578,15 @@
 			<Button onclick={() => (dialogOpen = true)}>Dialog öffnen</Button>
 			<Button onclick={() => (sheetOpen = true)}>Sheet öffnen</Button>
 			<Button variant="ghost" onclick={() => toast('Run STU-41 gestartet')}>Info-Meldung</Button>
-			<Button variant="ghost" onclick={() => toast('Ticket nach Review verschoben', 'success')}
-				>Erfolg</Button
-			>
+			<Button variant="ghost" onclick={() => toast('Ticket nach Review verschoben', 'success')}>
+				Erfolg
+			</Button>
 			<Button
 				variant="ghost"
 				onclick={() => toast('Run STU-37 fehlgeschlagen: Migration bricht ab', 'error')}
-				>Fehler</Button
 			>
+				Fehler
+			</Button>
 			<Button
 				variant="ghost"
 				onclick={() =>
@@ -584,8 +594,10 @@
 						label: 'Rückgängig',
 						run: () => toast('STU-12 zurückgeholt'),
 						countdown: true
-					})}>Rückgängig-Meldung</Button
+					})}
 			>
+				Rückgängig-Meldung
+			</Button>
 		</div>
 	</section>
 

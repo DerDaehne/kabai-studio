@@ -51,9 +51,9 @@
 			<ul>
 				{#each errors as error (error.name)}
 					<li>
-						<a href="#{error.name}" onclick={(event) => focusField(event, error.name)}
-							>{error.label}: {error.message}</a
-						>
+						<a href="#{error.name}" onclick={(event) => focusField(event, error.name)}>
+							{error.label}: {error.message}
+						</a>
 					</li>
 				{/each}
 			</ul>

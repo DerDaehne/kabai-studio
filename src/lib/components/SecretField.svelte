@@ -40,9 +40,9 @@
 {#if name && !replacing}
 	<p>
 		<strong>{name}</strong> — gesetzt, geändert {updatedAt} UTC
-		<button type="button" onclick={() => (replacing = true)} bind:this={replaceButton}
-			>Ersetzen</button
-		>
+		<button type="button" onclick={() => (replacing = true)} bind:this={replaceButton}>
+			Ersetzen
+		</button>
 	</p>
 	<form
 		method="POST"

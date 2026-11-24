@@ -14,17 +14,17 @@
 	<li>
 		<a href="/settings/profiles">
 			<span class="label">Agent-Profile</span>
-			<span class="desc"
-				>Mit welchem Modell Agents arbeiten: lokal oder online, vorbelegt aus dem Modell-Katalog.</span
-			>
+			<span class="desc">
+				Mit welchem Modell Agents arbeiten: lokal oder online, vorbelegt aus dem Modell-Katalog.
+			</span>
 		</a>
 	</li>
 	<li>
 		<a href="/settings/secrets">
 			<span class="label">Secrets</span>
-			<span class="desc"
-				>API-Keys und Tokens für Agent-Profile und MCP-Server, verschlüsselt gespeichert.</span
-			>
+			<span class="desc">
+				API-Keys und Tokens für Agent-Profile und MCP-Server, verschlüsselt gespeichert.
+			</span>
 		</a>
 	</li>
 	<li>
@@ -37,9 +37,9 @@
 
 <section class="backup" aria-labelledby="backup-title">
 	<h2 id="backup-title">
-		Sicherung <Badge tone={b.error ? 'failed' : 'succeeded'}
-			>{b.error ? 'Problem' : 'aktuell'}</Badge
-		>
+		Sicherung <Badge tone={b.error ? 'failed' : 'succeeded'}>
+			{b.error ? 'Problem' : 'aktuell'}
+		</Badge>
 	</h2>
 	{#if b.error}<p class="error">{b.error}</p>{/if}
 	<dl>
@@ -71,9 +71,9 @@
 	<h2 id="about-title">{t('settings.about.title')}</h2>
 	<Attribution />
 	<p>
-		<a href="https://github.com/DerDaehne/kabai-studio/blob/main/LICENSE"
-			>{t('settings.about.licenceText')}</a
-		>
+		<a href="https://github.com/DerDaehne/kabai-studio/blob/main/LICENSE">
+			{t('settings.about.licenceText')}
+		</a>
 	</p>
 	<p class="version">
 		Version <code>{data.version}</code> · Build <code>{data.buildDate}</code>

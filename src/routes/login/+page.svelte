@@ -9,16 +9,16 @@
 {#if form?.error}<p role="alert">{form.error}</p>{/if}
 <form method="POST">
 	<p>
-		<label
-			>{t('auth.name')}
-			<input name="name" value={form?.name ?? ''} required autocomplete="username" /></label
-		>
+		<label>
+			{t('auth.name')}
+			<input name="name" value={form?.name ?? ''} required autocomplete="username" />
+		</label>
 	</p>
 	<p>
-		<label
-			>{t('auth.password')}
-			<input type="password" name="password" required autocomplete="current-password" /></label
-		>
+		<label>
+			{t('auth.password')}
+			<input type="password" name="password" required autocomplete="current-password" />
+		</label>
 	</p>
 	<button>{t('login.submit')}</button>
 </form>

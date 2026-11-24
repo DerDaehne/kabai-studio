@@ -311,15 +311,19 @@
 				<button
 					class="chip"
 					aria-pressed={shell.focus === null}
-					onclick={() => (shell.focus = null)}>{t('board.focus.all')}</button
+					onclick={() => (shell.focus = null)}
 				>
+					{t('board.focus.all')}
+				</button>
 				{#each projects as project (project.id)}
 					<button
 						class="chip"
 						aria-pressed={shell.focus?.id === project.id}
 						onclick={() => (shell.focus = project)}
-						><ProjectTag code={project.code} palette={project.palette} /> {project.name}</button
 					>
+						<ProjectTag code={project.code} palette={project.palette} />
+						{project.name}
+					</button>
 				{/each}
 			</div>
 		{/if}
@@ -333,9 +337,9 @@
 				{shell.focus
 					? t('board.empty.hintIn', { project: shell.focus.name })
 					: t('board.empty.hint')}
-				{#snippet action()}<Button variant="primary" onclick={() => openDraft(true)}
-						>{t('board.empty.action')}</Button
-					>{/snippet}
+				{#snippet action()}<Button variant="primary" onclick={() => openDraft(true)}>
+						{t('board.empty.action')}
+					</Button>{/snippet}
 			</EmptyState>
 		{:else}
 			<div class="panorama" data-panorama use:sideways>

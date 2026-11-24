@@ -197,8 +197,10 @@
 							form={formId}
 							formaction="?/models"
 							formnovalidate
-							loading={loadingModels}>Modelle laden</Button
+							loading={loadingModels}
 						>
+							Modelle laden
+						</Button>
 					{/if}
 				</div>
 			{/snippet}
@@ -219,9 +221,9 @@
 	</div>
 
 	<fieldset>
-		<legend
-			>Verhalten{suggestion ? ` – vorbelegt aus dem Modell-Katalog (${suggestion.id})` : ''}</legend
-		>
+		<legend>
+			Verhalten{suggestion ? ` – vorbelegt aus dem Modell-Katalog (${suggestion.id})` : ''}
+		</legend>
 		<FormField
 			label="Rolle"
 			hint={suggestion?.reasons.role ??

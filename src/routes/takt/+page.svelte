@@ -249,11 +249,12 @@
 						<ProjectTag code={card.project.code} palette={card.project.palette} />
 						<span class="ref">{card.ticket.ref}</span>
 						<span class="title">{card.project.name} · {card.ticket.title}</span>
-						{#if card.profile}<span class="who">{t('takt.asks', { profile: card.profile })}</span
-							>{/if}
-						<time datetime={card.askedAt}
-							>{t('takt.waitingSince', { time: asked.format(new Date(card.askedAt)) })}</time
-						>
+						{#if card.profile}<span class="who">
+								{t('takt.asks', { profile: card.profile })}
+							</span>{/if}
+						<time datetime={card.askedAt}>
+							{t('takt.waitingSince', { time: asked.format(new Date(card.askedAt)) })}
+						</time>
 					</p>
 					<h2 class="question" id="question-{card.id}">{cardQuestion?.lead}</h2>
 					{#if cardQuestion?.rest}<div class="question-rest">
@@ -292,12 +293,12 @@
 										{t('takt.keySend')} · <Kbd key="Escape" />
 										{t('takt.keyDiscard')}
 									</span>
-									<button type="button" class="rk-btn" onclick={closeOwnAnswer}
-										>{t('takt.discard')}</button
-									>
-									<button class="rk-btn rk-btn--primary" disabled={!ownText.trim()}
-										>{t('takt.send')}</button
-									>
+									<button type="button" class="rk-btn" onclick={closeOwnAnswer}>
+										{t('takt.discard')}
+									</button>
+									<button class="rk-btn rk-btn--primary" disabled={!ownText.trim()}>
+										{t('takt.send')}
+									</button>
 								</div>
 							</form>
 						{:else}
@@ -314,14 +315,17 @@
 						{/if}
 					</div>
 					<p class="actions">
-						<button type="button" class="rk-btn rk-btn--quiet" onclick={() => later(card)}
-							>{t('takt.later')} <Kbd key="s" /></button
-						>
+						<button type="button" class="rk-btn rk-btn--quiet" onclick={() => later(card)}>
+							{t('takt.later')}
+							<Kbd key="s" />
+						</button>
 						<a
 							class="rk-btn rk-btn--quiet"
 							href={ticketHref(card.project.code, card.ticket.number, { run: card.runId })}
-							>{t('takt.runRecord')} <Kbd key="Enter" /></a
 						>
+							{t('takt.runRecord')}
+							<Kbd key="Enter" />
+						</a>
 					</p>
 				</article>
 			{/key}
@@ -352,24 +356,26 @@
 	{#if paused.length}
 		<p class="detail">{t('takt.paused.hint')}</p>
 		<p>
-			<button type="button" class="rk-btn" onclick={() => void resumeAll()}
-				>{t('takt.resumeAll')}</button
-			>
+			<button type="button" class="rk-btn" onclick={() => void resumeAll()}>
+				{t('takt.resumeAll')}
+			</button>
 		</p>
 		<ul class="rows" data-testid="paused-runs">
 			{#each paused as run (run.id)}
 				<li class="row">
 					<ProjectTag code={run.project.code} palette={run.project.palette} />
-					<a href={ticketHref(run.project.code, refNumber(run.ticket), { run: run.id })}
-						>{run.ticket}</a
-					>
+					<a href={ticketHref(run.project.code, refNumber(run.ticket), { run: run.id })}>
+						{run.ticket}
+					</a>
 					<Tag tone="warning">{t('start.state.paused')}</Tag>
 					<button
 						type="button"
 						class="rk-btn"
 						aria-label={t('takt.resumeRun', { ticket: run.ticket })}
-						onclick={() => void resumeRun(run.id)}>{t('takt.resume')}</button
+						onclick={() => void resumeRun(run.id)}
 					>
+						{t('takt.resume')}
+					</button>
 				</li>
 			{/each}
 		</ul>

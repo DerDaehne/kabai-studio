@@ -225,12 +225,12 @@
 		</label>
 	</form>
 	<span class="rk-actions">
-		<Button size="sm" variant="ghost" onclick={() => openTaskDialog(task, 'rename')}
-			>{t('ticket.task.rename')}</Button
-		>
-		<Button size="sm" variant="ghost" onclick={() => openTaskDialog(task, 'delete')}
-			>{t('ticket.task.delete')}</Button
-		>
+		<Button size="sm" variant="ghost" onclick={() => openTaskDialog(task, 'rename')}>
+			{t('ticket.task.rename')}
+		</Button>
+		<Button size="sm" variant="ghost" onclick={() => openTaskDialog(task, 'delete')}>
+			{t('ticket.task.delete')}
+		</Button>
 	</span>
 {/snippet}
 
@@ -243,8 +243,10 @@
 				<p>{question.lead}</p>
 			</div>
 			{#if question.rest}<AgentText text={question.rest} />{/if}
-			<a class="rk-btn" href="/takt">{t('ticket.question.toTakt')} <Kbd key="g" /><Kbd key="t" /></a
-			>
+			<a class="rk-btn" href="/takt">
+				{t('ticket.question.toTakt')}
+				<Kbd key="g" /><Kbd key="t" />
+			</a>
 		</div>
 	{/if}
 {/snippet}
@@ -292,9 +294,9 @@
 	<ul class="rk-rows comments">
 		{#each ticket.comments as comment (comment.id)}
 			<li>
-				<span class="author"
-					><Icon name={AUTHOR_ICONS[comment.authorKind]} size={14} />{authorLabel(comment)}</span
-				>
+				<span class="author">
+					<Icon name={AUTHOR_ICONS[comment.authorKind]} size={14} />{authorLabel(comment)}
+				</span>
 				<AgentText text={comment.body} />
 			</li>
 		{:else}
@@ -321,9 +323,9 @@
 		<ul class="rk-rows relations">
 			{#each items as rel (rel.ref)}
 				<li>
-					<span class="relation"
-						><b>{rel.ref}</b>{#if rel.title}<span>{rel.title}</span>{/if}</span
-					>
+					<span class="relation">
+						<b>{rel.ref}</b>{#if rel.title}<span>{rel.title}</span>{/if}
+					</span>
 					<span class="rk-actions">
 						{#if rel.column}<Tag>{rel.column}</Tag>{/if}
 						{#if rel.blocking}<Tag tone="warning">{t('ticket.relation.blocking')}</Tag>{/if}
@@ -357,9 +359,9 @@
 	</ul>
 	{@render formError('move')}
 
-	<Button variant="danger" size="sm" onclick={() => (deleteOpen = true)}
-		>{t('ticket.delete')}</Button
-	>
+	<Button variant="danger" size="sm" onclick={() => (deleteOpen = true)}>
+		{t('ticket.delete')}
+	</Button>
 {/snippet}
 
 {#snippet runsFacet()}
@@ -367,14 +369,15 @@
 		<ul class="rk-rows runs" aria-label={t('ticket.runs.list')}>
 			{#each data.runs as run (run.id)}
 				<li>
-					<a href={ticketHref(address.key, address.number, { run: run.id, facet: 'spur' })}
-						><b>{t('ticket.runs.open', { id: run.id })}</b></a
-					>
+					<a href={ticketHref(address.key, address.number, { run: run.id, facet: 'spur' })}>
+						<b>{t('ticket.runs.open', { id: run.id })}</b>
+					</a>
 					<span class="rk-actions">
 						<Tag tone={RUN_TONES[run.halted ? 'paused' : run.state]}>{runWord(run)}</Tag>
 						{#if run.profile}<span class="muted">{run.profile}</span>{/if}
-						{#if run.startedAt}<span class="muted">{dateTime.format(new Date(run.startedAt))}</span
-							>{/if}
+						{#if run.startedAt}<span class="muted">
+								{dateTime.format(new Date(run.startedAt))}
+							</span>{/if}
 					</span>
 				</li>
 			{/each}
@@ -384,9 +387,9 @@
 	{/if}
 {/snippet}
 
-<svelte:head
-	><title>{t('ticket.title', { ref: ticket.ref, title: ticket.title })}</title></svelte:head
->
+<svelte:head>
+	<title>{t('ticket.title', { ref: ticket.ref, title: ticket.title })}</title>
+</svelte:head>
 
 <Crumb href="/board" label={t('board.heading')} />
 <header class="ticket-head">
@@ -397,14 +400,15 @@
 	<h1 class="rk-title">{ticket.title}</h1>
 	<p class="rk-facts" data-testid="facts">
 		{#if ticket.lage}
-			<Tag tone={ticket.lage.reason.kind === 'failure' ? 'error' : LAGE_TONES[ticket.lage.lage]}
-				><span class="reason">{lageText(ticket.lage)}</span></Tag
-			>
+			<Tag tone={ticket.lage.reason.kind === 'failure' ? 'error' : LAGE_TONES[ticket.lage.lage]}>
+				<span class="reason">{lageText(ticket.lage)}</span>
+			</Tag>
 			<StepTrack progress={ticket.lage.progress} />
 			<span>{stepText({ ...ticket.lage, phase: ticket.column.phase })}</span>
 		{/if}
-		{#if data.runs[0]?.profile}<span>{t('ticket.profile', { profile: data.runs[0].profile })}</span
-			>{/if}
+		{#if data.runs[0]?.profile}<span>
+				{t('ticket.profile', { profile: data.runs[0].profile })}
+			</span>{/if}
 		{#if data.flow}<span>{t('ticket.column', { name: ticket.column.name })}</span>{/if}
 	</p>
 	<div class="rk-actions">
@@ -453,9 +457,9 @@
 				>{/snippet}
 		</FormField>
 		{@render formError('update')}
-		<Button type="button" variant="ghost" onclick={() => (editOpen = false)}
-			>{t('ticket.editDialog.cancel')}</Button
-		>
+		<Button type="button" variant="ghost" onclick={() => (editOpen = false)}>
+			{t('ticket.editDialog.cancel')}
+		</Button>
 		<Button type="submit" variant="primary">{t('ticket.save')}</Button>
 	</form>
 </Dialog>
@@ -491,9 +495,9 @@
 				{#snippet children(a)}<input {...a} name="reason" required />{/snippet}
 			</FormField>
 			{@render formError('taskDialog')}
-			<Button type="button" variant="ghost" onclick={() => (taskDialog = null)}
-				>{t('ticket.cancel')}</Button
-			>
+			<Button type="button" variant="ghost" onclick={() => (taskDialog = null)}>
+				{t('ticket.cancel')}
+			</Button>
 			<Button type="submit" variant={taskDialog.mode === 'delete' ? 'danger' : 'primary'}>
 				{taskDialog.mode === 'delete' ? t('ticket.task.delete') : t('ticket.save')}
 			</Button>
@@ -504,9 +508,9 @@
 <Dialog bind:open={deleteOpen} title={t('ticket.delete')}>
 	<p>{t('ticket.delete.body', { ref: ticket.ref, title: ticket.title })}</p>
 	<form method="POST" action="?/delete" use:enhance>
-		<Button type="button" variant="ghost" onclick={() => (deleteOpen = false)}
-			>{t('ticket.cancel')}</Button
-		>
+		<Button type="button" variant="ghost" onclick={() => (deleteOpen = false)}>
+			{t('ticket.cancel')}
+		</Button>
 		<Button type="submit" variant="danger">{t('ticket.delete.confirm')}</Button>
 	</form>
 </Dialog>

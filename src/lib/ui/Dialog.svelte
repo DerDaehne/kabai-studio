@@ -129,8 +129,10 @@
 				<button
 					class="rk-btn rk-btn--icon rk-btn--quiet"
 					aria-label="Schließen"
-					onclick={requestClose}><Icon name="x" /></button
+					onclick={requestClose}
 				>
+					<Icon name="x" />
+				</button>
 			</header>
 			<div class="body">{@render children()}</div>
 			{#if discarding}
@@ -145,9 +147,9 @@
 {#snippet discardQuestion()}
 	<div class="rk-actions" role="group" aria-label={t('dialog.discard.title')}>
 		<strong>{t('dialog.discard.title')}</strong>
-		<button bind:this={keepEditing} type="button" class="rk-btn rk-btn--primary" onclick={keepOn}
-			>{t('dialog.discard.keep')}</button
-		>
+		<button bind:this={keepEditing} type="button" class="rk-btn rk-btn--primary" onclick={keepOn}>
+			{t('dialog.discard.keep')}
+		</button>
 		<Button variant="danger" onclick={discard}>{t('dialog.discard.confirm')}</Button>
 	</div>
 {/snippet}

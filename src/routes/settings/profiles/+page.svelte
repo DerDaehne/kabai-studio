@@ -37,8 +37,10 @@
 					onclick={() => {
 						deleting = profile;
 						confirmOpen = true;
-					}}>Löschen</Button
+					}}
 				>
+					Löschen
+				</Button>
 				{#if form?.id === profile.id}<p class="error" role="alert">{form.message}</p>{/if}
 			</li>
 		{/each}

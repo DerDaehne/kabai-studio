@@ -11,8 +11,10 @@
 <span
 	class="tag"
 	style:color="var(--project-{palette})"
-	style:background-color="var(--project-{palette}-fill)">{code}</span
+	style:background-color="var(--project-{palette}-fill)"
 >
+	{code}
+</span>
 
 <style>
 	.tag {

@@ -57,13 +57,13 @@
 			onfocusout={() => hold('focus', false)}
 		>
 			<p class="rk-toast-msg">
-				{#if toast.tone === 'error'}<span class="rk-toast-sr">Fehler: </span>{/if}<span
-					>{toast.message}</span
-				>
+				{#if toast.tone === 'error'}<span class="rk-toast-sr">Fehler: </span>{/if}<span>
+					{toast.message}
+				</span>
 				{#if toast.action?.countdown}
-					<span class="rk-toast-sr"
-						>, {Math.ceil(toast.windowMs / 1000)} Sekunden zum Rückgängigmachen</span
-					>
+					<span class="rk-toast-sr">
+						, {Math.ceil(toast.windowMs / 1000)} Sekunden zum Rückgängigmachen
+					</span>
 				{/if}
 			</p>
 			{#if toast.action}
@@ -74,9 +74,9 @@
 					onclick={() => runAction(toast)}
 				>
 					{toast.action.label}
-					{#if toast.action.countdown}<span class="rk-toast-count" aria-hidden="true"
-							>{seconds(toast)}</span
-						>{/if}
+					{#if toast.action.countdown}<span class="rk-toast-count" aria-hidden="true">
+							{seconds(toast)}
+						</span>{/if}
 				</button>
 				{#if toast.action.countdown}<span class="rk-toast-line" aria-hidden="true"></span>{/if}
 			{/if}

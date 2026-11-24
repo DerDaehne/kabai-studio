@@ -68,34 +68,38 @@
 			{@attach focusField}
 		/>
 		<Button type="submit" size="sm">{t('board.giveBack.send')}</Button>
-		<span class="hint"
-			><Kbd key="Enter" />
+		<span class="hint">
+			<Kbd key="Enter" />
 			{t('board.giveBack.hintSend')} · <Kbd key="Escape" />
-			{t('board.giveBack.hintDiscard')}</span
-		>
+			{t('board.giveBack.hintDiscard')}
+		</span>
 	</form>
 {/snippet}
 
 {#snippet intents()}
 	<span class="intents" role="group" aria-label={t('board.intents.label', { ref: row.ref })}>
 		{#if row.reason.kind === 'question'}
-			<Button size="sm" onclick={() => void goto(href)}
-				>{t('board.intent.answer')} <Kbd key="Enter" /></Button
-			>
+			<Button size="sm" onclick={() => void goto(href)}>
+				{t('board.intent.answer')}
+				<Kbd key="Enter" />
+			</Button>
 		{:else if canStart(row)}
-			<Button size="sm" onclick={() => void editor.start(row)}
-				>{t('board.intent.start')} <Kbd key="s" /></Button
-			>
+			<Button size="sm" onclick={() => void editor.start(row)}>
+				{t('board.intent.start')}
+				<Kbd key="s" />
+			</Button>
 		{/if}
 		{#if canAccept(row)}
-			<Button size="sm" onclick={() => void editor.accept(row)}
-				>{t('board.intent.accept')} <Kbd key="a" /></Button
-			>
+			<Button size="sm" onclick={() => void editor.accept(row)}>
+				{t('board.intent.accept')}
+				<Kbd key="a" />
+			</Button>
 		{/if}
 		{#if canGiveBack(row)}
-			<Button size="sm" onclick={() => editor.startGivingBack(row)}
-				>{t('board.intent.giveBack')} <Kbd key="r" /></Button
-			>
+			<Button size="sm" onclick={() => editor.startGivingBack(row)}>
+				{t('board.intent.giveBack')}
+				<Kbd key="r" />
+			</Button>
 		{/if}
 	</span>
 {/snippet}
@@ -104,33 +108,32 @@
 	<StepTrack progress={row.progress} />
 	<span class="step">{stepText({ lage: row.lage, phase: row.column.phase, step: row.step })}</span>
 	{#if reasonText(row)}
-		<Tag tone={row.reason.kind === 'failure' ? 'error' : LAGE_TONES[row.lage]}
-			><span class="reason">{reasonText(row)}</span></Tag
-		>
+		<Tag tone={row.reason.kind === 'failure' ? 'error' : LAGE_TONES[row.lage]}>
+			<span class="reason">{reasonText(row)}</span>
+		</Tag>
 	{/if}
 {/snippet}
 
 {#snippet flowMeta()}
 	<Tag tone={LAGE_TONES[row.lage]}><span class="reason">{lageText(row)}</span></Tag>
 	{#if row.run}
-		<span class="run"
-			>{row.run.profile
+		<span class="run">
+			{row.run.profile
 				? t('board.run.profile', { state: t(RUN_WORDS[row.run.state]), profile: row.run.profile })
-				: t(RUN_WORDS[row.run.state])}</span
-		>
+				: t(RUN_WORDS[row.run.state])}
+		</span>
 	{/if}
-	{#if row.tasks.total}<span class="tasks"
-			>{row.tasks.done}/{row.tasks.total}<span class="visually-hidden">
-				{t('board.tasksDone')}</span
-			></span
-		>{/if}
+	{#if row.tasks.total}<span class="tasks">
+			{row.tasks.done}/{row.tasks.total}<span class="visually-hidden"> {t('board.tasksDone')}</span>
+		</span>{/if}
 	{#if row.epic}<span>{t('board.epic', { ref: row.epic })}</span>{/if}
 {/snippet}
 
 <div class="row">
-	<span class="id"
-		><ProjectTag code={row.project.code} palette={row.project.palette} /> {row.ref}</span
-	>
+	<span class="id">
+		<ProjectTag code={row.project.code} palette={row.project.palette} />
+		{row.ref}
+	</span>
 	{#if renaming}
 		{@render renameForm()}
 	{:else}
