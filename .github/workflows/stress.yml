@@ -11,8 +11,15 @@ permissions:
 jobs:
   stress:
     runs-on: ubuntu-latest
-    # 3x unit suite + build + browser stress need more headroom than the test job.
+    # Measured on the nightly runs: setup, build and browser install take about 5 min, the 3x unit suite about 4.5 min and
+    # the 3x browser suite 30 to 38 min on one pinned core, so the whole job took 34 to 44 min and sometimes hit the limit.
+    # Three shards of the browser suite take 10 to 13 min each; the unit suite runs on the first shard only. The slowest
+    # shard needs about 5 + 4.5 + 13 x 1.15 (uneven shards) = 25 min, which leaves 20 min below the limit.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,7 +35,8 @@ jobs:
       # worker process, and several suites keep state across repeats there (e.g. an owner row
       # that only the first repeat may create). Each repeat shuffles with its own printed seed,
       # so a failure can be replayed with --sequence.seed.
-      - run: |
+      - if: matrix.shard == 1
+        run: |
           for _ in 1 2 3; do
             seed=$RANDOM
             echo "shuffle seed $seed"
@@ -48,11 +56,11 @@ jobs:
       - id: browser
         # taskset pins the whole process tree (Playwright, the dev server, Chromium) to one CPU
         # core, so the runner is as contended as the slower CI runner where tests actually flaked.
-        run: taskset --cpu-list 0 npm run test:browser -- --repeat-each=3
+        run: taskset --cpu-list 0 npm run test:browser -- --repeat-each=3 --shard=${{ matrix.shard }}/3
       - if: failure() && steps.browser.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: stress-browser-test-results
+          name: stress-browser-test-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 
